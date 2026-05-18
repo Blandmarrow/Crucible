@@ -189,7 +189,6 @@ Split the main content area into two independently operating panes:
 ```powershell
 # Clone the repository
 git clone https://github.com/Blandmarrow/Dataset-manager
-cd Dataset-manager
 ```
 
 Then double-click **`Setup Dataset Manager.bat`** to create the virtual environment, install all dependencies, and build the frontend. The window stays open so you can see the output.

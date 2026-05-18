@@ -90,6 +90,10 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         from backend.database import AsyncSessionLocal
         from backend.services.caption_service import set_caption
         from backend.workers.progress import broadcaster
+        try:
+            import torch as _torch
+        except Exception:
+            _torch = None
 
         is_ollama = body.model.startswith("ollama:")
         is_florence = body.model.startswith("florence2")
@@ -169,12 +173,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 # Emit progress including image_id so the frontend can update that image
                 elapsed = time.monotonic() - start_time
                 throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
-                try:
-                    import torch
-                    vram_mb = int(torch.cuda.memory_allocated() / 1024 / 1024) if torch.cuda.is_available() else 0
-                except Exception:
-                    vram_mb = 0
-                filename = file_path.replace("\\", "/").split("/")[-1]
+                vram_mb = int(_torch.cuda.memory_allocated() / 1024 / 1024) if (_torch and _torch.cuda.is_available()) else 0
+                filename = Path(file_path).name
                 await broadcaster.emit(job_id, {
                     "type": "progress",
                     "job_id": job_id,

@@ -127,12 +127,13 @@ export interface JobProgress {
   type: string;
   job_id: string;
   job_type: string;
-  status: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   done: number;
   total: number;
   percent: number;
   current_item?: string;
   message?: string;
+  image_id?: string;
 }
 
 export interface BooruTag {

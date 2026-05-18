@@ -193,7 +193,7 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(403, "Access denied")
 
     # Sync DB
-    if p.is_file() or new_path.is_file():
+    if new_path.is_file():
         result = await db.execute(select(Image).where(Image.file_path == str(p)))
         img = result.scalar_one_or_none()
         if img:

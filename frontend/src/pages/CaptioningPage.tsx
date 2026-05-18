@@ -45,7 +45,7 @@ export default function CaptioningPage() {
   const allActiveJobs = useJobStore((s) => s.activeJobs);
   const globalCaptionJob = !activeJobId
     ? Array.from(allActiveJobs.values()).find(
-        (j) => (j as any).job_type === "caption" && j.status === "running"
+        (j) => j.job_type === "caption" && j.status === "running"
       )
     : undefined;
   const effectiveJobId = activeJobId ?? globalCaptionJob?.job_id ?? null;
@@ -113,13 +113,13 @@ export default function CaptioningPage() {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     }
-  }, [jobProgress?.status]);
+  }, [jobProgress?.status, datasetId]);
 
   useEffect(() => {
     if (jobProgress?.status === "running" && (jobProgress?.done ?? 0) > 0) {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
     }
-  }, [jobProgress?.done]);
+  }, [jobProgress?.done, datasetId]);
 
   const uncaptioned = (dataset?.image_count ?? 0) - (dataset?.captioned_count ?? 0);
   const isDone = jobProgress?.status === "completed";

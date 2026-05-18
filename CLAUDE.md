@@ -56,6 +56,8 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 
 `ml/model_manager.py` is a singleton that tracks loaded models and their VRAM usage. Before loading a model it calls `_evict_lru(needed_mb)` to free space. Each model_id gets its own `asyncio.Lock` to serialize inference. All inference runs in `loop.run_in_executor(None, _sync_fn)` to avoid blocking the event loop. Ollama models are not tracked — Ollama manages its own VRAM.
 
+After a successful load, `_registry[model_id]["vram_mb"]` is updated with the measured GPU delta so eviction decisions reflect reality.
+
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|
@@ -77,19 +79,14 @@ Quality scorers and what they add to `Image`:
 | `ml/dino_scorer.py` | `dino_embedding` (BLOB, float16), `dino_layer_embeddings` (BLOB, float16) | `dino_embedding`: final-layer CLS token, 768-dim. `dino_layer_embeddings`: all 12 transformer-layer CLS tokens concatenated, 18 432 bytes (12 × 768 × float16); layer N (1-indexed) at offset `(N-1)*768*2`. `slice_layer_embedding(blob, layer)` extracts one layer's bytes. |
 | `ml/similarity_scorer.py` | — | CPU-only. `compute_style_similarity(ref_bytes, cand_bytes)` — cosine similarity of candidates to mean reference. `compute_combined_similarity(ref_clip, cand_clip, ref_dino, cand_dino, clip_w=0.38, dino_w=0.62)` — weighted blend of CLIP and DINOv2 cosine similarities. |
 
-Flag thresholds (defined as constants in their respective modules):
-| Flag | Column | Threshold | Constant |
+Flag thresholds:
+| Flag | Column | Default threshold | Source |
 |---|---|---|---|
-| `is_blurry` | `blur_score` (Laplacian variance) | < 80 | `BLUR_THRESHOLD` in `technical_scorer.py` |
-| `is_noisy` | `noise_score` (smooth-region std dev) | > 15 | `NOISE_THRESHOLD` in `technical_scorer.py` |
-| `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `UNIFORMITY_THRESHOLD` in `technical_scorer.py` |
-| `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `WATERMARK_THRESHOLD` in `aesthetic_scorer.py` |
+| `is_blurry` | `blur_score` (Laplacian variance) | < 80 | `BLUR_THRESHOLD` constant in `technical_scorer.py` |
+| `is_noisy` | `noise_score` (smooth-region std dev) | > 15 | `NOISE_THRESHOLD` constant in `technical_scorer.py` |
+| `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `UNIFORMITY_THRESHOLD` constant in `technical_scorer.py` |
+| `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `settings.watermark_threshold` — configurable via `WATERMARK_THRESHOLD=` in `.env` |
 
-Recommended training-data thresholds (surfaced in the QualityPage score guide):
-- **Aesthetic**: ≥ 5.0 minimum; ≥ 6.5 for curated sets; < 4.0 reject
-- **Watermark**: exclude any image with `has_watermark = True`
-- **Blur / Noise / Uniform**: exclude flagged images unless the flag matches intentional style
-- **Style similarity**: ≥ 0.5 cosine similarity as a starting point for style-consistent filtering
 
 **Style similarity flow**: (1) run scoring with `run_embeddings=True` to store `clip_embedding`/`dino_embedding`; optionally also `run_dino=True` + `run_dino_layers=True` to store `dino_layer_embeddings` (all 12 transformer-layer CLS tokens). (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
 
@@ -105,6 +102,8 @@ Recommended training-data thresholds (surfaced in the QualityPage score guide):
 
 Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request.
 
+**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces two rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma). `watermark_threshold` (default `0.6`) is a configurable field — set `WATERMARK_THRESHOLD=` in `.env` to tune it without a code change.
+
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
 **Venv ML packages**: torch, transformers, open_clip, etc. are installed in the system Python (`C:\Users\Tom\AppData\Local\Programs\Python\Python310`) and exposed to the venv via `venv/lib/site-packages/system_ml_packages.pth`. The venv was created with `--system-site-packages` and `huggingface-hub` is pinned to `>=0.30,<1.0` in the venv to stay compatible with those system packages.
@@ -113,9 +112,15 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 
 SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`. Alembic migrations in `backend/alembic/versions/`. The Alembic `env.py` strips `+aiosqlite` from the URL when running synchronous migrations.
 
+Three performance indexes exist:
+- `ix_images_dataset_created_at` on `(dataset_id, created_at)` — gallery page loads sorted by date
+- `ix_images_file_path` on `file_path` — filesystem move/rename/delete lookups
+- `ix_images_dataset_caption` on `(dataset_id, caption_text)` — caption filter + listing
+
 ### SSE progress
 
 `ProgressBroadcaster` (singleton in `workers/progress.py`) maintains per-job `asyncio.Queue`s. Emitting a progress event pushes to the job-specific channel and the `"all"` channel. A 25-second heartbeat comment keeps proxies from closing idle connections. Streams close when status becomes `completed`, `failed`, or `cancelled`.
+
 
 ### Frontend state
 
@@ -124,11 +129,14 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 - **`useJobSSE(jobId)`** — opens `EventSource` for one job, writes progress to `jobStore`.
 - **`useAllJobsSSE()`** — opened at app root in `TopBar`, drives the global progress bar.
 - **Job completion → cache invalidation**: pages that trigger background jobs (`QualityPage`, `SelectionToolbar`, `ImageDetailPage`) watch their job ID in `jobStore` via `useEffect` and call `qc.invalidateQueries` when status becomes `"completed"`. Always follow this pattern when adding new job-triggering UI.
-- **Per-image cache invalidation (captioning)**: `CaptioningPage` also invalidates `["images", datasetId]` on every `jobProgress.done` increment while a caption job is running — not just on completion — so the gallery reflects each saved caption in near-real-time. Caption SSE events carry an `image_id` field for this purpose; `JobProgress` (`types/index.ts`) types this as `image_id?: string` and `status` as `"pending" | "running" | "completed" | "failed" | "cancelled"` (matching the `Job` interface) — no `as any` casts needed when reading these fields.
-- **CaptioningPage job tracking**: uses `effectiveJobId = activeJobId ?? globalCaptionJob?.job_id` where `globalCaptionJob` is found by scanning `allActiveJobs` (from `useJobStore`) for any entry with `job_type === "caption"` and `status === "running"`. This means the Stop button and progress panel work even when the user navigates away and returns, because `useAllJobsSSE` in TopBar keeps the store updated. `activeJobId` is set locally in `onSuccess` when starting a job from this page.
-- **CaptioningPage Stop button**: shown in the page header and as a full-width button in the Live progress panel whenever `canStop = !!effectiveJobId && !isDone && !isFailed && !isCancelled`. Calls `DELETE /jobs/{job_id}`.
-- **CaptioningPage Presets**: uses `usePresetsStore` directly with inline UI (no `PromptPresetManager`) — a flat list of load buttons + a save form. `PromptPresetManager` (`components/caption/PromptPresetManager.tsx`) accepts an optional `defaultOpen?: boolean` prop (used when embedding it in other pages that want it expanded by default).
+- **Per-image cache invalidation (captioning)**: Caption SSE events carry `image_id`; `CaptioningPage` invalidates `["images", datasetId]` on every `done` increment so the gallery updates in real-time.
 - **SelectionToolbar score modal**: the "Run Scoring" action accepts four boolean toggles — `run_technical`, `run_aesthetic`, `run_watermark` (CLIP zero-shot watermark detection), and `run_embeddings` (CLIP + DINOv2 embedding extraction for style similarity). `run_watermark` and `run_embeddings` default to `false` since they add significant VRAM/time overhead.
+
+### Frontend constants
+
+`frontend/src/constants/captionStyles.ts` — `STYLE_LABELS: Record<string, string[]>` (style names per model type) and `modelType(model: string): string | null` (maps a model ID to its type key). Shared by `CaptioningPage`, `ImageDetailPage`, and `SelectionToolbar`; do not redeclare locally.
+
+`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
 
 ### Layout
 
@@ -158,8 +166,6 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 
 `ImageDetailPage` reads `gallery-nav-*` to support arrow-key navigation. When the user reaches the boundary of the current page it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`) and on crossing writes the new page's context back to `gallery-nav-*` and updates `gallery-state-*` so that **Back** returns to the correct gallery page. Arrow keys are suppressed when an `<input>` or `<textarea>` has focus.
 
-**Caption textarea auto-expand**: The caption text `<textarea>` in `ImageDetailPage` uses a `captionRef` + `useEffect` pattern to auto-size: on every `captionText` change it sets `height = "auto"` then `height = scrollHeight`. `minHeight: 8rem` keeps a reasonable baseline for short captions; `resize-none overflow-hidden` prevent manual resize handles.
-
 **ImageDetailPage caption panel**: Contains only the caption text textarea and Save button (plus the collapsible AI Generate section). The `tags` and `caption_style` fields are still present in the DB schema, backend save endpoint (`PATCH /captions/{id}`), and save mutation — they are read from `captionData` and re-persisted unchanged — but neither a tag editor nor a style picker is exposed in the UI.
 
 ### Datasets page
@@ -176,7 +182,7 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 
 **Dataset folder naming**: `create_dataset()` in `dataset_service.py` derives the folder name from the dataset name via `_name_to_slug()` (lowercase, spaces → underscores, special chars stripped, max 80 chars) rather than using the UUID. The UUID is still the DB primary key. If the slug folder already exists (name collision edge case), a `{slug}_{uuid8}` suffix is appended. Example: dataset named `"My Portraits"` creates `data/datasets/my_portraits/`.
 
-**Dataset rename**: `PATCH /datasets/{id}` (router: `routers/datasets.py`) accepts `{ name?, description? }`. When the name changes it calls `rename_dataset()` in `dataset_service.py`, which: (1) computes the new slug, (2) moves the folder on disk via `Path.rename()`, (3) bulk-updates all `Image.file_path` and `Image.thumbnail_path` records for images in that dataset using string prefix replacement, (4) updates `Dataset.folder_path` and `Dataset.name` — all committed in one transaction. Description-only updates skip the folder move. A 400 is returned if the new name conflicts with an existing dataset. The frontend exposes this via a pencil icon button in the card hover-action row (`renameTarget` / `renameName` state + `renameMutation`).
+**Dataset rename**: `PATCH /datasets/{id}` accepts `{ name?, description? }`. When the name changes, `rename_dataset()` renames the folder on disk, bulk-updates all `Image.file_path`/`thumbnail_path` records via string prefix replacement, and updates `Dataset.folder_path`/`name` — all in one transaction. Returns 400 on name conflict.
 
 ### Statistics page
 
@@ -193,19 +199,19 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 
 | Field | Description |
 |---|---|
-| `blur_distribution` | Laplacian variance bucketed into 6 ranges |
-| `noise_distribution` | Smooth-region std dev bucketed into 6 ranges |
-| `uniformity_distribution` | Grayscale std dev bucketed into 5 ranges |
-| `watermark_distribution` | CLIP watermark score in 10 equal 0.1-wide bins |
-| `color_distribution` / `saturation_distribution` | Hasler-Süsstrunk color/saturation buckets |
-| `megapixel_distribution` | `width × height / 1M` bucketed into 7 ranges |
-| `file_size_distribution` | File size in MB bucketed into 6 ranges |
+| `blur_distribution` | 6-bucket Laplacian variance |
+| `noise_distribution` | 6-bucket smooth-region std dev |
+| `uniformity_distribution` | 5-bucket grayscale std dev |
+| `watermark_distribution` | 10 equal bins, 0–1 |
+| `color_distribution` / `saturation_distribution` | Hasler-Süsstrunk buckets |
+| `megapixel_distribution` | 7-bucket width×height/1M |
+| `file_size_distribution` | 6-bucket MB ranges |
 | `file_size_summary` | `{min_mb, median_mb, p95_mb, max_mb}` |
-| `aspect_ratio_fine` | 8 common AR buckets (9:16+ → 21:9+) |
-| `caption_length_distribution` | Word count bucketed into 6 ranges |
-| `style_similarity_distribution` | 10 equal bins (0–1 range) of `style_similarity_score`, same bucketing as `watermark_distribution` |
-| `quality_flag_counts` | `{blurry, noisy, uniform, watermarked, duplicate}` counts |
-| `score_coverage` | How many images have each score type computed |
+| `aspect_ratio_fine` | 8 common AR buckets |
+| `caption_length_distribution` | 6-bucket word count |
+| `style_similarity_distribution` | 10 equal bins, 0–1 |
+| `quality_flag_counts` | `{blurry, noisy, uniform, watermarked, duplicate}` |
+| `score_coverage` | Per-score type computed count |
 
 Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on the backend (`dataset_service.py`) are used only for pre-computing the initial distributions returned by `/stats`; when the user customises edges, `rebucketValues()` runs entirely client-side against the raw `score-values` arrays — no backend call needed.
 
@@ -266,17 +272,15 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. |
 | `save_backup` | `false` | Before calling `set_caption`, write the existing `.txt` sidecar to `.txt.bak`. |
 
-**Captioning job execution**: `_run` in `routers/captioning.py` processes images one at a time — generate → save → emit — rather than batch-generating all captions first and then saving. Each SSE progress event includes `image_id` (the UUID of the just-captioned image) in addition to the standard progress fields. This means captions are committed to the DB and sidecar as each image finishes, not all at once at the end.
-
-All three captioners (Florence-2, PaliGemma-2, Ollama) emit `throughput_ips` (float, images/sec), `vram_used_mb` (int), and `image_id` (str) in every SSE progress event. Ollama always reports `vram_used_mb: 0` since Ollama manages its own VRAM.
-
-**Captioning job cancellation**: `_run` opens a fresh `AsyncSessionLocal` at the start of each per-image iteration and checks the job's DB `status`. If the status is `"cancelled"` (set by `DELETE /jobs/{job_id}`), it raises `asyncio.CancelledError`, which the job worker catches to mark the job cancelled and emit the SSE close event. Cancellation therefore takes effect at the next image boundary, not mid-inference. The `DELETE /jobs/{job_id}` endpoint in `routers/jobs.py` handles setting the DB status; no changes to the job queue were needed.
+**Captioning job execution**: `_run` in `routers/captioning.py` processes images one at a time (generate → save → emit SSE). Each event carries `image_id`, `throughput_ips`, and `vram_used_mb` (sampled every 10 images; Ollama always 0). Failed images accumulate in `failed_image_ids`; a `caption_summary` SSE event is emitted after the loop if any failed. Cancellation is checked at each image boundary via the job's DB `status` (`DELETE /jobs/{job_id}` sets it).
 
 **Ollama timeout**: `httpx.AsyncClient` in `ollama_captioner.py` uses a 300-second timeout per image to accommodate slow hardware and cold model loads.
 
 ### Export page
 
 `ExportPage.tsx` supports 3 format buttons: kohya, ai-toolkit, plain folder. All three are fully implemented. The left panel uses `.form-row` layout throughout.
+
+**Shared export loop**: `export_service.py` uses a shared `_run_export_loop(session, dataset_id, dest_dir, filters, progress_cb, format_fn)` helper that handles the DB query (column-explicit select, no blob fields), filter loop, progress emission, and result accumulation. Each of `export_kohya`, `export_aitoolkit`, and `export_plain` delegates to this helper and provides only a format-specific callback. Blob columns (`clip_embedding`, `dino_embedding`, `dino_layer_embeddings`) are excluded from the query — only `id`, `file_path`, `filename`, `caption_text`, `tags_json`, `aesthetic_score`, `quality_flags`, and `style_similarity_score` are loaded.
 
 **Filters** (applied in `export_service.py::_is_excluded()`, shared by all three formats):
 
@@ -293,13 +297,6 @@ Filter params are debounced 350 ms on the frontend; the preview query (`GET /exp
 
 **Resize** (`resize_to: int | None`): after copying/converting, resizes the longest side to the given pixel count via Pillow (only downscales; originals untouched). Skips the PIL round-trip entirely when `resize_to=None` and `output_format="original"`.
 
-**Plain folder** output structure:
-```
-output_dir/
-  images/        ← copied/converted images
-  captions.jsonl ← {"file": "name.png", "caption": "...", "tags": [...]} per line
-  tags.csv       ← file,tag rows (one row per tag per image)
-```
 
 ### AI generation metadata
 
@@ -318,9 +315,8 @@ Supported formats:
 
 Frontend: `components/image/GenerationMetadata.tsx` — collapsible section titled **GENERATION METADATA** (default expanded) with source badge, prompt + copy button, negative prompt, param grid (model/sampler/steps/CFG/seed/size/VAE), and optional ComfyUI raw workflow viewer.
 
-**Lazy backfill**: `GET /images/{image_id}` checks if `generation_metadata` is NULL on the loaded image; if so, it calls `extract_generation_metadata` on the file and commits the result before returning. This transparently populates metadata for images imported before this feature was added, with no user action required.
+**Lazy backfill**: `GET /images/{image_id}` calls `extract_generation_metadata` and commits if the field is NULL, transparently backfilling pre-feature images.
 
-**A1111 parser — no-negative-prompt case**: `_parse_a1111_params()` handles images with no `Negative prompt:` line by searching for `Steps:` within the prompt block itself, splitting the prompt from the param line before extracting structured fields. Without this fix, Steps/Sampler/Seed/Model etc. would not be extracted for such images.
 
 ### File browser
 

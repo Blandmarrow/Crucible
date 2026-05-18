@@ -19,8 +19,7 @@ def compute_style_similarity(
     ref_matrix = np.stack(ref_arrays)       # (R, dim)
     mean_ref = ref_matrix.mean(axis=0)
     norm = float(np.linalg.norm(mean_ref))
-    if norm > 0:
-        mean_ref = mean_ref / norm
+    mean_ref = mean_ref / (norm + 1e-8)
 
     cand_arrays = [
         np.frombuffer(b, dtype=np.float16).astype(np.float32)

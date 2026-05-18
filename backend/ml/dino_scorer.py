@@ -11,6 +11,8 @@ _LAYER_BLOB_SIZE = 12 * 768 * 2  # 12 layers × 768 dims × float16
 
 def slice_layer_embedding(blob: bytes, layer: int) -> bytes:
     """Return the 768-dim float16 bytes for a specific DINOv2 layer (1-indexed)."""
+    if not (1 <= layer <= 12):
+        raise ValueError(f"layer must be 1–12, got {layer}")
     if len(blob) != _LAYER_BLOB_SIZE:
         raise ValueError(f"Expected {_LAYER_BLOB_SIZE}-byte layer blob, got {len(blob)}")
     offset = (layer - 1) * 768 * 2

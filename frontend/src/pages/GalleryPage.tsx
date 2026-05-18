@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
 import type { ImageListItem } from "../types";
@@ -131,6 +131,7 @@ export default function GalleryPage() {
         score_filters: scoreFiltersParam,
       }),
     enabled: !!datasetId,
+    placeholderData: keepPreviousData,
   });
 
   useEffect(() => {

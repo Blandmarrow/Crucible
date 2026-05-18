@@ -123,6 +123,7 @@ export default function DatasetsPage() {
   }, [qc]);
 
   const pageRef = useRef<HTMLDivElement>(null);
+  const dragRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     const el = pageRef.current;
@@ -131,12 +132,19 @@ export default function DatasetsPage() {
     const onDragOver = (e: DragEvent) => {
       if (!e.dataTransfer?.types.includes("Files")) return;
       e.preventDefault();
-      const under = document.elementFromPoint(e.clientX, e.clientY);
-      const card = under?.closest<HTMLElement>("[data-dataset-id]");
-      const id = card?.dataset.datasetId ?? null;
-      setDragOverId(id);
-      if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
-      if (id) dragTimerRef.current = setTimeout(() => setDragOverId(null), 200);
+      // Throttle the expensive elementFromPoint lookup to once per animation frame
+      if (dragRafRef.current !== null) return;
+      const cx = e.clientX;
+      const cy = e.clientY;
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        const under = document.elementFromPoint(cx, cy);
+        const card = under?.closest<HTMLElement>("[data-dataset-id]");
+        const id = card?.dataset.datasetId ?? null;
+        setDragOverId(id);
+        if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
+        if (id) dragTimerRef.current = setTimeout(() => setDragOverId(null), 200);
+      });
     };
 
     const onDrop = (e: DragEvent) => {
@@ -154,6 +162,7 @@ export default function DatasetsPage() {
     return () => {
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
+      if (dragRafRef.current !== null) cancelAnimationFrame(dragRafRef.current);
     };
   }, [handleCardDrop]);
 

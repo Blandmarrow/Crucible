@@ -62,7 +62,9 @@ WATERMARK_PROMPTS = [
     "an image with text overlay, watermark, or logo",
     "a clean image without any text or watermark",
 ]
-WATERMARK_THRESHOLD = 0.6
+def _watermark_threshold() -> float:
+    from backend.config import settings
+    return settings.watermark_threshold
 
 
 def _precompute_watermark_text_features(model_entry: dict) -> torch.Tensor:
@@ -86,7 +88,7 @@ def score_watermark_sync(image_path: str, model_entry: dict,
         logits = (img_feats @ text_features.T) * 100.0
         probs = logits.softmax(dim=-1)[0]
     score = float(probs[0].item())
-    return {"watermark_score": round(score, 4), "has_watermark": score >= WATERMARK_THRESHOLD}
+    return {"watermark_score": round(score, 4), "has_watermark": score >= _watermark_threshold()}
 
 
 async def score_images_watermark(

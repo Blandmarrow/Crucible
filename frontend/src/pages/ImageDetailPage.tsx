@@ -13,6 +13,8 @@ import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { ModelInfo, OllamaModel } from "../types";
+import { STYLE_LABELS, modelType } from "../constants/captionStyles";
+import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 
 function formatSize(bytes: number | null) {
   if (!bytes) return "—";
@@ -20,34 +22,6 @@ function formatSize(bytes: number | null) {
 }
 
 interface CropArea { x: number; y: number; width: number; height: number; }
-
-const STYLE_LABELS: Record<string, string[]> = {
-  florence2: ["short", "detailed", "tags", "dense", "promptgen"],
-  paligemma2: ["short", "detailed", "tags", "booru"],
-  ollama: ["short", "detailed", "tags", "booru"],
-};
-
-function modelType(model: string) {
-  if (model.startsWith("ollama:")) return "ollama";
-  if (model === "paligemma2") return "paligemma2";
-  if (model.startsWith("florence2")) return "florence2";
-  return null;
-}
-
-const DINO_LAYER_LABELS: Record<string, string> = {
-  "1":  "Low-level color & gradients",
-  "2":  "Edges & corners",
-  "3":  "Local texture orientations",
-  "4":  "Texture patterns & simple shapes",
-  "5":  "Object part emergence",
-  "6":  "Region boundaries & contours",
-  "7":  "Complex textures & patterns",
-  "8":  "Higher-level object parts",
-  "9":  "Object & shape representations",
-  "10": "Semantic object features",
-  "11": "Abstract semantic content",
-  "12": "Global semantics (Final)",
-};
 
 function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
   const [open, setOpen] = useState(true);

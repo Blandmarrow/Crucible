@@ -11,12 +11,7 @@ import { useSelectionStore } from "../store/selectionStore";
 import { usePresetsStore } from "../store/promptPresetsStore";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel } from "../types";
-
-const STYLE_LABELS: Record<string, string[]> = {
-  florence2: ["short", "detailed", "tags", "dense", "promptgen"],
-  paligemma2: ["short", "detailed", "tags", "booru"],
-  ollama: ["short", "detailed", "tags", "booru"],
-};
+import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
@@ -66,11 +61,8 @@ export default function CaptioningPage() {
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
 
-  const modelType = selectedModel.startsWith("ollama:") ? "ollama"
-    : selectedModel === "paligemma2" ? "paligemma2"
-    : selectedModel.startsWith("florence2") ? "florence2"
-    : null;
-  const availableStyles = modelType ? STYLE_LABELS[modelType] : [];
+  const selectedModelType = modelType(selectedModel);
+  const availableStyles = selectedModelType ? STYLE_LABELS[selectedModelType] : [];
 
   const unloadMutation = useMutation({
     mutationFn: (modelId: string) => captioningApi.unloadModel(modelId),

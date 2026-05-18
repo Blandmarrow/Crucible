@@ -18,6 +18,10 @@ class ProgressBroadcaster:
             self._queues[channel].remove(q)
         except ValueError:
             pass
+        # Remove the channel key when the last subscriber leaves so the dict
+        # doesn't accumulate entries for every job that has ever run.
+        if channel in self._queues and not self._queues[channel]:
+            del self._queues[channel]
 
     async def emit(self, job_id: str, event: dict) -> None:
         payload = {**event, "job_id": job_id}

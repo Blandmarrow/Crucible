@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 import shutil
 import string
@@ -7,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 
@@ -65,12 +66,16 @@ async def list_directory(path: str = Query(...)):
     if not p.is_dir():
         raise HTTPException(400, "Path is not a directory")
 
-    entries = []
-    try:
-        for child in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+    def _list_dir() -> list[dict]:
+        result: list[dict] = []
+        try:
+            children = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        except PermissionError:
+            raise
+        for child in children:
             try:
                 stat = child.stat()
-                entries.append({
+                result.append({
                     "name": child.name,
                     "path": str(child),
                     "type": "dir" if child.is_dir() else "file",
@@ -81,6 +86,10 @@ async def list_directory(path: str = Query(...)):
                 })
             except (PermissionError, OSError):
                 pass
+        return result
+
+    try:
+        entries = await asyncio.get_event_loop().run_in_executor(None, _list_dir)
     except PermissionError:
         raise HTTPException(403, "Access denied")
 
@@ -225,9 +234,7 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
             await db.commit()
     elif p.is_dir():
         old_prefix = str(p)
-        result = await db.execute(select(Image).where(Image.file_path.startswith(old_prefix)))
-        for img in result.scalars().all():
-            await db.delete(img)
+        await db.execute(delete(Image).where(Image.file_path.startswith(old_prefix)))
         await db.commit()
 
     try:

@@ -15,6 +15,7 @@ import ExportPage from "./pages/ExportPage";
 import BooruPage from "./pages/BooruPage";
 import FileBrowserPage from "./pages/FileBrowserPage";
 import PaneContainer from "./components/pane/PaneContainer";
+import ErrorBoundary from "./components/common/ErrorBoundary";
 import { usePaneStore } from "./stores/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
@@ -61,15 +62,15 @@ function MainContent() {
     <main style={{ flex: 1, overflowY: "auto" }}>
       <Routes>
         <Route path="/" element={<Navigate to="/datasets" replace />} />
-        <Route path="/datasets" element={<DatasetsPage />} />
-        <Route path="/booru" element={<BooruPage />} />
-        <Route path="/datasets/:datasetId/gallery" element={<GalleryPage />} />
-        <Route path="/datasets/:datasetId/image/:imageId" element={<ImageDetailPage />} />
-        <Route path="/datasets/:datasetId/captioning" element={<CaptioningPage />} />
-        <Route path="/datasets/:datasetId/quality" element={<QualityPage />} />
-        <Route path="/datasets/:datasetId/stats" element={<StatsPage />} />
-        <Route path="/datasets/:datasetId/export" element={<ExportPage />} />
-        <Route path="/file-browser" element={<FileBrowserPage />} />
+        <Route path="/datasets" element={<ErrorBoundary><DatasetsPage /></ErrorBoundary>} />
+        <Route path="/booru" element={<ErrorBoundary><BooruPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/gallery" element={<ErrorBoundary><GalleryPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/image/:imageId" element={<ErrorBoundary><ImageDetailPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/captioning" element={<ErrorBoundary><CaptioningPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/quality" element={<ErrorBoundary><QualityPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/stats" element={<ErrorBoundary><StatsPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/export" element={<ErrorBoundary><ExportPage /></ErrorBoundary>} />
+        <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
       </Routes>
     </main>
   );

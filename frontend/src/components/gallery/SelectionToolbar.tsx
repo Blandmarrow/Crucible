@@ -12,19 +12,7 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel } from "../../types";
-
-const STYLE_LABELS: Record<string, string[]> = {
-  florence2: ["short", "detailed", "tags", "dense", "promptgen"],
-  paligemma2: ["short", "detailed", "tags", "booru"],
-  ollama: ["short", "detailed", "tags", "booru"],
-};
-
-function modelType(model: string) {
-  if (model.startsWith("ollama:")) return "ollama";
-  if (model === "paligemma2") return "paligemma2";
-  if (model.startsWith("florence2")) return "florence2";
-  return null;
-}
+import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 
 interface Props {
   datasetId: string;

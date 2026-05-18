@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -225,19 +225,28 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/batch/delete", status_code=204)
 async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Image).where(Image.id.in_(image_ids)))
-    images = result.scalars().all()
-    dataset_ids = set()
-    for img in images:
-        dataset_ids.add(img.dataset_id)
-        p = Path(img.file_path)
-        t = Path(img.thumbnail_path) if img.thumbnail_path else None
-        txt = p.with_suffix(".txt")
-        await db.delete(img)
-        for f in [p, t, txt]:
-            if f and f.exists():
-                f.unlink(missing_ok=True)
+    result = await db.execute(
+        select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
+        .where(Image.id.in_(image_ids))
+    )
+    rows = result.all()
+    if not rows:
+        return
+
+    dataset_ids = {r.dataset_id for r in rows}
+    files_to_delete: list[Path] = []
+    for r in rows:
+        p = Path(r.file_path)
+        files_to_delete.extend([p, p.with_suffix(".txt")])
+        if r.thumbnail_path:
+            files_to_delete.append(Path(r.thumbnail_path))
+
+    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
     await db.commit()
+
+    for f in files_to_delete:
+        f.unlink(missing_ok=True)
+
     for did in dataset_ids:
         await refresh_stats(db, did)
 

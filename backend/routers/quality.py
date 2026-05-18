@@ -4,7 +4,9 @@ import functools
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from pathlib import Path
+
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -438,17 +440,25 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/duplicates/resolve", status_code=204)
 async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Image).where(Image.id.in_(body.delete_ids)))
-    to_delete = result.scalars().all()
-    for img in to_delete:
-        from pathlib import Path
-        p = Path(img.file_path)
-        t = Path(img.thumbnail_path) if img.thumbnail_path else None
-        await db.delete(img)
-        for f in [p, t]:
-            if f and f.exists():
-                f.unlink(missing_ok=True)
-    await db.commit()
+    if body.delete_ids:
+        result = await db.execute(
+            select(Image.id, Image.file_path, Image.thumbnail_path)
+            .where(Image.id.in_(body.delete_ids))
+        )
+        rows = result.all()
+        files_to_delete: list[Path] = []
+        for r in rows:
+            p = Path(r.file_path)
+            files_to_delete.append(p)
+            files_to_delete.append(p.with_suffix(".txt"))
+            if r.thumbnail_path:
+                files_to_delete.append(Path(r.thumbnail_path))
+
+        await db.execute(delete(Image).where(Image.id.in_(body.delete_ids)))
+        await db.commit()
+
+        for f in files_to_delete:
+            f.unlink(missing_ok=True)
 
     for img_id in body.keep_ids:
         img = await db.get(Image, img_id)

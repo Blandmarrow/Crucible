@@ -1,6 +1,7 @@
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 from PIL import Image as PilImage, ImageOps
 from sqlalchemy import select
@@ -8,8 +9,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
 
+# Only the columns the export loop actually reads — avoids loading multi-MB blob fields
+_EXPORT_COLS = (
+    Image.id,
+    Image.file_path,
+    Image.filename,
+    Image.caption_text,
+    Image.tags_json,
+    Image.aesthetic_score,
+    Image.quality_flags,
+    Image.style_similarity_score,
+)
 
-def _caption_text(img: Image) -> str:
+
+def _caption_text(img: Any) -> str:
     if img.caption_text:
         return img.caption_text
     if img.tags_json:
@@ -18,7 +31,7 @@ def _caption_text(img: Image) -> str:
 
 
 def _is_excluded(
-    img: Image,
+    img: Any,
     aesthetic_min: float | None,
     captioned_only: bool,
     exclude_flags: list[str],
@@ -70,7 +83,7 @@ def _write_image(
         img.save(dest_img, fmt, quality=jpeg_quality)
 
 
-def _dest_img_path(dest_dir: Path, img: Image, output_format: str) -> Path:
+def _dest_img_path(dest_dir: Path, img: Any, output_format: str) -> Path:
     src = Path(img.file_path)
     if output_format == "png":
         return dest_dir / (src.stem + ".png")
@@ -82,6 +95,78 @@ def _dest_img_path(dest_dir: Path, img: Image, output_format: str) -> Path:
 def _write_sidecar(dest_dir: Path, stem: str, caption: str, caption_format: str) -> None:
     ext = ".caption" if caption_format == "caption" else ".txt"
     (dest_dir / f"{stem}{ext}").write_text(caption, encoding="utf-8")
+
+
+async def _run_export_loop(
+    db: AsyncSession,
+    dataset_id: str,
+    image_ids: list[str] | None,
+    dest_dir: Path,
+    output_format: str,
+    jpeg_quality: int,
+    resize_to: int | None,
+    aesthetic_min: float | None,
+    captioned_only: bool,
+    exclude_flags: list[str],
+    style_sim_min: float | None,
+    job_id: str | None,
+    job_type: str,
+    caption_format: str | None,
+    accumulate_plain: bool = False,
+) -> dict:
+    """
+    Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
+    'jsonl_entries' and 'csv_rows' when accumulate_plain=True.
+    """
+    from backend.workers.progress import broadcaster
+
+    query = select(*_EXPORT_COLS).where(Image.dataset_id == dataset_id)
+    if image_ids:
+        query = query.where(Image.id.in_(image_ids))
+    result = await db.execute(query)
+    images = result.all()
+
+    jsonl_entries: list[dict] = []
+    csv_rows: list[tuple[str, str]] = []
+    exported = 0
+
+    for i, img in enumerate(images):
+        src = Path(img.file_path)
+        if not src.exists():
+            continue
+        if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
+            continue
+
+        dest_img = _dest_img_path(dest_dir, img, output_format)
+        _write_image(src, dest_img, output_format, jpeg_quality, resize_to)
+
+        caption = _caption_text(img)
+        tags = img.tags_json or []
+
+        if accumulate_plain:
+            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": tags})
+            for tag in tags:
+                csv_rows.append((dest_img.name, tag))
+        elif caption_format == "jsonl":
+            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": tags})
+        else:
+            _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
+
+        exported += 1
+
+        if job_id and i % 5 == 0:
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": job_type,
+                "status": "running", "done": exported, "total": len(images),
+                "percent": round((i + 1) / len(images) * 100, 1),
+                "current_item": img.filename, "message": f"Exporting {img.filename}",
+            })
+
+    return {
+        "exported": exported,
+        "jsonl_entries": jsonl_entries,
+        "csv_rows": csv_rows,
+    }
 
 
 async def export_kohya(
@@ -101,54 +186,23 @@ async def export_kohya(
     style_sim_min: float | None = None,
     job_id: str | None = None,
 ) -> dict:
-    from backend.workers.progress import broadcaster
-
     exclude_flags = exclude_flags or []
     dest = Path(output_dir) / f"{n_repeats}_{concept_token}"
     dest.mkdir(parents=True, exist_ok=True)
 
-    query = select(Image).where(Image.dataset_id == dataset_id)
-    if image_ids:
-        query = query.where(Image.id.in_(image_ids))
-    result = await db.execute(query)
-    images = result.scalars().all()
+    loop_result = await _run_export_loop(
+        db, dataset_id, image_ids, dest, output_format, jpeg_quality,
+        resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
+        job_id, "export", caption_format,
+    )
 
-    jsonl_entries: list[dict] = []
-    exported = 0
-
-    for i, img in enumerate(images):
-        src = Path(img.file_path)
-        if not src.exists():
-            continue
-        if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
-            continue
-
-        dest_img = _dest_img_path(dest, img, output_format)
-        _write_image(src, dest_img, output_format, jpeg_quality, resize_to)
-
-        caption = _caption_text(img)
-        if caption_format == "jsonl":
-            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": img.tags_json or []})
-        else:
-            _write_sidecar(dest, dest_img.stem, caption, caption_format)
-
-        exported += 1
-
-        if job_id and i % 5 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "export",
-                "status": "running", "done": exported, "total": len(images),
-                "percent": round((i + 1) / len(images) * 100, 1),
-                "current_item": img.filename, "message": f"Exporting {img.filename}",
-            })
-
-    if caption_format == "jsonl" and jsonl_entries:
+    if caption_format == "jsonl" and loop_result["jsonl_entries"]:
         out = Path(output_dir) / "captions.jsonl"
         with out.open("w", encoding="utf-8") as f:
-            for entry in jsonl_entries:
+            for entry in loop_result["jsonl_entries"]:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": exported, "output_dir": str(dest)}
+    return {"exported": loop_result["exported"], "output_dir": str(dest)}
 
 
 async def export_aitoolkit(
@@ -167,54 +221,23 @@ async def export_aitoolkit(
     style_sim_min: float | None = None,
     job_id: str | None = None,
 ) -> dict:
-    from backend.workers.progress import broadcaster
-
     exclude_flags = exclude_flags or []
     dest = Path(output_dir) / concept_name
     dest.mkdir(parents=True, exist_ok=True)
 
-    query = select(Image).where(Image.dataset_id == dataset_id)
-    if image_ids:
-        query = query.where(Image.id.in_(image_ids))
-    result = await db.execute(query)
-    images = result.scalars().all()
+    loop_result = await _run_export_loop(
+        db, dataset_id, image_ids, dest, output_format, jpeg_quality,
+        resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
+        job_id, "export", caption_format,
+    )
 
-    jsonl_entries: list[dict] = []
-    exported = 0
-
-    for i, img in enumerate(images):
-        src = Path(img.file_path)
-        if not src.exists():
-            continue
-        if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
-            continue
-
-        dest_img = _dest_img_path(dest, img, output_format)
-        _write_image(src, dest_img, output_format, jpeg_quality, resize_to)
-
-        caption = _caption_text(img)
-        if caption_format == "jsonl":
-            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": img.tags_json or []})
-        else:
-            _write_sidecar(dest, dest_img.stem, caption, caption_format)
-
-        exported += 1
-
-        if job_id and i % 5 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "export",
-                "status": "running", "done": exported, "total": len(images),
-                "percent": round((i + 1) / len(images) * 100, 1),
-                "current_item": img.filename, "message": f"Exporting {img.filename}",
-            })
-
-    if caption_format == "jsonl" and jsonl_entries:
+    if caption_format == "jsonl" and loop_result["jsonl_entries"]:
         out = Path(output_dir) / "captions.jsonl"
         with out.open("w", encoding="utf-8") as f:
-            for entry in jsonl_entries:
+            for entry in loop_result["jsonl_entries"]:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": exported, "output_dir": str(dest)}
+    return {"exported": loop_result["exported"], "output_dir": str(dest)}
 
 
 async def export_plain(
@@ -231,60 +254,28 @@ async def export_plain(
     style_sim_min: float | None = None,
     job_id: str | None = None,
 ) -> dict:
-    from backend.workers.progress import broadcaster
-
     exclude_flags = exclude_flags or []
     images_dir = Path(output_dir) / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    query = select(Image).where(Image.dataset_id == dataset_id)
-    if image_ids:
-        query = query.where(Image.id.in_(image_ids))
-    result = await db.execute(query)
-    images = result.scalars().all()
-
-    jsonl_entries: list[dict] = []
-    csv_rows: list[tuple[str, str]] = []
-    exported = 0
-
-    for i, img in enumerate(images):
-        src = Path(img.file_path)
-        if not src.exists():
-            continue
-        if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
-            continue
-
-        dest_img = _dest_img_path(images_dir, img, output_format)
-        _write_image(src, dest_img, output_format, jpeg_quality, resize_to)
-
-        caption = _caption_text(img)
-        tags = img.tags_json or []
-        jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": tags})
-        for tag in tags:
-            csv_rows.append((dest_img.name, tag))
-
-        exported += 1
-
-        if job_id and i % 5 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "export",
-                "status": "running", "done": exported, "total": len(images),
-                "percent": round((i + 1) / len(images) * 100, 1),
-                "current_item": img.filename, "message": f"Exporting {img.filename}",
-            })
+    loop_result = await _run_export_loop(
+        db, dataset_id, image_ids, images_dir, output_format, jpeg_quality,
+        resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
+        job_id, "export", None, accumulate_plain=True,
+    )
 
     jsonl_path = Path(output_dir) / "captions.jsonl"
     with jsonl_path.open("w", encoding="utf-8") as f:
-        for entry in jsonl_entries:
+        for entry in loop_result["jsonl_entries"]:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     csv_path = Path(output_dir) / "tags.csv"
     with csv_path.open("w", encoding="utf-8") as f:
         f.write("file,tag\n")
-        for fname, tag in csv_rows:
+        for fname, tag in loop_result["csv_rows"]:
             f.write(f"{fname},{tag}\n")
 
-    return {"exported": exported, "output_dir": output_dir}
+    return {"exported": loop_result["exported"], "output_dir": output_dir}
 
 
 async def preview_export(

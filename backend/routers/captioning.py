@@ -63,27 +63,30 @@ async def list_styles():
 
 @router.post("/run")
 async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get_db)):
-    query = select(Image).where(Image.dataset_id == body.dataset_id)
+    query = (
+        select(Image.id, Image.file_path, Image.tags_json)
+        .where(Image.dataset_id == body.dataset_id)
+    )
     if body.image_ids:
         query = query.where(Image.id.in_(body.image_ids))
     if not body.overwrite:
         query = query.where(Image.caption_text == "")
     result = await db.execute(query)
-    images = result.scalars().all()
+    rows = result.all()
 
-    if not images:
+    if not rows:
         return {"job_id": None, "message": "No images to caption"}
 
     job = BackgroundJob(
         job_type="caption",
         dataset_id=body.dataset_id,
-        total_items=len(images),
+        total_items=len(rows),
         config=body.model_dump(),
     )
     db.add(job)
     await db.commit()
 
-    image_data = [(img.id, img.file_path, img.tags_json or []) for img in images]
+    image_data = [(r.id, r.file_path, r.tags_json or []) for r in rows]
 
     async def _run(job_id: str) -> None:
         import time
@@ -118,6 +121,9 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
         total = len(image_data)
         start_time = time.monotonic()
+        failed_image_ids: list[str] = []
+        # Cache VRAM reading every 10 images to avoid per-image GPU calls
+        cached_vram_mb = 0
 
         async with AsyncSessionLocal() as session:
             for i, (img_id, file_path, existing_tags) in enumerate(image_data):
@@ -145,6 +151,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         )
                 except Exception:
                     logger.error("Caption failed for %s", file_path, exc_info=True)
+                    failed_image_ids.append(img_id)
 
                 # Save immediately if a caption was produced
                 if caption:
@@ -170,10 +177,12 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
                         await set_caption(session, img_id, caption, tags, body.style, body.model)
 
-                # Emit progress including image_id so the frontend can update that image
+                # Refresh VRAM reading only every 10 images (GPU call is not free)
+                if i % 10 == 0 and _torch and _torch.cuda.is_available():
+                    cached_vram_mb = int(_torch.cuda.memory_allocated() / 1024 / 1024)
+
                 elapsed = time.monotonic() - start_time
                 throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
-                vram_mb = int(_torch.cuda.memory_allocated() / 1024 / 1024) if (_torch and _torch.cuda.is_available()) else 0
                 filename = Path(file_path).name
                 await broadcaster.emit(job_id, {
                     "type": "progress",
@@ -187,8 +196,18 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     "image_id": img_id,
                     "message": f"{model_label}: {i + 1}/{total}",
                     "throughput_ips": throughput,
-                    "vram_used_mb": vram_mb,
+                    "vram_used_mb": cached_vram_mb,
                 })
+
+        # Emit a summary event so the frontend can surface any failures to the user
+        if failed_image_ids:
+            await broadcaster.emit(job_id, {
+                "type": "caption_summary",
+                "job_id": job_id,
+                "job_type": "caption",
+                "failed_count": len(failed_image_ids),
+                "failed_image_ids": failed_image_ids,
+            })
 
         from backend.services.dataset_service import refresh_stats
         async with AsyncSessionLocal() as session:

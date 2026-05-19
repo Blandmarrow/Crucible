@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from backend.config import settings
 from backend.database import get_db
@@ -193,7 +194,7 @@ async def upload_images(
 
 @router.get("/{image_id}", response_model=ImageOut)
 async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id)
+    img = await db.get(Image, image_id, options=[undefer(Image.dino_layer_embeddings)])
     if not img:
         raise HTTPException(404, "Image not found")
     if img.generation_metadata is None and img.file_path and Path(img.file_path).exists():

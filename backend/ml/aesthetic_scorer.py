@@ -49,6 +49,7 @@ def score_image_sync(image_path: str, model_entry: dict) -> float:
 
     img = Image.open(image_path).convert("RGB")
     tensor = preprocess(img).unsqueeze(0).to("cuda")
+    img.close()
 
     with torch.no_grad(), torch.autocast("cuda"):
         features = clip_model.encode_image(tensor)
@@ -82,6 +83,7 @@ def score_watermark_sync(image_path: str, model_entry: dict,
     from PIL import Image as PILImage
     img = PILImage.open(image_path).convert("RGB")
     tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    img.close()
     with torch.no_grad(), torch.autocast("cuda"):
         img_feats = model_entry["clip"].encode_image(tensor)
         img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
@@ -127,6 +129,7 @@ def extract_clip_embedding_sync(image_path: str, model_entry: dict) -> bytes:
     from PIL import Image as PILImage
     img = PILImage.open(image_path).convert("RGB")
     tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    img.close()
     with torch.no_grad():
         feats = model_entry["clip"].encode_image(tensor)
         feats = feats / feats.norm(dim=-1, keepdim=True)
@@ -139,6 +142,7 @@ def extract_clip_embedding_from_bytes_sync(image_bytes: bytes, model_entry: dict
     from PIL import Image as PILImage
     img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
     tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    img.close()
     with torch.no_grad():
         feats = model_entry["clip"].encode_image(tensor)
         feats = feats / feats.norm(dim=-1, keepdim=True)

@@ -444,9 +444,13 @@ export default function ImageDetailPage() {
             )}
           </div>
 
-          {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 && (
+          {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 ? (
             <DinoLayerBreakdown scores={image.dino_layer_scores} />
-          )}
+          ) : image.has_dino_layer_embeddings ? (
+            <p className="text-[11px] text-fg opacity-50 mt-1">
+              Per-layer embeddings stored — run style similarity with "All layers" to score them.
+            </p>
+          ) : null}
 
           {/* Quality flags */}
           {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true) && (

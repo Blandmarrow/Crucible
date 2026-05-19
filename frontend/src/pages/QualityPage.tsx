@@ -13,7 +13,7 @@ const SCORING_OPTIONS = [
   { key: "technical", label: "Technical · OpenCV", desc: "Blur, noise, near-uniform, color richness, dHash duplicates.", vram: "CPU" },
   { key: "watermark", label: "Watermark detection", desc: "CLIP zero-shot classification for text overlays and logos.", vram: "2.1 GB" },
   { key: "embeddings", label: "Style embeddings · CLIP", desc: "Required for the style-similarity workflow below.", vram: "2.1 GB" },
-  { key: "dino", label: "DINOv2 embeddings", desc: "Object-aware embedding alongside CLIP. Higher VRAM.", vram: "1.2 GB" },
+  { key: "dino", label: "DINOv2 embeddings", desc: "Object-aware embedding. Can be used alone or alongside CLIP for style similarity.", vram: "1.2 GB" },
   { key: "dino_layers", label: "DINOv2 per-layer embeds", desc: "Stores all 12 transformer layer CLS tokens. Enables per-layer style similarity.", vram: "1.2 GB" },
 ];
 
@@ -83,8 +83,8 @@ export default function QualityPage() {
         run_technical: runTechnical,
         run_watermark: runWatermark,
         run_embeddings: runEmbeddings,
-        run_dino: runEmbeddings && runDino,
-        run_dino_layers: runEmbeddings && runDino && runDinoLayers,
+        run_dino: runDino,
+        run_dino_layers: runDino && runDinoLayers,
       }),
     onSuccess: (data) => {
       if (data.job_id) { setActiveJobId(data.job_id); toast.success("Quality scoring started"); }
@@ -177,8 +177,7 @@ export default function QualityPage() {
         <div className="panel-b">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             {SCORING_OPTIONS.filter((o) => {
-              if (o.key === "dino") return runEmbeddings;
-              if (o.key === "dino_layers") return runEmbeddings && runDino;
+              if (o.key === "dino_layers") return runDino;
               return true;
             }).map((opt) => {
               const [checked, setChecked] = checkMap[opt.key];

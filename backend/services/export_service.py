@@ -62,25 +62,28 @@ def _write_image(
         return
 
     img = PilImage.open(src)
-    img = ImageOps.exif_transpose(img)
+    try:
+        img = ImageOps.exif_transpose(img)
 
-    if resize_to and max(img.size) > resize_to:
-        ratio = resize_to / max(img.size)
-        img = img.resize((int(img.width * ratio), int(img.height * ratio)), PilImage.Resampling.LANCZOS)
+        if resize_to and max(img.size) > resize_to:
+            ratio = resize_to / max(img.size)
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)), PilImage.Resampling.LANCZOS)
 
-    if output_format == "jpeg":
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        img.save(dest_img, "JPEG", quality=jpeg_quality)
-    elif output_format == "png":
-        img.save(dest_img, "PNG")
-    else:
-        fmt = src.suffix.lstrip(".").upper()
-        if fmt == "JPG":
-            fmt = "JPEG"
-        if fmt == "JPEG" and img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        img.save(dest_img, fmt, quality=jpeg_quality)
+        if output_format == "jpeg":
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(dest_img, "JPEG", quality=jpeg_quality)
+        elif output_format == "png":
+            img.save(dest_img, "PNG")
+        else:
+            fmt = src.suffix.lstrip(".").upper()
+            if fmt == "JPG":
+                fmt = "JPEG"
+            if fmt == "JPEG" and img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(dest_img, fmt, quality=jpeg_quality)
+    finally:
+        img.close()
 
 
 def _dest_img_path(dest_dir: Path, img: Any, output_format: str) -> Path:

@@ -31,6 +31,7 @@ def _resize_for_ollama(
         img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.Resampling.LANCZOS)
     buf = __import__("io").BytesIO()
     img.save(buf, format="JPEG", quality=90)
+    img.close()
     return base64.b64encode(buf.getvalue()).decode()
 
 

@@ -88,7 +88,7 @@ Flag thresholds:
 | `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `settings.watermark_threshold` — configurable via `WATERMARK_THRESHOLD=` in `.env` |
 
 
-**Style similarity flow**: (1) run scoring with `run_embeddings=True` to store `clip_embedding`/`dino_embedding`; optionally also `run_dino=True` + `run_dino_layers=True` to store `dino_layer_embeddings` (all 12 transformer-layer CLS tokens). (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
+**Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
 
 | `embedding_type` | `dino_layer` | Column(s) written | Description |
 |---|---|---|---|
@@ -116,6 +116,8 @@ Three performance indexes exist:
 - `ix_images_dataset_created_at` on `(dataset_id, created_at)` — gallery page loads sorted by date
 - `ix_images_file_path` on `file_path` — filesystem move/rename/delete lookups
 - `ix_images_dataset_caption` on `(dataset_id, caption_text)` — caption filter + listing
+
+**Deferred blob columns**: `clip_embedding`, `dino_embedding`, and `dino_layer_embeddings` are declared with `deferred=True` on their `mapped_column`. SQLAlchemy omits them from `SELECT *` queries — they are only fetched when explicitly accessed or when `undefer()` is passed as a load option. The `GET /images/{image_id}` endpoint undefers `dino_layer_embeddings` so the `has_dino_layer_embeddings` property on `ImageOut` works. Quality/similarity routers use column-explicit selects (`select(Image.id, Image.clip_embedding, ...)`) and are unaffected. Never access these columns from a full-row ORM load without adding `undefer()`.
 
 ### SSE progress
 

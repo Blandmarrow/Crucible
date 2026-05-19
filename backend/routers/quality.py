@@ -95,12 +95,12 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         if body.run_embeddings:
             entry = await model_manager.load_aesthetic()
             clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
-            if body.run_dino:
-                from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
-                dino_entry = await model_manager.load_dino()
-                dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
-                if body.run_dino_layers:
-                    dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
+        if body.run_dino:
+            from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
+            dino_entry = await model_manager.load_dino()
+            dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
+            if body.run_dino_layers:
+                dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
 
         async with AsyncSessionLocal() as session:
             for i, img_id in enumerate(ids):

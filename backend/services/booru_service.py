@@ -15,6 +15,7 @@ def _cache_get(key: str) -> Any | None:
         ts, data = _cache[key]
         if time.time() - ts < _CACHE_TTL:
             return data
+        del _cache[key]  # evict expired entry so it doesn't accumulate indefinitely
     return None
 
 

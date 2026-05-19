@@ -28,6 +28,7 @@ def infer_sync(
 
     img = preprocess_for_caption(image_path, target_w, target_h)
     inputs = processor(text=prompt, images=img, return_tensors="pt")
+    img.close()
     model_dtype = next(model.parameters()).dtype
     inputs = {
         k: (v.to("cuda", dtype=model_dtype) if v.is_floating_point() else v.to("cuda"))

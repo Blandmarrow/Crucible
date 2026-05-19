@@ -28,6 +28,7 @@ def extract_dino_embedding_sync(image_path: str, model_entry) -> bytes:
 
     img = PILImage.open(image_path).convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
+    img.close()
     inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
     with torch.no_grad():
@@ -51,6 +52,7 @@ def extract_dino_layer_embeddings_sync(image_path: str, model_entry) -> bytes:
 
     img = PILImage.open(image_path).convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
+    img.close()
     inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
     with torch.no_grad():

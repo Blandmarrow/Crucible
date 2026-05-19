@@ -40,9 +40,9 @@ class Image(Base):
     color_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     saturation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     style_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    clip_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    dino_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    dino_layer_embeddings: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    clip_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    dino_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    dino_layer_embeddings: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quality_flags: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
@@ -55,6 +55,10 @@ class Image(Base):
     captioned_by: Mapped[str] = mapped_column(String(128), default="")
     captioned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    @property
+    def has_dino_layer_embeddings(self) -> bool:
+        return self.dino_layer_embeddings is not None
 
     dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="images")
     tags: Mapped[list["Tag"]] = relationship("Tag", back_populates="image", cascade="all, delete-orphan")

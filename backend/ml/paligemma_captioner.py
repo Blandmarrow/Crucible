@@ -27,6 +27,7 @@ def infer_sync(
 
     img = preprocess_for_caption(image_path, target_w, target_h)
     inputs = processor(text=prompt, images=img, return_tensors="pt").to("cuda", torch.bfloat16)
+    img.close()
 
     try:
         with torch.no_grad():

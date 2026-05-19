@@ -23,6 +23,7 @@ class ImageOut(BaseModel):
     saturation_score: float | None = None
     style_similarity_score: float | None = None
     dino_layer_scores: dict | None = None
+    has_dino_layer_embeddings: bool = False
     quality_flags: dict[str, Any]
     generation_metadata: dict | None = None
     caption_text: str

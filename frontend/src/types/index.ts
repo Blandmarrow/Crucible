@@ -92,6 +92,7 @@ export interface ImageDetail extends ImageListItem {
   captioned_at: string | null;
   created_at: string;
   generation_metadata?: GenerationMetadata | null;
+  has_dino_layer_embeddings: boolean;
 }
 
 export interface CaptionData {

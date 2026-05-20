@@ -2,11 +2,12 @@
 
 A web-based application for building, curating, and exporting Stable Diffusion training datasets. Manage your image collections with AI-powered captioning, multi-metric quality scoring, and flexible export to the most common training formats.
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Node](https://img.shields.io/badge/node-18%2B-green)
 
 ## What it does
+
 
 Dataset-Manger gives you a single interface to go from raw image folders to a clean, captioned, scored, and filtered training dataset ready to drop into Kohya SS, AI Toolkit, or any other training framework.
 
@@ -159,7 +160,6 @@ Split the main content area into two independently operating panes:
 ## Prerequisites
 
 ### Required
-- **Windows 10/11** — setup and launch scripts are PowerShell; the backend and frontend are otherwise cross-platform
 - **Python 3.10+**
 - **Node.js 18+**
 
@@ -179,19 +179,17 @@ Split the main content area into two independently operating panes:
 
 | OS | Status |
 |---|---|
-| Windows 10 / 11 | Fully supported |
-| Linux / macOS | Backend and frontend are cross-platform, but the setup and launch scripts are PowerShell only — you would need to adapt them manually, might add later. |
+| Windows 10 / 11 | Fully supported (`manage.ps1`) |
+| Linux / macOS | Fully supported (`manage.sh`) |
 
 ---
 
 ## Installation
 
-```powershell
+```bash
 # Clone the repository
 git clone https://github.com/Blandmarrow/Dataset-manager
 ```
-
-Then double-click **`Setup Dataset Manager.bat`** to create the virtual environment, install all dependencies, and build the frontend. The window stays open so you can see the output.
 
 Copy `.env.example` to `.env` and fill in any optional values:
 
@@ -201,13 +199,48 @@ GELBOORU_API_KEY=...      # Optional, for Gelbooru tag fetching
 GELBOORU_USER_ID=...
 ```
 
+### Windows
+
+Double-click **`Setup Dataset Manager.bat`** to create the virtual environment, install all dependencies, and build the frontend. The window stays open so you can see the output.
+
+You can also run it directly in PowerShell:
+
+```powershell
+.\manage.ps1 setup
+```
+
+### Linux / macOS
+
+```bash
+chmod +x manage.sh
+./manage.sh setup
+```
+
+> **GPU inference note**: the venv is created with `--system-site-packages` so it inherits PyTorch from your system Python. If you need CUDA support, install PyTorch in your system Python first ([pytorch.org/get-started](https://pytorch.org/get-started/locally/)), then run `./manage.sh setup`. The technical scorer and duplicate detector run on CPU with no GPU requirement.
+
 ---
 
 ## Usage
 
-Double-click **`Start Dataset Manager.bat`** in Explorer to launch the app. It opens on `http://localhost:8000` automatically.
+### Windows
 
-To update to the latest version, double-click **`Update Dataset Manager.bat`** — it pulls the latest code, updates dependencies, and rebuilds the frontend.
+Double-click **`Start Dataset Manager.bat`** in Explorer to launch the app. It opens on `http://localhost:8000` automatically. To update, double-click **`Update Dataset Manager.bat`**.
+
+Or run directly in PowerShell:
+
+```powershell
+.\manage.ps1 start    # production server on :8000
+.\manage.ps1 update   # git pull + update deps + rebuild frontend
+.\manage.ps1 dev      # backend hot-reload (:8000) + Vite dev server (:5173)
+```
+
+### Linux / macOS
+
+```bash
+./manage.sh start    # production server on :8000
+./manage.sh update   # git pull + update deps + rebuild frontend
+./manage.sh dev      # backend hot-reload (:8000) + Vite dev server (:5173)
+```
 
 To shut down, click the power icon in the top-right of the app and confirm, or press `Ctrl+C` in the terminal.
 

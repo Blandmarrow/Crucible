@@ -6,16 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Launch
 
-Double-click the `.bat` files in Explorer, or run the `.ps1` scripts directly in PowerShell:
+**Windows** — double-click the `.bat` files in Explorer, or run `manage.ps1` directly in PowerShell:
 
 | File | Purpose |
 |---|---|
-| `Start Dataset Manager.bat` | Double-click to launch (wraps `start.ps1`) |
-| `Update Dataset Manager.bat` | Double-click to update (wraps `update.ps1`) |
-| `setup.ps1` | First time only — creates venv, installs deps, builds frontend |
-| `start.ps1` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
-| `update.ps1` | `git pull` → update pip deps → `npm install` → rebuild frontend |
-| `start_dev.ps1` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
+| `Setup Dataset Manager.bat` | Double-click to set up (runs `manage.ps1 setup`) |
+| `Start Dataset Manager.bat` | Double-click to launch (runs `manage.ps1 start`) |
+| `Update Dataset Manager.bat` | Double-click to update (runs `manage.ps1 update`) |
+| `manage.ps1 setup` | First time only — creates venv, installs deps, builds frontend |
+| `manage.ps1 start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
+| `manage.ps1 update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
+| `manage.ps1 dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
+
+**Linux / macOS** — run `manage.sh` (make it executable once with `chmod +x manage.sh`):
+
+| Command | Purpose |
+|---|---|
+| `./manage.sh setup` | First time only — creates venv, installs deps, builds frontend |
+| `./manage.sh start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
+| `./manage.sh update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
+| `./manage.sh dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
 To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal.
 

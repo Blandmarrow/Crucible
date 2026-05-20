@@ -90,6 +90,16 @@ export interface GenerationMetadata {
   comfyui_workflow?: Record<string, unknown>;
 }
 
+export interface Detection {
+  id: number;
+  label: string;
+  bbox: [number, number, number, number]; // [x1, y1, x2, y2] normalized 0-1
+  score: number | null;
+  model: string;
+  task: string;
+  detected_at: string;
+}
+
 export interface ImageDetail extends ImageListItem {
   original_filename: string;
   phash: string | null;
@@ -99,6 +109,7 @@ export interface ImageDetail extends ImageListItem {
   created_at: string;
   generation_metadata?: GenerationMetadata | null;
   has_dino_layer_embeddings: boolean;
+  detections: Detection[];
 }
 
 export interface CaptionData {

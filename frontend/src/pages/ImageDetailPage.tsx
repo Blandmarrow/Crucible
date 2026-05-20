@@ -2,12 +2,13 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
 import { captionsApi } from "../api/captions";
 import { captioningApi } from "../api/captioning";
+import { detectionApi } from "../api/detection";
 import { useJobStore } from "../store/jobStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
@@ -15,6 +16,13 @@ import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+
+const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
+function labelColor(label: string): string {
+  let h = 0;
+  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) & 0xffffffff;
+  return BBOX_COLORS[Math.abs(h) % BBOX_COLORS.length];
+}
 
 function formatSize(bytes: number | null) {
   if (!bytes) return "—";
@@ -84,6 +92,17 @@ export default function ImageDetailPage() {
   const [zoom, setZoom] = useState(1);
   const [aspect, setAspect] = useState<number | undefined>(undefined);
   const [croppedArea, setCroppedArea] = useState<CropArea | null>(null);
+
+  // Detection state
+  const [overlayVisible, setOverlayVisible] = useState(true);
+  const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
+  const [showDetectPanel, setShowDetectPanel] = useState(true);
+  const [showDetectModal, setShowDetectModal] = useState(false);
+  const [detectModel, setDetectModel] = useState("florence2_large");
+  const [detectTask, setDetectTask] = useState("<OD>");
+  const [detectPrompt, setDetectPrompt] = useState("");
+  const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectJobId, setDetectJobId] = useState<string | null>(null);
 
   // AI captioning state
   const [showAi, setShowAi] = useState(false);
@@ -174,6 +193,9 @@ export default function ImageDetailPage() {
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
   }, [navCtx, datasetId, atEnd, atStart, nextId, prevId, nextPageData, prevPageData, paneGo]);
 
+  // Reset hidden labels when navigating to a different image
+  useEffect(() => { setHiddenLabels(new Set()); }, [imageId]);
+
   // Arrow-key navigation — skip when focus is inside a text field
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -209,8 +231,23 @@ export default function ImageDetailPage() {
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
 
+  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
+
   // Track AI job progress from the global SSE store (TopBar already subscribes to all jobs)
   const aiJobProgress = useJobStore((s) => s.activeJobs.get(aiJobId ?? ""));
+
+  useEffect(() => {
+    if (!detectJobId || !detectJobProgress) return;
+    if (detectJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      setDetectJobId(null);
+      setShowDetectModal(false);
+      toast.success("Detection complete");
+    } else if (detectJobProgress.status === "failed") {
+      setDetectJobId(null);
+      toast.error("Detection failed");
+    }
+  }, [detectJobProgress?.status, detectJobId, imageId, qc]);
 
   // When AI job completes, refresh caption
   useEffect(() => {
@@ -265,6 +302,29 @@ export default function ImageDetailPage() {
       toast.success(`Cropped to ${data.width}×${data.height}`);
     },
     onError: () => toast.error("Crop failed"),
+  });
+
+  const detectMutation = useMutation({
+    mutationFn: () =>
+      detectionApi.run({
+        dataset_id: datasetId!,
+        image_ids: [imageId!],
+        model: detectModel,
+        task: detectTask,
+        custom_prompt: detectPrompt,
+        overwrite: detectOverwrite,
+      }),
+    onSuccess: (data) => {
+      if (data.job_id) {
+        setDetectJobId(data.job_id);
+      } else {
+        toast("No images to process");
+      }
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Failed to start detection");
+    },
   });
 
   const aiMutation = useMutation({
@@ -338,6 +398,16 @@ export default function ImageDetailPage() {
 
           <span className="text-sm text-gray-400 truncate">{image.filename}</span>
           <div className="flex-1" />
+          {(image?.detections?.length ?? 0) > 0 && !cropMode && (
+            <button
+              className={`btn-sm flex items-center gap-1.5 ${overlayVisible ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setOverlayVisible((v) => !v)}
+              title={overlayVisible ? "Hide detection boxes" : "Show detection boxes"}
+            >
+              {overlayVisible ? <Eye size={14} /> : <EyeOff size={14} />}
+              Boxes
+            </button>
+          )}
           <button
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => setCropMode((v) => !v)}
@@ -373,11 +443,45 @@ export default function ImageDetailPage() {
               onCropComplete={onCropComplete}
             />
           ) : (
-            <img
-              src={imagesApi.fileUrl(imageId!)}
-              alt={image.filename}
-              className="max-w-full max-h-full object-contain absolute inset-0 m-auto"
-            />
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", lineHeight: 0 }}>
+                <img
+                  src={imagesApi.fileUrl(imageId!)}
+                  alt={image.filename}
+                  style={{ display: "block", maxWidth: "100%", maxHeight: "calc(100vh - 120px)", objectFit: "contain" }}
+                />
+                {overlayVisible && (image.detections?.length ?? 0) > 0 && image.width && image.height && (
+                  <svg
+                    viewBox={`0 0 ${image.width} ${image.height}`}
+                    preserveAspectRatio="xMidYMid meet"
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+                  >
+                    {(() => {
+                      const maxDim = Math.max(image.width!, image.height!);
+                      const strokeW = maxDim * 0.004;
+                      const fontSize = maxDim * 0.018;
+                      return image.detections.filter(det => !hiddenLabels.has(det.label)).map((det) => {
+                        const [x1, y1, x2, y2] = det.bbox;
+                        const rx = x1 * image.width!;
+                        const ry = y1 * image.height!;
+                        const rw = (x2 - x1) * image.width!;
+                        const rh = (y2 - y1) * image.height!;
+                        const color = labelColor(det.label);
+                        return (
+                          <g key={det.id}>
+                            <rect x={rx} y={ry} width={rw} height={rh} fill="none" stroke={color} strokeWidth={strokeW} />
+                            <rect x={rx} y={ry - fontSize * 1.4} width={rw} height={fontSize * 1.4} fill={color} opacity={0.85} />
+                            <text x={rx + 4} y={ry - fontSize * 0.3} fill="black" fontSize={fontSize} fontWeight="600" fontFamily="system-ui,sans-serif">
+                              {det.label}
+                            </text>
+                          </g>
+                        );
+                      });
+                    })()}
+                  </svg>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -461,6 +565,91 @@ export default function ImageDetailPage() {
               {hasWatermark === true && <span className="badge-blue flex items-center gap-1"><Type size={10} />Watermark</span>}
             </div>
           )}
+
+          {/* Detections panel */}
+          <div style={{ marginTop: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+            <button
+              style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "space-between", padding: "2px 0", background: "none", border: "none", cursor: "pointer", color: "inherit" }}
+              onClick={() => setShowDetectPanel((v) => !v)}
+            >
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}>
+                <ScanSearch size={11} /> Detections
+                {(image.detections?.length ?? 0) > 0 && (
+                  <span style={{ fontWeight: 400, textTransform: "none" }}>({image.detections.length})</span>
+                )}
+              </span>
+              {showDetectPanel ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+
+            {showDetectPanel && (
+              <div style={{ marginTop: 6 }}>
+                {(image.detections?.length ?? 0) > 0 ? (
+                  <>
+                    <p style={{ fontSize: 10, color: "var(--fg-mute)", marginBottom: 6 }}>
+                      {image.detections[0].model} · {image.detections[0].task === "<OD>" ? "Object Detection" : "Grounded Caption"}
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {Object.entries(
+                        image.detections.reduce((acc, d) => {
+                          acc[d.label] = (acc[d.label] ?? 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>)
+                      )
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([label, count]) => {
+                          const hidden = hiddenLabels.has(label);
+                          return (
+                            <button
+                              key={label}
+                              onClick={() => setHiddenLabels(prev => {
+                                const next = new Set(prev);
+                                next.has(label) ? next.delete(label) : next.add(label);
+                                return next;
+                              })}
+                              title={hidden ? "Show boxes" : "Hide boxes"}
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 7px",
+                                borderRadius: 4,
+                                background: hidden ? "transparent" : labelColor(label) + "33",
+                                border: `1px solid ${hidden ? labelColor(label) + "44" : labelColor(label) + "88"}`,
+                                color: hidden ? "var(--fg-mute)" : "var(--fg)",
+                                whiteSpace: "nowrap",
+                                cursor: "pointer",
+                                opacity: hidden ? 0.45 : 1,
+                                textDecoration: hidden ? "line-through" : "none",
+                              }}
+                            >
+                              {label}{count > 1 && <span style={{ opacity: 0.6, marginLeft: 3 }}>×{count}</span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <p style={{ fontSize: 11, color: "var(--fg-mute)" }}>No detections run yet.</p>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 5 }}
+                      onClick={() => setShowDetectModal(true)}
+                    >
+                      <ScanSearch size={12} /> Run Detection
+                    </button>
+                  </div>
+                )}
+                {(image.detections?.length ?? 0) > 0 && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}
+                    onClick={() => setShowDetectModal(true)}
+                  >
+                    <ScanSearch size={12} /> Re-run Detection
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* AI generation metadata */}
           {image.generation_metadata && (
@@ -619,6 +808,93 @@ export default function ImageDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Detection modal */}
+      {showDetectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-sm space-y-4">
+            <h4 className="font-medium flex items-center gap-2">
+              <ScanSearch size={16} /> Run Detection
+            </h4>
+
+            <div>
+              <label className="label">Model</label>
+              <select className="select w-full" value={detectModel} onChange={(e) => setDetectModel(e.target.value)}>
+                <option value="florence2_large">Florence-2 Large</option>
+                <option value="florence2_promptgen">Florence-2 PromptGen</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="label">Task</label>
+              <select
+                className="select w-full"
+                value={detectTask}
+                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); }}
+              >
+                <option value="<OD>">Object Detection (auto-detect everything)</option>
+                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+              </select>
+            </div>
+
+            {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+              <div className="space-y-2">
+                {captionText && (
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={detectPrompt === captionText}
+                      onChange={(e) => setDetectPrompt(e.target.checked ? captionText : "")}
+                    />
+                    Use this image's caption
+                  </label>
+                )}
+                <label className="label">Caption to ground</label>
+                <input
+                  className="input"
+                  placeholder="e.g. a cat sitting on a dog"
+                  value={detectPrompt}
+                  onChange={(e) => setDetectPrompt(e.target.value)}
+                  autoFocus={!captionText}
+                />
+                <p className="text-xs text-gray-500">
+                  Florence-2 will draw boxes around the phrases from this caption.
+                </p>
+              </div>
+            )}
+
+            {detectJobId && detectJobProgress && (
+              <div className="space-y-1">
+                <div className="bg-gray-700 rounded-full h-1.5">
+                  <div className="bg-accent h-1.5 rounded-full transition-all" style={{ width: `${detectJobProgress.percent ?? 0}%` }} />
+                </div>
+                <p className="text-xs text-gray-500">{detectJobProgress.message || "Detecting…"}</p>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
+              Overwrite existing detections
+            </label>
+
+            <div className="flex gap-2 justify-end">
+              <button className="btn-ghost" onClick={() => setShowDetectModal(false)} disabled={!!detectJobId}>Cancel</button>
+              <button
+                className="btn-primary flex items-center gap-2"
+                onClick={() => detectMutation.mutate()}
+                disabled={
+                  detectMutation.isPending ||
+                  !!detectJobId ||
+                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectPrompt.trim())
+                }
+
+              >
+                <ScanSearch size={14} /> {detectJobId ? "Running…" : "Run Detection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

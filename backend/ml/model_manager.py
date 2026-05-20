@@ -94,11 +94,13 @@ class ModelManager:
         model = None
         try:
             processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-            )
+            # PromptGen v2 has missing keys that trigger _initialize_missing_keys, which
+            # calls DaViT._initialize_weights — a method the custom vision encoder doesn't
+            # implement.  low_cpu_mem_usage=False disables fast-init and skips that path.
+            load_kwargs: dict = {"torch_dtype": torch.bfloat16, "trust_remote_code": True}
+            if variant == "promptgen":
+                load_kwargs["low_cpu_mem_usage"] = False
+            model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
             model = model.to("cuda")
             model.eval()
         except Exception:

@@ -3,6 +3,7 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { captioningApi } from "../api/captioning";
+import { detectionApi } from "../api/detection";
 import { jobsApi } from "../api/jobs";
 import { datasetsApi } from "../api/datasets";
 import { useJobSSE } from "../hooks/useSSE";
@@ -34,6 +35,11 @@ export default function CaptioningPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [detectTask, setDetectTask] = useState("<OD>");
+  const [detectPrompt, setDetectPrompt] = useState("");
+  const [detectUseCaptions, setDetectUseCaptions] = useState(false);
+  const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectJobId, setDetectJobId] = useState<string | null>(null);
 
   // Scan the global job store (fed by TopBar's useAllJobsSSE) to detect caption
   // jobs started before this component mounted (e.g. user navigated back).
@@ -46,7 +52,9 @@ export default function CaptioningPage() {
   const effectiveJobId = activeJobId ?? globalCaptionJob?.job_id ?? null;
 
   useJobSSE(effectiveJobId);
+  useJobSSE(detectJobId);
   const jobProgress = useJobStore((s) => s.activeJobs.get(effectiveJobId ?? ""));
+  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
 
   const { data: modelsData, isLoading } = useQuery({
     queryKey: ["captioning-models"],
@@ -100,12 +108,49 @@ export default function CaptioningPage() {
     onError: () => toast.error("Failed to stop captioning"),
   });
 
+  const detectMutation = useMutation({
+    mutationFn: () =>
+      detectionApi.run({
+        dataset_id: datasetId!,
+        image_ids: scope === "selected" ? [...selectedIds] : undefined,
+        model: selectedModel,
+        task: detectTask,
+        custom_prompt: detectUseCaptions ? "" : detectPrompt,
+        use_caption_as_prompt: detectUseCaptions,
+        overwrite: detectOverwrite,
+      }),
+    onSuccess: (data) => {
+      if (data.job_id) {
+        setDetectJobId(data.job_id);
+        toast.success("Detection started");
+      } else {
+        toast("No images to process");
+      }
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Failed to start detection");
+    },
+  });
+
   useEffect(() => {
     if (jobProgress?.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     }
   }, [jobProgress?.status, datasetId]);
+
+  useEffect(() => {
+    if (!detectJobId || !detectJobProgress) return;
+    if (detectJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      setDetectJobId(null);
+      toast.success("Detection complete");
+    } else if (detectJobProgress.status === "failed") {
+      setDetectJobId(null);
+      toast.error("Detection failed");
+    }
+  }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
 
   useEffect(() => {
     if (jobProgress?.status === "running" && (jobProgress?.done ?? 0) > 0) {
@@ -398,6 +443,83 @@ export default function CaptioningPage() {
                 ))}
               </div>
             </div>
+
+            {/* Detection — Florence-2 only */}
+            {selectedModel.startsWith("florence2") && (
+              <div className="form-row">
+                <div className="lbl-col">
+                  <h4>Object Detection</h4>
+                  <p>Run bounding-box detection using the same Florence-2 model. Scope follows the setting above.</p>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <select
+                    className="select"
+                    value={detectTask}
+                    onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
+                  >
+                    <option value="<OD>">Object Detection (auto-detect everything)</option>
+                    <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+                  </select>
+                  {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+                    <>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5 }}>
+                        <input
+                          type="checkbox"
+                          className="checkbox"
+                          checked={detectUseCaptions}
+                          onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
+                        />
+                        Use each image's existing caption as prompt
+                      </label>
+                      {!detectUseCaptions && (
+                        <input
+                          className="input"
+                          placeholder="Caption to ground, e.g. a cat sitting on a mat"
+                          value={detectPrompt}
+                          onChange={(e) => setDetectPrompt(e.target.value)}
+                        />
+                      )}
+                      {detectUseCaptions && (
+                        <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: 0 }}>
+                          Images without a caption will be skipped.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  {detectJobId && detectJobProgress && (
+                    <div>
+                      <div style={{ height: 4, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${detectJobProgress.percent ?? 0}%`, background: "var(--accent)", transition: "width .4s" }} />
+                      </div>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
+                        {detectJobProgress.message || "Detecting…"}
+                      </p>
+                    </div>
+                  )}
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5 }}>
+                    <input
+                      type="checkbox"
+                      className="checkbox"
+                      checked={detectOverwrite}
+                      onChange={(e) => setDetectOverwrite(e.target.checked)}
+                    />
+                    Overwrite existing detections
+                  </label>
+                  <button
+                    className="btn ghost sm"
+                    style={{ alignSelf: "flex-start" }}
+                    onClick={() => detectMutation.mutate()}
+                    disabled={
+                      detectMutation.isPending ||
+                      !!detectJobId ||
+                      (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())
+                    }
+                  >
+                    {detectJobId ? "Running…" : "Run Detection"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

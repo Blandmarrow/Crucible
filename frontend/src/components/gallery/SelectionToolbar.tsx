@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Tag, Tags, X, Sparkles, Star, FolderInput } from "lucide-react";
+import { Trash2, Tag, Tags, X, Sparkles, Star, FolderInput, ScanSearch } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
@@ -8,6 +8,7 @@ import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { captioningApi } from "../../api/captioning";
 import { qualityApi } from "../../api/quality";
+import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
@@ -42,9 +43,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
   const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
+  const [showDetect, setShowDetect] = useState(false);
+  const [detectModel, setDetectModel] = useState("florence2_large");
+  const [detectTask, setDetectTask] = useState("<OD>");
+  const [detectPrompt, setDetectPrompt] = useState("");
+  const [detectUseCaptions, setDetectUseCaptions] = useState(false);
+  const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectJobId, setDetectJobId] = useState<string | null>(null);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
+  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
 
   useEffect(() => {
     if (!scoreJobId || !scoreJobProgress) return;
@@ -67,6 +76,18 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.error("Captioning failed");
     }
   }, [captionJobProgress?.status, captionJobId, datasetId, qc]);
+
+  useEffect(() => {
+    if (!detectJobId || !detectJobProgress) return;
+    if (detectJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      setDetectJobId(null);
+      toast.success("Detection complete");
+    } else if (detectJobProgress.status === "failed") {
+      setDetectJobId(null);
+      toast.error("Detection failed");
+    }
+  }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
 
   const ids = [...selectedIds];
 
@@ -166,6 +187,32 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onError: () => toast.error("Failed to start scoring"),
   });
 
+  const detectMutation = useMutation({
+    mutationFn: () =>
+      detectionApi.run({
+        dataset_id: datasetId,
+        image_ids: ids,
+        model: detectModel,
+        task: detectTask,
+        custom_prompt: detectUseCaptions ? "" : detectPrompt,
+        use_caption_as_prompt: detectUseCaptions,
+        overwrite: detectOverwrite,
+      }),
+    onSuccess: (data) => {
+      setShowDetect(false);
+      if (data.job_id) {
+        setDetectJobId(data.job_id);
+        toast.success(`Detecting objects in ${count} image${count !== 1 ? "s" : ""}…`);
+      } else {
+        toast("No images to process");
+      }
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Failed to start detection");
+    },
+  });
+
   if (count === 0) return null;
 
   return (
@@ -185,6 +232,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowScore(true)}>
           <Star size={14} /> Score
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowDetect(true)}>
+          <ScanSearch size={14} /> Detect
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
@@ -372,6 +422,93 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 disabled={(!runAesthetic && !runTechnical && !runWatermark && !runEmbeddings) || scoreMutation.isPending}
               >
                 <Star size={14} /> Run Scoring
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detection modal */}
+      {showDetect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-sm space-y-4">
+            <h4 className="font-medium flex items-center gap-2">
+              <ScanSearch size={16} /> Detect Objects in {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+
+            <div>
+              <label className="label">Model</label>
+              <select
+                className="select w-full"
+                value={detectModel}
+                onChange={(e) => setDetectModel(e.target.value)}
+              >
+                <option value="florence2_large">Florence-2 Large</option>
+                <option value="florence2_promptgen">Florence-2 PromptGen</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="label">Task</label>
+              <select
+                className="select w-full"
+                value={detectTask}
+                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
+              >
+                <option value="<OD>">Object Detection (auto-detect everything)</option>
+                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+              </select>
+            </div>
+
+            {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={detectUseCaptions}
+                    onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
+                  />
+                  Use each image's existing caption as prompt
+                </label>
+                {!detectUseCaptions && (
+                  <>
+                    <label className="label">Caption to ground</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. a cat sitting on a dog"
+                      value={detectPrompt}
+                      onChange={(e) => setDetectPrompt(e.target.value)}
+                      autoFocus
+                    />
+                    <p className="text-xs text-gray-500">
+                      Florence-2 will draw boxes around the phrases from this caption.
+                    </p>
+                  </>
+                )}
+                {detectUseCaptions && (
+                  <p className="text-xs text-gray-500">
+                    Images without a caption will be skipped.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
+              Overwrite existing detections
+            </label>
+
+            <div className="flex gap-2 justify-end">
+              <button className="btn-ghost" onClick={() => setShowDetect(false)}>Cancel</button>
+              <button
+                className="btn-primary flex items-center gap-2"
+                onClick={() => detectMutation.mutate()}
+                disabled={
+                  detectMutation.isPending ||
+                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())
+                }
+              >
+                <ScanSearch size={14} /> Run Detection
               </button>
             </div>
           </div>

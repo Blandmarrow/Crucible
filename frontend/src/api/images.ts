@@ -28,6 +28,7 @@ export interface ImageListParams {
   format_filter?: string;
   score_filters?: string;
   subfolder?: string;
+  detection_label?: string;
 }
 
 export const imagesApi = {

@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Any
 from pydantic import BaseModel
 
+from backend.schemas.detection import DetectionOut
+
 
 class ImageOut(BaseModel):
     id: str
@@ -32,6 +34,7 @@ class ImageOut(BaseModel):
     captioned_by: str
     captioned_at: datetime | None
     tags_json: list[str]
+    detections: list[DetectionOut] = []
 
     model_config = {"from_attributes": True}
 

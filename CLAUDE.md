@@ -95,6 +95,42 @@ Quality scorers and what they add to `Image`:
 | `ml/dino_scorer.py` | `dino_embedding` (BLOB, float16), `dino_layer_embeddings` (BLOB, float16) | `dino_embedding`: final-layer CLS token, 768-dim. `dino_layer_embeddings`: all 12 transformer-layer CLS tokens concatenated, 18 432 bytes (12 × 768 × float16); layer N (1-indexed) at offset `(N-1)*768*2`. `slice_layer_embedding(blob, layer)` extracts one layer's bytes. |
 | `ml/similarity_scorer.py` | — | CPU-only. `compute_style_similarity(ref_bytes, cand_bytes)` — cosine similarity of candidates to mean reference. `compute_combined_similarity(ref_clip, cand_clip, ref_dino, cand_dino, clip_w=0.38, dino_w=0.62)` — weighted blend of CLIP and DINOv2 cosine similarities. |
 
+### Object detection
+
+Bounding-box detection runs as a background job, same pattern as quality scoring.
+
+**Router**: `backend/routers/detection.py`, prefix `/detection`.
+
+| Endpoint | Body / params | Returns |
+|---|---|---|
+| `POST /detection/run` | `DetectionJobRequest` | `{ job_id, total }` |
+| `GET /detection/image/{image_id}` | — | `list[DetectionOut]` |
+
+**`DetectionJobRequest`** fields:
+
+| Field | Default | Effect |
+|---|---|---|
+| `dataset_id` | required | Target dataset |
+| `image_ids` | `null` | If set, only these images; otherwise the whole dataset |
+| `model` | required | `"florence2_large"` or `"florence2_promptgen"` |
+| `task` | required | `"<OD>"` or `"<CAPTION_TO_PHRASE_GROUNDING>"` |
+| `custom_prompt` | `""` | Phrase to ground (only used for `<CAPTION_TO_PHRASE_GROUNDING>`) |
+| `use_caption_as_prompt` | `false` | When `true`, each image's `caption_text` is used as the per-image prompt; images without a caption are skipped |
+| `overwrite` | `true` | Delete existing detections for each image before inserting new ones |
+
+**Tasks**:
+- `<OD>` — fixed-vocabulary object detection; no prompt; detects only categories the model was trained on.
+- `<CAPTION_TO_PHRASE_GROUNDING>` — phrase grounding; draws boxes around noun phrases that appear in the supplied text. More useful for dataset curation because you control what gets detected.
+
+**ML inference**: `backend/ml/florence_captioner.py::infer_sync_detection` / `detect_image`. Returns normalized bboxes `[x1, y1, x2, y2]` in 0–1 range. `_move_inputs_to_cuda(model, inputs)` is a shared helper used by both `infer_sync` (captioning) and `infer_sync_detection`.
+
+**Storage**: `backend/models/detection.py::Detection` table. Indexed on `image_id` and `label`. `ImageOut.detections: list[DetectionOut]` is populated only in `GET /images/{image_id}` (the detail endpoint) — not in `list_images`.
+
+**Frontend surfaces**:
+- `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, overwrite toggle).
+- `CaptioningPage` — "Object Detection" section shown when a Florence-2 model is selected; uses the same model as captioning.
+- `ImageDetailPage` — DETECTIONS panel in the right column (collapsible, shows label chips with counts); SVG overlay on the image with per-label color coding. Label chips are toggle buttons — clicking a chip adds/removes that label from a `hiddenLabels: Set<string>` that filters the SVG overlay. State resets on image navigation. Eye icon in the toolbar shows/hides all boxes at once.
+
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
 |---|---|---|---|
@@ -184,6 +220,7 @@ Three performance indexes exist:
 - **Caption filter** — All / Captioned / Uncaptioned.
 - **Quality flag** — dropdown with options: None, Blurry (`is_blurry`), Noisy (`is_noisy`), Near-uniform (`is_uniform`), Watermarked (`has_watermark`), Duplicate (`is_duplicate`). All values map directly to `quality_flag` param.
 - **Score filters** — multi-chip system: each active filter is a `{field, min?, max?}` chip with a × remove button. An "Add score filter" form lets the user pick any of the 8 score fields and enter optional min/max bounds. Multiple chips are combined as AND conditions via the JSON-encoded `score_filters` param. The older single `score_field`/`min_score`/`max_score` params are not used by GalleryPage (retained only for StatsPage BucketPanel backward compat).
+- **Detection label** — text input with icon prefix, debounced 350 ms; passes `detection_label` to `GET /images/`; uses a correlated `EXISTS` subquery against the `detections` table matching `label ILIKE '%...%'`; has a clear (×) button when set.
 - **Subfolder filter** — see Gallery subfolder sidebar section above; passes `subfolder` query param to `GET /images/`.
 
 ### Gallery navigation state
@@ -270,6 +307,7 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 | `mp_min` / `mp_max` | `float` | `width × height` megapixel range |
 | `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range |
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |
+| `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` |
 
 **ImageLightbox**: Clicking a thumbnail in `BucketPanel` opens a full-resolution lightbox with prev/next navigation, metadata footer, a "View Details →" link to `/datasets/:datasetId/image/:imageId`, and a two-step **Delete** button. Deleting an image removes it from the panel's TanStack Query cache via `queryClient.setQueryData` (no refetch) and invalidates `dataset-stats`, `tag-stats`, and `tag-cooccurrence` queries. A per-thumbnail ×-on-hover delete button with an inline confirm overlay provides the same action from the grid.
 

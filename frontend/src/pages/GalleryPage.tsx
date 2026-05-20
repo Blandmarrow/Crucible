@@ -66,6 +66,8 @@ export default function GalleryPage() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [detectionLabelInput, setDetectionLabelInput] = useState("");
+  const [detectionLabel, setDetectionLabel] = useState("");
   const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>([]);
   const [showAddScore, setShowAddScore] = useState(false);
   const [draftField, setDraftField] = useState(SCORE_FIELDS[0].value);
@@ -94,6 +96,15 @@ export default function GalleryPage() {
     }, 350);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDetectionLabel(detectionLabelInput);
+      setPage(1);
+      hasRestoredScroll.current = false;
+    }, 350);
+    return () => clearTimeout(t);
+  }, [detectionLabelInput]);
 
   useEffect(() => {
     return () => {
@@ -133,7 +144,7 @@ export default function GalleryPage() {
     : undefined;
 
   const { data: images = [], isLoading, refetch } = useQuery({
-    queryKey: ["images", datasetId, page, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder],
+    queryKey: ["images", datasetId, page, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
     queryFn: () =>
       imagesApi.list({
         dataset_id: datasetId!,
@@ -146,6 +157,7 @@ export default function GalleryPage() {
         quality_flag: qualityFilter || undefined,
         score_filters: scoreFiltersParam,
         subfolder: activeSubfolder,
+        detection_label: detectionLabel || undefined,
       }),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -299,6 +311,29 @@ export default function GalleryPage() {
           <option value="has_watermark">Flagged: watermark</option>
           <option value="is_duplicate">Flagged: duplicate</option>
         </select>
+
+        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+            style={{ position: "absolute", left: 8, width: 13, height: 13, color: "var(--fg-mute)", pointerEvents: "none" }}>
+            <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+            <circle cx="8" cy="8" r="2.5"/>
+          </svg>
+          <input
+            className="input"
+            placeholder="Objects: cat, dog…"
+            style={{ paddingLeft: 26, width: 160 }}
+            value={detectionLabelInput}
+            onChange={(e) => setDetectionLabelInput(e.target.value)}
+            title="Filter by detected object label"
+          />
+          {detectionLabelInput && (
+            <button
+              onClick={() => { setDetectionLabelInput(""); setDetectionLabel(""); resetPage(); }}
+              style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
+              title="Clear"
+            >×</button>
+          )}
+        </div>
 
         {/* Multi-score filters */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>

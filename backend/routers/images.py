@@ -14,6 +14,8 @@ from backend.config import settings
 from backend.utils import normalize_subfolder
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
+from backend.models.detection import Detection
+from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
     BatchCropRequest,
     BatchMoveSubfolderRequest,
@@ -78,6 +80,7 @@ async def list_images(
     format_filter: str | None = None,
     score_filters: str | None = Query(None),
     subfolder: str | None = Query(None),
+    detection_label: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
@@ -129,6 +132,13 @@ async def list_images(
 
     if subfolder is not None:
         q = q.where(Image.subfolder == subfolder)
+
+    if detection_label:
+        q = q.where(
+            select(Detection.id)
+            .where(Detection.image_id == Image.id, Detection.label.ilike(f"%{detection_label}%"))
+            .exists()
+        )
 
     if score_filters:
         try:
@@ -213,7 +223,13 @@ async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
         if gen_meta:
             img.generation_metadata = gen_meta
             await db.commit()
-    return img
+    det_result = await db.execute(
+        select(Detection).where(Detection.image_id == image_id).order_by(Detection.id)
+    )
+    detections = det_result.scalars().all()
+    img_out = ImageOut.model_validate(img)
+    img_out.detections = [DetectionOut.model_validate(d) for d in detections]
+    return img_out
 
 
 @router.delete("/{image_id}", status_code=204)

@@ -58,4 +58,6 @@ export const imagesApi = {
     client.post<{ job_id: string }>("/images/batch/crop", { image_ids, target_ar, strategy }).then((r) => r.data),
   batchMoveSubfolder: (image_ids: string[], subfolder: string) =>
     client.post<BatchMoveSubfolderResult>("/images/batch/move-subfolder", { image_ids, subfolder }).then((r) => r.data),
+  renameImage: (id: string, newStem: string) =>
+    client.patch<{ filename: string }>(`/images/${id}/rename`, { new_stem: newStem }).then((r) => r.data),
 };

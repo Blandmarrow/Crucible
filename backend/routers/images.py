@@ -2,8 +2,6 @@ import asyncio
 import json
 import shutil
 from pathlib import Path
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, or_, select, update as sa_update
@@ -11,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import normalize_subfolder
+from backend.utils import normalize_subfolder, rename_with_sidecar, slugify_filename, unique_filename
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
@@ -24,6 +22,7 @@ from backend.schemas.image import (
     ImageListItem,
     ImageOut,
     ImageResizeRequest,
+    RenameImageRequest,
 )
 from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import (
@@ -179,11 +178,17 @@ async def upload_images(
     dest_thumbs = Path(ds.folder_path) / "thumbnails"
     added = []
 
+    existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
+    db_names: set[str] = {r[0] for r in existing_result.all()}
+
     for upload in files:
         suffix = Path(upload.filename or "").suffix.lower()
         if suffix not in SUPPORTED_EXTENSIONS:
             continue
-        filename = f"{uuid4().hex}{suffix}"
+        raw_stem = Path(upload.filename or "").stem
+        slug = slugify_filename(raw_stem) or "image"
+        filename = unique_filename(dest_images, slug, suffix, db_names)
+        db_names.add(filename)
         dest = dest_images / filename
         with open(dest, "wb") as f:
             shutil.copyfileobj(upload.file, f)
@@ -397,15 +402,71 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
     return {"job_id": job.id}
 
 
+@router.patch("/{image_id}/rename")
+async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession = Depends(get_db)):
+    img = await db.get(Image, image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+
+    raw = body.new_stem.strip()
+    if not raw or "/" in raw or "\\" in raw or len(raw) > 200:
+        raise HTTPException(400, "Invalid new_stem")
+    slug = slugify_filename(raw)
+    if not slug:
+        raise HTTPException(400, "Stem produces empty slug")
+
+    old_path = Path(img.file_path)
+    existing = await db.execute(
+        select(Image.filename).where(Image.dataset_id == img.dataset_id, Image.id != image_id)
+    )
+    db_names: set[str] = {r[0] for r in existing.all()}
+    new_filename = unique_filename(old_path.parent, slug, old_path.suffix.lower(), db_names)
+    new_path = old_path.parent / new_filename
+
+    rename_with_sidecar(old_path, new_path)
+    img.filename = new_filename
+    img.file_path = str(new_path)
+    img.is_auto_named = False
+    await db.commit()
+    return {"filename": new_filename}
+
+
 @router.post("/batch/move-subfolder")
 async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession = Depends(get_db)):
     target = normalize_subfolder(body.subfolder)
     result = await db.execute(
-        sa_update(Image)
+        select(Image.id, Image.filename, Image.file_path, Image.dataset_id)
         .where(Image.id.in_(body.image_ids))
-        .values(subfolder=target)
     )
-    if result.rowcount == 0:
+    rows = result.all()
+    if not rows:
         raise HTTPException(404, "No matching images found")
+
+    dataset_id = rows[0].dataset_id
+    images_dir = Path(rows[0].file_path).parent
+
+    existing = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
+    db_names: set[str] = {r[0] for r in existing.all()}
+
+    target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
+
+    for row in rows:
+        old_path = Path(row.file_path)
+        suf = old_path.suffix.lower()
+        db_names.discard(row.filename)
+        new_filename = unique_filename(images_dir, target_stem, suf, db_names)
+        new_path = images_dir / new_filename
+        if new_path != old_path:
+            rename_with_sidecar(old_path, new_path)
+        db_names.add(new_filename)
+        await db.execute(
+            sa_update(Image).where(Image.id == row.id).values(
+                subfolder=target,
+                filename=new_filename,
+                file_path=str(new_path),
+                is_auto_named=True,
+            )
+        )
+
     await db.commit()
-    return {"moved": result.rowcount, "subfolder": target}
+    return {"moved": len(rows), "subfolder": target}

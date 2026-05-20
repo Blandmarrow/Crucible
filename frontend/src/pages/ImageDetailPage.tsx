@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -113,6 +113,9 @@ export default function ImageDetailPage() {
   const [aiTargetHeight, setAiTargetHeight] = useState<number | null>(null);
   const [aiJobId, setAiJobId] = useState<string | null>(null);
 
+  const [renameMode, setRenameMode] = useState(false);
+  const [renameStem, setRenameStem] = useState("");
+
   // Navigation context written by GalleryPage — re-read whenever imageId changes (we may have
   // updated sessionStorage just before navigating, so the fresh read gets the new page's data)
   const navCtx = useMemo(() => {
@@ -193,8 +196,11 @@ export default function ImageDetailPage() {
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
   }, [navCtx, datasetId, atEnd, atStart, nextId, prevId, nextPageData, prevPageData, paneGo]);
 
-  // Reset hidden labels when navigating to a different image
-  useEffect(() => { setHiddenLabels(new Set()); }, [imageId]);
+  useEffect(() => {
+    setHiddenLabels(new Set());
+    setRenameMode(false);
+    setRenameStem("");
+  }, [imageId]);
 
   // Arrow-key navigation — skip when focus is inside a text field
   useEffect(() => {
@@ -278,6 +284,17 @@ export default function ImageDetailPage() {
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, [captionText]);
+
+  const renameMutation = useMutation({
+    mutationFn: () => imagesApi.renameImage(imageId!, renameStem),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      setRenameMode(false);
+      toast.success("Renamed");
+    },
+    onError: () => toast.error("Rename failed"),
+  });
 
   const saveMutation = useMutation({
     mutationFn: () => captionsApi.update(imageId!, { caption_text: captionText, tags, caption_style: captionStyle }),
@@ -498,6 +515,41 @@ export default function ImageDetailPage() {
             <span>{formatSize(image.file_size_bytes)}</span>
             <span className="text-gray-500">Format</span>
             <span>{image.format}</span>
+            <span className="text-gray-500">Filename</span>
+            <span className="min-w-0">
+              {renameMode ? (
+                <span className="flex items-center gap-1">
+                  <input
+                    className="input"
+                    style={{ fontSize: 11, height: 22, padding: "0 4px", flex: 1, minWidth: 0 }}
+                    value={renameStem}
+                    onChange={(e) => setRenameStem(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && renameStem.trim()) renameMutation.mutate();
+                      if (e.key === "Escape") setRenameMode(false);
+                    }}
+                    autoFocus
+                  />
+                  <button className="icon-btn" style={{ width: 20, height: 20 }} onClick={() => renameMutation.mutate()} disabled={!renameStem.trim() || renameMutation.isPending}>
+                    <Save size={11} />
+                  </button>
+                  <button className="icon-btn" style={{ width: 20, height: 20 }} onClick={() => setRenameMode(false)}>✕</button>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 min-w-0">
+                  <span className="truncate font-mono" style={{ fontSize: 11 }}>{image.filename}</span>
+                  {image.is_auto_named && <span className="badge dot" title="Auto-named from caption">auto</span>}
+                  <button
+                    className="icon-btn"
+                    style={{ width: 18, height: 18, opacity: 0.5 }}
+                    title="Rename"
+                    onClick={() => { setRenameStem(image.filename.replace(/\.[^.]+$/, "")); setRenameMode(true); }}
+                  >
+                    <Pencil size={11} />
+                  </button>
+                </span>
+              )}
+            </span>
             {image.aesthetic_score !== null && (
               <>
                 <span className="text-gray-500">Aesthetic</span>

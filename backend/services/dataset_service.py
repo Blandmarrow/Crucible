@@ -185,8 +185,13 @@ async def import_images_from_folder(
     total = len(image_files)
     added = 0
 
+    from backend.utils import slugify_filename, unique_filename
+
     dest_images = Path(dataset.folder_path) / "images"
     dest_thumbs = Path(dataset.folder_path) / "thumbnails"
+
+    existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset.id))
+    db_filenames: set[str] = {r[0] for r in existing_result.all()}
 
     for i, src_file in enumerate(image_files):
         try:
@@ -197,12 +202,10 @@ async def import_images_from_folder(
             else:
                 rel_subfolder = subfolder
 
-            dest_file = dest_images / src_file.name
-            # Avoid overwriting existing files
-            if dest_file.exists():
-                stem = src_file.stem
-                suffix = src_file.suffix
-                dest_file = dest_images / f"{stem}_{uuid4().hex[:6]}{suffix}"
+            slug = slugify_filename(src_file.stem) or "image"
+            new_name = unique_filename(dest_images, slug, src_file.suffix.lower(), db_filenames)
+            dest_file = dest_images / new_name
+            db_filenames.add(new_name)
 
             shutil.copy2(src_file, dest_file)
 
@@ -215,7 +218,7 @@ async def import_images_from_folder(
 
             img = Image(
                 dataset_id=dataset.id,
-                filename=dest_file.name,
+                filename=new_name,
                 original_filename=src_file.name,
                 subfolder=rel_subfolder,
                 file_path=str(dest_file),

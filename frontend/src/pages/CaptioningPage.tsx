@@ -32,6 +32,7 @@ export default function CaptioningPage() {
   const [appendTags, setAppendTags] = useState(true);
   const [stripRefusals, setStripRefusals] = useState(true);
   const [saveBackup, setSaveBackup] = useState(false);
+  const [renameOnCaption, setRenameOnCaption] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
@@ -89,6 +90,7 @@ export default function CaptioningPage() {
       append_tags: appendTags,
       strip_refusals: stripRefusals,
       save_backup: saveBackup,
+      rename_on_caption: renameOnCaption,
     }),
     onSuccess: (data) => {
       if (data.job_id) {
@@ -435,6 +437,7 @@ export default function CaptioningPage() {
                   { label: <>Append existing tags from <span className="mono">tags_json</span></>, val: appendTags, set: setAppendTags },
                   { label: "Strip refusal phrases & identity guesses", val: stripRefusals, set: setStripRefusals },
                   { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup },
+                  { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption },
                 ].map((opt, i) => (
                   <label key={i} className="row-flex" style={{ gap: 8, cursor: "pointer" }}>
                     <input type="checkbox" className="checkbox" checked={opt.val} onChange={(e) => opt.set(e.target.checked)} />

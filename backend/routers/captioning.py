@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -43,6 +43,7 @@ class CaptionJobRequest(BaseModel):
     append_tags: bool = True
     strip_refusals: bool = True
     save_backup: bool = False
+    rename_on_caption: bool = False
 
 
 @router.get("/models")
@@ -64,7 +65,7 @@ async def list_styles():
 @router.post("/run")
 async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get_db)):
     query = (
-        select(Image.id, Image.file_path, Image.tags_json)
+        select(Image.id, Image.file_path, Image.tags_json, Image.filename, Image.subfolder)
         .where(Image.dataset_id == body.dataset_id)
     )
     if body.image_ids:
@@ -86,7 +87,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     db.add(job)
     await db.commit()
 
-    image_data = [(r.id, r.file_path, r.tags_json or []) for r in rows]
+    image_data = [(r.id, r.file_path, r.tags_json or [], r.filename, r.subfolder or "") for r in rows]
 
     async def _run(job_id: str) -> None:
         import time
@@ -125,8 +126,15 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         # Cache VRAM reading every 10 images to avoid per-image GPU calls
         cached_vram_mb = 0
 
+        _rename_db_names: set[str] = set()
+        if body.rename_on_caption:
+            from backend.utils import rename_with_sidecar, slugify_filename, unique_filename
+            async with AsyncSessionLocal() as _ns:
+                _r = await _ns.execute(select(Image.filename).where(Image.dataset_id == body.dataset_id))
+                _rename_db_names = {r[0] for r in _r.all()}
+
         async with AsyncSessionLocal() as session:
-            for i, (img_id, file_path, existing_tags) in enumerate(image_data):
+            for i, (img_id, file_path, existing_tags, img_filename, img_subfolder) in enumerate(image_data):
                 # Check for user-initiated stop before each image
                 async with AsyncSessionLocal() as cs:
                     job_row = await cs.get(BackgroundJob, job_id)
@@ -177,6 +185,28 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
                         await set_caption(session, img_id, caption, tags, body.style, body.model)
 
+                        if body.rename_on_caption:
+                            try:
+                                new_stem = slugify_filename(img_subfolder.replace("/", "_")) if img_subfolder else "image"
+                                old_path = Path(file_path)
+                                suf = old_path.suffix.lower()
+                                _rename_db_names.discard(img_filename)
+                                new_filename = unique_filename(old_path.parent, new_stem, suf, _rename_db_names)
+                                new_path = old_path.parent / new_filename
+                                if new_path != old_path:
+                                    rename_with_sidecar(old_path, new_path)
+                                await session.execute(
+                                    sa_update(Image).where(Image.id == img_id).values(
+                                        filename=new_filename,
+                                        file_path=str(new_path),
+                                        is_auto_named=True,
+                                    )
+                                )
+                                _rename_db_names.add(new_filename)
+                                await session.commit()
+                            except Exception:
+                                logger.error("Rename failed for %s", file_path, exc_info=True)
+
                 # Refresh VRAM reading only every 10 images (GPU call is not free)
                 if i % 10 == 0 and _torch and _torch.cuda.is_available():
                     cached_vram_mb = int(_torch.cuda.memory_allocated() / 1024 / 1024)
@@ -214,7 +244,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
             await refresh_stats(session, body.dataset_id)
 
     await job_queue.enqueue(job, _run)
-    return {"job_id": job.id, "total": len(images)}
+    return {"job_id": job.id, "total": len(rows)}
 
 
 @router.delete("/model/{model_id}/unload", status_code=204)

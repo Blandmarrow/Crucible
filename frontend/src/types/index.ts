@@ -72,6 +72,7 @@ export interface ImageListItem {
   caption_text: string;
   tags_json: string[];
   captioned_by: string;
+  is_auto_named: boolean;
 }
 
 export interface GenerationMetadata {

@@ -33,6 +33,7 @@ class ImageOut(BaseModel):
     caption_style: str
     captioned_by: str
     captioned_at: datetime | None
+    is_auto_named: bool = False
     tags_json: list[str]
     detections: list[DetectionOut] = []
 
@@ -61,8 +62,13 @@ class ImageListItem(BaseModel):
     caption_text: str
     tags_json: list[str]
     captioned_by: str
+    is_auto_named: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class RenameImageRequest(BaseModel):
+    new_stem: str
 
 
 class ImageResizeRequest(BaseModel):

@@ -15,6 +15,7 @@ class Image(Base):
     dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("datasets.id"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(512), default="")
+    subfolder: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     thumbnail_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
@@ -67,5 +68,6 @@ class Image(Base):
         Index("ix_images_dataset_aesthetic", "dataset_id", "aesthetic_score"),
         Index("ix_images_dataset_blur", "dataset_id", "blur_score"),
         Index("ix_images_dataset_similarity", "dataset_id", "style_similarity_score"),
+        Index("ix_images_dataset_subfolder", "dataset_id", "subfolder"),
         UniqueConstraint("dataset_id", "filename", name="uq_dataset_filename"),
     )

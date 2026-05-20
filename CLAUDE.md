@@ -45,6 +45,12 @@ HTTP request → FastAPI router → service layer (pure business logic, no HTTP)
 
 Long-running operations (captioning, quality scoring, import, export, batch ops) are queued: the router creates a `BackgroundJob` DB record, enqueues a coroutine in `workers/job_queue.py`, and immediately returns `{job_id}`. The worker runs the job, emits SSE progress events via `workers/progress.py`, and updates the job row when done. The frontend subscribes to `GET /api/v1/jobs/stream/{job_id}` (or `/stream/all/events` for the global progress bar).
 
+### Shared utilities
+
+`backend/utils.py` — thin module for helpers shared across multiple routers. Currently contains:
+
+- `normalize_subfolder(s: str) -> str` — strips leading/trailing slashes and `.` segments, rejects `..` with HTTP 400. Import this; never copy the logic inline or re-import it from a router.
+
 ### Key invariants
 
 - **tags_json is the source of truth.** `image.tags_json` (JSON column) is always kept in sync with the `tags` table via `_sync_tags()` in `caption_service.py` — both written in the same transaction. Never write the `tags` table directly.
@@ -122,6 +128,8 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 
 SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`. Alembic migrations in `backend/alembic/versions/`. The Alembic `env.py` strips `+aiosqlite` from the URL when running synchronous migrations.
 
+**Subfolders** (`Image.subfolder`, `Dataset.declared_subfolders`): images are physically flat in `{dataset.folder_path}/images/`; `subfolder` is pure string metadata (empty string = root/ungrouped; nested paths use `/`). `Dataset.declared_subfolders` (JSON column, default `[]`) stores explicitly-created subfolder paths so empty subfolders survive a `list_subfolders()` call — that function GROUP BYs images, so any path not in `declared_subfolders` with zero images would disappear. `declare_subfolder()` adds a path; `delete_subfolder()` bulk-moves images to root and removes the declared entry. `normalize_subfolder()` in `backend/utils.py` sanitizes path strings before storage. API: `GET/POST/DELETE /datasets/{id}/subfolders`.
+
 Three performance indexes exist:
 - `ix_images_dataset_created_at` on `(dataset_id, created_at)` — gallery page loads sorted by date
 - `ix_images_file_path` on `file_path` — filesystem move/rename/delete lookups
@@ -158,6 +166,16 @@ Three performance indexes exist:
 
 `generation_metadata` is included in both `ImageOut` and `ImageListItem` backend schemas, so it comes back with the gallery list response. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when `image.generation_metadata` is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default.
 
+### Gallery subfolder sidebar
+
+`GalleryPage` shows a left-hand subfolder sidebar (180 px fixed) when any subfolder exists or when the create form is open. Items: "All" (no filter), "(root)" (empty-string subfolder, only shown if images exist there), and one button per named subfolder with its image count. Active item is highlighted with `var(--surface-3)`.
+
+- **Create**: `+` icon in the sidebar header opens an inline form (input + Enter/Escape handling). If no subfolders exist yet, a `+ Subfolder` button appears in the main toolbar instead to surface the sidebar. On confirm, calls `datasetsApi.createSubfolder` → `POST /datasets/{id}/subfolders`, sets active subfolder to the new path.
+- **Delete**: hover-revealed `×` button on each row opens a `ConfirmDialog`. If the subfolder has images, the dialog warns they will be moved to root (not deleted). On confirm, calls `datasetsApi.deleteSubfolder` → `DELETE /datasets/{id}/subfolders?path=...`. If the deleted subfolder was active, resets to "All".
+- **Upload subfolder**: a `<select>` next to the Upload button lets users target a specific subfolder for drag-drop or file-picker uploads. Defaults to the active subfolder; can be overridden independently.
+- **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, and delete.
+- **CSS**: `.subfolder-row .subfolder-delete-btn` is `opacity: 0`; `.subfolder-row:hover .subfolder-delete-btn` reveals it. Defined in `frontend/src/index.css`.
+
 ### Gallery filters
 
 `GalleryPage` supports the following filter controls:
@@ -166,6 +184,7 @@ Three performance indexes exist:
 - **Caption filter** — All / Captioned / Uncaptioned.
 - **Quality flag** — dropdown with options: None, Blurry (`is_blurry`), Noisy (`is_noisy`), Near-uniform (`is_uniform`), Watermarked (`has_watermark`), Duplicate (`is_duplicate`). All values map directly to `quality_flag` param.
 - **Score filters** — multi-chip system: each active filter is a `{field, min?, max?}` chip with a × remove button. An "Add score filter" form lets the user pick any of the 8 score fields and enter optional min/max bounds. Multiple chips are combined as AND conditions via the JSON-encoded `score_filters` param. The older single `score_field`/`min_score`/`max_score` params are not used by GalleryPage (retained only for StatsPage BucketPanel backward compat).
+- **Subfolder filter** — see Gallery subfolder sidebar section above; passes `subfolder` query param to `GET /images/`.
 
 ### Gallery navigation state
 
@@ -187,6 +206,8 @@ Three performance indexes exist:
 **Preview strip**: `GET /datasets/` (`DatasetOut`) includes `preview_image_ids: list[str]` — up to 8 image IDs fetched in a single batch query alongside the datasets list. The card renders these as `<img src="/api/v1/images/{id}/thumbnail">` tiles. When a dataset has no images the strip falls back to deterministic colour gradients.
 
 **Import job tracking**: after starting an import (`POST /datasets/{id}/import`) `DatasetsPage` stores the returned `job_id` and watches it in `jobStore` via `useEffect`. The `["datasets"]` query is invalidated only when the job status becomes `"completed"` — not when the job is created — so image counts update after the import actually finishes.
+
+**Import subfolder options**: the import modal accepts `subfolder` (target logical subfolder, empty = root) and `preserve_structure: bool` (when true, recursively walks the source folder and maps each subdirectory level to a logical subfolder matching the relative path; when false, all images land in the specified `subfolder`). Both are passed in the `POST /datasets/{id}/import` body as `DatasetImportWithOptions`.
 
 **Card navigation**: Dataset card clicks use `usePaneNavigate().go(url, view)` (not raw `useNavigate`) so that clicking a dataset inside a split pane updates that pane's view rather than the URL. Do not revert to `useNavigate` here.
 

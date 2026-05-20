@@ -2,19 +2,23 @@ import asyncio
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from backend.utils import normalize_subfolder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import DatasetCreate, DatasetImport, DatasetOut, DatasetStats, DatasetUpdate, TagCooccurrence
+from backend.schemas.dataset import DatasetCreate, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
     create_dataset,
+    declare_subfolder,
+    delete_subfolder,
     get_dataset_stats,
     get_score_values,
     get_tag_cooccurrence,
     import_images_from_folder,
+    list_subfolders,
     refresh_stats,
     rename_dataset,
 )
@@ -107,17 +111,16 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{dataset_id}/import")
-async def import_folder(dataset_id: str, body: DatasetImport, db: AsyncSession = Depends(get_db)):
+async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: AsyncSession = Depends(get_db)):
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
 
-    from datetime import datetime
     job = BackgroundJob(
         job_type="import",
         dataset_id=dataset_id,
         total_items=0,
-        config={"folder_path": body.folder_path},
+        config=body.model_dump(),
     )
     db.add(job)
     await db.commit()
@@ -126,10 +129,48 @@ async def import_folder(dataset_id: str, body: DatasetImport, db: AsyncSession =
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
             ds2 = await session.get(Dataset, dataset_id)
-            await import_images_from_folder(session, ds2, body.folder_path, job_id=job_id)
+            await import_images_from_folder(
+                session, ds2, body.folder_path,
+                job_id=job_id,
+                subfolder=body.subfolder,
+                preserve_structure=body.preserve_structure,
+            )
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
+
+
+@router.get("/{dataset_id}/subfolders", response_model=list[SubfolderInfo])
+async def get_subfolders(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    return await list_subfolders(db, dataset_id)
+
+
+@router.post("/{dataset_id}/subfolders", response_model=SubfolderInfo, status_code=201)
+async def create_subfolder(dataset_id: str, body: SubfolderCreate, db: AsyncSession = Depends(get_db)):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    path = normalize_subfolder(body.path)
+    if not path:
+        raise HTTPException(400, "Subfolder path must not be empty")
+    await declare_subfolder(db, dataset_id, path)
+    return {"path": path, "image_count": 0}
+
+
+@router.delete("/{dataset_id}/subfolders")
+async def remove_subfolder(
+    dataset_id: str,
+    path: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    moved = await delete_subfolder(db, dataset_id, path)
+    return {"deleted": path, "images_moved_to_root": moved}
 
 
 @router.post("/{dataset_id}/refresh-stats", status_code=204)

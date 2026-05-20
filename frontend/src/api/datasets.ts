@@ -1,5 +1,5 @@
 import client from "./client";
-import type { Dataset, DatasetStats, TagCooccurrence } from "../types";
+import type { Dataset, DatasetStats, SubfolderInfo, TagCooccurrence } from "../types";
 
 export interface ScoreValues {
   aesthetic_score: number[];
@@ -23,8 +23,14 @@ export const datasetsApi = {
   update: (id: string, data: { name?: string; description?: string }) =>
     client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
-  importFolder: (id: string, folder_path: string) =>
-    client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path }).then((r) => r.data),
+  importFolder: (id: string, folder_path: string, subfolder = "", preserve_structure = false) =>
+    client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path, subfolder, preserve_structure }).then((r) => r.data),
+  subfolders: (id: string) =>
+    client.get<SubfolderInfo[]>(`/datasets/${id}/subfolders`).then((r) => r.data),
+  createSubfolder: (id: string, path: string) =>
+    client.post<SubfolderInfo>(`/datasets/${id}/subfolders`, { path }).then((r) => r.data),
+  deleteSubfolder: (id: string, path: string) =>
+    client.delete(`/datasets/${id}/subfolders`, { params: { path } }).then((r) => r.data),
   refreshStats: (id: string) => client.post(`/datasets/${id}/refresh-stats`),
   stats: (id: string) => client.get<DatasetStats>(`/datasets/${id}/stats`).then((r) => r.data),
   tagCooccurrence: (id: string, limit = 15) =>

@@ -362,4 +362,9 @@
     padding: 1px 5px; border: 1px solid var(--line-2); border-bottom-width: 2px;
     border-radius: 3px; background: var(--surface-2); color: var(--fg-mute);
   }
+
+  /* ── Subfolder sidebar row ── */
+  .subfolder-row .subfolder-delete-btn { opacity: 0; transition: opacity .1s, color .1s; }
+  .subfolder-row:hover .subfolder-delete-btn { opacity: 1; }
+  .subfolder-delete-btn:hover { color: var(--bad) !important; }
 }

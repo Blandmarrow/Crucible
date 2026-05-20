@@ -8,6 +8,7 @@ class ImageOut(BaseModel):
     dataset_id: str
     filename: str
     original_filename: str
+    subfolder: str = ""
     width: int | None
     height: int | None
     file_size_bytes: int | None
@@ -39,6 +40,7 @@ class ImageListItem(BaseModel):
     id: str
     dataset_id: str
     filename: str
+    subfolder: str = ""
     width: int | None
     height: int | None
     file_size_bytes: int | None
@@ -87,3 +89,8 @@ class BatchCropRequest(BaseModel):
     image_ids: list[str]
     target_ar: float
     strategy: str = "center"
+
+
+class BatchMoveSubfolderRequest(BaseModel):
+    image_ids: list[str]
+    subfolder: str

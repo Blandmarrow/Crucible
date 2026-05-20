@@ -45,10 +45,16 @@ export interface TagCooccurrence {
   matrix: number[][];
 }
 
+export interface SubfolderInfo {
+  path: string;
+  image_count: number;
+}
+
 export interface ImageListItem {
   id: string;
   dataset_id: string;
   filename: string;
+  subfolder: string;
   width: number | null;
   height: number | null;
   file_size_bytes: number | null;

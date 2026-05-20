@@ -29,6 +29,7 @@ class KohyaExportRequest(BaseModel):
     captioned_only: bool = False
     exclude_flags: str = ""   # comma-separated flag names
     style_sim_min: float | None = None
+    subfolders: list[str] | None = None
 
 
 class AIToolkitExportRequest(BaseModel):
@@ -44,6 +45,7 @@ class AIToolkitExportRequest(BaseModel):
     captioned_only: bool = False
     exclude_flags: str = ""
     style_sim_min: float | None = None
+    subfolders: list[str] | None = None
 
 
 class PlainExportRequest(BaseModel):
@@ -57,6 +59,7 @@ class PlainExportRequest(BaseModel):
     captioned_only: bool = False
     exclude_flags: str = ""
     style_sim_min: float | None = None
+    subfolders: list[str] | None = None
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -92,6 +95,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 body.captioned_only,
                 _parse_flags(body.exclude_flags),
                 body.style_sim_min,
+                body.subfolders,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -132,6 +136,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 body.captioned_only,
                 _parse_flags(body.exclude_flags),
                 body.style_sim_min,
+                body.subfolders,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -170,6 +175,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 body.captioned_only,
                 _parse_flags(body.exclude_flags),
                 body.style_sim_min,
+                body.subfolders,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -189,8 +195,10 @@ async def preview(
     captioned_only: bool = Query(default=False),
     exclude_flags: str = Query(default=""),
     style_sim_min: float | None = Query(default=None),
+    subfolders: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ):
+    subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
     return await preview_export(
         db,
         dataset_id,
@@ -198,4 +206,5 @@ async def preview(
         captioned_only,
         _parse_flags(exclude_flags),
         style_sim_min,
+        subfolder_list,
     )

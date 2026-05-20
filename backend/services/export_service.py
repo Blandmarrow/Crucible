@@ -14,6 +14,7 @@ _EXPORT_COLS = (
     Image.id,
     Image.file_path,
     Image.filename,
+    Image.subfolder,
     Image.caption_text,
     Image.tags_json,
     Image.aesthetic_score,
@@ -116,6 +117,7 @@ async def _run_export_loop(
     job_type: str,
     caption_format: str | None,
     accumulate_plain: bool = False,
+    subfolders: list[str] | None = None,
 ) -> dict:
     """
     Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
@@ -126,6 +128,8 @@ async def _run_export_loop(
     query = select(*_EXPORT_COLS).where(Image.dataset_id == dataset_id)
     if image_ids:
         query = query.where(Image.id.in_(image_ids))
+    if subfolders is not None:
+        query = query.where(Image.subfolder.in_(subfolders))
     result = await db.execute(query)
     images = result.all()
 
@@ -187,6 +191,7 @@ async def export_kohya(
     captioned_only: bool = False,
     exclude_flags: list[str] | None = None,
     style_sim_min: float | None = None,
+    subfolders: list[str] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -196,7 +201,7 @@ async def export_kohya(
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
-        job_id, "export", caption_format,
+        job_id, "export", caption_format, subfolders=subfolders,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -222,6 +227,7 @@ async def export_aitoolkit(
     captioned_only: bool = False,
     exclude_flags: list[str] | None = None,
     style_sim_min: float | None = None,
+    subfolders: list[str] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -231,7 +237,7 @@ async def export_aitoolkit(
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
-        job_id, "export", caption_format,
+        job_id, "export", caption_format, subfolders=subfolders,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -255,6 +261,7 @@ async def export_plain(
     captioned_only: bool = False,
     exclude_flags: list[str] | None = None,
     style_sim_min: float | None = None,
+    subfolders: list[str] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -264,7 +271,7 @@ async def export_plain(
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, images_dir, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
-        job_id, "export", None, accumulate_plain=True,
+        job_id, "export", None, accumulate_plain=True, subfolders=subfolders,
     )
 
     jsonl_path = Path(output_dir) / "captions.jsonl"
@@ -288,15 +295,17 @@ async def preview_export(
     captioned_only: bool = False,
     exclude_flags: list[str] | None = None,
     style_sim_min: float | None = None,
+    subfolders: list[str] | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
 
-    result = await db.execute(
-        select(
-            Image.filename, Image.caption_text, Image.tags_json,
-            Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
-        ).where(Image.dataset_id == dataset_id)
-    )
+    query = select(
+        Image.filename, Image.caption_text, Image.tags_json,
+        Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
+    ).where(Image.dataset_id == dataset_id)
+    if subfolders is not None:
+        query = query.where(Image.subfolder.in_(subfolders))
+    result = await db.execute(query)
     rows = result.all()
 
     total = len(rows)

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -114,11 +114,63 @@ async def rename_dataset(
     return ds
 
 
+async def list_subfolders(db: AsyncSession, dataset_id: str) -> list[dict]:
+    ds = await db.get(Dataset, dataset_id)
+    declared: list[str] = ds.declared_subfolders if ds else []
+
+    result = await db.execute(
+        select(Image.subfolder, func.count(Image.id).label("cnt"))
+        .where(Image.dataset_id == dataset_id)
+        .group_by(Image.subfolder)
+        .order_by(Image.subfolder)
+    )
+    image_rows = {r.subfolder: r.cnt for r in result.all()}
+
+    # Merge: start with image-derived, add any declared paths that have no images yet
+    merged: dict[str, int] = dict(image_rows)
+    for path in declared:
+        if path not in merged:
+            merged[path] = 0
+
+    return [{"path": p, "image_count": c} for p, c in sorted(merged.items())]
+
+
+async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> None:
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        return
+    current: list[str] = list(ds.declared_subfolders or [])
+    if path not in current:
+        current.append(path)
+        ds.declared_subfolders = current
+        await db.commit()
+
+
+async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
+    """Move all images in the subfolder to root and remove from declared list. Returns image count moved."""
+    result = await db.execute(
+        sa_update(Image)
+        .where(Image.dataset_id == dataset_id, Image.subfolder == path)
+        .values(subfolder="")
+    )
+    moved = result.rowcount
+
+    ds = await db.get(Dataset, dataset_id)
+    if ds:
+        current = [p for p in (ds.declared_subfolders or []) if p != path]
+        ds.declared_subfolders = current
+
+    await db.commit()
+    return moved
+
+
 async def import_images_from_folder(
     db: AsyncSession,
     dataset: Dataset,
     folder_path: str,
     job_id: str | None = None,
+    subfolder: str = "",
+    preserve_structure: bool = False,
 ) -> int:
     from backend.workers.progress import broadcaster
 
@@ -126,7 +178,10 @@ async def import_images_from_folder(
     if not src.exists() or not src.is_dir():
         raise ValueError(f"Folder not found: {folder_path}")
 
-    image_files = [f for f in src.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    if preserve_structure:
+        image_files = [f for f in src.rglob("*") if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    else:
+        image_files = [f for f in src.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
     total = len(image_files)
     added = 0
 
@@ -135,6 +190,13 @@ async def import_images_from_folder(
 
     for i, src_file in enumerate(image_files):
         try:
+            if preserve_structure:
+                rel_subfolder = str(src_file.parent.relative_to(src)).replace("\\", "/")
+                if rel_subfolder == ".":
+                    rel_subfolder = ""
+            else:
+                rel_subfolder = subfolder
+
             dest_file = dest_images / src_file.name
             # Avoid overwriting existing files
             if dest_file.exists():
@@ -155,6 +217,7 @@ async def import_images_from_folder(
                 dataset_id=dataset.id,
                 filename=dest_file.name,
                 original_filename=src_file.name,
+                subfolder=rel_subfolder,
                 file_path=str(dest_file),
                 thumbnail_path=thumb_path,
                 generation_metadata=gen_meta,

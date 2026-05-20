@@ -16,6 +16,21 @@ class DatasetImport(BaseModel):
     folder_path: str
 
 
+class DatasetImportWithOptions(BaseModel):
+    folder_path: str
+    subfolder: str = ""
+    preserve_structure: bool = False
+
+
+class SubfolderInfo(BaseModel):
+    path: str
+    image_count: int
+
+
+class SubfolderCreate(BaseModel):
+    path: str
+
+
 class DatasetOut(BaseModel):
     id: str
     name: str

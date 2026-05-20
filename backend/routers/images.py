@@ -6,15 +6,17 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
+from backend.utils import normalize_subfolder
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.schemas.image import (
     BatchCropRequest,
+    BatchMoveSubfolderRequest,
     BatchResizeRequest,
     ImageCropRequest,
     ImageListItem,
@@ -52,6 +54,7 @@ def _safe_path(path_str: str, base_dir: Path) -> Path:
     return resolved
 
 
+
 @router.get("/", response_model=list[ImageListItem])
 async def list_images(
     dataset_id: str,
@@ -74,6 +77,7 @@ async def list_images(
     ar_max: float | None = None,
     format_filter: str | None = None,
     score_filters: str | None = Query(None),
+    subfolder: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
@@ -123,6 +127,9 @@ async def list_images(
     if format_filter:
         q = q.where(Image.format == format_filter)
 
+    if subfolder is not None:
+        q = q.where(Image.subfolder == subfolder)
+
     if score_filters:
         try:
             for f in json.loads(score_filters):
@@ -150,6 +157,7 @@ async def list_images(
 @router.post("/upload", status_code=201)
 async def upload_images(
     dataset_id: str,
+    subfolder: str = Query(""),
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -179,6 +187,7 @@ async def upload_images(
             dataset_id=dataset_id,
             filename=filename,
             original_filename=upload.filename or filename,
+            subfolder=normalize_subfolder(subfolder),
             file_path=str(dest),
             thumbnail_path=thumb_path,
             generation_metadata=gen_meta,
@@ -370,3 +379,17 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
+
+
+@router.post("/batch/move-subfolder")
+async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession = Depends(get_db)):
+    target = normalize_subfolder(body.subfolder)
+    result = await db.execute(
+        sa_update(Image)
+        .where(Image.id.in_(body.image_ids))
+        .values(subfolder=target)
+    )
+    if result.rowcount == 0:
+        raise HTTPException(404, "No matching images found")
+    await db.commit()
+    return {"moved": result.rowcount, "subfolder": target}

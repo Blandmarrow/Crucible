@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
-import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
-import type { ImageListItem } from "../types";
+import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 import { datasetsApi } from "../api/datasets";
 import ImageCard from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
@@ -73,6 +74,11 @@ export default function GalleryPage() {
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [genMetaImage, setGenMetaImage] = useState<ImageListItem | null>(null);
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const [uploadSubfolder, setUploadSubfolder] = useState("");
+  const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
+  const [newSubfolderName, setNewSubfolderName] = useState("");
+  const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -108,6 +114,16 @@ export default function GalleryPage() {
     enabled: !!datasetId,
   });
 
+  const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
+
+  useEffect(() => {
+    setUploadSubfolder(activeSubfolder ?? "");
+  }, [activeSubfolder]);
+
   const scoreFiltersParam = scoreFilters.length > 0
     ? JSON.stringify(scoreFilters.map(f => ({
         field: f.field,
@@ -117,7 +133,7 @@ export default function GalleryPage() {
     : undefined;
 
   const { data: images = [], isLoading, refetch } = useQuery({
-    queryKey: ["images", datasetId, page, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam],
+    queryKey: ["images", datasetId, page, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder],
     queryFn: () =>
       imagesApi.list({
         dataset_id: datasetId!,
@@ -129,6 +145,7 @@ export default function GalleryPage() {
         search: search || undefined,
         quality_flag: qualityFilter || undefined,
         score_filters: scoreFiltersParam,
+        subfolder: activeSubfolder,
       }),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -150,20 +167,45 @@ export default function GalleryPage() {
     }
   }, [images, datasetId, page, sortOpt, captionedFilter]);
 
-  const handleUpload = useCallback(async (files: FileList) => {
+  const handleUpload = useCallback(async (files: FileList, sf?: string) => {
     if (!datasetId) return;
     setUploading(true);
     try {
-      await imagesApi.upload(datasetId, Array.from(files));
+      await imagesApi.upload(datasetId, Array.from(files), sf ?? uploadSubfolder);
       await refetch();
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       toast.success(`Uploaded ${files.length} image(s)`);
     } catch {
       toast.error("Upload failed");
     } finally {
       setUploading(false);
     }
-  }, [datasetId, refetch, qc]);
+  }, [datasetId, refetch, qc, uploadSubfolder]);
+
+  const createSubfolderMutation = useMutation({
+    mutationFn: (path: string) => datasetsApi.createSubfolder(datasetId!, path),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      setShowCreateSubfolder(false);
+      setNewSubfolderName("");
+      setActiveSubfolder(data.path);
+      toast.success(`Created subfolder "${data.path}"`);
+    },
+    onError: () => toast.error("Failed to create subfolder"),
+  });
+
+  const deleteSubfolderMutation = useMutation({
+    mutationFn: (path: string) => datasetsApi.deleteSubfolder(datasetId!, path),
+    onSuccess: (_data, path) => {
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      setPendingDeleteSubfolder(null);
+      if (activeSubfolder === path) { setActiveSubfolder(undefined); resetPage(); }
+      toast.success(`Deleted subfolder "${path}"`);
+    },
+    onError: () => toast.error("Failed to delete subfolder"),
+  });
 
   const handleDragEnter = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes("Files")) {
@@ -334,6 +376,19 @@ export default function GalleryPage() {
 
         <div style={{ flex: 1 }} />
 
+        {subfolders.length === 0 && !showCreateSubfolder && (
+          <button
+            className="btn ghost sm"
+            onClick={() => { setShowCreateSubfolder(true); setNewSubfolderName(""); }}
+            style={{ whiteSpace: "nowrap" }}
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M8 2v12M2 8h12"/>
+            </svg>
+            Subfolder
+          </button>
+        )}
+
         <button
           className="btn ghost sm"
           onClick={() => count === images.length ? clear() : selectAll(images.map(i => i.id))}
@@ -344,18 +399,146 @@ export default function GalleryPage() {
           {count === images.length && images.length > 0 ? "Deselect all" : "Select all"}
         </button>
 
-        <label className="btn" style={{ cursor: "pointer" }}>
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
-          </svg>
-          {uploading ? "Uploading…" : "Upload"}
-          <input type="file" multiple accept="image/*" style={{ display: "none" }}
-            onChange={(e) => e.target.files && handleUpload(e.target.files)} />
-        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {subfolders.length > 0 && (
+            <select
+              className="select"
+              style={{ width: "auto", maxWidth: 120 }}
+              value={uploadSubfolder}
+              onChange={(e) => setUploadSubfolder(e.target.value)}
+              title="Upload to subfolder"
+            >
+              <option value="">(root)</option>
+              {subfolders.filter(sf => sf.path !== "").map(sf => (
+                <option key={sf.path} value={sf.path}>{sf.path}</option>
+              ))}
+            </select>
+          )}
+          <label className="btn" style={{ cursor: "pointer" }}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
+            </svg>
+            {uploading ? "Uploading…" : "Upload"}
+            <input type="file" multiple accept="image/*" style={{ display: "none" }}
+              onChange={(e) => e.target.files && handleUpload(e.target.files)} />
+          </label>
+        </div>
       </div>
 
-      {/* Grid */}
-      <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
+      {/* Grid area with subfolder sidebar */}
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {/* Subfolder sidebar */}
+        {(subfolders.length > 0 || showCreateSubfolder) && (
+          <div style={{
+            width: 180, flexShrink: 0, borderRight: "1px solid var(--line)",
+            overflowY: "auto", padding: "10px 6px",
+            background: "var(--surface-1)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 8px 6px" }}>
+              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: ".08em", color: "var(--fg-mute)", textTransform: "uppercase" }}>
+                Subfolders
+              </span>
+              <button
+                className="icon-btn"
+                style={{ width: 20, height: 20, fontSize: 16, lineHeight: 1 }}
+                title="Create subfolder"
+                onClick={() => { setShowCreateSubfolder(true); setNewSubfolderName(""); }}
+              >+</button>
+            </div>
+            {showCreateSubfolder && (
+              <div style={{ padding: "0 6px 6px" }}>
+                <input
+                  className="input"
+                  style={{ width: "100%", fontSize: 12, padding: "3px 6px" }}
+                  placeholder="characters/poses"
+                  value={newSubfolderName}
+                  onChange={(e) => setNewSubfolderName(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newSubfolderName.trim()) createSubfolderMutation.mutate(newSubfolderName.trim());
+                    if (e.key === "Escape") { setShowCreateSubfolder(false); setNewSubfolderName(""); }
+                  }}
+                />
+                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                  <button
+                    className="btn sm"
+                    style={{ flex: 1, fontSize: 11 }}
+                    disabled={!newSubfolderName.trim() || createSubfolderMutation.isPending}
+                    onClick={() => createSubfolderMutation.mutate(newSubfolderName.trim())}
+                  >Create</button>
+                  <button
+                    className="btn ghost sm"
+                    style={{ fontSize: 11 }}
+                    onClick={() => { setShowCreateSubfolder(false); setNewSubfolderName(""); }}
+                  >✕</button>
+                </div>
+              </div>
+            )}
+            {/* "All" entry */}
+            <button
+              onClick={() => { setActiveSubfolder(undefined); resetPage(); }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                width: "100%", padding: "5px 8px", borderRadius: "var(--r)",
+                border: "none", cursor: "pointer", textAlign: "left",
+                background: activeSubfolder === undefined ? "var(--surface-3)" : "transparent",
+                color: activeSubfolder === undefined ? "var(--accent)" : "var(--fg)",
+                fontSize: 12.5, fontWeight: activeSubfolder === undefined ? 600 : 400,
+              }}
+            >
+              <span>All</span>
+              <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{dataset?.image_count ?? ""}</span>
+            </button>
+            {subfolders.map((sf) => {
+              const depth = sf.path === "" ? 0 : (sf.path.split("/").length - 1);
+              const label = sf.path === "" ? "(root)" : sf.path.split("/").pop()!;
+              const isActive = activeSubfolder === sf.path;
+              return (
+                <div
+                  key={sf.path}
+                  className="subfolder-row"
+                  style={{
+                    display: "flex", alignItems: "center",
+                    borderRadius: "var(--r)",
+                    background: isActive ? "var(--surface-3)" : "transparent",
+                  }}
+                >
+                  <button
+                    onClick={() => { setActiveSubfolder(sf.path); resetPage(); }}
+                    title={sf.path || "(root)"}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      flex: 1, minWidth: 0, padding: "5px 4px 5px 8px",
+                      paddingLeft: 8 + depth * 12,
+                      border: "none", cursor: "pointer", textAlign: "left",
+                      background: "transparent",
+                      color: isActive ? "var(--accent)" : "var(--fg)",
+                      fontSize: 12.5, fontWeight: isActive ? 600 : 400,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{label}</span>
+                    <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{sf.image_count}</span>
+                  </button>
+                  <button
+                    className="subfolder-delete-btn"
+                    title={`Delete "${sf.path || "(root)"}"`}
+                    onClick={(e) => { e.stopPropagation(); setPendingDeleteSubfolder(sf); }}
+                    style={{
+                      flexShrink: 0, width: 18, height: 18, padding: 0,
+                      border: "none", cursor: "pointer", borderRadius: "var(--r)",
+                      background: "transparent", color: "var(--fg-mute)",
+                      fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                      marginRight: 4,
+                    }}
+                  >×</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Main grid column */}
+        <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         {isDragOver && (
           <div style={{
             position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none",
@@ -414,7 +597,8 @@ export default function GalleryPage() {
         )}
 
         {/* Selection bar (sticky bottom within scroll area) */}
-        <SelectionToolbar datasetId={datasetId!} />
+        <SelectionToolbar datasetId={datasetId!} subfolders={subfolders} />
+        </div>
         </div>
       </div>
 
@@ -451,6 +635,21 @@ export default function GalleryPage() {
             <GenerationMetadata metadata={genMetaImage.generation_metadata} />
           </div>
         </div>
+      )}
+
+      {pendingDeleteSubfolder && (
+        <ConfirmDialog
+          title={`Delete "${pendingDeleteSubfolder.path || "(root)"}"`}
+          message={
+            pendingDeleteSubfolder.image_count > 0
+              ? `This subfolder contains ${pendingDeleteSubfolder.image_count} image${pendingDeleteSubfolder.image_count !== 1 ? "s" : ""}. They will be moved to root (ungrouped). The images themselves will not be deleted.`
+              : "This empty subfolder will be removed."
+          }
+          confirmLabel="Delete Subfolder"
+          danger
+          onConfirm={() => deleteSubfolderMutation.mutate(pendingDeleteSubfolder.path)}
+          onCancel={() => setPendingDeleteSubfolder(null)}
+        />
       )}
     </div>
   );

@@ -43,6 +43,8 @@ export default function DatasetsPage() {
   const [renameName, setRenameName] = useState("");
   const [importTarget, setImportTarget] = useState<Dataset | null>(null);
   const [importPath, setImportPath] = useState("");
+  const [importSubfolder, setImportSubfolder] = useState("");
+  const [importPreserveStructure, setImportPreserveStructure] = useState(false);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,10 +104,10 @@ export default function DatasetsPage() {
   });
 
   const importMutation = useMutation({
-    mutationFn: () => datasetsApi.importFolder(importTarget!.id, importPath),
+    mutationFn: () => datasetsApi.importFolder(importTarget!.id, importPath, importSubfolder, importPreserveStructure),
     onSuccess: (data) => {
       toast.success(`Import started`);
-      setImportTarget(null); setImportPath("");
+      setImportTarget(null); setImportPath(""); setImportSubfolder(""); setImportPreserveStructure(false);
       setImportJobId(data.job_id);
     },
     onError: () => toast.error("Import failed"),
@@ -408,13 +410,41 @@ export default function DatasetsPage() {
           <div className="dialog">
             <h3>Import from folder</h3>
             <p>Into: <strong style={{ color: "var(--fg)" }}>{importTarget.name}</strong></p>
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 14 }}>
               <label className="label">Folder path</label>
               <input className="input" placeholder="D:\datasets\my_images" value={importPath}
                 onChange={(e) => setImportPath(e.target.value)} autoFocus />
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label className="label">Target subfolder <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
+              <input
+                className="input"
+                placeholder="e.g. characters (leave blank for root)"
+                value={importSubfolder}
+                onChange={(e) => setImportSubfolder(e.target.value)}
+                disabled={importPreserveStructure}
+                style={{ opacity: importPreserveStructure ? 0.5 : 1 }}
+              />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={importPreserveStructure}
+                onChange={(e) => {
+                  setImportPreserveStructure(e.target.checked);
+                  if (e.target.checked) setImportSubfolder("");
+                }}
+              />
+              <span style={{ fontSize: 13 }}>Preserve source folder structure</span>
+            </label>
+            {importPreserveStructure && (
+              <p style={{ fontSize: 11.5, color: "var(--fg-mute)", marginTop: -12, marginBottom: 14, paddingLeft: 22 }}>
+                Subfolders from the source directory will be recreated as logical subfolders.
+              </p>
+            )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => setImportTarget(null)}>Cancel</button>
+              <button className="btn ghost" onClick={() => { setImportTarget(null); setImportSubfolder(""); setImportPreserveStructure(false); }}>Cancel</button>
               <button className="btn primary" onClick={() => importMutation.mutate()} disabled={!importPath || importMutation.isPending}>Import</button>
             </div>
           </div>

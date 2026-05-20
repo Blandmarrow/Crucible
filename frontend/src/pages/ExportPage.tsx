@@ -3,8 +3,10 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { exportApi } from "../api/export";
+import { datasetsApi } from "../api/datasets";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
+import type { SubfolderInfo } from "../types";
 
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
@@ -41,11 +43,19 @@ export default function ExportPage() {
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(["has_watermark"]));
   const [filterStyleSim, setFilterStyleSim] = useState(false);
   const [styleSimMin, setStyleSimMin] = useState(0.5);
+  const [subfolderFilterActive, setSubfolderFilterActive] = useState(false);
+  const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set());
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   useJobSSE(activeJobId);
   const jobProgress = useJobStore((s) => s.activeJobs.get(activeJobId ?? ""));
+
+  const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
 
   // Debounced filter params for preview query
   const [debouncedFilters, setDebouncedFilters] = useState({
@@ -53,6 +63,7 @@ export default function ExportPage() {
     captioned_only: filterCaptioned,
     exclude_flags: "has_watermark",
     style_sim_min: null as number | null,
+    subfolders: null as string[] | null,
   });
 
   useEffect(() => {
@@ -62,10 +73,11 @@ export default function ExportPage() {
         captioned_only: filterCaptioned,
         exclude_flags: [...excludeFlags].join(","),
         style_sim_min: filterStyleSim ? styleSimMin : null,
+        subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
       });
     }, 350);
     return () => clearTimeout(t);
-  }, [filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin]);
+  }, [filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders]);
 
   const { data: preview } = useQuery({
     queryKey: ["export-preview", datasetId, debouncedFilters],
@@ -80,6 +92,7 @@ export default function ExportPage() {
     captioned_only: filterCaptioned,
     exclude_flags: [...excludeFlags].join(","),
     style_sim_min: filterStyleSim ? styleSimMin : null,
+    subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
   });
 
   const exportMutation = useMutation({
@@ -218,6 +231,38 @@ export default function ExportPage() {
                     disabled={!filterStyleSim} style={{ width: 64, textAlign: "center" }}
                   />
                 </label>
+
+                {/* Subfolder filter */}
+                {subfolders.length > 0 && (
+                  <div>
+                    <label className="row-flex" style={{ gap: 8 }}>
+                      <input type="checkbox" className="checkbox" checked={subfolderFilterActive}
+                        onChange={(e) => setSubfolderFilterActive(e.target.checked)} />
+                      <span style={{ fontSize: 12.5 }}>Limit to subfolders</span>
+                    </label>
+                    {subfolderFilterActive && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4, marginTop: 6 }}>
+                        {subfolders.map((sf) => (
+                          <label key={sf.path} className="row-flex" style={{ gap: 8 }}>
+                            <input
+                              type="checkbox" className="checkbox"
+                              checked={selectedSubfolders.has(sf.path)}
+                              onChange={() => {
+                                setSelectedSubfolders(prev => {
+                                  const next = new Set(prev);
+                                  next.has(sf.path) ? next.delete(sf.path) : next.add(sf.path);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span style={{ fontSize: 12 }}>{sf.path === "" ? "(root)" : sf.path}</span>
+                            <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>{sf.image_count}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

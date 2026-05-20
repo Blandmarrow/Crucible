@@ -1,6 +1,11 @@
 import client from "./client";
 import type { ImageDetail, ImageListItem } from "../types";
 
+export interface BatchMoveSubfolderResult {
+  moved: number;
+  subfolder: string;
+}
+
 export interface ImageListParams {
   dataset_id: string;
   page?: number;
@@ -22,6 +27,7 @@ export interface ImageListParams {
   ar_max?: number;
   format_filter?: string;
   score_filters?: string;
+  subfolder?: string;
 }
 
 export const imagesApi = {
@@ -33,10 +39,11 @@ export const imagesApi = {
     client.delete("/images/batch/delete", { data: image_ids }),
   fileUrl: (id: string) => `/api/v1/images/${id}/file`,
   thumbnailUrl: (id: string) => `/api/v1/images/${id}/thumbnail`,
-  upload: (dataset_id: string, files: File[]) => {
+  upload: (dataset_id: string, files: File[], subfolder = "") => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
-    return client.post(`/images/upload?dataset_id=${dataset_id}`, form, {
+    const qs = subfolder ? `&subfolder=${encodeURIComponent(subfolder)}` : "";
+    return client.post(`/images/upload?dataset_id=${dataset_id}${qs}`, form, {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
@@ -48,4 +55,6 @@ export const imagesApi = {
     client.post<{ job_id: string }>("/images/batch/resize", { image_ids, ...opts }).then((r) => r.data),
   batchCrop: (image_ids: string[], target_ar: number, strategy = "center") =>
     client.post<{ job_id: string }>("/images/batch/crop", { image_ids, target_ar, strategy }).then((r) => r.data),
+  batchMoveSubfolder: (image_ids: string[], subfolder: string) =>
+    client.post<BatchMoveSubfolderResult>("/images/batch/move-subfolder", { image_ids, subfolder }).then((r) => r.data),
 };

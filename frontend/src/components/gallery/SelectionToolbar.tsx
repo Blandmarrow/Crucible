@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Tag, Tags, X, Sparkles, Star } from "lucide-react";
+import { Trash2, Tag, Tags, X, Sparkles, Star, FolderInput } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
@@ -11,14 +11,15 @@ import { qualityApi } from "../../api/quality";
 import ConfirmDialog from "../common/ConfirmDialog";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
-import type { ModelInfo, OllamaModel } from "../../types";
+import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 
 interface Props {
   datasetId: string;
+  subfolders?: SubfolderInfo[];
 }
 
-export default function SelectionToolbar({ datasetId }: Props) {
+export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) {
   const { selectedIds, clear, count } = useSelectionStore();
   const qc = useQueryClient();
   const [showTagAdd, setShowTagAdd] = useState(false);
@@ -39,6 +40,8 @@ export default function SelectionToolbar({ datasetId }: Props) {
   const [runEmbeddings, setRunEmbeddings] = useState(false);
   const [scoreJobId, setScoreJobId] = useState<string | null>(null);
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
+  const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
+  const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -83,10 +86,23 @@ export default function SelectionToolbar({ datasetId }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       clear();
       setShowDeleteConfirm(false);
       toast.success(`Deleted ${ids.length} images`);
     },
+  });
+
+  const moveSubfolderMutation = useMutation({
+    mutationFn: () => imagesApi.batchMoveSubfolder(ids, moveSubfolderTarget),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      setShowMoveSubfolder(false);
+      clear();
+      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+    },
+    onError: () => toast.error("Move failed"),
   });
 
   const addTagsMutation = useMutation({
@@ -169,6 +185,9 @@ export default function SelectionToolbar({ datasetId }: Props) {
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowScore(true)}>
           <Star size={14} /> Score
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
+          <FolderInput size={14} /> Move to
         </button>
         <button className="btn-danger btn-sm flex items-center gap-1.5" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 size={14} /> Delete
@@ -368,6 +387,53 @@ export default function SelectionToolbar({ datasetId }: Props) {
           onConfirm={() => deleteMutation.mutate()}
           onCancel={() => setShowDeleteConfirm(false)}
         />
+      )}
+
+      {/* Move to subfolder modal */}
+      {showMoveSubfolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-sm space-y-3">
+            <h4 className="font-medium flex items-center gap-2">
+              <FolderInput size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Subfolder
+            </h4>
+            {subfolders.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  className={`btn btn-sm ${moveSubfolderTarget === "" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setMoveSubfolderTarget("")}
+                >
+                  (root)
+                </button>
+                {subfolders.filter(sf => sf.path !== "").map(sf => (
+                  <button
+                    key={sf.path}
+                    className={`btn btn-sm ${moveSubfolderTarget === sf.path ? "btn-primary" : "btn-secondary"}`}
+                    onClick={() => setMoveSubfolderTarget(sf.path)}
+                  >
+                    {sf.path}
+                  </button>
+                ))}
+              </div>
+            )}
+            <input
+              className="input"
+              placeholder={subfolders.length > 0 ? "Or type a new path: characters/poses" : "Subfolder path: characters/poses"}
+              value={moveSubfolderTarget}
+              onChange={e => setMoveSubfolderTarget(e.target.value)}
+              autoFocus={subfolders.length === 0}
+            />
+            <div className="flex gap-2 justify-end">
+              <button className="btn-ghost" onClick={() => setShowMoveSubfolder(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={() => moveSubfolderMutation.mutate()}
+                disabled={moveSubfolderMutation.isPending}
+              >
+                Move
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

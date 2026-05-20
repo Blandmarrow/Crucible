@@ -7,6 +7,7 @@ interface ExportFilters {
   captioned_only?: boolean;
   exclude_flags?: string;
   style_sim_min?: number | null;
+  subfolders?: string[] | null;
 }
 
 export const exportApi = {
@@ -44,6 +45,7 @@ export const exportApi = {
       captioned_only?: boolean;
       exclude_flags?: string;
       style_sim_min?: number | null;
+      subfolders?: string[] | null;
     },
   ) =>
     client
@@ -53,6 +55,7 @@ export const exportApi = {
           ...(filters?.captioned_only && { captioned_only: true }),
           ...(filters?.exclude_flags && { exclude_flags: filters.exclude_flags }),
           ...(filters?.style_sim_min != null && { style_sim_min: filters.style_sim_min }),
+          ...(filters?.subfolders?.length && { subfolders: filters.subfolders.join(",") }),
         },
       })
       .then((r) => r.data),

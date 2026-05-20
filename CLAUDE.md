@@ -59,6 +59,15 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 
 After a successful load, `_registry[model_id]["vram_mb"]` is updated with the measured GPU delta so eviction decisions reflect reality.
 
+**Explicit unload methods** — two public async methods allow callers to free VRAM on demand:
+
+| Method | Effect |
+|---|---|
+| `await model_manager.unload(model_id)` | Unloads one model by ID, acquires its per-model lock, moves weights to CPU, deletes the entry, and calls `torch.cuda.empty_cache()`. |
+| `await model_manager.evict_all()` | Calls `unload()` for every currently registered model and does a final `cuda.empty_cache()`. Returns the list of model IDs that were unloaded. Used by `POST /api/v1/models/unload-all`. |
+
+**`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`, registered in `main.py`) — evicts all ML models from VRAM without restarting the server. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Intended to be called after quality scoring completes so that scoring models (aesthetic, CLIP, DINOv2) do not occupy VRAM when they are no longer needed.
+
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|

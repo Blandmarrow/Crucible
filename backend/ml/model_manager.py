@@ -266,6 +266,16 @@ class ModelManager:
                 del entry.model
                 torch.cuda.empty_cache()
 
+    async def evict_all(self) -> list[str]:
+        """Unload every registered ML model from VRAM and return their IDs."""
+        import torch
+        model_ids = list(self._registry.keys())
+        for model_id in model_ids:
+            await self.unload(model_id)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return model_ids
+
     def list_models(self) -> list[dict]:
         loaded = set(self._registry.keys())
         all_models = [

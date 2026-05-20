@@ -17,7 +17,7 @@ from backend.database import init_db
 
 if settings.hf_token:
     os.environ.setdefault("HF_TOKEN", settings.hf_token)
-from backend.routers import booru, captions, captioning, datasets, export, filesystem, images, jobs, quality, system
+from backend.routers import booru, captions, captioning, datasets, export, filesystem, images, jobs, models, quality, system
 from backend.workers.job_queue import job_queue
 
 
@@ -50,6 +50,7 @@ app.include_router(images.router, prefix=PREFIX)
 app.include_router(captions.router, prefix=PREFIX)
 app.include_router(captioning.router, prefix=PREFIX)
 app.include_router(quality.router, prefix=PREFIX)
+app.include_router(models.router, prefix=PREFIX)
 app.include_router(booru.router, prefix=PREFIX)
 app.include_router(export.router, prefix=PREFIX)
 app.include_router(jobs.router, prefix=PREFIX)

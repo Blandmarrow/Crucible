@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Tag, Tags, X, Sparkles, Star, FolderInput, ScanSearch } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ScanSearch } from "lucide-react";
 import toast from "react-hot-toast";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
-import { captionsApi } from "../../api/captions";
 import { captioningApi } from "../../api/captioning";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
@@ -23,9 +22,6 @@ interface Props {
 export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) {
   const { selectedIds, clear, count } = useSelectionStore();
   const qc = useQueryClient();
-  const [showTagAdd, setShowTagAdd] = useState(false);
-  const [showTagRemove, setShowTagRemove] = useState(false);
-  const [tagInput, setTagInput] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
   const [showScore, setShowScore] = useState(false);
@@ -126,26 +122,6 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onError: () => toast.error("Move failed"),
   });
 
-  const addTagsMutation = useMutation({
-    mutationFn: () => captionsApi.batchSetTags(ids, tagInput.split(",").map(t => t.trim()).filter(Boolean)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setShowTagAdd(false);
-      setTagInput("");
-      toast.success("Tags added");
-    },
-  });
-
-  const removeTagsMutation = useMutation({
-    mutationFn: () => captionsApi.batchRemoveTags(ids, tagInput.split(",").map(t => t.trim()).filter(Boolean)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setShowTagRemove(false);
-      setTagInput("");
-      toast.success("Tags removed");
-    },
-  });
-
   const captionMutation = useMutation({
     mutationFn: () =>
       captioningApi.run({
@@ -221,12 +197,6 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         <span className="text-sm font-medium text-accent">{count} selected</span>
         <div className="w-px h-4 bg-gray-600" />
 
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowTagAdd(true); setTagInput(""); }}>
-          <Tag size={14} /> Add Tags
-        </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowTagRemove(true); setTagInput(""); }}>
-          <Tags size={14} /> Remove Tags
-        </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCaption(true)}>
           <Sparkles size={14} /> Caption
         </button>
@@ -246,34 +216,6 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           <X size={14} />
         </button>
       </div>
-
-      {/* Tag add modal */}
-      {showTagAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-3">
-            <h4 className="font-medium">Add Tags to {count} Images</h4>
-            <input className="input" placeholder="tag1, tag2, tag3" value={tagInput} onChange={e => setTagInput(e.target.value)} autoFocus />
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowTagAdd(false)}>Cancel</button>
-              <button className="btn-primary" onClick={() => addTagsMutation.mutate()} disabled={!tagInput}>Apply</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tag remove modal */}
-      {showTagRemove && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-3">
-            <h4 className="font-medium">Remove Tags from {count} Images</h4>
-            <input className="input" placeholder="tag1, tag2, tag3" value={tagInput} onChange={e => setTagInput(e.target.value)} autoFocus />
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowTagRemove(false)}>Cancel</button>
-              <button className="btn-danger" onClick={() => removeTagsMutation.mutate()} disabled={!tagInput}>Remove</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Caption modal */}
       {showCaption && (

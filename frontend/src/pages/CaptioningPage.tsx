@@ -29,7 +29,6 @@ export default function CaptioningPage() {
   const [targetWidth, setTargetWidth] = useState<number | null>(null);
   const [targetHeight, setTargetHeight] = useState<number | null>(null);
   const [scope, setScope] = useState<Scope>("uncaptioned");
-  const [appendTags, setAppendTags] = useState(true);
   const [stripRefusals, setStripRefusals] = useState(true);
   const [saveBackup, setSaveBackup] = useState(false);
   const [renameOnCaption, setRenameOnCaption] = useState(false);
@@ -87,7 +86,6 @@ export default function CaptioningPage() {
       custom_prompt: customPrompt,
       image_ids: scope === "selected" ? [...selectedIds] : undefined,
       ...(targetWidth && targetHeight ? { target_width: targetWidth, target_height: targetHeight } : {}),
-      append_tags: appendTags,
       strip_refusals: stripRefusals,
       save_backup: saveBackup,
       rename_on_caption: renameOnCaption,
@@ -434,7 +432,6 @@ export default function CaptioningPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
-                  { label: <>Append existing tags from <span className="mono">tags_json</span></>, val: appendTags, set: setAppendTags },
                   { label: "Strip refusal phrases & identity guesses", val: stripRefusals, set: setStripRefusals },
                   { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup },
                   { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption },

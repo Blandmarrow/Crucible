@@ -355,7 +355,6 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 | Field | Default | Effect |
 |---|---|---|
-| `append_tags` | `true` | After generating a caption, merge existing `tags_json` into it. For tag/booru styles: deduplicate and rebuild comma-separated string. For prose styles: append existing tags as a comma-separated suffix. |
 | `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. |
 | `save_backup` | `false` | Before calling `set_caption`, write the existing `.txt` sidecar to `.txt.bak`. |
 | `rename_on_caption` | `false` | After saving each caption, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root). Sets `is_auto_named=True`. Subfolder and original filename are fetched from the initial bulk query — no per-image DB round-trip. |

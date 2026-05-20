@@ -32,9 +32,10 @@ export const datasetsApi = {
   deleteSubfolder: (id: string, path: string) =>
     client.delete(`/datasets/${id}/subfolders`, { params: { path } }).then((r) => r.data),
   refreshStats: (id: string) => client.post(`/datasets/${id}/refresh-stats`),
-  stats: (id: string) => client.get<DatasetStats>(`/datasets/${id}/stats`).then((r) => r.data),
-  tagCooccurrence: (id: string, limit = 15) =>
-    client.get<TagCooccurrence>(`/datasets/${id}/tag-cooccurrence?limit=${limit}`).then((r) => r.data),
-  scoreValues: (id: string) =>
-    client.get<ScoreValues>(`/datasets/${id}/score-values`).then((r) => r.data),
+  stats: (id: string, subfolder?: string) =>
+    client.get<DatasetStats>(`/datasets/${id}/stats`, { params: { subfolder } }).then((r) => r.data),
+  tagCooccurrence: (id: string, limit = 15, subfolder?: string) =>
+    client.get<TagCooccurrence>(`/datasets/${id}/tag-cooccurrence`, { params: { limit, subfolder } }).then((r) => r.data),
+  scoreValues: (id: string, subfolder?: string) =>
+    client.get<ScoreValues>(`/datasets/${id}/score-values`, { params: { subfolder } }).then((r) => r.data),
 };

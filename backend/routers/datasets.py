@@ -182,24 +182,24 @@ async def do_refresh_stats(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{dataset_id}/stats", response_model=DatasetStats)
-async def get_stats(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    stats = await get_dataset_stats(db, dataset_id)
+async def get_stats(dataset_id: str, subfolder: str | None = Query(None), db: AsyncSession = Depends(get_db)):
+    stats = await get_dataset_stats(db, dataset_id, subfolder=subfolder)
     if not stats:
         raise HTTPException(404, "Dataset not found")
     return stats
 
 
 @router.get("/{dataset_id}/score-values")
-async def get_score_values_endpoint(dataset_id: str, db: AsyncSession = Depends(get_db)):
+async def get_score_values_endpoint(dataset_id: str, subfolder: str | None = Query(None), db: AsyncSession = Depends(get_db)):
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
-    return await get_score_values(db, dataset_id)
+    return await get_score_values(db, dataset_id, subfolder=subfolder)
 
 
 @router.get("/{dataset_id}/tag-cooccurrence", response_model=TagCooccurrence)
-async def tag_cooccurrence(dataset_id: str, limit: int = 15, db: AsyncSession = Depends(get_db)):
+async def tag_cooccurrence(dataset_id: str, limit: int = 15, subfolder: str | None = Query(None), db: AsyncSession = Depends(get_db)):
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
-    return await get_tag_cooccurrence(db, dataset_id, limit)
+    return await get_tag_cooccurrence(db, dataset_id, limit, subfolder=subfolder)

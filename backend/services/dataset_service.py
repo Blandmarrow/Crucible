@@ -275,21 +275,22 @@ async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:
         await db.commit()
 
 
-async def get_dataset_stats(db: AsyncSession, dataset_id: str) -> dict:
+async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         return {}
 
-    result = await db.execute(
-        select(
-            Image.width, Image.height, Image.format,
-            Image.aesthetic_score, Image.caption_text,
-            Image.blur_score, Image.noise_score, Image.uniformity_score,
-            Image.watermark_score, Image.color_score, Image.saturation_score,
-            Image.file_size_bytes, Image.quality_flags,
-            Image.style_similarity_score,
-        ).where(Image.dataset_id == dataset_id)
-    )
+    q = select(
+        Image.width, Image.height, Image.format,
+        Image.aesthetic_score, Image.caption_text,
+        Image.blur_score, Image.noise_score, Image.uniformity_score,
+        Image.watermark_score, Image.color_score, Image.saturation_score,
+        Image.file_size_bytes, Image.quality_flags,
+        Image.style_similarity_score,
+    ).where(Image.dataset_id == dataset_id)
+    if subfolder is not None:
+        q = q.where(Image.subfolder == subfolder)
+    result = await db.execute(q)
     rows = result.all()
 
     # Bucket edge/label definitions
@@ -429,12 +430,13 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str) -> dict:
         wc_dist[b] = wc_dist.get(b, 0) + 1
 
     # Embedding coverage — separate count query to avoid loading blobs
-    embed_count = await db.scalar(
-        select(func.count(Image.id)).where(
-            Image.dataset_id == dataset_id,
-            Image.clip_embedding.isnot(None),
-        )
+    embed_q = select(func.count(Image.id)).where(
+        Image.dataset_id == dataset_id,
+        Image.clip_embedding.isnot(None),
     )
+    if subfolder is not None:
+        embed_q = embed_q.where(Image.subfolder == subfolder)
+    embed_count = await db.scalar(embed_q)
     score_cov["embeddings"] = embed_count or 0
 
     total = len(rows)
@@ -463,8 +465,8 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str) -> dict:
         "image_count": total,
         "captioned_count": captioned,
         "caption_coverage_pct": coverage,
-        "total_size_bytes": ds.total_size_bytes,
-        "total_size_mb": round(ds.total_size_bytes / 1_048_576, 2),
+        "total_size_bytes": sum(r.file_size_bytes or 0 for r in rows) if subfolder is not None else ds.total_size_bytes,
+        "total_size_mb": round(sum(file_sizes_mb), 2) if subfolder is not None else round(ds.total_size_bytes / 1_048_576, 2),
         "avg_width": round(sum(widths) / len(widths), 1) if widths else None,
         "avg_height": round(sum(heights) / len(heights), 1) if heights else None,
         "aspect_ratio_distribution": {k: v for k, v in ar_coarse.items() if v},
@@ -487,23 +489,24 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str) -> dict:
     }
 
 
-async def get_score_values(db: AsyncSession, dataset_id: str) -> dict:
-    result = await db.execute(
-        select(
-            Image.aesthetic_score,
-            Image.blur_score,
-            Image.noise_score,
-            Image.uniformity_score,
-            Image.watermark_score,
-            Image.color_score,
-            Image.saturation_score,
-            Image.style_similarity_score,
-            Image.width,
-            Image.height,
-            Image.file_size_bytes,
-            Image.caption_text,
-        ).where(Image.dataset_id == dataset_id)
-    )
+async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
+    q = select(
+        Image.aesthetic_score,
+        Image.blur_score,
+        Image.noise_score,
+        Image.uniformity_score,
+        Image.watermark_score,
+        Image.color_score,
+        Image.saturation_score,
+        Image.style_similarity_score,
+        Image.width,
+        Image.height,
+        Image.file_size_bytes,
+        Image.caption_text,
+    ).where(Image.dataset_id == dataset_id)
+    if subfolder is not None:
+        q = q.where(Image.subfolder == subfolder)
+    result = await db.execute(q)
     rows = result.all()
 
     score_fields = [
@@ -529,11 +532,11 @@ async def get_score_values(db: AsyncSession, dataset_id: str) -> dict:
     return out
 
 
-async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15) -> dict:
-    result = await db.execute(
-        select(Image.tags_json)
-        .where(Image.dataset_id == dataset_id, Image.tags_json.isnot(None))
-    )
+async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15, subfolder: str | None = None) -> dict:
+    q = select(Image.tags_json).where(Image.dataset_id == dataset_id, Image.tags_json.isnot(None))
+    if subfolder is not None:
+        q = q.where(Image.subfolder == subfolder)
+    result = await db.execute(q)
     all_tags_json = [r[0] for r in result.all() if r[0]]
 
     # Count tag frequencies, pick top N

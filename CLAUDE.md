@@ -219,14 +219,19 @@ Three performance indexes exist:
 
 ### Statistics page
 
-`frontend/src/pages/StatsPage.tsx` renders the dataset analytics dashboard. It makes four queries:
+`frontend/src/pages/StatsPage.tsx` renders the dataset analytics dashboard. A compact subfolder dropdown in the page header (shown only when subfolders exist) scopes all four queries to a specific subfolder. It makes five queries:
 
 | Query key | Source | Contents |
 |---|---|---|
-| `["dataset-stats", datasetId]` | `GET /datasets/{id}/stats` | All distributions (see schema below) |
-| `["tag-stats", datasetId]` | `GET /captions/dataset/{id}/tag-stats` | Top 500 tags with counts |
-| `["tag-cooccurrence", datasetId]` | `GET /datasets/{id}/tag-cooccurrence?limit=15` | Top-15 tag co-occurrence matrix |
-| `["score-values", datasetId]` | `GET /datasets/{id}/score-values` | Raw float arrays for all 8 score fields + `megapixels`, `file_size_mb`, `caption_words` — used for client-side histogram rebucketing |
+| `["subfolders", datasetId]` | `GET /datasets/{id}/subfolders` | Subfolder list for the dropdown |
+| `["dataset-stats", datasetId, activeSubfolder]` | `GET /datasets/{id}/stats?subfolder=` | All distributions (see schema below) |
+| `["tag-stats", datasetId, activeSubfolder]` | `GET /captions/dataset/{id}/tag-stats?subfolder=` | Top 500 tags with counts |
+| `["tag-cooccurrence", datasetId, activeSubfolder]` | `GET /datasets/{id}/tag-cooccurrence?limit=15&subfolder=` | Top-15 tag co-occurrence matrix |
+| `["score-values", datasetId, activeSubfolder]` | `GET /datasets/{id}/score-values?subfolder=` | Raw float arrays for all 8 score fields + `megapixels`, `file_size_mb`, `caption_words` — used for client-side histogram rebucketing |
+
+All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` resets to `undefined` on dataset change. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
+
+**`DatasetStats` subfolder invariant**: `get_dataset_stats()` has two scalar queries that run outside the main row-scan — embedding count and disk usage — and both must include `.where(Image.subfolder == subfolder)` when subfolder is not None. The row-scan itself drives all other fields (distributions, caption coverage, mean aesthetic, quality flags). `total_size_mb` is derived from the filtered `file_sizes_mb` list when a subfolder is active; `ds.total_size_bytes` (the cached dataset total) is only used for the all-images case.
 
 **`DatasetStats` schema** (in `backend/schemas/dataset.py`) includes these distribution dicts on top of the basic summary fields. All are computed in a single row-scan in `dataset_service.get_dataset_stats()`:
 

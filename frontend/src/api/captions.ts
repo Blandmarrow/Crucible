@@ -11,8 +11,8 @@ export const captionsApi = {
     client.post("/captions/batch/set-tags", { image_ids, tags, mode }),
   batchRemoveTags: (image_ids: string[], tags: string[]) =>
     client.post("/captions/batch/remove-tags", { image_ids, tags }),
-  tagStats: (dataset_id: string) =>
-    client.get<TagStat[]>(`/captions/dataset/${dataset_id}/tag-stats`).then((r) => r.data),
+  tagStats: (dataset_id: string, subfolder?: string) =>
+    client.get<TagStat[]>(`/captions/dataset/${dataset_id}/tag-stats`, { params: { subfolder } }).then((r) => r.data),
   findReplace: (
     dataset_id: string,
     find: string,

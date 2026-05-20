@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ImageListItem } from "../types";
+import type { ImageListItem, SubfolderInfo } from "../types";
 import { datasetsApi } from "../api/datasets";
 import { captionsApi } from "../api/captions";
 import { imagesApi, type ImageListParams } from "../api/images";
@@ -363,20 +363,22 @@ function BucketPanel({
   params,
   datasetId,
   onClose,
+  subfolder,
 }: {
   title: string;
   params: FilterParams;
   datasetId: string;
   onClose: () => void;
+  subfolder?: string;
 }) {
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const queryClient = useQueryClient();
-  const queryKey = ["bucket-images", datasetId, params];
+  const queryKey = ["bucket-images", datasetId, params, subfolder];
 
   const { data: images = [], isLoading } = useQuery({
     queryKey,
-    queryFn: () => imagesApi.list({ dataset_id: datasetId, limit: 200, ...params }),
+    queryFn: () => imagesApi.list({ dataset_id: datasetId, limit: 200, ...params, subfolder }),
   });
 
   useEffect(() => {
@@ -679,28 +681,39 @@ function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdg
 export default function StatsPage() {
   const datasetId = usePaneDatasetId();
   const [panelFilter, setPanelFilter] = useState<PanelFilter>(null);
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    setActiveSubfolder(undefined);
+  }, [datasetId]);
+
+  const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ["dataset-stats", datasetId],
-    queryFn: () => datasetsApi.stats(datasetId!),
+    queryKey: ["dataset-stats", datasetId, activeSubfolder],
+    queryFn: () => datasetsApi.stats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
   });
 
   const { data: tagStats = [] } = useQuery({
-    queryKey: ["tag-stats", datasetId],
-    queryFn: () => captionsApi.tagStats(datasetId!),
+    queryKey: ["tag-stats", datasetId, activeSubfolder],
+    queryFn: () => captionsApi.tagStats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
   });
 
   const { data: cooccurrence } = useQuery({
-    queryKey: ["tag-cooccurrence", datasetId],
-    queryFn: () => datasetsApi.tagCooccurrence(datasetId!),
+    queryKey: ["tag-cooccurrence", datasetId, activeSubfolder],
+    queryFn: () => datasetsApi.tagCooccurrence(datasetId!, 15, activeSubfolder),
     enabled: !!datasetId,
   });
 
   const { data: sv } = useQuery<ScoreValues>({
-    queryKey: ["score-values", datasetId],
-    queryFn: () => datasetsApi.scoreValues(datasetId!),
+    queryKey: ["score-values", datasetId, activeSubfolder],
+    queryFn: () => datasetsApi.scoreValues(datasetId!, activeSubfolder),
     enabled: !!datasetId,
   });
 
@@ -762,6 +775,19 @@ export default function StatsPage() {
           <p>Dataset quality metrics, score distributions and tag analysis.</p>
         </div>
         <div className="phactions">
+          {subfolders.length > 0 && (
+            <select
+              className="select"
+              value={activeSubfolder ?? ""}
+              onChange={(e) => setActiveSubfolder(e.target.value === "" ? undefined : e.target.value)}
+              style={{ fontSize: 12, height: 30 }}
+            >
+              <option value="">All subfolders</option>
+              {subfolders.map((sf) => (
+                <option key={sf.path} value={sf.path}>{sf.path} ({sf.image_count})</option>
+              ))}
+            </select>
+          )}
           <button className="btn" onClick={() => downloadCsv(stats, datasetId!)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
@@ -1001,6 +1027,7 @@ export default function StatsPage() {
           params={panelFilter.params}
           datasetId={datasetId!}
           onClose={() => setPanelFilter(null)}
+          subfolder={activeSubfolder}
         />
       )}
 

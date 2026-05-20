@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -55,8 +55,8 @@ async def batch_remove(body: BatchTagRemove, db: AsyncSession = Depends(get_db))
 
 
 @router.get("/dataset/{dataset_id}/tag-stats", response_model=list[TagStatItem])
-async def tag_stats(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    return await get_tag_stats(db, dataset_id)
+async def tag_stats(dataset_id: str, subfolder: str | None = Query(None), db: AsyncSession = Depends(get_db)):
+    return await get_tag_stats(db, dataset_id, subfolder=subfolder)
 
 
 @router.post("/dataset/{dataset_id}/find-replace")

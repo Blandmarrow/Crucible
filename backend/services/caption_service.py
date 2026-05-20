@@ -123,15 +123,18 @@ async def find_replace_captions(
     return updated
 
 
-async def get_tag_stats(db: AsyncSession, dataset_id: str) -> list[dict]:
+async def get_tag_stats(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> list[dict]:
     from sqlalchemy import func
-    result = await db.execute(
+    q = (
         select(Tag.tag, Tag.category, func.count(Tag.id).label("count"))
         .where(Tag.dataset_id == dataset_id)
         .group_by(Tag.tag, Tag.category)
         .order_by(func.count(Tag.id).desc())
         .limit(500)
     )
+    if subfolder is not None:
+        q = q.join(Image, Tag.image_id == Image.id).where(Image.subfolder == subfolder)
+    result = await db.execute(q)
     return [{"tag": r.tag, "category": r.category, "count": r.count} for r in result.all()]
 
 

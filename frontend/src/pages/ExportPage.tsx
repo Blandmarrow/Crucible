@@ -7,10 +7,12 @@ import { datasetsApi } from "../api/datasets";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
+import DirPickerModal from "../components/common/DirPickerModal";
+import { FolderOpen } from "lucide-react";
 
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
-type ResizeTo = 512 | 768 | 1024 | null;
+type ResizeTo = number | null;
 
 const FORMAT_LABELS: Record<Format, string> = {
   kohya: "kohya",
@@ -35,6 +37,9 @@ export default function ExportPage() {
   const [conceptToken, setConceptToken] = useState("concept");
   const [outputImgFmt, setOutputImgFmt] = useState("original");
   const [resizeTo, setResizeTo] = useState<ResizeTo>(null);
+  const [customResize, setCustomResize] = useState(false);
+  const [customResizeVal, setCustomResizeVal] = useState("");
+  const [dirPickerOpen, setDirPickerOpen] = useState(false);
 
   // Filters
   const [filterAesthetic, setFilterAesthetic] = useState(false);
@@ -87,7 +92,7 @@ export default function ExportPage() {
 
   const buildFilters = () => ({
     caption_format: captionFmt,
-    resize_to: resizeTo,
+    resize_to: customResize ? (parseInt(customResizeVal, 10) || null) : resizeTo,
     aesthetic_min: filterAesthetic ? aestheticMin : null,
     captioned_only: filterCaptioned,
     exclude_flags: [...excludeFlags].join(","),
@@ -270,14 +275,51 @@ export default function ExportPage() {
             <div className="form-row">
               <div className="lbl-col">
                 <h4>Resize on export</h4>
-                <p>Resize images before writing. Originals are unchanged.</p>
+                <p>
+                  Scales the <strong>longest side</strong> down to the chosen pixel count.
+                  Aspect ratio is preserved — no cropping. Images already smaller than the
+                  target are not upscaled. Originals are never modified.
+                </p>
               </div>
-              <div className="row-flex">
-                {([512, 768, 1024, null] as ResizeTo[]).map((r) => (
-                  <button key={r ?? "none"} className={`btn sm${resizeTo === r ? " primary" : ""}`} onClick={() => setResizeTo(r)}>
-                    {r ?? "No resize"}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="row-flex">
+                  {([512, 768, 1024] as number[]).map((r) => (
+                    <button
+                      key={r}
+                      className={`btn sm${!customResize && resizeTo === r ? " primary" : ""}`}
+                      onClick={() => { setResizeTo(r); setCustomResize(false); }}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                  <button
+                    className={`btn sm${customResize ? " primary" : ""}`}
+                    onClick={() => setCustomResize(true)}
+                  >
+                    Custom
                   </button>
-                ))}
+                  <button
+                    className={`btn sm${!customResize && resizeTo === null ? " primary" : ""}`}
+                    onClick={() => { setResizeTo(null); setCustomResize(false); }}
+                  >
+                    No resize
+                  </button>
+                </div>
+                {customResize && (
+                  <div className="row-flex" style={{ alignItems: "center", gap: 6 }}>
+                    <input
+                      className="input"
+                      type="number"
+                      min={64}
+                      max={8192}
+                      placeholder="e.g. 1536"
+                      value={customResizeVal}
+                      style={{ width: 110 }}
+                      onChange={(e) => setCustomResizeVal(e.target.value)}
+                    />
+                    <span style={{ color: "var(--fg-muted)", fontSize: 12 }}>px (longest side)</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -287,8 +329,21 @@ export default function ExportPage() {
                 <h4>Output directory</h4>
                 <p>Folder where files will be written.</p>
               </div>
-              <input className="input" placeholder="C:\training\my_dataset" value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
+              <div style={{ display: "flex", gap: 6 }}>
+                <input className="input" style={{ flex: 1 }} placeholder="C:\training\my_dataset" value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
+                <button className="btn sm" title="Browse…" onClick={() => setDirPickerOpen(true)}>
+                  <FolderOpen size={14} /> Browse
+                </button>
+              </div>
             </div>
+
+            {dirPickerOpen && (
+              <DirPickerModal
+                initialPath={outputDir}
+                onConfirm={(p) => { setOutputDir(p); setDirPickerOpen(false); }}
+                onCancel={() => setDirPickerOpen(false)}
+              />
+            )}
 
             {/* Concept */}
             {showConcept && (

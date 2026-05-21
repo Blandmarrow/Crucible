@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Folder, FolderOpen, File, Image as ImageIcon, HardDrive, Home,
@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { filesystemApi, type FsEntry } from "../api/filesystem";
+import { parentOf, breadcrumbsFromPath } from "../utils/pathUtils";
 import { datasetsApi } from "../api/datasets";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { Dataset, GenerationMetadata as GenMeta } from "../types";
@@ -312,23 +313,7 @@ export default function FileBrowserPage() {
       return sortDir === "asc" ? cmp : -cmp;
     });
 
-  // Breadcrumb segments from currentPath
-  const breadcrumbs = useCallback(() => {
-    if (!currentPath) return [];
-    const parts = currentPath.replace(/\\/g, "/").split("/").filter(Boolean);
-    const result: { label: string; path: string }[] = [];
-    // On Windows: first segment is like "C:" → reconstruct as "C:\"
-    let accum = "";
-    for (let i = 0; i < parts.length; i++) {
-      if (i === 0) {
-        accum = parts[0].endsWith(":") ? parts[0] + "\\" : "/" + parts[0];
-      } else {
-        accum = accum.endsWith("\\") || accum.endsWith("/") ? accum + parts[i] : accum + "\\" + parts[i];
-      }
-      result.push({ label: parts[i], path: accum });
-    }
-    return result;
-  }, [currentPath]);
+  const breadcrumbs = () => currentPath ? breadcrumbsFromPath(currentPath) : [];
 
   const navigateTo = (path: string) => {
     setCurrentPath(path);
@@ -337,15 +322,9 @@ export default function FileBrowserPage() {
 
   const goUp = () => {
     if (!currentPath) return;
-    const p = currentPath.replace(/[\\/]+$/, "");
-    const lastSep = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-    if (lastSep <= 0) {
-      // Already at drive root like C:\ — go to roots list
-      setCurrentPath("");
-      setSelectedEntry(null);
-    } else {
-      navigateTo(p.slice(0, lastSep) || p.slice(0, lastSep + 1));
-    }
+    const parent = parentOf(currentPath);
+    if (parent) navigateTo(parent);
+    else { setCurrentPath(""); setSelectedEntry(null); }
   };
 
   const handleEntryClick = (e: React.MouseEvent, entry: FsEntry) => {

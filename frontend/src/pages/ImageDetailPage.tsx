@@ -2,13 +2,14 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2 } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
 import { captionsApi } from "../api/captions";
 import { captioningApi } from "../api/captioning";
 import { detectionApi } from "../api/detection";
+import { upscalingApi } from "../api/upscaling";
 import { useJobStore } from "../store/jobStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
@@ -77,6 +78,19 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
   );
 }
 
+function injectNavId(datasetId: string, afterId: string, newId: string) {
+  try {
+    const raw = sessionStorage.getItem(`gallery-nav-${datasetId}`);
+    if (!raw) return;
+    const ctx = JSON.parse(raw) as { ids: string[]; [k: string]: unknown };
+    const idx = ctx.ids.indexOf(afterId);
+    const newIds = [...ctx.ids];
+    if (idx >= 0) newIds.splice(idx + 1, 0, newId);
+    else newIds.push(newId);
+    sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify({ ...ctx, ids: newIds }));
+  } catch { /* ignore */ }
+}
+
 export default function ImageDetailPage() {
   const datasetId = usePaneDatasetId();
   const imageId = usePaneImageId();
@@ -95,6 +109,18 @@ export default function ImageDetailPage() {
   const [croppedArea, setCroppedArea] = useState<CropArea | null>(null);
   const [outputWidth, setOutputWidth] = useState("");
   const [outputHeight, setOutputHeight] = useState("");
+  // Crop + upscale (atomic)
+  const [cropUpscaleModel, setCropUpscaleModel] = useState("");
+  const [cropUpscaleTargetW, setCropUpscaleTargetW] = useState("");
+  const [cropUpscaleTargetH, setCropUpscaleTargetH] = useState("");
+  const [cropUpscaleJobId, setCropUpscaleJobId] = useState<string | null>(null);
+  // Standalone upscale mode
+  const [upscaleMode, setUpscaleMode] = useState(false);
+  const [upscaleModel, setUpscaleModel] = useState("");
+  const [upscaleReplace, setUpscaleReplace] = useState(false);
+  const [upscaleTargetW, setUpscaleTargetW] = useState("");
+  const [upscaleTargetH, setUpscaleTargetH] = useState("");
+  const [upscaleJobId, setUpscaleJobId] = useState<string | null>(null);
 
   const owNum = parseInt(outputWidth);
   const ohNum = parseInt(outputHeight);
@@ -247,6 +273,16 @@ export default function ImageDetailPage() {
     enabled: showAi,
   });
 
+  const { data: upscaleModels = [] } = useQuery({
+    queryKey: ["upscale-models"],
+    queryFn: upscalingApi.models,
+    enabled: upscaleMode || cropMode,
+    staleTime: Infinity,
+  });
+  const upscaleModelOptions = upscaleModels.map((m) => (
+    <option key={m.path} value={m.path}>{m.name}{m.scale ? ` (${m.scale}×)` : ""}</option>
+  ));
+
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
   const aiModelType = modelType(aiModel);
@@ -256,6 +292,10 @@ export default function ImageDetailPage() {
 
   // Track AI job progress from the global SSE store (TopBar already subscribes to all jobs)
   const aiJobProgress = useJobStore((s) => s.activeJobs.get(aiJobId ?? ""));
+
+  // Upscale job progress
+  const upscaleJobProgress = useJobStore((s) => s.activeJobs.get(upscaleJobId ?? ""));
+  const cropUpscaleJobProgress = useJobStore((s) => s.activeJobs.get(cropUpscaleJobId ?? ""));
 
   useEffect(() => {
     if (!detectJobId || !detectJobProgress) return;
@@ -284,6 +324,52 @@ export default function ImageDetailPage() {
       toast.error("Captioning failed");
     }
   }, [aiJobProgress?.status, aiJobId, imageId, datasetId, qc]);
+
+  // Standalone upscale job tracking
+  useEffect(() => {
+    if (!upscaleJobId || !upscaleJobProgress) return;
+    if (upscaleJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      setUpscaleJobId(null);
+      if (!upscaleReplace && upscaleJobProgress.image_id) {
+        if (datasetId && imageId) injectNavId(datasetId, imageId, upscaleJobProgress.image_id);
+        toast.success("Upscaling complete — navigating to new image");
+        setUpscaleMode(false);
+        paneGo(
+          `/datasets/${datasetId}/image/${upscaleJobProgress.image_id}`,
+          { page: "image-detail", datasetId: datasetId ?? "", imageId: upscaleJobProgress.image_id },
+        );
+      } else {
+        toast.success("Upscaling complete");
+        setUpscaleMode(false);
+      }
+    } else if (upscaleJobProgress.status === "failed") {
+      setUpscaleJobId(null);
+      toast.error("Upscaling failed");
+    }
+  }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo]);
+
+  // Crop+upscale job tracking
+  useEffect(() => {
+    if (!cropUpscaleJobId || !cropUpscaleJobProgress) return;
+    if (cropUpscaleJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      setCropUpscaleJobId(null);
+      setCropMode(false);
+      if (cropUpscaleJobProgress.image_id) {
+        if (datasetId && imageId) injectNavId(datasetId, imageId, cropUpscaleJobProgress.image_id);
+        toast.success(`Created upscaled crop`);
+        paneGo(
+          `/datasets/${datasetId}/image/${cropUpscaleJobProgress.image_id}`,
+          { page: "image-detail", datasetId: datasetId ?? "", imageId: cropUpscaleJobProgress.image_id },
+        );
+      }
+    } else if (cropUpscaleJobProgress.status === "failed") {
+      setCropUpscaleJobId(null);
+      toast.error("Crop+upscale failed");
+    }
+  }, [cropUpscaleJobProgress?.status, cropUpscaleJobId, datasetId, qc, paneGo]);
 
   useEffect(() => {
     if (captionData && !captionDirty) {
@@ -329,19 +415,48 @@ export default function ImageDetailPage() {
         ...croppedArea,
         output_width: owNum > 0 ? owNum : undefined,
         output_height: ohNum > 0 ? ohNum : undefined,
+        upscale_model: cropUpscaleModel || undefined,
+        upscale_target_width: cropUpscaleModel && parseInt(cropUpscaleTargetW) > 0 ? parseInt(cropUpscaleTargetW) : undefined,
+        upscale_target_height: cropUpscaleModel && parseInt(cropUpscaleTargetH) > 0 ? parseInt(cropUpscaleTargetH) : undefined,
       });
     },
     onSuccess: (data) => {
       if (!datasetId) return;
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setCropMode(false);
-      toast.success(`Created ${data.filename} (${data.width}×${data.height})`);
-      paneGo(
-        `/datasets/${datasetId}/image/${data.id}`,
-        { page: "image-detail", datasetId, imageId: data.id },
-      );
+      if ("job_id" in data) {
+        // Crop+upscale — async job
+        setCropUpscaleJobId(data.job_id);
+        toast("Upscaling crop…");
+      } else {
+        setCropMode(false);
+        if (datasetId && imageId) injectNavId(datasetId, imageId, data.id);
+        toast.success(`Created ${data.filename} (${data.width}×${data.height})`);
+        paneGo(
+          `/datasets/${datasetId}/image/${data.id}`,
+          { page: "image-detail", datasetId, imageId: data.id },
+        );
+      }
     },
     onError: () => toast.error("Crop failed"),
+  });
+
+  const upscaleMutation = useMutation({
+    mutationFn: () =>
+      upscalingApi.run({
+        dataset_id: datasetId!,
+        image_ids: [imageId!],
+        model_path: upscaleModel,
+        replace: upscaleReplace,
+        target_width: parseInt(upscaleTargetW) > 0 ? parseInt(upscaleTargetW) : null,
+        target_height: parseInt(upscaleTargetH) > 0 ? parseInt(upscaleTargetH) : null,
+      }),
+    onSuccess: (data) => {
+      if (data.job_id) {
+        setUpscaleJobId(data.job_id);
+        toast.success("Upscaling…");
+      }
+    },
+    onError: () => toast.error("Failed to start upscaling"),
   });
 
   const detectMutation = useMutation({
@@ -406,6 +521,8 @@ export default function ImageDetailPage() {
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
   const aiRunning = !!aiJobId && aiJobProgress?.status === "running";
+  const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
+  const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
 
   return (
     <div className="flex h-full">
@@ -457,12 +574,19 @@ export default function ImageDetailPage() {
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => {
               setCropMode((v) => {
-                if (!v) resetCrop();
+                if (!v) { resetCrop(); setUpscaleMode(false); }
                 return !v;
               });
             }}
           >
             <Crop size={14} /> {cropMode ? "Cancel Crop" : "Crop"}
+          </button>
+          <button
+            className={`btn-sm flex items-center gap-1.5 ${upscaleMode ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); }}
+            disabled={upscaleRunning || cropUpscaleRunning}
+          >
+            <Maximize2 size={14} /> {upscaleMode ? "Cancel" : "Upscale"}
           </button>
           {cropMode && (
             <>
@@ -517,8 +641,98 @@ export default function ImageDetailPage() {
                   if (owNum > 0 && parseInt(newH) > 0) resetCrop();
                 }}
               />
-              <button className="btn-primary btn-sm" onClick={() => cropMutation.mutate()} disabled={!croppedArea || cropMutation.isPending}>
-                {cropMutation.isPending ? "Saving…" : "Save Crop"}
+              {/* Crop + upscale toggle */}
+              {upscaleModels.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>
+                  <select
+                    className="input"
+                    style={{ width: 148 }}
+                    value={cropUpscaleModel}
+                    onChange={(e) => setCropUpscaleModel(e.target.value)}
+                  >
+                    <option value="">No upscale</option>
+                    {upscaleModelOptions}
+                  </select>
+                  {cropUpscaleModel && (
+                    <>
+                      <input
+                        type="number"
+                        min="1"
+                        className="input"
+                        style={{ width: 64 }}
+                        placeholder="W px"
+                        value={cropUpscaleTargetW}
+                        onChange={(e) => setCropUpscaleTargetW(e.target.value)}
+                      />
+                      <span style={{ color: "var(--fg-mute)", fontSize: 13 }}>×</span>
+                      <input
+                        type="number"
+                        min="1"
+                        className="input"
+                        style={{ width: 64 }}
+                        placeholder="H px"
+                        value={cropUpscaleTargetH}
+                        onChange={(e) => setCropUpscaleTargetH(e.target.value)}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+              <button
+                className="btn-primary btn-sm"
+                onClick={() => cropMutation.mutate()}
+                disabled={!croppedArea || cropMutation.isPending || cropUpscaleRunning}
+              >
+                {cropUpscaleRunning ? "Upscaling…" : cropMutation.isPending ? "Saving…" : cropUpscaleModel ? "Crop & Upscale" : "Save Crop"}
+              </button>
+            </>
+          )}
+          {/* Standalone upscale controls */}
+          {upscaleMode && (
+            <>
+              <select
+                className="input"
+                style={{ width: 160 }}
+                value={upscaleModel}
+                onChange={(e) => setUpscaleModel(e.target.value)}
+              >
+                <option value="">— select model —</option>
+                {upscaleModelOptions}
+              </select>
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={upscaleReplace}
+                  onChange={(e) => setUpscaleReplace(e.target.checked)}
+                />
+                Replace
+              </label>
+              <input
+                type="number"
+                min="1"
+                className="input"
+                style={{ width: 68 }}
+                placeholder="W px"
+                value={upscaleTargetW}
+                onChange={(e) => setUpscaleTargetW(e.target.value)}
+              />
+              <span style={{ color: "var(--fg-mute)", fontSize: 13 }}>×</span>
+              <input
+                type="number"
+                min="1"
+                className="input"
+                style={{ width: 68 }}
+                placeholder="H px"
+                value={upscaleTargetH}
+                onChange={(e) => setUpscaleTargetH(e.target.value)}
+              />
+              <button
+                className="btn-primary btn-sm flex items-center gap-1.5"
+                onClick={() => upscaleMutation.mutate()}
+                disabled={!upscaleModel || upscaleRunning || upscaleMutation.isPending}
+              >
+                <Maximize2 size={13} />
+                {upscaleRunning ? `${upscaleJobProgress?.percent?.toFixed(0) ?? 0}%` : "Run"}
               </button>
             </>
           )}

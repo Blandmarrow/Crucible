@@ -52,8 +52,19 @@ export const imagesApi = {
   },
   resize: (id: string, opts: { width?: number; height?: number; scale?: number; maintain_ar?: boolean }) =>
     client.post(`/images/${id}/resize`, opts).then((r) => r.data),
-  crop: (id: string, box: { x: number; y: number; width: number; height: number; output_width?: number; output_height?: number }) =>
-    client.post<{ id: string; filename: string; width: number; height: number }>(`/images/${id}/crop`, box).then((r) => r.data),
+  crop: (
+    id: string,
+    box: {
+      x: number; y: number; width: number; height: number;
+      output_width?: number; output_height?: number;
+      upscale_model?: string;
+      upscale_target_width?: number;
+      upscale_target_height?: number;
+    },
+  ) =>
+    client
+      .post<{ id: string; filename: string; width: number; height: number } | { job_id: string }>(`/images/${id}/crop`, box)
+      .then((r) => r.data),
   batchResize: (image_ids: string[], opts: object) =>
     client.post<{ job_id: string }>("/images/batch/resize", { image_ids, ...opts }).then((r) => r.data),
   batchCrop: (image_ids: string[], target_ar: number, strategy = "center") =>

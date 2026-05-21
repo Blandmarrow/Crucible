@@ -88,6 +88,9 @@ class ImageCropRequest(BaseModel):
     height: int
     output_width: int | None = None
     output_height: int | None = None
+    upscale_model: str | None = None
+    upscale_target_width: int | None = None
+    upscale_target_height: int | None = None
 
 
 class BatchResizeRequest(BaseModel):

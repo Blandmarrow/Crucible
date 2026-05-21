@@ -341,6 +341,86 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     new_filename = unique_filename(dest_images, crop_stem, src_path.suffix, db_names)
     dest_path = dest_images / new_filename
 
+    # --- Crop + upscale path (async background job) ---
+    if body.upscale_model:
+        # Crop to a temp file; the job will upscale it to the final dest
+        tmp_path = dest_images / (dest_path.stem + "_tmp" + dest_path.suffix)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, crop_image_to_dest,
+            str(src_path), str(tmp_path),
+            body.x, body.y, body.width, body.height,
+            body.output_width, body.output_height,
+        )
+
+        job_cfg = {
+            "tmp_path": str(tmp_path),
+            "dest_path": str(dest_path),
+            "dest_thumbs": str(dest_thumbs),
+            "new_filename": new_filename,
+            "dataset_id": img.dataset_id,
+            "original_filename": img.original_filename,
+            "subfolder": img.subfolder,
+            "upscale_model": body.upscale_model,
+            "upscale_target_width": body.upscale_target_width,
+            "upscale_target_height": body.upscale_target_height,
+        }
+        job = BackgroundJob(job_type="crop_upscale", dataset_id=img.dataset_id, total_items=1, config=job_cfg)
+        db.add(job)
+        await db.commit()
+
+        async def _run_crop_upscale(job_id: str) -> None:
+            import os
+            from backend.database import AsyncSessionLocal
+            from backend.ml.upscaler import upscale_image_sync
+            from backend.workers.progress import broadcaster
+
+            cfg = job_cfg
+            tmp = cfg["tmp_path"]
+            dst = cfg["dest_path"]
+            loop2 = asyncio.get_running_loop()
+            try:
+                info = await loop2.run_in_executor(
+                    None, upscale_image_sync,
+                    tmp, dst, cfg["upscale_model"], False,
+                    cfg["upscale_target_width"], cfg["upscale_target_height"],
+                )
+            finally:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+            thumb_path = str(Path(cfg["dest_thumbs"]) / (Path(cfg["new_filename"]).stem + ".webp"))
+            await loop2.run_in_executor(None, generate_thumbnail, dst, thumb_path)
+
+            async with AsyncSessionLocal() as session:
+                new_img = Image(
+                    dataset_id=cfg["dataset_id"],
+                    filename=cfg["new_filename"],
+                    original_filename=cfg["original_filename"],
+                    subfolder=cfg["subfolder"],
+                    file_path=dst,
+                    thumbnail_path=thumb_path,
+                    width=info["width"],
+                    height=info["height"],
+                    file_size_bytes=info["file_size_bytes"],
+                    format=info["format"],
+                )
+                session.add(new_img)
+                await session.commit()
+                await session.refresh(new_img)
+
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": "crop_upscale",
+                "status": "completed", "done": 1, "total": 1, "percent": 100.0,
+                "image_id": new_img.id, "filename": new_img.filename,
+            })
+
+        await job_queue.enqueue(job, _run_crop_upscale)
+        return {"job_id": job.id}
+
+    # --- Synchronous crop-only path (original behaviour) ---
     loop = asyncio.get_running_loop()
     info = await loop.run_in_executor(
         None, crop_image_to_dest,

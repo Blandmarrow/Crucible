@@ -104,6 +104,7 @@ Model IDs and their captioner/scorer modules:
 
 `HF_TOKEN` from `.env` is injected into `os.environ` early in `main.py` so all `hf_hub_download` calls pick it up automatically.
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
+| `upscale:{abs_path}` | `ml/upscaler.py` (spandrel; keyed by absolute model file path to support multiple loaded upscalers) |
 
 **Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All three captioners (Florence-2, PaliGemma-2, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
@@ -181,6 +182,35 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
 **Venv ML packages**: torch, transformers, open_clip, etc. are installed in the system Python (`C:\Users\Tom\AppData\Local\Programs\Python\Python310`) and exposed to the venv via `venv/lib/site-packages/system_ml_packages.pth`. The venv was created with `--system-site-packages` and `huggingface-hub` is pinned to `>=0.30,<1.0` in the venv to stay compatible with those system packages.
+
+### Upscaling
+
+ML-based image upscaling via the `spandrel` library, which auto-detects architecture from `.pth`/`.safetensors` files (RealESRGAN/RRDB, SwinIR, HAT, OmniSR, and more).
+
+**Router**: `backend/routers/upscaling.py`, prefix `/upscaling`.
+
+| Endpoint | Body / params | Returns |
+|---|---|---|
+| `GET /upscaling/models` | — | `list[UpscaleModelInfo]` — scans `settings.upscale_models_dir` |
+| `POST /upscaling/run` | `UpscaleRunRequest` | `{ job_id, total }` |
+
+**Config**: `settings.upscale_models_dir` (default `models/upscale_models/`). Override with `UPSCALE_MODELS_DIR=` in `.env` (e.g. pointing at a ComfyUI models folder). The directory is created automatically on startup.
+
+**`UpscaleRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `model_path`, `replace` (overwrite source vs. new file), `target_width`/`target_height` (optional: upscale then resize down to fit, maintaining AR).
+
+**ML inference** (`backend/ml/upscaler.py`):
+- `scan_upscale_models(dir)` — globs `*.pth`/`*.safetensors`, detects scale from filename heuristics (`4x-`, `_x4`, `_X4`, etc.), returns `[{name, path, scale}]` without loading weights.
+- `upscale_image_sync(src, dest, model_path, replace, target_w, target_h)` — loads via `spandrel.ModelLoader().load_from_file()`, tiles if either dimension > 1024 px (512 px tiles, 64 px overlap, linear-ramp seam blending), optional LANCZOS resize post-upscale.
+- Model caching uses `model_manager._registry` under ID `upscale:{abs_path}`; `_ensure_upscaler_loaded` includes a double-check after re-acquiring `_sync_lock` to prevent the TOCTOU double-load race.
+
+**Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at` on existing record, thumbnail regenerated.
+
+**Frontend surfaces**:
+- `ImageDetailPage` — "Upscale" toolbar button toggles inline controls (model select, Replace checkbox, optional W×H). Uses `upscalingApi.run()` with `image_ids: [imageId]`.
+- `SelectionToolbar` — "Upscale" button opens a modal with `<UpscaleForm>`.
+- `BulkEditPage` — "Upscale" tab (see Bulk caption editing section).
+
+`UpscaleForm` (`frontend/src/components/upscale/UpscaleForm.tsx`) — reusable form used by `SelectionToolbar` and `BulkEditPage`. Queries `["upscale-models"]` with `staleTime: Infinity` (model list never changes at runtime).
 
 ### Database
 
@@ -260,7 +290,9 @@ Three performance indexes exist:
 
 `ImageDetailPage` reads `gallery-nav-*` to support arrow-key navigation. When the user reaches the boundary of the current page it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`) and on crossing writes the new page's context back to `gallery-nav-*` and updates `gallery-state-*` so that **Back** returns to the correct gallery page. Arrow keys are suppressed when an `<input>` or `<textarea>` has focus.
 
-**ImageDetailPage crop tool**: Non-destructive — creates a new `Image` record (filename `{source_stem}_crop{ext}`, collision-handled via `unique_filename`) rather than overwriting the source. The aspect dropdown and zoom slider control the crop selection shape and size; W×H inputs control the output pixel dimensions (resize-after-crop, independent of the selection). When both W and H are filled in, the crop box aspect ratio automatically locks to W/H. On success, navigates to the new image. The crop endpoint (`POST /images/{id}/crop`) uses `asyncio.get_running_loop()` and a targeted `LIKE '{stem}%'` query for collision detection (not a full dataset scan).
+**Nav context invariant for newly created images**: When navigating to an image that was just created (crop, upscale new-file), the new image ID is not in the existing `gallery-nav-*` list, so `currentIndex === -1` and arrow keys would silently do nothing. Always call `injectNavId(datasetId, sourceImageId, newImageId)` (defined at module level in `ImageDetailPage.tsx`) before calling `paneGo` to insert the new ID immediately after the source in the nav context. This applies to: sync crop, crop+upscale job completion, and standalone upscale (non-replace) completion.
+
+**ImageDetailPage crop tool**: Non-destructive — creates a new `Image` record (filename `{source_stem}_crop{ext}`, collision-handled via `unique_filename`) rather than overwriting the source. The aspect dropdown and zoom slider control the crop selection shape and size; W×H inputs control the output pixel dimensions (resize-after-crop, independent of the selection). When both W and H are filled in, the crop box aspect ratio automatically locks to W/H. On success, navigates to the new image. The crop endpoint (`POST /images/{id}/crop`) uses `asyncio.get_running_loop()` and a targeted `LIKE '{stem}%'` query for collision detection (not a full dataset scan). An optional upscale model selector (shown when upscale models are configured) enables atomic crop+upscale: the crop is saved to a temp file, a `crop_upscale` background job runs the upscale, and the endpoint returns `{job_id}` instead of the image dict. The frontend branches on `"job_id" in data` to distinguish the async path.
 
 **ImageDetailPage caption panel**: Contains only the caption text textarea and Save button (plus the collapsible AI Generate section). The `tags` and `caption_style` fields are still present in the DB schema, backend save endpoint (`PATCH /captions/{id}`), and save mutation — they are read from `captionData` and re-persisted unchanged — but neither a tag editor nor a style picker is exposed in the UI. A live **token counter** (`N words · N tokens`) is displayed right-aligned beside the "Caption Text" label, computed via `gpt-tokenizer` (`encode` with GPT-2 BPE) inside a `useMemo` keyed on `captionText`. The counter turns amber at ≥ 70 tokens and red at ≥ 77 to signal the CLIP truncation limit.
 
@@ -400,7 +432,7 @@ Images with no `caption_text` are skipped for `remove` and `find_replace`. For `
 
 **Frontend surfaces**:
 - `SelectionToolbar` — **Edit** button (pencil icon) opens a modal with `<BulkEditForm imageIds={selectedIds} />`. On success, invalidates `["images", datasetId]` and clears the selection.
-- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — scope radio: *All images* / *Exclude images with quality flags* / *Currently selected*. Embeds `<BulkEditForm>` with scope-derived `imageIds` and `qualityFlags` props. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
+- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — two tabs: *Edit Captions* and *Upscale*. Both tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*). The captions tab embeds `<BulkEditForm>`; the upscale tab embeds `<UpscaleForm>`. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
 
 `BulkEditForm` (`frontend/src/components/caption/BulkEditForm.tsx`) — reusable form component. When the `qualityFlags` prop is provided it uses those and hides its own flag selector; when omitted the internal flag selector is shown. The `disabled` prop prevents submission (used by `BulkEditPage` when scope is "flags" but nothing is selected).
 

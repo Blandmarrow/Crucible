@@ -4,13 +4,16 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useSelectionStore } from "../store/selectionStore";
 import { FLAG_OPTIONS } from "../constants/flags";
 import BulkEditForm from "../components/caption/BulkEditForm";
+import UpscaleForm from "../components/upscale/UpscaleForm";
 
 type Scope = "all" | "flags" | "selected";
+type Tab = "captions" | "upscale";
 
 export default function BulkEditPage() {
   const datasetId = usePaneDatasetId();
   const { selectedIds, count: selectedCount } = useSelectionStore();
 
+  const [tab, setTab] = useState<Tab>("captions");
   const [scope, setScope] = useState<Scope>("all");
   const [selectedFlags, setSelectedFlags] = useState<Set<string>>(new Set());
 
@@ -32,12 +35,22 @@ export default function BulkEditPage() {
 
   return (
     <div style={{ padding: "24px 32px", maxWidth: 680, flex: 1, overflowY: "auto" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <Pencil size={18} style={{ color: "var(--accent)" }} />
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Bulk Edit Captions</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Bulk Edit</h2>
       </div>
 
-      {/* Scope */}
+      {/* Tab bar */}
+      <div className="tabs" style={{ marginBottom: 20 }}>
+        <button className={`tab${tab === "captions" ? " active" : ""}`} onClick={() => setTab("captions")}>
+          Edit Captions
+        </button>
+        <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
+          Upscale
+        </button>
+      </div>
+
+      {/* Scope — shared between both tabs */}
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-h">Scope</div>
         <div className="panel-b space-y-2">
@@ -85,19 +98,34 @@ export default function BulkEditPage() {
         </div>
       )}
 
-      {/* Operation form */}
-      <div className="panel">
-        <div className="panel-h">Operation</div>
-        <div className="panel-b">
-          <BulkEditForm
-            key={scope}
-            datasetId={datasetId}
-            imageIds={imageIds}
-            qualityFlags={qualityFlags}
-            disabled={formDisabled}
-          />
+      {/* Tab content */}
+      {tab === "captions" && (
+        <div className="panel">
+          <div className="panel-h">Operation</div>
+          <div className="panel-b">
+            <BulkEditForm
+              key={scope}
+              datasetId={datasetId}
+              imageIds={imageIds}
+              qualityFlags={qualityFlags}
+              disabled={formDisabled}
+            />
+          </div>
         </div>
-      </div>
+      )}
+
+      {tab === "upscale" && (
+        <div className="panel">
+          <div className="panel-h">Upscale</div>
+          <div className="panel-b">
+            <UpscaleForm
+              key={scope}
+              datasetId={datasetId}
+              imageIds={imageIds}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

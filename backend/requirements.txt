@@ -16,6 +16,8 @@ numpy>=1.26
 huggingface-hub>=0.30,<1.0
 tiktoken>=0.7
 psutil>=5.9
+spandrel>=0.4
+spandrel_extra_arches>=0.1
 # ML packages — installed from system Python via --system-site-packages venv.
 # If your venv was NOT created with that flag, install manually with the
 # appropriate CUDA index URL, e.g.:

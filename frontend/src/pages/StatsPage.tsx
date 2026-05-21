@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Settings, ChevronDown, ChevronRight, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -59,6 +60,21 @@ const AESTHETIC_FILTER_MAP: Record<string, FilterParams> = {
 type FilterParams = Omit<ImageListParams, "dataset_id" | "page" | "limit">;
 interface ChartEntry { name: string; count: number; filter?: FilterParams; }
 type PanelFilter = { title: string; params: FilterParams } | null;
+
+type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captions";
+type ItemId =
+  | "score_guide" | "quality_flags" | "score_coverage"
+  | "aesthetic_score" | "style_sim" | "color_richness" | "saturation"
+  | "blur" | "noise" | "uniformity" | "watermark"
+  | "aspect_ratio" | "megapixels" | "file_size" | "file_formats"
+  | "caption_wc" | "caption_tc" | "top_tags" | "cooccurrence";
+
+interface StatsCategoryDef { id: CategoryId; label: string; items: { id: ItemId; label: string }[]; }
+interface StatsVisibility {
+  categories: Record<CategoryId, boolean>;
+  items: Record<ItemId, boolean>;
+  collapsed: Record<CategoryId, boolean>;
+}
 
 // ─── Data builders ────────────────────────────────────────────────────────────
 function scoreEntries(
@@ -242,6 +258,169 @@ function rebucketValues(values: number[], edges: number[], fb: FB): ChartEntry[]
       filter: fb(i > 0 ? s[i - 1] : undefined, i < s.length ? s[i] : undefined),
     }))
     .filter(e => e.count > 0);
+}
+
+// ─── Category config ─────────────────────────────────────────────────────────
+const STATS_CONFIG: StatsCategoryDef[] = [
+  { id: "summary",    label: "Summary",           items: [
+    { id: "score_guide",    label: "Score guide"     },
+    { id: "quality_flags",  label: "Quality flags"   },
+    { id: "score_coverage", label: "Score coverage"  },
+  ]},
+  { id: "aesthetic",  label: "Aesthetic & Style",  items: [
+    { id: "aesthetic_score", label: "Aesthetic score"  },
+    { id: "style_sim",       label: "Style similarity" },
+    { id: "color_richness",  label: "Color richness"   },
+    { id: "saturation",      label: "Saturation"       },
+  ]},
+  { id: "technical",  label: "Technical Quality",  items: [
+    { id: "blur",       label: "Blur score"       },
+    { id: "noise",      label: "Noise score"      },
+    { id: "uniformity", label: "Uniformity score" },
+    { id: "watermark",  label: "Watermark score"  },
+  ]},
+  { id: "properties", label: "Image Properties",   items: [
+    { id: "aspect_ratio", label: "Aspect ratio" },
+    { id: "megapixels",   label: "Megapixels"   },
+    { id: "file_size",    label: "File size"     },
+    { id: "file_formats", label: "File formats"  },
+  ]},
+  { id: "captions",   label: "Captions & Tags",    items: [
+    { id: "caption_wc",   label: "Caption word count"  },
+    { id: "caption_tc",   label: "Caption token count" },
+    { id: "top_tags",     label: "Top 20 tags"         },
+    { id: "cooccurrence", label: "Tag co-occurrence"   },
+  ]},
+];
+
+// ─── Visibility hook ──────────────────────────────────────────────────────────
+const STATS_VIS_KEY = "stats-visibility-v1";
+
+function defaultVisibility(): StatsVisibility {
+  const categories = {} as Record<CategoryId, boolean>;
+  const items      = {} as Record<ItemId, boolean>;
+  const collapsed  = {} as Record<CategoryId, boolean>;
+  for (const cat of STATS_CONFIG) {
+    categories[cat.id] = true;
+    collapsed[cat.id]  = false;
+    for (const item of cat.items) items[item.id] = true;
+  }
+  return { categories, items, collapsed };
+}
+
+function useStatsVisibility() {
+  const [vis, setVis] = useState<StatsVisibility>(() => {
+    try {
+      const raw = localStorage.getItem(STATS_VIS_KEY);
+      if (!raw) return defaultVisibility();
+      const p = JSON.parse(raw) as Partial<StatsVisibility>;
+      const d = defaultVisibility();
+      return {
+        categories: { ...d.categories, ...(p.categories ?? {}) },
+        items:      { ...d.items,      ...(p.items      ?? {}) },
+        collapsed:  { ...d.collapsed,  ...(p.collapsed  ?? {}) },
+      };
+    } catch { return defaultVisibility(); }
+  });
+  useEffect(() => { localStorage.setItem(STATS_VIS_KEY, JSON.stringify(vis)); }, [vis]);
+  const toggleCategory = useCallback((id: CategoryId) =>
+    setVis(v => ({ ...v, categories: { ...v.categories, [id]: !v.categories[id] } })), []);
+  const toggleItem = useCallback((id: ItemId) =>
+    setVis(v => ({ ...v, items: { ...v.items, [id]: !v.items[id] } })), []);
+  const toggleCollapsed = useCallback((id: CategoryId) =>
+    setVis(v => ({ ...v, collapsed: { ...v.collapsed, [id]: !v.collapsed[id] } })), []);
+  const reset = useCallback(() => setVis(defaultVisibility()), []);
+  return { vis, toggleCategory, toggleItem, toggleCollapsed, reset };
+}
+
+// ─── SettingsDrawer ───────────────────────────────────────────────────────────
+function SettingsDrawer({
+  categories, items, onToggleCategory, onToggleItem, onReset, onClose,
+}: {
+  categories: Record<CategoryId, boolean>;
+  items: Record<ItemId, boolean>;
+  onToggleCategory: (id: CategoryId) => void;
+  onToggleItem: (id: ItemId) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 55, background: "rgba(0,0,0,.35)" }} />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 56,
+          width: 280, background: "var(--surface-1)",
+          borderLeft: "1px solid var(--line)",
+          boxShadow: "-8px 0 32px rgba(0,0,0,.45)",
+          display: "flex", flexDirection: "column",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Display settings</span>
+          <button className="icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>
+          {STATS_CONFIG.map((cat) => {
+            const catOn = categories[cat.id];
+            return (
+              <div key={cat.id} style={{ marginBottom: 4 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", cursor: "pointer" }}>
+                  <input type="checkbox" className="checkbox" checked={catOn} onChange={() => onToggleCategory(cat.id)} />
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg)" }}>{cat.label}</span>
+                </label>
+                {cat.items.map((item) => (
+                  <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 16px 5px 38px", cursor: catOn ? "pointer" : "default", opacity: catOn ? 1 : 0.4 }}>
+                    <input type="checkbox" className="checkbox" checked={items[item.id]} disabled={!catOn} onChange={() => onToggleItem(item.id)} />
+                    <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--line)", flexShrink: 0 }}>
+          <button className="btn ghost" style={{ width: "100%", justifyContent: "center", fontSize: 12 }} onClick={onReset}>
+            Reset to defaults
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── CategorySection ──────────────────────────────────────────────────────────
+function CategorySection({ label, isVisible, isCollapsed, onToggleCollapsed, children }: {
+  label: string; isVisible: boolean;
+  isCollapsed: boolean; onToggleCollapsed: () => void; children: React.ReactNode;
+}) {
+  if (!isVisible) return null;
+  return (
+    <section style={{ marginBottom: 22 }}>
+      <button
+        onClick={onToggleCollapsed}
+        style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          background: "none", border: "none", padding: "0 0 8px 0",
+          cursor: "pointer", borderBottom: "1px solid var(--line)", marginBottom: 14,
+          color: "var(--fg)",
+        }}
+      >
+        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--fg-dim)", flex: 1, textAlign: "left" }}>
+          {label}
+        </span>
+        {isCollapsed ? <ChevronRight size={13} style={{ flexShrink: 0 }} /> : <ChevronDown size={13} style={{ flexShrink: 0 }} />}
+      </button>
+      {!isCollapsed && children}
+    </section>
+  );
 }
 
 // ─── ImageLightbox ────────────────────────────────────────────────────────────
@@ -683,6 +862,8 @@ export default function StatsPage() {
   const datasetId = usePaneDatasetId();
   const [panelFilter, setPanelFilter] = useState<PanelFilter>(null);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const { vis, toggleCategory, toggleItem, toggleCollapsed, reset } = useStatsVisibility();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     setActiveSubfolder(undefined);
@@ -718,6 +899,8 @@ export default function StatsPage() {
     enabled: !!datasetId,
   });
 
+  const show = (cat: CategoryId, item: ItemId) => vis.categories[cat] && vis.items[item];
+
   if (isLoading) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading stats…</div>;
   if (!stats) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>No data</div>;
 
@@ -751,6 +934,7 @@ export default function StatsPage() {
   const hasFlags          = Object.values(stats.quality_flag_counts).some((v) => v > 0);
   const hasCoverage       = Object.values(stats.score_coverage).some((v) => v > 0);
   const hasCooccurrence   = (cooccurrence?.tags.length ?? 0) > 0;
+  const hasStyleSimData   = ssimData.length > 0 || (sv?.style_similarity_score.length ?? 0) > 0;
   const fs = stats.file_size_summary;
   const totalFlagged = Object.values(stats.quality_flag_counts).reduce((a, b) => a + b, 0);
 
@@ -777,6 +961,9 @@ export default function StatsPage() {
           <p>Dataset quality metrics, score distributions and tag analysis.</p>
         </div>
         <div className="phactions">
+          <button className="icon-btn" title="Display settings" onClick={() => setDrawerOpen(true)}>
+            <Settings size={15} />
+          </button>
           {subfolders.length > 0 && (
             <select
               className="select"
@@ -799,70 +986,8 @@ export default function StatsPage() {
         </div>
       </div>
 
-      {/* Top grid: score guide + quality flags */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 14, marginBottom: 14 }}>
-        {/* Score guide */}
-        <div className="panel">
-          <div className="panel-h"><h3>Score guide</h3></div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--line)" }}>
-                  {["Metric", "Range", "Recommended threshold", "Method"].map((h) => (
-                    <th key={h} style={{ padding: "6px 16px", textAlign: "left", fontSize: 10.5, color: "var(--fg-dim)", fontWeight: 500, letterSpacing: ".04em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {SCORE_GUIDE.map(({ metric, range, threshold, note, cls }) => (
-                  <tr key={metric} style={{ borderBottom: "1px solid var(--line)" }}>
-                    <td style={{ padding: "9px 16px", fontWeight: 500, whiteSpace: "nowrap", fontSize: 12.5 }}>{metric}</td>
-                    <td style={{ padding: "9px 16px", color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace", fontSize: 11 }}>{range}</td>
-                    <td style={{ padding: "9px 16px" }}>
-                      <span className={`badge ${cls} dot`}>{threshold}</span>
-                    </td>
-                    <td style={{ padding: "9px 16px", color: "var(--fg-mute)", fontSize: 11.5 }}>{note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Quality flags */}
-        <div className="panel">
-          <div className="panel-h">
-            <h3>Quality flags</h3>
-            <div style={{ flex: 1 }} />
-            {hasFlags && <span className="badge dot warn">{totalFlagged.toLocaleString()} flagged</span>}
-          </div>
-          <div style={{ padding: "8px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-            {FLAG_DEFS.map(({ key, flag, label, hint, cls, icon }) => {
-              const n = stats.quality_flag_counts[key] ?? 0;
-              return (
-                <div
-                  key={key}
-                  className="flag-card"
-                  onClick={() => n > 0 && openFlag(flag, `${label} images`)}
-                  style={{ opacity: n === 0 ? 0.45 : 1, cursor: n === 0 ? "default" : "pointer" }}
-                >
-                  <div className={`fc-icon ${cls}`}>
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">{icon}</svg>
-                  </div>
-                  <div>
-                    <div className="fc-name">{label}</div>
-                    <div className="fc-desc">{hint}</div>
-                  </div>
-                  <span className="fc-num">{n.toLocaleString()}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* 4-col stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
+      {/* 4-col stat cards — always visible */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 22 }}>
         {[
           { k: "Total images",    v: stats.image_count.toLocaleString() },
           { k: "Captioned",       v: `${stats.caption_coverage_pct}%` },
@@ -876,157 +1001,258 @@ export default function StatsPage() {
         ))}
       </div>
 
-      {/* Aesthetic score distribution */}
-      <div style={{ marginBottom: 14 }}>
-        <HistPanel
-          title="Aesthetic score distribution"
-          subtitle="Click a bar to view images in that range"
-          entries={aestheticData}
-          onBarClick={open("Aesthetic")}
-          rawValues={sv?.aesthetic_score}
-          defaultEdgeStr={DEFAULT_EDGES.aesthetic}
-          fb={mkScore("aesthetic_score", "desc")}
-        />
-      </div>
-
-      {/* Style similarity distribution */}
-      {(ssimData.length > 0 || (sv?.style_similarity_score.length ?? 0) > 0) && (
-        <div style={{ marginBottom: 14 }}>
-          <HistPanel
-            title="Style similarity distribution"
-            subtitle="Cosine similarity to reference images · higher = more consistent style · click to browse"
-            entries={ssimData}
-            onBarClick={open("Style similarity")}
-            rawValues={sv?.style_similarity_score}
-            defaultEdgeStr={DEFAULT_EDGES.style_sim}
-            fb={mkScore("style_similarity_score", "desc")}
-          />
-        </div>
-      )}
-
-      {/* Score distributions grid */}
-      {hasQualityScores && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
-          <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}        defaultEdgeStr={DEFAULT_EDGES.blur}        fb={mkScore("blur_score", "asc")} />
-          <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}       defaultEdgeStr={DEFAULT_EDGES.noise}       fb={mkScore("noise_score", "desc")} />
-          <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score}  defaultEdgeStr={DEFAULT_EDGES.uniformity}  fb={mkScore("uniformity_score", "asc")} />
-          <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}   defaultEdgeStr={DEFAULT_EDGES.watermark}   fb={mkScore("watermark_score", "asc")} />
-          <HistPanel title="Color richness"                               entries={colorData}     onBarClick={open("Color richness")} rawValues={sv?.color_score}       defaultEdgeStr={DEFAULT_EDGES.color}       fb={mkScore("color_score", "asc")} />
-          <HistPanel title="Saturation"                                   entries={satData}       onBarClick={open("Saturation")}     rawValues={sv?.saturation_score}  defaultEdgeStr={DEFAULT_EDGES.saturation}  fb={mkScore("saturation_score", "asc")} />
-        </div>
-      )}
-
-      {/* Dimensions & file size */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
-        <HistPanel title="Aspect ratio" entries={arData} onBarClick={open("Aspect ratio")} />
-        <HistPanel title="Megapixels"   entries={megapixelData} onBarClick={open("Megapixels")} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} />
-        <HistPanel
-          title="File size"
-          entries={fileSizeData}
-          onBarClick={open("File size")}
-          rawValues={sv?.file_size_mb}
-          defaultEdgeStr={DEFAULT_EDGES.file_size}
-          fb={mkFs}
-          footer={Object.keys(fs).length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
-              {[
-                { label: "Min",    value: `${fs.min_mb?.toFixed(2)} MB`    },
-                { label: "Median", value: `${fs.median_mb?.toFixed(2)} MB` },
-                { label: "p95",    value: `${fs.p95_mb?.toFixed(2)} MB`    },
-                { label: "Max",    value: `${fs.max_mb?.toFixed(2)} MB`    },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 10, color: "var(--fg-dim)" }}>{label}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--fg)", fontWeight: 500, marginTop: 2, fontFamily: "Geist Mono, monospace" }}>{value}</div>
+      {/* ── Summary ─────────────────────────────────────────────────────────── */}
+      <CategorySection
+        label="Summary"
+        isVisible={vis.categories.summary}
+        isCollapsed={vis.collapsed.summary}
+        onToggleCollapsed={() => toggleCollapsed("summary")}
+      >
+        {(show("summary", "score_guide") || show("summary", "quality_flags")) && (
+          <div style={{ display: "grid", gridTemplateColumns: show("summary", "score_guide") && show("summary", "quality_flags") ? "1.35fr 1fr" : "1fr", gap: 14, marginBottom: 14 }}>
+            {show("summary", "score_guide") && (
+              <div className="panel">
+                <div className="panel-h"><h3>Score guide</h3></div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--line)" }}>
+                        {["Metric", "Range", "Recommended threshold", "Method"].map((h) => (
+                          <th key={h} style={{ padding: "6px 16px", textAlign: "left", fontSize: 10.5, color: "var(--fg-dim)", fontWeight: 500, letterSpacing: ".04em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {SCORE_GUIDE.map(({ metric, range, threshold, note, cls }) => (
+                        <tr key={metric} style={{ borderBottom: "1px solid var(--line)" }}>
+                          <td style={{ padding: "9px 16px", fontWeight: 500, whiteSpace: "nowrap", fontSize: 12.5 }}>{metric}</td>
+                          <td style={{ padding: "9px 16px", color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace", fontSize: 11 }}>{range}</td>
+                          <td style={{ padding: "9px 16px" }}><span className={`badge ${cls} dot`}>{threshold}</span></td>
+                          <td style={{ padding: "9px 16px", color: "var(--fg-mute)", fontSize: 11.5 }}>{note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
-            </div>
-          ) : undefined}
-        />
-      </div>
-
-      {/* Caption word count */}
-      {capLenData.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <HistPanel title="Caption word count" entries={capLenData} onBarClick={() => {}} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkNone} />
-        </div>
-      )}
-
-      {/* Caption token count */}
-      {capTokenData.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={() => {}} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkNone} />
-        </div>
-      )}
-
-      {/* File formats */}
-      <div style={{ marginBottom: 14 }}>
-        <HistPanel
-          title="File formats"
-          subtitle="Click a bar to view images with that format"
-          entries={formatData}
-          onBarClick={open("Format")}
-        />
-      </div>
-
-      {/* Tag analytics */}
-      {topTags.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 14, marginBottom: 14 }}>
-          {/* Top tags — horizontal bars */}
-          <div className="panel">
-            <div className="panel-h"><h3>Top 20 tags</h3></div>
-            <div style={{ padding: "8px 16px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
-              {topTags.map((t) => (
-                <div key={t.tag} style={{ display: "grid", gridTemplateColumns: "120px 1fr auto", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11.5, color: "var(--fg-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{t.tag}</span>
-                  <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${(t.count / maxTagCount) * 100}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", borderRadius: 3 }} />
+              </div>
+            )}
+            {show("summary", "quality_flags") && (
+              <div className="panel">
+                <div className="panel-h">
+                  <h3>Quality flags</h3>
+                  <div style={{ flex: 1 }} />
+                  {hasFlags && <span className="badge dot warn">{totalFlagged.toLocaleString()} flagged</span>}
+                </div>
+                <div style={{ padding: "8px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                  {FLAG_DEFS.map(({ key, flag, label, hint, cls, icon }) => {
+                    const n = stats.quality_flag_counts[key] ?? 0;
+                    return (
+                      <div key={key} className="flag-card" onClick={() => n > 0 && openFlag(flag, `${label} images`)} style={{ opacity: n === 0 ? 0.45 : 1, cursor: n === 0 ? "default" : "pointer" }}>
+                        <div className={`fc-icon ${cls}`}>
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">{icon}</svg>
+                        </div>
+                        <div>
+                          <div className="fc-name">{label}</div>
+                          <div className="fc-desc">{hint}</div>
+                        </div>
+                        <span className="fc-num">{n.toLocaleString()}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {show("summary", "score_coverage") && hasCoverage && (
+          <div className="panel" style={{ marginBottom: 14 }}>
+            <div className="panel-h"><h3>Score coverage</h3></div>
+            <div style={{ padding: "10px 16px 14px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+              {coverageDefs.map(({ key, label }) => {
+                const n = stats.score_coverage[key] ?? 0;
+                const pct = stats.image_count > 0 ? Math.round((n / stats.image_count) * 100) : 0;
+                return (
+                  <div key={key} style={{ background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)", padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, color: "var(--fg-dim)", marginBottom: 6 }}>{label}</div>
+                    <div style={{ height: 4, background: "var(--surface-3)", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: pct === 100 ? "var(--good)" : "var(--accent)", borderRadius: 2 }} />
+                    </div>
+                    <div style={{ fontSize: 11.5, fontFamily: "Geist Mono, monospace", color: "var(--fg)" }}>
+                      {n.toLocaleString()} <span style={{ color: "var(--fg-dim)" }}>/ {stats.image_count.toLocaleString()}</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: "var(--fg-mute)", marginTop: 2 }}>{pct}% scored</div>
                   </div>
-                  <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace", minWidth: 36, textAlign: "right" }}>{t.count.toLocaleString()}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
+        )}
+      </CategorySection>
 
-          {/* Co-occurrence */}
-          {hasCooccurrence && (
-            <div className="panel">
-              <div className="panel-h">
-                <h3>Tag co-occurrence</h3>
-                <span className="mono" style={{ fontSize: 11, color: "var(--fg-dim)", marginLeft: "auto" }}>top 15 tags</span>
-              </div>
-              <div style={{ padding: "8px 16px 14px" }}>
-                <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--fg-mute)" }}>Cell brightness = how often two tags appear on the same image. Diagonal = single-tag count.</p>
-                <CooccurrenceHeatmap tags={cooccurrence!.tags} matrix={cooccurrence!.matrix} />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Score coverage */}
-      {hasCoverage && (
-        <div className="panel" style={{ marginBottom: 14 }}>
-          <div className="panel-h"><h3>Score coverage</h3></div>
-          <div style={{ padding: "10px 16px 14px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-            {coverageDefs.map(({ key, label }) => {
-              const n = stats.score_coverage[key] ?? 0;
-              const pct = stats.image_count > 0 ? Math.round((n / stats.image_count) * 100) : 0;
-              return (
-                <div key={key} style={{ background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)", padding: "12px 14px" }}>
-                  <div style={{ fontSize: 11, color: "var(--fg-dim)", marginBottom: 6 }}>{label}</div>
-                  <div style={{ height: 4, background: "var(--surface-3)", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: pct === 100 ? "var(--good)" : "var(--accent)", borderRadius: 2 }} />
-                  </div>
-                  <div style={{ fontSize: 11.5, fontFamily: "Geist Mono, monospace", color: "var(--fg)" }}>
-                    {n.toLocaleString()} <span style={{ color: "var(--fg-dim)" }}>/ {stats.image_count.toLocaleString()}</span>
-                  </div>
-                  <div style={{ fontSize: 10.5, color: "var(--fg-mute)", marginTop: 2 }}>{pct}% scored</div>
-                </div>
-              );
-            })}
+      {/* ── Aesthetic & Style ────────────────────────────────────────────────── */}
+      <CategorySection
+        label="Aesthetic & Style"
+        isVisible={vis.categories.aesthetic}
+        isCollapsed={vis.collapsed.aesthetic}
+        onToggleCollapsed={() => toggleCollapsed("aesthetic")}
+      >
+        {(show("aesthetic", "aesthetic_score") || (show("aesthetic", "style_sim") && hasStyleSimData)) && (
+          <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "aesthetic_score") && show("aesthetic", "style_sim") && hasStyleSimData ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+            {show("aesthetic", "aesthetic_score") && (
+              <HistPanel
+                title="Aesthetic score distribution"
+                subtitle="Click a bar to view images in that range"
+                entries={aestheticData}
+                onBarClick={open("Aesthetic")}
+                rawValues={sv?.aesthetic_score}
+                defaultEdgeStr={DEFAULT_EDGES.aesthetic}
+                fb={mkScore("aesthetic_score", "desc")}
+              />
+            )}
+            {show("aesthetic", "style_sim") && hasStyleSimData && (
+              <HistPanel
+                title="Style similarity distribution"
+                subtitle="Cosine similarity to reference images · higher = more consistent style · click to browse"
+                entries={ssimData}
+                onBarClick={open("Style similarity")}
+                rawValues={sv?.style_similarity_score}
+                defaultEdgeStr={DEFAULT_EDGES.style_sim}
+                fb={mkScore("style_similarity_score", "desc")}
+              />
+            )}
           </div>
-        </div>
+        )}
+        {(show("aesthetic", "color_richness") || show("aesthetic", "saturation")) && (
+          <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "color_richness") && show("aesthetic", "saturation") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+            {show("aesthetic", "color_richness") && (
+              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} />
+            )}
+            {show("aesthetic", "saturation") && (
+              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} />
+            )}
+          </div>
+        )}
+      </CategorySection>
+
+      {/* ── Technical Quality ────────────────────────────────────────────────── */}
+      <CategorySection
+        label="Technical Quality"
+        isVisible={vis.categories.technical}
+        isCollapsed={vis.collapsed.technical}
+        onToggleCollapsed={() => toggleCollapsed("technical")}
+      >
+        {hasQualityScores && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 14 }}>
+            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")} />}
+            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")} />}
+            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} />}
+            {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")} />}
+          </div>
+        )}
+      </CategorySection>
+
+      {/* ── Image Properties ─────────────────────────────────────────────────── */}
+      <CategorySection
+        label="Image Properties"
+        isVisible={vis.categories.properties}
+        isCollapsed={vis.collapsed.properties}
+        onToggleCollapsed={() => toggleCollapsed("properties")}
+      >
+        {(show("properties", "aspect_ratio") || show("properties", "megapixels") || show("properties", "file_size") || show("properties", "file_formats")) && (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${[show("properties", "aspect_ratio"), show("properties", "megapixels"), show("properties", "file_size"), show("properties", "file_formats")].filter(Boolean).length}, 1fr)`, gap: 10, marginBottom: 14 }}>
+            {show("properties", "aspect_ratio") && <HistPanel title="Aspect ratio" entries={arData} onBarClick={open("Aspect ratio")} />}
+            {show("properties", "megapixels")   && <HistPanel title="Megapixels" entries={megapixelData} onBarClick={open("Megapixels")} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} />}
+            {show("properties", "file_size")    && (
+              <HistPanel
+                title="File size"
+                entries={fileSizeData}
+                onBarClick={open("File size")}
+                rawValues={sv?.file_size_mb}
+                defaultEdgeStr={DEFAULT_EDGES.file_size}
+                fb={mkFs}
+                footer={Object.keys(fs).length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                    {[
+                      { label: "Min",    value: `${fs.min_mb?.toFixed(2)} MB`    },
+                      { label: "Median", value: `${fs.median_mb?.toFixed(2)} MB` },
+                      { label: "p95",    value: `${fs.p95_mb?.toFixed(2)} MB`    },
+                      { label: "Max",    value: `${fs.max_mb?.toFixed(2)} MB`    },
+                    ].map(({ label, value }) => (
+                      <div key={label} style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: "var(--fg-dim)" }}>{label}</div>
+                        <div style={{ fontSize: 11.5, color: "var(--fg)", fontWeight: 500, marginTop: 2, fontFamily: "Geist Mono, monospace" }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : undefined}
+              />
+            )}
+            {show("properties", "file_formats") && <HistPanel title="File formats" subtitle="Click a bar to view images with that format" entries={formatData} onBarClick={open("Format")} />}
+          </div>
+        )}
+      </CategorySection>
+
+      {/* ── Captions & Tags ──────────────────────────────────────────────────── */}
+      <CategorySection
+        label="Captions & Tags"
+        isVisible={vis.categories.captions}
+        isCollapsed={vis.collapsed.captions}
+        onToggleCollapsed={() => toggleCollapsed("captions")}
+      >
+        {(show("captions", "caption_wc") || show("captions", "caption_tc")) && (
+          <div style={{ display: "grid", gridTemplateColumns: show("captions", "caption_wc") && show("captions", "caption_tc") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+            {show("captions", "caption_wc") && capLenData.length > 0 && (
+              <HistPanel title="Caption word count" entries={capLenData} onBarClick={() => {}} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkNone} />
+            )}
+            {show("captions", "caption_tc") && capTokenData.length > 0 && (
+              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={() => {}} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkNone} />
+            )}
+          </div>
+        )}
+        {topTags.length > 0 && (show("captions", "top_tags") || show("captions", "cooccurrence")) && (
+          <div style={{ display: "grid", gridTemplateColumns: show("captions", "top_tags") && show("captions", "cooccurrence") && hasCooccurrence ? "1fr 1.4fr" : "1fr", gap: 14, marginBottom: 14 }}>
+            {show("captions", "top_tags") && (
+              <div className="panel">
+                <div className="panel-h"><h3>Top 20 tags</h3></div>
+                <div style={{ padding: "8px 16px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {topTags.map((t) => (
+                    <div key={t.tag} style={{ display: "grid", gridTemplateColumns: "120px 1fr auto", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11.5, color: "var(--fg-mute)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{t.tag}</span>
+                      <div style={{ height: 6, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${(t.count / maxTagCount) * 100}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace", minWidth: 36, textAlign: "right" }}>{t.count.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {show("captions", "cooccurrence") && hasCooccurrence && (
+              <div className="panel">
+                <div className="panel-h">
+                  <h3>Tag co-occurrence</h3>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--fg-dim)", marginLeft: "auto" }}>top 15 tags</span>
+                </div>
+                <div style={{ padding: "8px 16px 14px" }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--fg-mute)" }}>Cell brightness = how often two tags appear on the same image. Diagonal = single-tag count.</p>
+                  <CooccurrenceHeatmap tags={cooccurrence!.tags} matrix={cooccurrence!.matrix} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CategorySection>
+
+      {/* Settings drawer */}
+      {drawerOpen && (
+        <SettingsDrawer
+          categories={vis.categories}
+          items={vis.items}
+          onToggleCategory={toggleCategory}
+          onToggleItem={toggleItem}
+          onReset={reset}
+          onClose={() => setDrawerOpen(false)}
+        />
       )}
 
       {/* BucketPanel */}

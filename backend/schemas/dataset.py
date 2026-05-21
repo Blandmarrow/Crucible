@@ -71,6 +71,7 @@ class DatasetStats(BaseModel):
     file_size_summary: dict[str, float] = {}
     aspect_ratio_fine: dict[str, int] = {}
     caption_length_distribution: dict[str, int] = {}
+    caption_token_distribution: dict[str, int] = {}
     style_similarity_distribution: dict[str, int] = {}
     quality_flag_counts: dict[str, int] = {}
     score_coverage: dict[str, int] = {}

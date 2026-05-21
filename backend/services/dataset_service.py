@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+import tiktoken
+
 from sqlalchemy import func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -313,6 +315,8 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     fs_labels =        ["<0.1 MB", "0.1–0.5 MB", "0.5–1 MB", "1–2 MB", "2–5 MB", "5+ MB"]
     wc_edges =         [1, 6, 11, 21, 51]
     wc_labels =        ["No caption", "1–5 words", "6–10 words", "11–20 words", "21–50 words", "50+ words"]
+    tc_edges =         [1, 20, 40, 60, 77]
+    tc_labels =        ["No caption", "1–19", "20–39", "40–59", "60–76", "77+"]
 
     widths: list[int] = []
     heights: list[int] = []
@@ -331,12 +335,14 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     mp_dist: dict[str, int] = {}
     fs_dist: dict[str, int] = {}
     wc_dist: dict[str, int] = {}
+    tc_dist: dict[str, int] = {}
 
     ssim_dist: dict[str, int] = {}
     flag_counts = {"blurry": 0, "noisy": 0, "uniform": 0, "watermarked": 0, "duplicate": 0}
     score_cov = {"aesthetic": 0, "technical": 0, "watermark": 0}
 
     captioned = 0
+    enc = tiktoken.get_encoding("gpt2")
 
     for r in rows:
         # Formats
@@ -424,13 +430,18 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         if flags.get("is_duplicate"):
             flag_counts["duplicate"] += 1
 
-        # Caption word count
         text = r.caption_text or ""
-        if text.strip():
+        trimmed = text.strip()
+        if trimmed:
             captioned += 1
-        wc = len(text.split()) if text.strip() else 0
+            wc = len(trimmed.split())
+            tc = len(enc.encode_ordinary(trimmed))
+        else:
+            wc = tc = 0
         b = _bucket(wc, wc_edges, wc_labels)
         wc_dist[b] = wc_dist.get(b, 0) + 1
+        b = _bucket(tc, tc_edges, tc_labels)
+        tc_dist[b] = tc_dist.get(b, 0) + 1
 
     # Embedding coverage — separate count query to avoid loading blobs
     embed_q = select(func.count(Image.id)).where(
@@ -486,6 +497,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "file_size_summary": fs_summary,
         "aspect_ratio_fine": _ordered(ar_fine, ar_fine_order),
         "caption_length_distribution": _ordered(wc_dist, wc_labels),
+        "caption_token_distribution": _ordered(tc_dist, tc_labels),
         "style_similarity_distribution": dict(sorted(ssim_dist.items())),
         "quality_flag_counts": flag_counts,
         "score_coverage": score_cov,
@@ -520,7 +532,9 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
     out["megapixels"] = []
     out["file_size_mb"] = []
     out["caption_words"] = []
+    out["caption_tokens"] = []
 
+    enc = tiktoken.get_encoding("gpt2")
     for row in rows:
         for field in score_fields:
             val = getattr(row, field)
@@ -530,7 +544,9 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
             out["megapixels"].append(row.width * row.height / 1_000_000)
         if row.file_size_bytes:
             out["file_size_mb"].append(row.file_size_bytes / 1_048_576)
-        out["caption_words"].append(len((row.caption_text or "").split()))
+        trimmed = (row.caption_text or "").strip()
+        out["caption_words"].append(len(trimmed.split()) if trimmed else 0)
+        out["caption_tokens"].append(len(enc.encode_ordinary(trimmed)) if trimmed else 0)
 
     return out
 

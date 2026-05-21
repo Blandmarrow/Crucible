@@ -16,6 +16,7 @@ import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { encode } from "gpt-tokenizer";
 
 const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
 function labelColor(label: string): string {
@@ -115,6 +116,14 @@ export default function ImageDetailPage() {
 
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
+
+  const captionStats = useMemo(() => {
+    const trimmed = captionText.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    const tokens = trimmed ? encode(trimmed).length : 0;
+    const tokenColor = tokens >= 77 ? "text-red-400" : tokens >= 70 ? "text-yellow-400" : "text-gray-500";
+    return { words, tokens, tokenColor };
+  }, [captionText]);
 
   // Navigation context written by GalleryPage — re-read whenever imageId changes (we may have
   // updated sessionStorage just before navigating, so the fresh read gets the new page's data)
@@ -714,7 +723,12 @@ export default function ImageDetailPage() {
           <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Caption</h3>
 
           <div>
-            <label className="label">Caption Text</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="label !mb-0">Caption Text</label>
+              <span className={`text-xs tabular-nums ${captionStats.tokenColor}`}>
+                {captionStats.words} words · {captionStats.tokens} tokens
+              </span>
+            </div>
             <textarea
               ref={captionRef}
               className="input resize-none overflow-hidden"

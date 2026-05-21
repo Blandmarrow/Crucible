@@ -13,6 +13,7 @@ export interface ScoreValues {
   megapixels: number[];
   file_size_mb: number[];
   caption_words: number[];
+  caption_tokens: number[];
 }
 
 export const datasetsApi = {

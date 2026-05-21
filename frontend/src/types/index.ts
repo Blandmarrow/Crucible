@@ -35,6 +35,7 @@ export interface DatasetStats {
   file_size_summary: Record<string, number>;
   aspect_ratio_fine: Record<string, number>;
   caption_length_distribution: Record<string, number>;
+  caption_token_distribution: Record<string, number>;
   style_similarity_distribution: Record<string, number>;
   quality_flag_counts: Record<string, number>;
   score_coverage: Record<string, number>;

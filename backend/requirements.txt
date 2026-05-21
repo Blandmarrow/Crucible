@@ -14,6 +14,7 @@ opencv-python>=4.9
 scipy>=1.13
 numpy>=1.26
 huggingface-hub>=0.30,<1.0
+tiktoken>=0.7
 psutil>=5.9
 # ML packages — installed from system Python via --system-site-packages venv.
 # If your venv was NOT created with that flag, install manually with the

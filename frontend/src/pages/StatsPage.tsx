@@ -206,6 +206,7 @@ const DEFAULT_EDGES: Record<string, string> = {
   megapixels: "0.25, 0.5, 1, 2, 4, 8",
   file_size:  "0.1, 0.5, 1, 2, 5",
   caption_wc: "1, 6, 11, 21, 51",
+  caption_tc: "1, 20, 40, 60, 77",
 };
 
 function fmtEdge(n: number): string {
@@ -739,6 +740,7 @@ export default function StatsPage() {
     name, count, filter: { format_filter: name },
   }));
   const capLenData: ChartEntry[] = Object.entries(stats.caption_length_distribution).map(([name, count]) => ({ name, count }));
+  const capTokenData: ChartEntry[] = Object.entries(stats.caption_token_distribution).map(([name, count]) => ({ name, count }));
   const topTags = tagStats.slice(0, 20);
   const maxTagCount = Math.max(...topTags.map((t) => t.count), 1);
 
@@ -947,6 +949,13 @@ export default function StatsPage() {
       {capLenData.length > 0 && (
         <div style={{ marginBottom: 14 }}>
           <HistPanel title="Caption word count" entries={capLenData} onBarClick={() => {}} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkNone} />
+        </div>
+      )}
+
+      {/* Caption token count */}
+      {capTokenData.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={() => {}} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkNone} />
         </div>
       )}
 

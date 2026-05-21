@@ -6,6 +6,7 @@ __pycache__/
 dataset_manager.db
 data/
 models_cache/
+models/upscale_models/
 frontend/dist/
 frontend/node_modules/
 .DS_Store

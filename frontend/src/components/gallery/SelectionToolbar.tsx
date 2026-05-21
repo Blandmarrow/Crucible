@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ScanSearch } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ScanSearch, Pencil } from "lucide-react";
 import toast from "react-hot-toast";
+import BulkEditForm from "../caption/BulkEditForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
@@ -46,6 +47,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
   const [detectJobId, setDetectJobId] = useState<string | null>(null);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -197,6 +199,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         <span className="text-sm font-medium text-accent">{count} selected</span>
         <div className="w-px h-4 bg-gray-600" />
 
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
+          <Pencil size={14} /> Edit
+        </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCaption(true)}>
           <Sparkles size={14} /> Caption
         </button>
@@ -453,6 +458,23 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 <ScanSearch size={14} /> Run Detection
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk edit caption modal */}
+      {showBulkEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-3">
+              <Pencil size={15} /> Edit Captions — {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+            <BulkEditForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => { setShowBulkEdit(false); clear(); }}
+              onCancel={() => setShowBulkEdit(false)}
+            />
           </div>
         </div>
       )}

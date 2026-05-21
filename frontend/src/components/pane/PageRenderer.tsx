@@ -6,6 +6,7 @@ import CaptioningPage from "../../pages/CaptioningPage";
 import QualityPage from "../../pages/QualityPage";
 import StatsPage from "../../pages/StatsPage";
 import ExportPage from "../../pages/ExportPage";
+import BulkEditPage from "../../pages/BulkEditPage";
 import FileBrowserPage from "../../pages/FileBrowserPage";
 import BooruPage from "../../pages/BooruPage";
 
@@ -18,6 +19,7 @@ export default function PageRenderer({ view }: { view: PaneView }) {
     case "quality":      return <QualityPage />;
     case "stats":        return <StatsPage />;
     case "export":       return <ExportPage />;
+    case "bulk-edit":    return <BulkEditPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
     default:             return <DatasetsPage />;

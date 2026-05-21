@@ -12,6 +12,7 @@ import CaptioningPage from "./pages/CaptioningPage";
 import QualityPage from "./pages/QualityPage";
 import StatsPage from "./pages/StatsPage";
 import ExportPage from "./pages/ExportPage";
+import BulkEditPage from "./pages/BulkEditPage";
 import BooruPage from "./pages/BooruPage";
 import FileBrowserPage from "./pages/FileBrowserPage";
 import PaneContainer from "./components/pane/PaneContainer";
@@ -70,6 +71,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/quality" element={<ErrorBoundary><QualityPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/stats" element={<ErrorBoundary><StatsPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/export" element={<ErrorBoundary><ExportPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/bulk-edit" element={<ErrorBoundary><BulkEditPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
       </Routes>
     </main>

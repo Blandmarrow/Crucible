@@ -5,6 +5,8 @@ from backend.database import get_db
 from backend.schemas.caption import (
     BatchTagRemove,
     BatchTagSet,
+    BulkEditRequest,
+    BulkEditResponse,
     CaptionOut,
     CaptionUpdate,
     FindReplaceRequest,
@@ -14,6 +16,7 @@ from backend.schemas.caption import (
 from backend.services.caption_service import (
     batch_remove_tags,
     batch_set_tags,
+    bulk_edit_captions,
     find_replace_captions,
     get_caption,
     get_tag_stats,
@@ -65,3 +68,17 @@ async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSessi
         db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
     )
     return {"updated": count}
+
+
+@router.post("/dataset/{dataset_id}/bulk-edit", response_model=BulkEditResponse)
+async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = Depends(get_db)):
+    return await bulk_edit_captions(
+        db,
+        dataset_id,
+        operation=body.operation,
+        text=body.text,
+        replacement=body.replacement,
+        use_regex=body.use_regex,
+        image_ids=body.image_ids,
+        quality_flags=body.quality_flags,
+    )

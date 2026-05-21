@@ -1,6 +1,20 @@
 import client from "./client";
 import type { CaptionData, TagStat } from "../types";
 
+export interface BulkEditRequest {
+  operation: "prepend" | "append" | "remove" | "find_replace";
+  text: string;
+  replacement?: string;
+  use_regex?: boolean;
+  image_ids?: string[];
+  quality_flags?: string[];
+}
+
+export interface BulkEditResponse {
+  affected: number;
+  skipped: number;
+}
+
 export const captionsApi = {
   get: (imageId: string) => client.get<CaptionData>(`/captions/image/${imageId}`).then((r) => r.data),
   update: (imageId: string, data: { caption_text: string; tags: string[]; caption_style?: string }) =>
@@ -27,5 +41,9 @@ export const captionsApi = {
         use_regex,
         image_ids,
       })
+      .then((r) => r.data),
+  bulkEdit: (dataset_id: string, req: BulkEditRequest) =>
+    client
+      .post<BulkEditResponse>(`/captions/dataset/${dataset_id}/bulk-edit`, req)
       .then((r) => r.data),
 };

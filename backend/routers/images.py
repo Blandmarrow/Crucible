@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import normalize_subfolder, rename_with_sidecar, slugify_filename, unique_filename
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, rename_with_sidecar, slugify_filename, unique_filename
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
@@ -43,10 +43,6 @@ _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
     "watermark_score", "color_score", "saturation_score", "style_similarity_score",
 })
-_ALLOWED_FLAG_KEYS = frozenset({
-    "is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate",
-})
-
 
 def _safe_path(path_str: str, base_dir: Path) -> Path:
     resolved = Path(path_str).resolve()
@@ -84,7 +80,7 @@ async def list_images(
 ):
     if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
         raise HTTPException(400, f"Invalid score_field: {score_field}")
-    if quality_flag and quality_flag not in _ALLOWED_FLAG_KEYS:
+    if quality_flag and quality_flag not in ALLOWED_FLAG_KEYS:
         raise HTTPException(400, f"Invalid quality_flag: {quality_flag}")
 
     q = select(Image).where(Image.dataset_id == dataset_id)

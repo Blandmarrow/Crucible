@@ -46,6 +46,12 @@ const IcoExport = () => (
     <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
   </svg>
 );
+const IcoBulkEdit = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <path d="M3 8h7M3 5h10M3 11h5"/>
+    <path d="M11.5 10l1.5-1.5 1.5 1.5-3 3-1.5.5.5-1.5z"/>
+  </svg>
+);
 const IcoFileBrowser = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <path d="M2.5 4.5h4l1.5 1.5h5.5v8h-11v-9.5z"/>
@@ -185,6 +191,7 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/quality`} icon={<IcoQuality />} label="Score images" />
             <NavItem to={`/datasets/${datasetId}/stats`} icon={<IcoStats />} label="Stats" />
             <NavItem to={`/datasets/${datasetId}/export`} icon={<IcoExport />} label="Export" />
+            <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
           </>
         )}
       </nav>

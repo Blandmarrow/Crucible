@@ -9,6 +9,7 @@ import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
+import { FLAG_OPTIONS } from "../constants/flags";
 
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
@@ -19,14 +20,6 @@ const FORMAT_LABELS: Record<Format, string> = {
   aitoolkit: "ai-toolkit",
   plain: "plain folder",
 };
-
-const FLAG_OPTIONS = [
-  { key: "is_blurry",     label: "Blurry" },
-  { key: "is_noisy",      label: "Noisy" },
-  { key: "is_uniform",    label: "Near-uniform" },
-  { key: "has_watermark", label: "Watermarked" },
-  { key: "is_duplicate",  label: "Duplicate" },
-];
 
 export default function ExportPage() {
   const datasetId = usePaneDatasetId();

@@ -1,10 +1,11 @@
 import re
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image, Tag
+from backend.utils import ALLOWED_FLAG_KEYS
 
 
 async def get_caption(db: AsyncSession, image_id: str) -> dict:
@@ -93,6 +94,72 @@ async def batch_remove_tags(db: AsyncSession, image_ids: list[str], tags: list[s
         await _sync_tags(db, img, new_tags, "manual")
         _write_txt_sidecar(img.file_path, img.caption_text or ", ".join(new_tags))
     await db.commit()
+
+
+async def bulk_edit_captions(
+    db: AsyncSession,
+    dataset_id: str,
+    operation: str,
+    text: str,
+    replacement: str = "",
+    use_regex: bool = False,
+    image_ids: list[str] | None = None,
+    quality_flags: list[str] | None = None,
+) -> dict:
+    query = select(Image).where(Image.dataset_id == dataset_id)
+    if image_ids:
+        query = query.where(Image.id.in_(image_ids))
+    if quality_flags:
+        valid_flags = [f for f in quality_flags if f in ALLOWED_FLAG_KEYS]
+        if valid_flags:
+            query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+
+    result = await db.execute(query)
+    images = result.scalars().all()
+
+    affected = 0
+    skipped = 0
+
+    for img in images:
+        old_text = img.caption_text or ""
+
+        try:
+            if operation == "prepend":
+                new_text = (text + " " + old_text).strip() if old_text else text
+            elif operation == "append":
+                new_text = (old_text + " " + text).strip() if old_text else text
+            elif operation == "remove":
+                if not old_text:
+                    skipped += 1
+                    continue
+                new_text = re.sub(text, "", old_text) if use_regex else old_text.replace(text, "")
+                new_text = " ".join(new_text.split())
+                if new_text == old_text:
+                    skipped += 1
+                    continue
+            elif operation == "find_replace":
+                if not old_text:
+                    skipped += 1
+                    continue
+                new_text = re.sub(text, replacement, old_text) if use_regex else old_text.replace(text, replacement)
+                new_text = " ".join(new_text.split())
+                if new_text == old_text:
+                    skipped += 1
+                    continue
+            else:
+                skipped += 1
+                continue
+        except re.error:
+            skipped += 1
+            continue
+
+        img.caption_text = new_text
+        img.captioned_at = datetime.utcnow()
+        _write_txt_sidecar(img.file_path, new_text or ", ".join(img.tags_json))
+        affected += 1
+
+    await db.commit()
+    return {"affected": affected, "skipped": skipped}
 
 
 async def find_replace_captions(

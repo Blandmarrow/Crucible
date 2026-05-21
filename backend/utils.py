@@ -3,6 +3,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate"})
+
 
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments."""

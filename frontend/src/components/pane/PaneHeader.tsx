@@ -11,11 +11,12 @@ const PAGE_OPTIONS: { value: PageType; label: string }[] = [
   { value: "quality",      label: "Score Images" },
   { value: "stats",        label: "Stats" },
   { value: "export",       label: "Export" },
+  { value: "bulk-edit",    label: "Bulk Edit" },
   { value: "file-browser", label: "File Browser" },
   { value: "booru",        label: "Booru Browser" },
 ];
 
-const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export"]);
+const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export", "bulk-edit"]);
 
 interface Props {
   paneId: string;

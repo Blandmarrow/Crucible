@@ -48,7 +48,7 @@ export default function ImageCard({ image, onShowGenMeta }: Props) {
       {/* Thumbnail */}
       <div style={{ aspectRatio: "1/1", background: "var(--surface-2)", position: "relative", overflow: "hidden" }}>
         <img
-          src={imagesApi.thumbnailUrl(image.id)}
+          src={imagesApi.thumbnailUrlVersioned(image.id, image.updated_at)}
           alt={image.filename}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           loading="lazy"

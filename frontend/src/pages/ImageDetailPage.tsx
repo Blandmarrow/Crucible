@@ -93,6 +93,12 @@ export default function ImageDetailPage() {
   const [zoom, setZoom] = useState(1);
   const [aspect, setAspect] = useState<number | undefined>(undefined);
   const [croppedArea, setCroppedArea] = useState<CropArea | null>(null);
+  const [outputWidth, setOutputWidth] = useState("");
+  const [outputHeight, setOutputHeight] = useState("");
+
+  const owNum = parseInt(outputWidth);
+  const ohNum = parseInt(outputHeight);
+  const effectiveAspect = (owNum > 0 && ohNum > 0) ? owNum / ohNum : aspect;
 
   // Detection state
   const [overlayVisible, setOverlayVisible] = useState(true);
@@ -319,13 +325,21 @@ export default function ImageDetailPage() {
   const cropMutation = useMutation({
     mutationFn: () => {
       if (!croppedArea) throw new Error("No crop area");
-      return imagesApi.crop(imageId!, croppedArea);
+      return imagesApi.crop(imageId!, {
+        ...croppedArea,
+        output_width: owNum > 0 ? owNum : undefined,
+        output_height: ohNum > 0 ? ohNum : undefined,
+      });
     },
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      if (!datasetId) return;
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       setCropMode(false);
-      toast.success(`Cropped to ${data.width}×${data.height}`);
+      toast.success(`Created ${data.filename} (${data.width}×${data.height})`);
+      paneGo(
+        `/datasets/${datasetId}/image/${data.id}`,
+        { page: "image-detail", datasetId, imageId: data.id },
+      );
     },
     onError: () => toast.error("Crop failed"),
   });
@@ -373,6 +387,11 @@ export default function ImageDetailPage() {
     },
     onError: () => toast.error("Failed to start captioning"),
   });
+
+  const resetCrop = useCallback(() => {
+    setZoom(1);
+    setCrop({ x: 0, y: 0 });
+  }, []);
 
   const onCropComplete = useCallback((_: unknown, croppedPixels: CropArea) => {
     setCroppedArea(croppedPixels);
@@ -436,13 +455,24 @@ export default function ImageDetailPage() {
           )}
           <button
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => setCropMode((v) => !v)}
+            onClick={() => {
+              setCropMode((v) => {
+                if (!v) resetCrop();
+                return !v;
+              });
+            }}
           >
             <Crop size={14} /> {cropMode ? "Cancel Crop" : "Crop"}
           </button>
           {cropMode && (
             <>
-              <select className="input w-28" value={aspect ?? ""} onChange={(e) => setAspect(e.target.value ? Number(e.target.value) : undefined)}>
+              <select
+                className="input w-28"
+                value={aspect ?? ""}
+                disabled={owNum > 0 && ohNum > 0}
+                title={(owNum > 0 && ohNum > 0) ? "Aspect ratio set by W×H" : undefined}
+                onChange={(e) => { setAspect(e.target.value ? Number(e.target.value) : undefined); resetCrop(); }}
+              >
                 <option value="">Free</option>
                 <option value={1}>1:1</option>
                 <option value={4/3}>4:3</option>
@@ -450,8 +480,45 @@ export default function ImageDetailPage() {
                 <option value={3/2}>3:2</option>
                 <option value={9/16}>9:16</option>
               </select>
-              <button className="btn-primary btn-sm" onClick={() => cropMutation.mutate()} disabled={!croppedArea}>
-                Apply Crop
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={0.05}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                title={`Zoom ${zoom.toFixed(2)}×`}
+                style={{ width: 80, accentColor: "var(--accent)" }}
+              />
+              <input
+                type="number"
+                min="1"
+                className="input"
+                style={{ width: 68 }}
+                placeholder="W px"
+                value={outputWidth}
+                onChange={(e) => {
+                  const newW = e.target.value;
+                  setOutputWidth(newW);
+                  if (parseInt(newW) > 0 && ohNum > 0) resetCrop();
+                }}
+              />
+              <span style={{ color: "var(--fg-mute)", fontSize: 13 }}>×</span>
+              <input
+                type="number"
+                min="1"
+                className="input"
+                style={{ width: 68 }}
+                placeholder="H px"
+                value={outputHeight}
+                onChange={(e) => {
+                  const newH = e.target.value;
+                  setOutputHeight(newH);
+                  if (owNum > 0 && parseInt(newH) > 0) resetCrop();
+                }}
+              />
+              <button className="btn-primary btn-sm" onClick={() => cropMutation.mutate()} disabled={!croppedArea || cropMutation.isPending}>
+                {cropMutation.isPending ? "Saving…" : "Save Crop"}
               </button>
             </>
           )}
@@ -463,7 +530,7 @@ export default function ImageDetailPage() {
               image={imagesApi.fileUrl(imageId!)}
               crop={crop}
               zoom={zoom}
-              aspect={aspect}
+              aspect={effectiveAspect}
               onCropChange={setCrop}
               onZoomChange={setZoom}
               onCropComplete={onCropComplete}

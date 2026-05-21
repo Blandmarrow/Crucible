@@ -227,11 +227,37 @@ def resize_image(
     return new_w, new_h
 
 
-def crop_image(path: str, x: int, y: int, width: int, height: int) -> tuple[int, int]:
-    img = _open_safe(path)
+def crop_image_to_dest(
+    src_path: str,
+    dest_path: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    output_width: int | None = None,
+    output_height: int | None = None,
+) -> dict:
+    img = _open_safe(src_path)
     cropped = img.crop((x, y, x + width, y + height))
-    cropped.save(path)
-    return cropped.width, cropped.height
+    img.close()
+    if output_width is not None and output_height is not None:
+        cropped = cropped.resize((output_width, output_height), Image.Resampling.LANCZOS)
+    elif output_width is not None:
+        oh = round(cropped.height * (output_width / cropped.width))
+        cropped = cropped.resize((output_width, oh), Image.Resampling.LANCZOS)
+    elif output_height is not None:
+        ow = round(cropped.width * (output_height / cropped.height))
+        cropped = cropped.resize((ow, output_height), Image.Resampling.LANCZOS)
+    w, h = cropped.width, cropped.height
+    phash_str = str(imagehash.phash(cropped))
+    cropped.save(dest_path)
+    return {
+        "width": w,
+        "height": h,
+        "format": Path(dest_path).suffix.lstrip(".").upper(),
+        "file_size_bytes": Path(dest_path).stat().st_size,
+        "phash": phash_str,
+    }
 
 
 def crop_to_aspect(path: str, target_ar: float, strategy: str = "center") -> tuple[int, int]:

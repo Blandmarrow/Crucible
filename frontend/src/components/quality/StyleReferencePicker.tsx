@@ -96,7 +96,7 @@ export default function StyleReferencePicker({
                     )}
                   >
                     <img
-                      src={imagesApi.thumbnailUrl(img.id)}
+                      src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)}
                       alt={img.filename}
                       className="w-full h-full object-cover"
                       loading="lazy"

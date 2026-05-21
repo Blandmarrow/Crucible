@@ -15,7 +15,7 @@ export const qualityApi = {
 
   duplicates: (dataset_id: string) =>
     client
-      .get<{ groups: Array<Array<{ id: string; filename: string; aesthetic_score: number | null }>> }>(
+      .get<{ groups: Array<Array<{ id: string; filename: string; aesthetic_score: number | null; updated_at: string }>> }>(
         `/quality/duplicates/${dataset_id}`
       )
       .then((r) => r.data),

@@ -26,7 +26,7 @@ from backend.schemas.image import (
 )
 from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import (
-    crop_image,
+    crop_image_to_dest,
     crop_to_aspect,
     extract_generation_metadata,
     generate_thumbnail,
@@ -325,13 +325,45 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    new_w, new_h = await asyncio.get_event_loop().run_in_executor(
-        None, crop_image, img.file_path, body.x, body.y, body.width, body.height
+
+    src_path = Path(img.file_path)
+    dest_images = src_path.parent
+    dest_thumbs = src_path.parent.parent / "thumbnails"
+
+    crop_stem = slugify_filename(src_path.stem + "_crop")
+    existing = await db.execute(
+        select(Image.filename).where(
+            Image.dataset_id == img.dataset_id,
+            Image.filename.like(f"{crop_stem}%"),
+        )
     )
-    img.width, img.height = new_w, new_h
-    await asyncio.get_event_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
+    db_names: set[str] = {r[0] for r in existing.all()}
+    new_filename = unique_filename(dest_images, crop_stem, src_path.suffix, db_names)
+    dest_path = dest_images / new_filename
+
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(
+        None, crop_image_to_dest,
+        str(src_path), str(dest_path),
+        body.x, body.y, body.width, body.height,
+        body.output_width, body.output_height,
+    )
+    thumb_path = str(dest_thumbs / (Path(new_filename).stem + ".webp"))
+    await loop.run_in_executor(None, generate_thumbnail, str(dest_path), thumb_path)
+
+    new_img = Image(
+        dataset_id=img.dataset_id,
+        filename=new_filename,
+        original_filename=img.original_filename,
+        subfolder=img.subfolder,
+        file_path=str(dest_path),
+        thumbnail_path=thumb_path,
+        **info,
+    )
+    db.add(new_img)
     await db.commit()
-    return {"width": new_w, "height": new_h}
+    await db.refresh(new_img)
+    return {"id": new_img.id, "filename": new_img.filename, "width": new_img.width, "height": new_img.height}
 
 
 @router.post("/batch/resize")

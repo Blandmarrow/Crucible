@@ -34,6 +34,7 @@ class ImageOut(BaseModel):
     captioned_by: str
     captioned_at: datetime | None
     is_auto_named: bool = False
+    updated_at: datetime
     tags_json: list[str]
     detections: list[DetectionOut] = []
 
@@ -63,6 +64,7 @@ class ImageListItem(BaseModel):
     tags_json: list[str]
     captioned_by: str
     is_auto_named: bool = False
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -84,6 +86,8 @@ class ImageCropRequest(BaseModel):
     y: int
     width: int
     height: int
+    output_width: int | None = None
+    output_height: int | None = None
 
 
 class BatchResizeRequest(BaseModel):

@@ -321,7 +321,7 @@ export default function QualityPage() {
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     {group.map((img) => (
                       <div key={img.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                        <img src={imagesApi.thumbnailUrl(img.id)} alt={img.filename} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", border: "1px solid var(--line-2)" }} />
+                        <img src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)} alt={img.filename} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", border: "1px solid var(--line-2)" }} />
                         <span className="mono" style={{ fontSize: 10, color: "var(--fg-dim)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }}>{img.filename}</span>
                         {img.aesthetic_score != null && <span className="mono" style={{ fontSize: 11, color: "var(--good)" }}>{img.aesthetic_score.toFixed(1)}</span>}
                       </div>

@@ -436,7 +436,7 @@ function BucketPanel({
                       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: "var(--r)", border: "1px solid var(--line)", background: "var(--surface-2)", cursor: "pointer", padding: 0 }}
                       onClick={() => { setConfirmDeleteId(null); setPreviewIdx(i); }}
                     >
-                      <img src={imagesApi.thumbnailUrl(img.id)} alt={img.filename} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
+                      <img src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)} alt={img.filename} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} loading="lazy" />
                     </button>
 
                     {confirmDeleteId === img.id ? (

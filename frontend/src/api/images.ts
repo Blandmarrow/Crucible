@@ -40,6 +40,8 @@ export const imagesApi = {
     client.delete("/images/batch/delete", { data: image_ids }),
   fileUrl: (id: string) => `/api/v1/images/${id}/file`,
   thumbnailUrl: (id: string) => `/api/v1/images/${id}/thumbnail`,
+  thumbnailUrlVersioned: (id: string, updatedAt: string) =>
+    `/api/v1/images/${id}/thumbnail?v=${Date.parse(updatedAt)}`,
   upload: (dataset_id: string, files: File[], subfolder = "") => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
@@ -50,8 +52,8 @@ export const imagesApi = {
   },
   resize: (id: string, opts: { width?: number; height?: number; scale?: number; maintain_ar?: boolean }) =>
     client.post(`/images/${id}/resize`, opts).then((r) => r.data),
-  crop: (id: string, box: { x: number; y: number; width: number; height: number }) =>
-    client.post(`/images/${id}/crop`, box).then((r) => r.data),
+  crop: (id: string, box: { x: number; y: number; width: number; height: number; output_width?: number; output_height?: number }) =>
+    client.post<{ id: string; filename: string; width: number; height: number }>(`/images/${id}/crop`, box).then((r) => r.data),
   batchResize: (image_ids: string[], opts: object) =>
     client.post<{ job_id: string }>("/images/batch/resize", { image_ids, ...opts }).then((r) => r.data),
   batchCrop: (image_ids: string[], target_ar: number, strategy = "center") =>

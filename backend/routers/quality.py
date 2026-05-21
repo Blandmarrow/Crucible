@@ -434,6 +434,7 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
             "id": img.id,
             "filename": img.filename,
             "aesthetic_score": img.aesthetic_score,
+            "updated_at": img.updated_at,
         })
     return {"groups": list(groups.values())}
 

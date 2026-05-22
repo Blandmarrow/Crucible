@@ -42,3 +42,30 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
         old_txt.rename(new_path.with_suffix(".txt"))
+
+
+def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:
+    """Normalise a file suffix to a PIL format name; fall back to PNG for unsupported types.
+
+    Returns (fmt, out_path) — out_path may be updated when the format falls back to PNG.
+    """
+    fmt = suffix.lstrip(".").upper()
+    if fmt == "JPG":
+        fmt = "JPEG"
+    if fmt not in ("JPEG", "PNG", "WEBP"):
+        fmt = "PNG"
+        out_path = str(Path(out_path).with_suffix(".png"))
+    return fmt, out_path
+
+
+def image_save_kwargs(fmt: str) -> dict:
+    """Return PIL save() kwargs for the given format."""
+    if fmt == "JPEG":
+        return {"quality": 95, "subsampling": 0}
+    return {}
+
+
+def thumbnail_path_for(image_path: Path | str) -> str:
+    """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder."""
+    p = Path(image_path)
+    return str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))

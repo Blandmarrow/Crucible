@@ -2,6 +2,8 @@ import logging
 import re
 from pathlib import Path
 
+from backend.utils import normalize_image_format, image_save_kwargs
+
 logger = logging.getLogger(__name__)
 
 _extra_arches_installed = False
@@ -94,17 +96,8 @@ def upscale_image_sync(
         result_img = _resize_to_target(result_img, target_width, target_height)
 
     out_path = src if replace else dest
-    fmt = Path(src).suffix.lstrip(".").upper()
-    if fmt == "JPG":
-        fmt = "JPEG"
-    if fmt not in ("JPEG", "PNG", "WEBP"):
-        fmt = "PNG"
-        out_path = str(Path(out_path).with_suffix(".png"))
-
-    save_kwargs: dict = {}
-    if fmt == "JPEG":
-        save_kwargs["quality"] = 95
-        save_kwargs["subsampling"] = 0
+    fmt, out_path = normalize_image_format(Path(src).suffix, out_path)
+    save_kwargs = image_save_kwargs(fmt)
 
     result_img.save(out_path, format=fmt, **save_kwargs)
     stat = Path(out_path).stat()

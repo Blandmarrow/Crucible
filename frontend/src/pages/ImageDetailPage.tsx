@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -10,6 +10,7 @@ import { captionsApi } from "../api/captions";
 import { captioningApi } from "../api/captioning";
 import { detectionApi } from "../api/detection";
 import { upscalingApi } from "../api/upscaling";
+import { lutApi } from "../api/lut";
 import { useJobStore } from "../store/jobStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
@@ -132,6 +133,12 @@ export default function ImageDetailPage() {
   const [upscaleTargetW, setUpscaleTargetW] = useState("");
   const [upscaleTargetH, setUpscaleTargetH] = useState("");
   const [upscaleJobId, setUpscaleJobId] = useState<string | null>(null);
+  // LUT mode
+  const [lutMode, setLutMode] = useState(false);
+  const [lutPath, setLutPath] = useState("");
+  const [lutIntensity, setLutIntensity] = useState(100);
+  const [lutReplace, setLutReplace] = useState(false);
+  const [lutJobId, setLutJobId] = useState<string | null>(null);
 
   const owNum = parseInt(outputWidth);
   const ohNum = parseInt(outputHeight);
@@ -310,6 +317,12 @@ export default function ImageDetailPage() {
     <option key={m.path} value={m.path}>{m.name}{m.scale ? ` (${m.scale}×)` : ""}</option>
   ));
 
+  const { data: lutModels = [] } = useQuery({
+    queryKey: ["lut-models"],
+    queryFn: lutApi.models,
+    staleTime: Infinity,
+  });
+
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
   const aiModelType = modelType(aiModel);
@@ -323,6 +336,7 @@ export default function ImageDetailPage() {
   // Upscale job progress
   const upscaleJobProgress = useJobStore((s) => s.activeJobs.get(upscaleJobId ?? ""));
   const cropUpscaleJobProgress = useJobStore((s) => s.activeJobs.get(cropUpscaleJobId ?? ""));
+  const lutJobProgress = useJobStore((s) => s.activeJobs.get(lutJobId ?? ""));
 
   useEffect(() => {
     if (!detectJobId || !detectJobProgress) return;
@@ -377,6 +391,32 @@ export default function ImageDetailPage() {
       toast.error("Upscaling failed");
     }
   }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo]);
+
+  // LUT job tracking
+  useEffect(() => {
+    if (!lutJobId || !lutJobProgress) return;
+    if (lutJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      setLutJobId(null);
+      if (!lutReplace && lutJobProgress.image_id) {
+        if (datasetId && imageId) injectNavId(datasetId, imageId, lutJobProgress.image_id);
+        toast.success("LUT applied — navigating to new image");
+        setLutMode(false);
+        paneGo(
+          `/datasets/${datasetId}/image/${lutJobProgress.image_id}`,
+          { page: "image-detail", datasetId: datasetId ?? "", imageId: lutJobProgress.image_id },
+          { replace: true },
+        );
+      } else {
+        toast.success("LUT applied");
+        setLutMode(false);
+      }
+    } else if (lutJobProgress.status === "failed") {
+      setLutJobId(null);
+      toast.error("LUT grading failed");
+    }
+  }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo]);
 
   // Crop+upscale job tracking
   useEffect(() => {
@@ -509,6 +549,24 @@ export default function ImageDetailPage() {
     onError: () => toast.error("Failed to start upscaling"),
   });
 
+  const lutMutation = useMutation({
+    mutationFn: () =>
+      lutApi.run({
+        dataset_id: datasetId!,
+        image_ids: [imageId!],
+        lut_path: lutPath,
+        intensity: lutIntensity / 100,
+        replace: lutReplace,
+      }),
+    onSuccess: (data) => {
+      if (data.job_id) {
+        setLutJobId(data.job_id);
+        toast.success("Applying LUT…");
+      }
+    },
+    onError: () => toast.error("Failed to start LUT grading"),
+  });
+
   const detectMutation = useMutation({
     mutationFn: () =>
       detectionApi.run({
@@ -573,6 +631,7 @@ export default function ImageDetailPage() {
   const aiRunning = !!aiJobId && aiJobProgress?.status === "running";
   const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
+  const lutRunning = !!lutJobId && lutJobProgress?.status === "running";
 
   return (
     <div className="flex h-full">
@@ -624,7 +683,7 @@ export default function ImageDetailPage() {
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => {
               setCropMode((v) => {
-                if (!v) { resetCrop(); setUpscaleMode(false); }
+                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); }
                 return !v;
               });
             }}
@@ -633,10 +692,17 @@ export default function ImageDetailPage() {
           </button>
           <button
             className={`btn-sm flex items-center gap-1.5 ${upscaleMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); }}
+            onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); setLutMode(false); }}
             disabled={upscaleRunning || cropUpscaleRunning}
           >
             <Maximize2 size={14} /> {upscaleMode ? "Cancel" : "Upscale"}
+          </button>
+          <button
+            className={`btn-sm flex items-center gap-1.5 ${lutMode ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => { setLutMode((v) => !v); setCropMode(false); setUpscaleMode(false); }}
+            disabled={lutRunning}
+          >
+            <Palette size={14} /> {lutMode ? "Cancel" : "LUT"}
           </button>
           {cropMode && (
             <>
@@ -783,6 +849,49 @@ export default function ImageDetailPage() {
               >
                 <Maximize2 size={13} />
                 {upscaleRunning ? `${upscaleJobProgress?.percent?.toFixed(0) ?? 0}%` : "Run"}
+              </button>
+            </>
+          )}
+          {/* LUT controls */}
+          {lutMode && (
+            <>
+              <select
+                className="input"
+                style={{ width: 160 }}
+                value={lutPath}
+                onChange={(e) => setLutPath(e.target.value)}
+              >
+                <option value="">— select LUT —</option>
+                {lutModels.map((m) => (
+                  <option key={m.path} value={m.path}>{m.name} ({m.format})</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1.5 text-sm" style={{ minWidth: 80 }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={lutIntensity}
+                  onChange={(e) => setLutIntensity(Number(e.target.value))}
+                  style={{ width: 72 }}
+                />
+                {lutIntensity}%
+              </label>
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={lutReplace}
+                  onChange={(e) => setLutReplace(e.target.checked)}
+                />
+                Replace
+              </label>
+              <button
+                className="btn-primary btn-sm flex items-center gap-1.5"
+                onClick={() => lutMutation.mutate()}
+                disabled={!lutPath || lutRunning || lutMutation.isPending}
+              >
+                <Palette size={13} />
+                {lutRunning ? `${lutJobProgress?.percent?.toFixed(0) ?? 0}%` : "Run"}
               </button>
             </>
           )}

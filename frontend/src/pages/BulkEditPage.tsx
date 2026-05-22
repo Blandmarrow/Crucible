@@ -5,9 +5,10 @@ import { useSelectionStore } from "../store/selectionStore";
 import { FLAG_OPTIONS } from "../constants/flags";
 import BulkEditForm from "../components/caption/BulkEditForm";
 import UpscaleForm from "../components/upscale/UpscaleForm";
+import LutForm from "../components/lut/LutForm";
 
 type Scope = "all" | "flags" | "selected";
-type Tab = "captions" | "upscale";
+type Tab = "captions" | "upscale" | "lut";
 
 export default function BulkEditPage() {
   const datasetId = usePaneDatasetId();
@@ -47,6 +48,9 @@ export default function BulkEditPage() {
         </button>
         <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
           Upscale
+        </button>
+        <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
+          Apply LUT
         </button>
       </div>
 
@@ -119,6 +123,19 @@ export default function BulkEditPage() {
           <div className="panel-h">Upscale</div>
           <div className="panel-b">
             <UpscaleForm
+              key={scope}
+              datasetId={datasetId}
+              imageIds={imageIds}
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "lut" && (
+        <div className="panel">
+          <div className="panel-h">Apply LUT</div>
+          <div className="panel-b">
+            <LutForm
               key={scope}
               datasetId={datasetId}
               imageIds={imageIds}

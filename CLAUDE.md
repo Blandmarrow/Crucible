@@ -64,6 +64,9 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 - `unique_filename(directory: Path, stem: str, suffix: str, db_names: set) -> str` — returns a filename not on disk and not in `db_names`. Tries `{stem}{suffix}` first, then `{stem}_001{suffix}`, `_002`, … Both checks are required: `db_names` covers in-flight batch collisions within the same request; the filesystem check covers files that exist but have no DB record.
 - `rename_with_sidecar(old_path: Path, new_path: Path) -> None` — renames a file and its `.txt` sidecar (if present) in one call. Use this everywhere a file rename happens; never copy the two-step pattern inline.
 - `ALLOWED_FLAG_KEYS: frozenset` — the canonical set of valid quality flag names (`is_blurry`, `is_noisy`, `is_uniform`, `has_watermark`, `is_duplicate`). Import this wherever flag names must be validated or used in SQL filters; never redefine the set locally.
+- `normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]` — normalises a file suffix to a PIL format name (`JPG`→`JPEG`, unsupported→`PNG`). Returns `(fmt, out_path)` — `out_path` may be updated when the format falls back to PNG (extension changes). Use in any image-save path; do not inline the JPG/PNG fallback logic again.
+- `image_save_kwargs(fmt: str) -> dict` — returns PIL `save()` kwargs for the given format (JPEG → `{quality: 95, subsampling: 0}`; others → `{}`). Use alongside `normalize_image_format`.
+- `thumbnail_path_for(image_path: Path | str) -> str` — derives the `.webp` thumbnail path for an image sitting in a dataset `images/` folder (`parent.parent/thumbnails/{stem}.webp`). Use in any router that creates or regenerates thumbnails; never reconstruct the path manually.
 
 ### Image file naming
 
@@ -213,6 +216,37 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 - `BulkEditPage` — "Upscale" tab (see Bulk caption editing section).
 
 `UpscaleForm` (`frontend/src/components/upscale/UpscaleForm.tsx`) — reusable form used by `SelectionToolbar` and `BulkEditPage`. Queries `["upscale-models"]` with `staleTime: Infinity` (model list never changes at runtime).
+
+### LUT Color Grading
+
+Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-controlled blend intensity.
+
+**Router**: `backend/routers/lut.py`, prefix `/lut`.
+
+| Endpoint | Body / params | Returns |
+|---|---|---|
+| `GET /lut/models` | — | `list[LutModelInfo]` — scans `settings.lut_models_dir` |
+| `POST /lut/run` | `LutRunRequest` | `{ job_id, total }` |
+
+**Config**: `settings.lut_models_dir` (default `models/lut/`). The directory is created automatically on startup.
+
+**`LutRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `lut_path`, `intensity` (0.0–1.0, clamped by validator), `replace` (overwrite source vs. new file).
+
+**ML processing** (`backend/ml/lut_processor.py`):
+- `scan_lut_models(dir)` — globs `*.cube`/`*.3dl`, returns `[{name, path, format}]`.
+- `apply_lut_sync(src, dest, lut_path, intensity, replace)` — loads PIL image + `exif_transpose`, converts to float32 [0,1], applies trilinear LUT interpolation, blends `original * (1-intensity) + graded * intensity`, saves. Returns `{width, height, file_size_bytes, format, out_path}`. Note `out_path` may differ from `dest` when the source format is unsupported and falls back to PNG — the router uses `info["out_path"]` to derive the actual output path.
+- Module-level `_lut_cache: dict[str, np.ndarray]` — parsed LUT arrays are cached for the process lifetime. LUTs are tiny (<1 MB each); no eviction needed in practice.
+
+**LUT axis-ordering invariant**: The `.cube` spec (and `.3dl`) stores data with **R varying fastest, B slowest**. After `reshape(N, N, N, 3)` numpy's axis order is `[B, G, R]`. Both `_parse_cube` and `_parse_3dl` therefore call `.transpose(2, 1, 0, 3)` to produce a `[R, G, B]`-indexed array, so that `lut[r, g, b]` is the natural lookup in `_apply_lut_array`. Do not remove this transpose — without it R and B are swapped in the lookup, producing visually wrong results.
+
+**Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `file_size_bytes`/`updated_at` on existing record, thumbnail regenerated.
+
+**Frontend surfaces**:
+- `ImageDetailPage` — "LUT" toolbar button (mutually exclusive with Crop and Upscale) toggles inline controls: LUT `<select>`, intensity slider, Replace checkbox, Run button. Non-replace completion calls `injectNavId` + `paneGo` to navigate to the new image (same pattern as upscaling).
+- `SelectionToolbar` — "LUT" button opens a modal with `<LutForm>`.
+- `BulkEditPage` — "Apply LUT" tab (see Bulk caption editing section).
+
+`LutForm` (`frontend/src/components/lut/LutForm.tsx`) — reusable form used by `SelectionToolbar` and `BulkEditPage`. Queries `["lut-models"]` with `staleTime: Infinity`. On job completion invalidates `["images", datasetId]` and calls `onSuccess?.()`.
 
 ### Database
 
@@ -440,7 +474,7 @@ Images with no `caption_text` are skipped for `remove` and `find_replace`. For `
 
 **Frontend surfaces**:
 - `SelectionToolbar` — **Edit** button (pencil icon) opens a modal with `<BulkEditForm imageIds={selectedIds} />`. On success, invalidates `["images", datasetId]` and clears the selection.
-- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — two tabs: *Edit Captions* and *Upscale*. Both tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*). The captions tab embeds `<BulkEditForm>`; the upscale tab embeds `<UpscaleForm>`. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
+- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — three tabs: *Edit Captions*, *Upscale*, and *Apply LUT*. All tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*). The captions tab embeds `<BulkEditForm>`; the upscale tab embeds `<UpscaleForm>`; the LUT tab embeds `<LutForm>`. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
 
 `BulkEditForm` (`frontend/src/components/caption/BulkEditForm.tsx`) — reusable form component. When the `qualityFlags` prop is provided it uses those and hides its own flag selector; when omitted the internal flag selector is shown. The `disabled` prop prevents submission (used by `BulkEditPage` when scope is "flags" but nothing is selected).
 

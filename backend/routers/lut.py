@@ -10,24 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.models import BackgroundJob, Image
-from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
-from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
+from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
+from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.utils import slugify_filename, unique_filename, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/upscaling", tags=["upscaling"])
+router = APIRouter(prefix="/lut", tags=["lut"])
 
 
-@router.get("/models", response_model=list[UpscaleModelInfo])
-async def list_upscale_models():
-    return scan_upscale_models(settings.upscale_models_dir)
+@router.get("/models", response_model=list[LutModelInfo])
+async def list_lut_models():
+    return scan_lut_models(settings.lut_models_dir)
 
 
 @router.post("/run")
-async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db)):
-    # Resolve image list
+async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
     if body.image_ids is not None:
         result = await db.execute(
             select(Image.id).where(Image.id.in_(body.image_ids))
@@ -41,7 +40,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
 
     total = len(image_ids)
     job = BackgroundJob(
-        job_type="batch_upscale",
+        job_type="batch_lut",
         dataset_id=body.dataset_id,
         total_items=total,
         config=body.model_dump(),
@@ -62,19 +61,18 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             images = result.scalars().all()
             loop = asyncio.get_running_loop()
 
-            model_path = cfg["model_path"]
+            lut_path = cfg["lut_path"]
+            intensity = cfg["intensity"]
             replace = cfg["replace"]
-            target_w = cfg["target_width"]
-            target_h = cfg["target_height"]
-
-            # Detect model scale for naming (heuristic from filename)
-            from backend.ml.upscaler import _detect_scale
-            raw_scale = _detect_scale(Path(model_path).stem)
-            scale_suffix = f"_up{raw_scale}x" if raw_scale else "_upscale"
 
             last_image_id: str | None = None
 
             for i, img in enumerate(images):
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row and job_row.status == "cancelled":
+                    await session.commit()
+                    return
+
                 src_path = Path(img.file_path)
                 dest_path_str: str
 
@@ -82,7 +80,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     dest_path_str = str(src_path)
                 else:
                     dest_images = src_path.parent
-                    dest_stem = slugify_filename(src_path.stem + scale_suffix)
+                    dest_stem = slugify_filename(src_path.stem + "_lut")
                     existing = await session.execute(
                         select(Image.filename).where(
                             Image.dataset_id == img.dataset_id,
@@ -95,13 +93,13 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
 
                 try:
                     info = await loop.run_in_executor(
-                        None, upscale_image_sync,
-                        str(src_path), dest_path_str, model_path, replace, target_w, target_h,
+                        None, apply_lut_sync,
+                        str(src_path), dest_path_str, lut_path, intensity, replace,
                     )
                 except Exception as exc:
-                    logger.error("Upscale failed for %s: %s", img.filename, exc)
+                    logger.error("LUT failed for %s: %s", img.filename, exc)
                     await broadcaster.emit(job_id, {
-                        "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                        "type": "progress", "job_id": job_id, "job_type": "batch_lut",
                         "status": "running", "done": i + 1, "total": len(images),
                         "percent": round((i + 1) / len(images) * 100, 1),
                         "current_item": img.filename,
@@ -109,28 +107,29 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     })
                     continue
 
+                # apply_lut_sync may change out_path if format conversion occurred
+                actual_out_path = info.get("out_path", dest_path_str)
+
                 if replace:
-                    img.width = info["width"]
-                    img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
                     img.updated_at = datetime.now(timezone.utc)
                     if img.thumbnail_path:
                         await loop.run_in_executor(
-                            None, generate_thumbnail, str(src_path), img.thumbnail_path
+                            None, generate_thumbnail, actual_out_path, img.thumbnail_path
                         )
                     last_image_id = img.id
                 else:
-                    dest_path = Path(dest_path_str)
-                    thumb_path = thumbnail_path_for(dest_path_str)
+                    actual_dest = Path(actual_out_path)
+                    thumb_path = thumbnail_path_for(actual_out_path)
                     await loop.run_in_executor(
-                        None, generate_thumbnail, dest_path_str, thumb_path
+                        None, generate_thumbnail, actual_out_path, thumb_path
                     )
                     new_img = Image(
                         dataset_id=img.dataset_id,
-                        filename=dest_path.name,
+                        filename=actual_dest.name,
                         original_filename=img.original_filename,
                         subfolder=img.subfolder,
-                        file_path=dest_path_str,
+                        file_path=actual_out_path,
                         thumbnail_path=thumb_path,
                         width=info["width"],
                         height=info["height"],
@@ -142,7 +141,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     last_image_id = new_img.id
 
                 await broadcaster.emit(job_id, {
-                    "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                    "type": "progress", "job_id": job_id, "job_type": "batch_lut",
                     "status": "running", "done": i + 1, "total": len(images),
                     "percent": round((i + 1) / len(images) * 100, 1),
                     "current_item": img.filename,

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     datasets_dir: Path = Path(__file__).parent.parent / "data" / "datasets"
     models_cache_dir: Path = Path(__file__).parent.parent / "models_cache"
     upscale_models_dir: Path = Path(__file__).parent.parent / "models" / "upscale_models"
+    lut_models_dir: Path = Path(__file__).parent.parent / "models" / "lut"
 
     # Database (absolute path so it's consistent regardless of working directory)
     database_url: str = f"sqlite+aiosqlite:///{Path(__file__).parent.parent / 'dataset_manager.db'}"
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
         self.datasets_dir.mkdir(parents=True, exist_ok=True)
         self.models_cache_dir.mkdir(parents=True, exist_ok=True)
         self.upscale_models_dir.mkdir(parents=True, exist_ok=True)
+        self.lut_models_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

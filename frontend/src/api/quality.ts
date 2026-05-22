@@ -3,6 +3,7 @@ import client from "./client";
 export const qualityApi = {
   score: (params: {
     dataset_id: string;
+    subfolder?: string;
     image_ids?: string[];
     run_aesthetic: boolean;
     run_technical: boolean;

@@ -1,12 +1,27 @@
 import os
 import signal
 import threading
+import warnings
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Triton is unavailable on Windows; disable TorchDynamo so torch.compile is never
 # attempted during inference (single-image inference gains nothing from it anyway).
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+
+# torchao: no Triton on Windows — expected, no runtime effect
+warnings.filterwarnings("ignore", message=".*Detected no triton.*")
+# open_clip: ViT-L-14 weights trained with QuickGELU; no effect on inference output
+warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU activation.*")
+# pydantic: HuggingFace internals use Field(repr=, frozen=) in a way Pydantic v2 flags; no runtime effect
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+except ImportError:
+    pass
+# torch.distributed: Windows doesn't support process stream redirects; logged via logging not warnings
+logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

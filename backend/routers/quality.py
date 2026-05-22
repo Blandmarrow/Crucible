@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
+from backend.utils import normalize_subfolder
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/quality", tags=["quality"])
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 
 class ScoreRequest(BaseModel):
     dataset_id: str
+    subfolder: str | None = None
     image_ids: list[str] | None = None
     run_aesthetic: bool = True
     run_technical: bool = True
@@ -46,6 +48,8 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
     query = select(Image).where(Image.dataset_id == body.dataset_id)
     if body.image_ids:
         query = query.where(Image.id.in_(body.image_ids))
+    elif body.subfolder is not None:
+        query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     result = await db.execute(query)
     images = result.scalars().all()
 

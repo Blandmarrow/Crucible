@@ -3,6 +3,7 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { qualityApi } from "../api/quality";
+import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
@@ -32,6 +33,13 @@ export default function QualityPage() {
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
   const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">("clip");
   const [dinoLayer, setDinoLayer] = useState<number | "all" | null>("all");
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+
+  const { data: subfolders = [] } = useQuery({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
 
   useJobSSE(activeJobId);
   const jobProgress = useJobStore((s) => s.activeJobs.get(activeJobId ?? ""));
@@ -79,6 +87,7 @@ export default function QualityPage() {
     mutationFn: () =>
       qualityApi.score({
         dataset_id: datasetId!,
+        subfolder: activeSubfolder,
         run_aesthetic: runAesthetic,
         run_technical: runTechnical,
         run_watermark: runWatermark,
@@ -167,6 +176,20 @@ export default function QualityPage() {
           )}
           <h3 style={{ marginLeft: lastRunLabel ? 12 : 0 }}>Run quality analysis</h3>
           <div style={{ flex: 1 }} />
+          {subfolders.length > 0 && (
+            <select
+              className="select"
+              value={activeSubfolder ?? ""}
+              onChange={(e) => setActiveSubfolder(e.target.value === "" ? undefined : e.target.value)}
+              style={{ fontSize: 12, height: 30, marginRight: 8 }}
+              disabled={isRunning}
+            >
+              <option value="">All subfolders</option>
+              {subfolders.map((sf) => (
+                <option key={sf.path} value={sf.path}>{sf.path} ({sf.image_count})</option>
+              ))}
+            </select>
+          )}
           <button className="btn primary" onClick={() => scoreMutation.mutate()} disabled={isRunning}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>

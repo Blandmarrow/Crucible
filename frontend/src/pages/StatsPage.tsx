@@ -734,11 +734,9 @@ function formatSize(mb: number) {
   return mb > 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`;
 }
 
-function meanAesthetic(dist: Record<string, number>): string {
-  const mids: Record<string, number> = { "low (0-4)": 2, "mid (4-6)": 5, "high (6-10)": 8 };
-  let sum = 0, n = 0;
-  for (const [k, c] of Object.entries(dist)) { const m = mids[k]; if (m != null) { sum += m * c; n += c; } }
-  return n > 0 ? (sum / n).toFixed(1) : "—";
+function meanAesthetic(values: number[] | undefined): string {
+  if (!values || values.length === 0) return "—";
+  return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -991,7 +989,7 @@ export default function StatsPage() {
         {[
           { k: "Total images",    v: stats.image_count.toLocaleString() },
           { k: "Captioned",       v: `${stats.caption_coverage_pct}%` },
-          { k: "Mean aesthetic",  v: meanAesthetic(stats.score_distribution) },
+          { k: "Mean aesthetic",  v: meanAesthetic(sv?.aesthetic_score) },
           { k: "Disk usage",      v: formatSize(stats.total_size_mb) },
         ].map(({ k, v }) => (
           <div key={k} className="stat-card">

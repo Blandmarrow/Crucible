@@ -193,6 +193,22 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showMoveSubfolder || showDeleteConfirm;
+
+  useEffect(() => {
+    if (count === 0) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete") return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (anyModalOpen) return;
+      e.preventDefault();
+      setShowDeleteConfirm(true);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [count, anyModalOpen]);
+
   if (count === 0) return null;
 
   return (

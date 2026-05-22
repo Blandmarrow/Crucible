@@ -14,6 +14,7 @@ import { useJobStore } from "../store/jobStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
@@ -78,17 +79,27 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
   );
 }
 
-function injectNavId(datasetId: string, afterId: string, newId: string) {
+function mutateNavIds(datasetId: string, transform: (ids: string[]) => string[]) {
   try {
     const raw = sessionStorage.getItem(`gallery-nav-${datasetId}`);
     if (!raw) return;
     const ctx = JSON.parse(raw) as { ids: string[]; [k: string]: unknown };
-    const idx = ctx.ids.indexOf(afterId);
-    const newIds = [...ctx.ids];
-    if (idx >= 0) newIds.splice(idx + 1, 0, newId);
-    else newIds.push(newId);
-    sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify({ ...ctx, ids: newIds }));
+    sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify({ ...ctx, ids: transform(ctx.ids) }));
   } catch { /* ignore */ }
+}
+
+function injectNavId(datasetId: string, afterId: string, newId: string) {
+  mutateNavIds(datasetId, (ids) => {
+    const next = [...ids];
+    const idx = ids.indexOf(afterId);
+    if (idx >= 0) next.splice(idx + 1, 0, newId);
+    else next.push(newId);
+    return next;
+  });
+}
+
+function removeNavId(datasetId: string, removedId: string) {
+  mutateNavIds(datasetId, (ids) => ids.filter(id => id !== removedId));
 }
 
 export default function ImageDetailPage() {
@@ -148,6 +159,7 @@ export default function ImageDetailPage() {
 
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const captionStats = useMemo(() => {
     const trimmed = captionText.trim();
@@ -243,17 +255,32 @@ export default function ImageDetailPage() {
     setRenameStem("");
   }, [imageId]);
 
-  // Arrow-key navigation — skip when focus is inside a text field
+  // Arrow-key navigation — skip when focus is inside a text field or a dialog is open
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+      if (showDeleteConfirm) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
       if (e.key === "ArrowLeft" && prevId) goTo(prevId);
       if (e.key === "ArrowRight" && nextId) goTo(nextId);
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo]);
+  }, [prevId, nextId, goTo, showDeleteConfirm]);
+
+  useEffect(() => {
+    const anyModalOpen = showDetectModal || showDeleteConfirm;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete") return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (anyModalOpen) return;
+      e.preventDefault();
+      setShowDeleteConfirm(true);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showDetectModal, showDeleteConfirm]);
 
   const { data: image, isLoading: imageLoading } = useQuery({
     queryKey: ["image", imageId],
@@ -339,6 +366,7 @@ export default function ImageDetailPage() {
         paneGo(
           `/datasets/${datasetId}/image/${upscaleJobProgress.image_id}`,
           { page: "image-detail", datasetId: datasetId ?? "", imageId: upscaleJobProgress.image_id },
+          { replace: true },
         );
       } else {
         toast.success("Upscaling complete");
@@ -395,6 +423,28 @@ export default function ImageDetailPage() {
       toast.success("Renamed");
     },
     onError: () => toast.error("Rename failed"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => imagesApi.batchDelete([imageId!]),
+    onSuccess: () => {
+      if (!datasetId) return;
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.removeQueries({ queryKey: ["image", imageId] });
+      if (imageId) removeNavId(datasetId, imageId);
+      setShowDeleteConfirm(false);
+      toast.success("Image deleted");
+      if (nextId) {
+        paneGo(`/datasets/${datasetId}/image/${nextId}`, { page: "image-detail", datasetId, imageId: nextId }, { replace: true });
+      } else if (prevId) {
+        paneGo(`/datasets/${datasetId}/image/${prevId}`, { page: "image-detail", datasetId, imageId: prevId }, { replace: true });
+      } else {
+        paneGo(`/datasets/${datasetId}/gallery`, { page: "gallery", datasetId }, { replace: true });
+      }
+    },
+    onError: () => toast.error("Delete failed"),
   });
 
   const saveMutation = useMutation({
@@ -1155,6 +1205,17 @@ export default function ImageDetailPage() {
           </div>
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <ConfirmDialog
+          title="Delete Image"
+          message="This will permanently delete this image and its caption."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => deleteMutation.mutate()}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
 
       {/* Detection modal */}
       {showDetectModal && (

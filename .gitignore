@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 .env
 dataset_manager.db
+dataset_manager.db-shm
+dataset_manager.db-wal
 data/
 models_cache/
 models/upscale_models/

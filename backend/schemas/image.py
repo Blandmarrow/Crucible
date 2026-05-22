@@ -110,3 +110,11 @@ class BatchCropRequest(BaseModel):
 class BatchMoveSubfolderRequest(BaseModel):
     image_ids: list[str]
     subfolder: str
+
+
+class BatchMoveDatasetRequest(BaseModel):
+    image_ids: list[str] = []
+    source_dataset_id: str | None = None
+    source_subfolder: str | None = None
+    target_dataset_id: str
+    subfolder: str = ""

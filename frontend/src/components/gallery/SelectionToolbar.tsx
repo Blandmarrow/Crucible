@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -12,6 +12,7 @@ import { captioningApi } from "../../api/captioning";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
+import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -42,6 +43,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
   const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
+  const [showMoveDataset, setShowMoveDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
@@ -126,6 +128,22 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
     },
     onError: () => toast.error("Move failed"),
+  });
+
+  const moveDatasetMutation = useMutation({
+    mutationFn: (params: { targetId: string; subfolder: string }) =>
+      imagesApi.batchMoveDataset({ image_ids: ids }, params.targetId, params.subfolder),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      setShowMoveDataset(false);
+      clear();
+      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
+    },
+    onError: () => toast.error("Move to dataset failed"),
   });
 
   const captionMutation = useMutation({
@@ -239,6 +257,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowMoveDataset(true)}>
+          <ArrowRightFromLine size={14} /> Move to Dataset
         </button>
         <button className="btn-danger btn-sm flex items-center gap-1.5" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 size={14} /> Delete
@@ -547,6 +568,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           danger
           onConfirm={() => deleteMutation.mutate()}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Move to dataset modal */}
+      {showMoveDataset && (
+        <MoveToDatasetModal
+          count={count}
+          currentDatasetId={datasetId}
+          isPending={moveDatasetMutation.isPending}
+          onMove={(targetId, subfolder) => moveDatasetMutation.mutate({ targetId, subfolder })}
+          onClose={() => setShowMoveDataset(false)}
         />
       )}
 

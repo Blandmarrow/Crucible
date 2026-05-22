@@ -74,7 +74,9 @@ Images receive human-readable names derived from their original filename via `sl
 
 `Image.is_auto_named: bool` (default `False`) — set to `True` when a file is renamed by the captioning job or by a subfolder move. Used to distinguish auto-named files from manually named ones. `PATCH /images/{image_id}/rename` sets it back to `False`.
 
-**Subfolder-based naming**: when `rename_on_caption=True` or when images are moved between subfolders (`POST /images/batch/move-subfolder`), filenames are derived from the target subfolder slug (e.g. images in `"animals"` become `animals.jpg`, `animals_001.jpg`, …; images in root become `image.jpg`, `image_001.jpg`, …). All moves rename every image in the batch unconditionally.
+**Subfolder-based naming**: when `rename_on_caption=True` or when images are moved between subfolders (`POST /images/batch/move-subfolder`) or between datasets (`POST /images/batch/move-dataset`), filenames are derived from the target subfolder slug (e.g. images in `"animals"` become `animals.jpg`, `animals_001.jpg`, …; images in root become `image.jpg`, `image_001.jpg`, …). All moves rename every image in the batch unconditionally.
+
+**Cross-dataset moves** (`POST /images/batch/move-dataset`): accepts either `image_ids` (explicit list) or `source_dataset_id + source_subfolder` (moves the whole subfolder). Files are renamed to the target subfolder slug, moved to `{target_dataset.folder_path}/images/`, thumbnails are copied then the originals removed. Calls `refresh_stats` on both source and target after commit. Frontend entry points: `SelectionToolbar` ("Move to Dataset" button) and `GalleryPage` subfolder sidebar (arrow icon). Shared modal: `MoveToDatasetModal` (`frontend/src/components/common/MoveToDatasetModal.tsx`) — queries `["datasets"]` and `["subfolders", selectedId]` to let the user pick a target dataset and optional subfolder.
 
 ### Key invariants
 
@@ -301,9 +303,10 @@ Three performance indexes exist:
 
 - **Create**: `+` icon in the sidebar header opens an inline form (input + Enter/Escape handling). If no subfolders exist yet, a `+ Subfolder` button appears in the main toolbar instead to surface the sidebar. On confirm, calls `datasetsApi.createSubfolder` → `POST /datasets/{id}/subfolders`, sets active subfolder to the new path.
 - **Delete**: hover-revealed `×` button on each row opens a `ConfirmDialog`. If the subfolder has images, the dialog warns they will be moved to root (not deleted). On confirm, calls `datasetsApi.deleteSubfolder` → `DELETE /datasets/{id}/subfolders?path=...`. If the deleted subfolder was active, resets to "All".
+- **Move to dataset**: hover-revealed arrow icon button on each row opens `MoveToDatasetModal` (shared with `SelectionToolbar`). On confirm, calls `POST /images/batch/move-dataset` with `source_dataset_id + source_subfolder`. If the moved subfolder was active, resets to "All". Invalidates `["images"]` and `["subfolders"]` for both source and target datasets.
 - **Upload subfolder**: a `<select>` next to the Upload button lets users target a specific subfolder for drag-drop or file-picker uploads. Defaults to the active subfolder; can be overridden independently.
 - **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, and delete.
-- **CSS**: `.subfolder-row .subfolder-delete-btn` is `opacity: 0`; `.subfolder-row:hover .subfolder-delete-btn` reveals it. Defined in `frontend/src/index.css`.
+- **CSS**: `.subfolder-row .subfolder-delete-btn` and `.subfolder-row .subfolder-move-btn` are `opacity: 0`; hover on the row reveals them. Defined in `frontend/src/index.css`. Base layout styles for `.subfolder-move-btn` live in CSS; `.subfolder-delete-btn` uses inline styles (pre-existing pattern).
 
 ### Gallery filters
 

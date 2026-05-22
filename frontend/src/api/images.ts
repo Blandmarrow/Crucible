@@ -6,6 +6,11 @@ export interface BatchMoveSubfolderResult {
   subfolder: string;
 }
 
+export interface BatchMoveDatasetResult {
+  moved: number;
+  target_dataset_id: string;
+}
+
 export interface ImageListParams {
   dataset_id: string;
   page?: number;
@@ -71,6 +76,12 @@ export const imagesApi = {
     client.post<{ job_id: string }>("/images/batch/crop", { image_ids, target_ar, strategy }).then((r) => r.data),
   batchMoveSubfolder: (image_ids: string[], subfolder: string) =>
     client.post<BatchMoveSubfolderResult>("/images/batch/move-subfolder", { image_ids, subfolder }).then((r) => r.data),
+  batchMoveDataset: (
+    params: { image_ids?: string[]; source_dataset_id?: string; source_subfolder?: string },
+    target_dataset_id: string,
+    subfolder: string,
+  ) =>
+    client.post<BatchMoveDatasetResult>("/images/batch/move-dataset", { ...params, target_dataset_id, subfolder }).then((r) => r.data),
   renameImage: (id: string, newStem: string) =>
     client.patch<{ filename: string }>(`/images/${id}/rename`, { new_stem: newStem }).then((r) => r.data),
 };

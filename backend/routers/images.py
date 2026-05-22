@@ -9,13 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, rename_with_sidecar, slugify_filename, unique_filename
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
     BatchCropRequest,
+    BatchMoveDatasetRequest,
     BatchMoveSubfolderRequest,
     BatchResizeRequest,
     ImageCropRequest,
@@ -588,3 +589,82 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
 
     await db.commit()
     return {"moved": len(rows), "subfolder": target}
+
+
+@router.post("/batch/move-dataset")
+async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = Depends(get_db)):
+    target = normalize_subfolder(body.subfolder)
+
+    if body.image_ids:
+        result = await db.execute(
+            select(Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path)
+            .where(Image.id.in_(body.image_ids))
+        )
+        rows = result.all()
+        source_dataset_id = rows[0].dataset_id if rows else None
+    elif body.source_dataset_id is not None and body.source_subfolder is not None:
+        source_subfolder = normalize_subfolder(body.source_subfolder)
+        result = await db.execute(
+            select(Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path)
+            .where(Image.dataset_id == body.source_dataset_id)
+            .where(Image.subfolder == source_subfolder)
+        )
+        rows = result.all()
+        source_dataset_id = body.source_dataset_id
+    else:
+        raise HTTPException(400, "Provide image_ids or source_dataset_id+source_subfolder")
+
+    if not rows:
+        raise HTTPException(404, "No matching images found")
+    if source_dataset_id == body.target_dataset_id:
+        raise HTTPException(400, "Source and target dataset must differ")
+
+    target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
+    target_dataset = target_ds_result.scalar_one_or_none()
+    if not target_dataset:
+        raise HTTPException(404, "Target dataset not found")
+
+    target_images_dir = Path(target_dataset.folder_path) / "images"
+    target_images_dir.mkdir(parents=True, exist_ok=True)
+    (Path(target_dataset.folder_path) / "thumbnails").mkdir(parents=True, exist_ok=True)
+
+    existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
+    db_names: set[str] = {r[0] for r in existing.all()}
+
+    target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
+
+    # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn)
+    plan: list[tuple[Path, Path, Path, Path, str, str]] = []
+    for row in rows:
+        old_path = Path(row.file_path)
+        suf = old_path.suffix.lower()
+        new_fn = unique_filename(target_images_dir, target_stem, suf, db_names)
+        new_path = target_images_dir / new_fn
+        old_thumb = Path(thumbnail_path_for(str(old_path)))
+        new_thumb = Path(thumbnail_path_for(str(new_path)))
+        db_names.add(new_fn)
+        plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_fn))
+
+    for old_path, new_path, old_thumb, new_thumb, img_id, new_fn in plan:
+        await db.execute(
+            sa_update(Image).where(Image.id == img_id).values(
+                dataset_id=body.target_dataset_id,
+                subfolder=target,
+                filename=new_fn,
+                file_path=str(new_path),
+                thumbnail_path=str(new_thumb),
+                is_auto_named=True,
+            )
+        )
+
+    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
+        rename_with_sidecar(old_path, new_path)
+        if old_thumb.exists():
+            shutil.copy2(old_thumb, new_thumb)
+            old_thumb.unlink()
+
+    await db.commit()
+    await refresh_stats(db, source_dataset_id)
+    await refresh_stats(db, body.target_dataset_id)
+    return {"moved": len(rows), "target_dataset_id": body.target_dataset_id}
+

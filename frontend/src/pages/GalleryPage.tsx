@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { ArrowRightFromLine } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -6,6 +7,7 @@ import { imagesApi } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
 import { datasetsApi } from "../api/datasets";
 import ImageCard from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
@@ -81,6 +83,7 @@ export default function GalleryPage() {
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
+  const [pendingMoveSubfolder, setPendingMoveSubfolder] = useState<SubfolderInfo | null>(null);
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -217,6 +220,26 @@ export default function GalleryPage() {
       toast.success(`Deleted subfolder "${path}"`);
     },
     onError: () => toast.error("Failed to delete subfolder"),
+  });
+
+  const moveSubfolderToDatasetMutation = useMutation({
+    mutationFn: (params: { targetId: string; subfolder: string }) =>
+      imagesApi.batchMoveDataset(
+        { source_dataset_id: datasetId!, source_subfolder: pendingMoveSubfolder!.path },
+        params.targetId,
+        params.subfolder,
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      if (activeSubfolder === pendingMoveSubfolder?.path) { setActiveSubfolder(undefined); resetPage(); }
+      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
+      setPendingMoveSubfolder(null);
+    },
+    onError: () => toast.error("Move to dataset failed"),
   });
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -555,6 +578,11 @@ export default function GalleryPage() {
                     <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{sf.image_count}</span>
                   </button>
                   <button
+                    className="subfolder-move-btn"
+                    title={`Move "${sf.path || "(root)"}" to another dataset`}
+                    onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(sf); }}
+                  ><ArrowRightFromLine size={11} /></button>
+                  <button
                     className="subfolder-delete-btn"
                     title={`Delete "${sf.path || "(root)"}"`}
                     onClick={(e) => { e.stopPropagation(); setPendingDeleteSubfolder(sf); }}
@@ -684,6 +712,16 @@ export default function GalleryPage() {
           danger
           onConfirm={() => deleteSubfolderMutation.mutate(pendingDeleteSubfolder.path)}
           onCancel={() => setPendingDeleteSubfolder(null)}
+        />
+      )}
+
+      {pendingMoveSubfolder && (
+        <MoveToDatasetModal
+          count={pendingMoveSubfolder.image_count}
+          currentDatasetId={datasetId!}
+          isPending={moveSubfolderToDatasetMutation.isPending}
+          onMove={(targetId, subfolder) => moveSubfolderToDatasetMutation.mutate({ targetId, subfolder })}
+          onClose={() => setPendingMoveSubfolder(null)}
         />
       )}
     </div>

@@ -367,4 +367,14 @@
   .subfolder-row .subfolder-delete-btn { opacity: 0; transition: opacity .1s, color .1s; }
   .subfolder-row:hover .subfolder-delete-btn { opacity: 1; }
   .subfolder-delete-btn:hover { color: var(--bad) !important; }
+
+  .subfolder-row .subfolder-move-btn { opacity: 0; transition: opacity .1s, color .1s; }
+  .subfolder-row:hover .subfolder-move-btn { opacity: 1; }
+  .subfolder-move-btn:hover { color: var(--accent) !important; }
+  .subfolder-move-btn {
+    flex-shrink: 0; width: 18px; height: 18px; padding: 0;
+    border: none; cursor: pointer; border-radius: var(--r);
+    background: transparent; color: var(--fg-mute);
+    line-height: 1; display: flex; align-items: center; justify-content: center;
+  }
 }

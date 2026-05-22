@@ -44,6 +44,7 @@ export default function ExportPage() {
   const [subfolderFilterActive, setSubfolderFilterActive] = useState(false);
   const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set());
 
+  const [stripMetadata, setStripMetadata] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   useJobSSE(activeJobId);
@@ -91,6 +92,7 @@ export default function ExportPage() {
     exclude_flags: [...excludeFlags].join(","),
     style_sim_min: filterStyleSim ? styleSimMin : null,
     subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
+    strip_metadata: stripMetadata,
   });
 
   const exportMutation = useMutation({
@@ -366,10 +368,16 @@ export default function ExportPage() {
                 <h4>Image format</h4>
                 <p>Convert images when copying to the export folder.</p>
               </div>
-              <div className="row-flex">
-                {[["original", "Keep original"], ["png", "Force PNG"], ["jpeg", "Force JPEG"]].map(([v, label]) => (
-                  <button key={v} className={`btn sm${outputImgFmt === v ? " primary" : ""}`} onClick={() => setOutputImgFmt(v)}>{label}</button>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="row-flex">
+                  {[["original", "Keep original"], ["png", "Force PNG"], ["jpeg", "Force JPEG"]].map(([v, label]) => (
+                    <button key={v} className={`btn sm${outputImgFmt === v ? " primary" : ""}`} onClick={() => setOutputImgFmt(v)}>{label}</button>
+                  ))}
+                </div>
+                <label className="row-flex" style={{ gap: 8 }}>
+                  <input type="checkbox" className="checkbox" checked={stripMetadata} onChange={(e) => setStripMetadata(e.target.checked)} />
+                  <span style={{ fontSize: 12.5 }}>Strip generation metadata</span>
+                </label>
               </div>
             </div>
           </div>

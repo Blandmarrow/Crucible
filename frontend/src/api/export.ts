@@ -8,6 +8,7 @@ interface ExportFilters {
   exclude_flags?: string;
   style_sim_min?: number | null;
   subfolders?: string[] | null;
+  strip_metadata?: boolean;
 }
 
 export const exportApi = {

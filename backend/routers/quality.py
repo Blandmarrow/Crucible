@@ -75,6 +75,10 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             score_images_watermark,
         )
         from backend.ml.technical_scorer import score_images_technical
+        from backend.services.threshold_service import get_thresholds
+
+        async with AsyncSessionLocal() as ts_session:
+            thresholds = await get_thresholds(ts_session)
 
         ids = [d[0] for d in image_data]
         paths = [d[1] for d in image_data]
@@ -86,12 +90,20 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
         technical_results = []
         if body.run_technical:
-            technical_results = await score_images_technical(ids, paths, job_id=job_id)
+            technical_results = await score_images_technical(
+                ids, paths, job_id=job_id,
+                blur_threshold=thresholds.blur_threshold,
+                noise_threshold=thresholds.noise_threshold,
+                uniformity_threshold=thresholds.uniformity_threshold,
+            )
 
         watermark_results = []
         if body.run_watermark:
             entry = await model_manager.load_aesthetic()
-            watermark_results = await score_images_watermark(paths, entry.model, job_id=job_id)
+            watermark_results = await score_images_watermark(
+                paths, entry.model, job_id=job_id,
+                watermark_threshold=thresholds.watermark_threshold,
+            )
 
         clip_embeddings: list[bytes | None] = []
         dino_embeddings: list[bytes | None] = []
@@ -141,9 +153,9 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
         # Detect duplicates after scoring
         if body.run_technical:
-            await _flag_duplicates(body.dataset_id)
+            await _flag_duplicates(body.dataset_id, int(thresholds.duplicate_threshold))
 
-    async def _flag_duplicates(dataset_id: str) -> None:
+    async def _flag_duplicates(dataset_id: str, duplicate_threshold: int) -> None:
         from backend.database import AsyncSessionLocal
         from backend.ml.technical_scorer import find_duplicates_sync
 
@@ -156,7 +168,8 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             )
             phashes = [(r.id, r.phash) for r in result.all()]
 
-        groups = await asyncio.get_event_loop().run_in_executor(None, find_duplicates_sync, phashes)
+        fn = functools.partial(find_duplicates_sync, phashes, duplicate_threshold)
+        groups = await asyncio.get_running_loop().run_in_executor(None, fn)
 
         async with AsyncSessionLocal() as session:
             for group in groups:

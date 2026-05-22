@@ -10,7 +10,7 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.database import Base
-from backend.models import Dataset, Image, Tag, BackgroundJob  # noqa: F401 - needed for autogenerate
+from backend.models import Dataset, Image, Tag, BackgroundJob, ThresholdSettings  # noqa: F401 - needed for autogenerate
 
 config = context.config
 

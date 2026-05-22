@@ -15,6 +15,7 @@ import ExportPage from "./pages/ExportPage";
 import BulkEditPage from "./pages/BulkEditPage";
 import BooruPage from "./pages/BooruPage";
 import FileBrowserPage from "./pages/FileBrowserPage";
+import SettingsPage from "./pages/SettingsPage";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import { usePaneStore } from "./stores/paneStore";
@@ -73,6 +74,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/export" element={<ErrorBoundary><ExportPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/bulk-edit" element={<ErrorBoundary><BulkEditPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
+        <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
       </Routes>
     </main>
   );

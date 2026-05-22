@@ -79,7 +79,8 @@ def _precompute_watermark_text_features(model_entry: dict) -> torch.Tensor:
 
 
 def score_watermark_sync(image_path: str, model_entry: dict,
-                          text_features: torch.Tensor) -> dict:
+                          text_features: torch.Tensor,
+                          watermark_threshold: float = 0.6) -> dict:
     from PIL import Image as PILImage
     img = PILImage.open(image_path).convert("RGB")
     tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
@@ -90,13 +91,14 @@ def score_watermark_sync(image_path: str, model_entry: dict,
         logits = (img_feats @ text_features.T) * 100.0
         probs = logits.softmax(dim=-1)[0]
     score = float(probs[0].item())
-    return {"watermark_score": round(score, 4), "has_watermark": score >= _watermark_threshold()}
+    return {"watermark_score": round(score, 4), "has_watermark": score >= watermark_threshold}
 
 
 async def score_images_watermark(
     image_paths: list[str],
     model_entry_dict: dict,
     job_id: str | None = None,
+    watermark_threshold: float = 0.6,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
 
@@ -107,7 +109,7 @@ async def score_images_watermark(
 
     for i, path in enumerate(image_paths):
         try:
-            fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats)
+            fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats, watermark_threshold)
             r = await loop.run_in_executor(None, fn)
         except Exception:
             r = {"watermark_score": 0.0, "has_watermark": False}

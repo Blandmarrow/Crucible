@@ -8,6 +8,7 @@ import { datasetsApi } from "../api/datasets";
 import { captionsApi } from "../api/captions";
 import { imagesApi, type ImageListParams } from "../api/images";
 import type { ScoreValues } from "../api/datasets";
+import { settingsApi, type Thresholds } from "../api/settings";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const BLUR_EDGES   = [20, 40, 80, 150, 300];
@@ -37,17 +38,28 @@ const SCORE_GUIDE = [
 ];
 
 const FLAG_DEFS = [
-  { key: "blurry",      flag: "is_blurry",     label: "Blurry",       hint: "Laplacian variance < 80",      cls: "warn",
+  { key: "blurry",      flag: "is_blurry",     label: "Blurry",       cls: "warn",
     icon: <><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.5"/></> },
-  { key: "noisy",       flag: "is_noisy",      label: "Noisy",        hint: "Smooth-region std dev > 15",   cls: "warn",
+  { key: "noisy",       flag: "is_noisy",      label: "Noisy",        cls: "warn",
     icon: <><path d="M3 8h1.5M5.5 5v1M8 4v1M10.5 5v1M12.5 8h-1.5M10.5 11v-1M8 12v-1M5.5 11v-1"/></> },
-  { key: "uniform",     flag: "is_uniform",    label: "Near-uniform", hint: "Grayscale std dev < 12",       cls: "info",
+  { key: "uniform",     flag: "is_uniform",    label: "Near-uniform", cls: "info",
     icon: <><rect x="3" y="3" width="10" height="10" rx="1"/></> },
-  { key: "watermarked", flag: "has_watermark", label: "Watermarked",  hint: "Watermark score ≥ 0.6",        cls: "bad",
+  { key: "watermarked", flag: "has_watermark", label: "Watermarked",  cls: "bad",
     icon: <><path d="M3 6h10M3 9h7"/></> },
-  { key: "duplicate",   flag: "is_duplicate",  label: "Duplicate",    hint: "Perceptual hash distance < 6", cls: "info",
+  { key: "duplicate",   flag: "is_duplicate",  label: "Duplicate",    cls: "info",
     icon: <><rect x="2.5" y="2.5" width="9" height="9" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1"/></> },
 ];
+
+function flagHint(key: string, t: Thresholds): string {
+  switch (key) {
+    case "blurry":      return `Laplacian variance < ${t.blur_threshold}`;
+    case "noisy":       return `Smooth-region std dev > ${t.noise_threshold}`;
+    case "uniform":     return `Grayscale std dev < ${t.uniformity_threshold}`;
+    case "watermarked": return `Watermark score ≥ ${t.watermark_threshold}`;
+    case "duplicate":   return `Perceptual hash distance < ${t.duplicate_threshold}`;
+    default:            return "";
+  }
+}
 
 const AESTHETIC_FILTER_MAP: Record<string, FilterParams> = {
   "low (0-4)":   { min_score: 0, max_score: 4, sort: "aesthetic_score", order: "desc" },
@@ -897,6 +909,12 @@ export default function StatsPage() {
     enabled: !!datasetId,
   });
 
+  const { data: thresholds } = useQuery<Thresholds>({
+    queryKey: ["settings", "thresholds"],
+    queryFn: settingsApi.getThresholds,
+    staleTime: 60_000,
+  });
+
   const show = (cat: CategoryId, item: ItemId) => vis.categories[cat] && vis.items[item];
 
   if (isLoading) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading stats…</div>;
@@ -1042,7 +1060,7 @@ export default function StatsPage() {
                   {hasFlags && <span className="badge dot warn">{totalFlagged.toLocaleString()} flagged</span>}
                 </div>
                 <div style={{ padding: "8px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-                  {FLAG_DEFS.map(({ key, flag, label, hint, cls, icon }) => {
+                  {FLAG_DEFS.map(({ key, flag, label, cls, icon }) => {
                     const n = stats.quality_flag_counts[key] ?? 0;
                     return (
                       <div key={key} className="flag-card" onClick={() => n > 0 && openFlag(flag, `${label} images`)} style={{ opacity: n === 0 ? 0.45 : 1, cursor: n === 0 ? "default" : "pointer" }}>
@@ -1051,7 +1069,7 @@ export default function StatsPage() {
                         </div>
                         <div>
                           <div className="fc-name">{label}</div>
-                          <div className="fc-desc">{hint}</div>
+                          {thresholds && <div className="fc-desc">{flagHint(key, thresholds)}</div>}
                         </div>
                         <span className="fc-num">{n.toLocaleString()}</span>
                       </div>

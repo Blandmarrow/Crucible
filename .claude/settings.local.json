@@ -47,7 +47,12 @@
       "Bash(../venv/Scripts/python.exe -m alembic init alembic)",
       "Bash(../venv/Scripts/python.exe -m alembic revision --autogenerate -m \"initial\")",
       "Bash(npm create *)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(xargs grep -l \"settings\\\\|Settings\")",
+      "Bash(\"../venv/Scripts/python.exe\" -m alembic revision --autogenerate -m \"add_threshold_settings\")",
+      "Bash(\"../venv/Scripts/python.exe\" -m alembic upgrade head)",
+      "Bash(npm run *)",
+      "Bash(venv/Scripts/python.exe -c \"from backend.routers.settings import router; from backend.services.threshold_service import get_thresholds; from backend.models.threshold_settings import ThresholdSettings; print\\('All imports OK'\\)\")"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from pathlib import Path
 
@@ -15,7 +16,12 @@ DUPLICATE_THRESHOLD = 8  # Hamming distance threshold
 UNIFORMITY_THRESHOLD = 12.0  # grayscale std dev below this = near-uniform
 
 
-def score_technical_sync(image_path: str) -> dict:
+def score_technical_sync(
+    image_path: str,
+    blur_threshold: float = BLUR_THRESHOLD,
+    noise_threshold: float = NOISE_THRESHOLD,
+    uniformity_threshold: float = UNIFORMITY_THRESHOLD,
+) -> dict:
     img_cv = cv2.imread(image_path)
     if img_cv is None:
         return {
@@ -53,10 +59,10 @@ def score_technical_sync(image_path: str) -> dict:
     return {
         "blur_score": round(blur_score, 3),
         "noise_score": round(noise_score, 3),
-        "is_blurry": blur_score < BLUR_THRESHOLD,
-        "is_noisy": noise_score > NOISE_THRESHOLD,
+        "is_blurry": blur_score < blur_threshold,
+        "is_noisy": noise_score > noise_threshold,
         "uniformity_score": round(uniformity_score, 3),
-        "is_uniform": uniformity_score < UNIFORMITY_THRESHOLD,
+        "is_uniform": uniformity_score < uniformity_threshold,
         "color_score": round(color_score, 3),
         "saturation_score": round(saturation_score, 4),
     }
@@ -66,6 +72,9 @@ async def score_images_technical(
     image_ids: list[str],
     image_paths: list[str],
     job_id: str | None = None,
+    blur_threshold: float = BLUR_THRESHOLD,
+    noise_threshold: float = NOISE_THRESHOLD,
+    uniformity_threshold: float = UNIFORMITY_THRESHOLD,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
 
@@ -75,7 +84,8 @@ async def score_images_technical(
 
     for i, path in enumerate(image_paths):
         try:
-            scores = await loop.run_in_executor(None, score_technical_sync, path)
+            fn = functools.partial(score_technical_sync, path, blur_threshold, noise_threshold, uniformity_threshold)
+            scores = await loop.run_in_executor(None, fn)
         except Exception:
             scores = {
                 "blur_score": 0.0, "noise_score": 0.0, "is_blurry": False, "is_noisy": False,
@@ -95,7 +105,7 @@ async def score_images_technical(
     return results
 
 
-def find_duplicates_sync(phashes: list[tuple[str, str]]) -> list[list[str]]:
+def find_duplicates_sync(phashes: list[tuple[str, str]], duplicate_threshold: int = DUPLICATE_THRESHOLD) -> list[list[str]]:
     """Group image IDs by near-identical phash (Hamming distance < threshold)."""
     groups: list[list[str]] = []
     assigned: set[str] = set()
@@ -109,7 +119,7 @@ def find_duplicates_sync(phashes: list[tuple[str, str]]) -> list[list[str]]:
             if id_b in assigned:
                 continue
             h_b = imagehash.hex_to_hash(hash_b)
-            if h_a - h_b < DUPLICATE_THRESHOLD:
+            if h_a - h_b < duplicate_threshold:
                 group.append(id_b)
                 assigned.add(id_b)
         if len(group) > 1:

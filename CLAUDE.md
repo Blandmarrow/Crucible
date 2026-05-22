@@ -162,10 +162,13 @@ Bounding-box detection runs as a background job, same pattern as quality scoring
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
 |---|---|---|---|
-| `is_blurry` | `blur_score` (Laplacian variance) | < 80 | `BLUR_THRESHOLD` constant in `technical_scorer.py` |
-| `is_noisy` | `noise_score` (smooth-region std dev) | > 15 | `NOISE_THRESHOLD` constant in `technical_scorer.py` |
-| `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `UNIFORMITY_THRESHOLD` constant in `technical_scorer.py` |
-| `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `settings.watermark_threshold` — configurable via `WATERMARK_THRESHOLD=` in `.env` |
+| `is_blurry` | `blur_score` (Laplacian variance) | < 100 | `blur_threshold` in `threshold_settings` DB table |
+| `is_noisy` | `noise_score` (smooth-region std dev) | > 15 | `noise_threshold` in `threshold_settings` DB table |
+| `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `uniformity_threshold` in `threshold_settings` DB table |
+| `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `watermark_threshold` in `threshold_settings` DB table |
+| `is_duplicate` | `phash` (perceptual hash Hamming distance) | < 8 | `duplicate_threshold` in `threshold_settings` DB table |
+
+All five thresholds are user-configurable via the Settings page (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Changes take effect on the next scoring run; existing scored images are not re-flagged. The constants in `technical_scorer.py` (`BLUR_THRESHOLD`, `NOISE_THRESHOLD`, `UNIFORMITY_THRESHOLD`, `DUPLICATE_THRESHOLD`) serve only as parameter defaults — the quality router always passes the DB-fetched values at runtime via `backend/services/threshold_service.py::get_thresholds()`.
 
 
 **Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
@@ -182,7 +185,7 @@ Flag thresholds:
 
 Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request.
 
-**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces three rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma); (3) any key found in the `.env` file that is not a recognised settings field is logged at WARNING level — `extra="ignore"` is retained so OS environment variables are never flagged. `watermark_threshold` (default `0.6`) is a configurable field — set `WATERMARK_THRESHOLD=` in `.env` to tune it without a code change.
+**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces three rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma); (3) any key found in the `.env` file that is not a recognised settings field is logged at WARNING level — `extra="ignore"` is retained so OS environment variables are never flagged. Note: `config.py` still declares a `watermark_threshold` field for legacy `.env` compatibility but the quality router no longer reads it — all five flag thresholds are now read from the `threshold_settings` DB table (see Settings page below).
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
@@ -360,7 +363,7 @@ Three performance indexes exist:
 
 **Panel organization**: Histograms are grouped into 5 collapsible `CategorySection` sections — *Summary*, *Aesthetic & Style*, *Technical Quality*, *Image Properties*, *Captions & Tags* — rendered below always-visible stat cards. A gear icon (`<Settings>`) in the page header opens a fixed right-side `SettingsDrawer` (zIndex 56, dimmer at 55) where per-category and per-item visibility can be toggled. State is persisted to `localStorage` under key `stats-visibility-v1` via the `useStatsVisibility` hook, which merges saved state with `defaultVisibility()` on load so newly added items default to visible. The `show(cat, item)` helper in `StatsPage` combines category + item visibility into a single boolean used in all render conditionals. Grid column counts for variable-visibility rows are computed by filtering the boolean results and using `repeat(N, 1fr)`.
 
-It makes five queries:
+It makes six queries:
 
 | Query key | Source | Contents |
 |---|---|---|
@@ -369,6 +372,7 @@ It makes five queries:
 | `["tag-stats", datasetId, activeSubfolder]` | `GET /captions/dataset/{id}/tag-stats?subfolder=` | Top 500 tags with counts |
 | `["tag-cooccurrence", datasetId, activeSubfolder]` | `GET /datasets/{id}/tag-cooccurrence?limit=15&subfolder=` | Top-15 tag co-occurrence matrix |
 | `["score-values", datasetId, activeSubfolder]` | `GET /datasets/{id}/score-values?subfolder=` | Raw float arrays for all 8 score fields + `megapixels`, `file_size_mb`, `caption_words`, `caption_tokens` — used for client-side histogram rebucketing |
+| `["settings", "thresholds"]` | `GET /api/v1/settings/thresholds` | Live flag threshold values for the quality flag hint text; `staleTime: 60_000` |
 
 All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` resets to `undefined` on dataset change. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
 
@@ -415,6 +419,21 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 | `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` |
 
 **ImageLightbox**: Clicking a thumbnail in `BucketPanel` opens a full-resolution lightbox with prev/next navigation, metadata footer, a "View Details →" link to `/datasets/:datasetId/image/:imageId`, and a two-step **Delete** button. Deleting an image removes it from the panel's TanStack Query cache via `queryClient.setQueryData` (no refetch) and invalidates `dataset-stats`, `tag-stats`, and `tag-cooccurrence` queries. A per-thumbnail ×-on-hover delete button with an inline confirm overlay provides the same action from the grid.
+
+### Settings page
+
+`frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all five quality flag thresholds as editable number inputs.
+
+**Backend**: `backend/routers/settings.py`, prefix `/settings`. Two endpoints:
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /thresholds` | Returns current thresholds from the `threshold_settings` singleton row (id=1); if the row doesn't exist yet, returns in-memory defaults from `DEFAULTS` in `threshold_service.py` without writing anything |
+| `PATCH /thresholds` | Creates the row on first save (upsert on id=1), updates only the fields present in the body, commits |
+
+**Model**: `backend/models/threshold_settings.py` — `ThresholdSettings` table with a single row (`id=1`). Five `Float` columns with `server_default` matching the constants in `technical_scorer.py`. Defaults are canonically defined in `backend/services/threshold_service.py::DEFAULTS`.
+
+**Frontend**: `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
 ### Styling
 

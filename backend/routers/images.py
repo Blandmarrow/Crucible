@@ -531,10 +531,10 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
     new_filename = unique_filename(old_path.parent, slug, old_path.suffix.lower(), db_names)
     new_path = old_path.parent / new_filename
 
-    rename_with_sidecar(old_path, new_path)
     img.filename = new_filename
     img.file_path = str(new_path)
     img.is_auto_named = False
+    rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
     await db.commit()
     return {"filename": new_filename}
 
@@ -558,23 +558,33 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
 
     target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
+    # Build the full rename plan before touching anything.
+    renames: list[tuple[Path, Path, str, str, str]] = []  # (old, new, id, new_fn, new_fp)
     for row in rows:
         old_path = Path(row.file_path)
         suf = old_path.suffix.lower()
         db_names.discard(row.filename)
         new_filename = unique_filename(images_dir, target_stem, suf, db_names)
         new_path = images_dir / new_filename
-        if new_path != old_path:
-            rename_with_sidecar(old_path, new_path)
         db_names.add(new_filename)
+        renames.append((old_path, new_path, row.id, new_filename, str(new_path)))
+
+    # Apply all DB mutations in-memory (no commit yet).
+    for _old, _new, img_id, new_fn, new_fp in renames:
         await db.execute(
-            sa_update(Image).where(Image.id == row.id).values(
+            sa_update(Image).where(Image.id == img_id).values(
                 subfolder=target,
-                filename=new_filename,
-                file_path=str(new_path),
+                filename=new_fn,
+                file_path=new_fp,
                 is_auto_named=True,
             )
         )
+
+    # Perform filesystem renames — if any raise, the exception propagates and
+    # db.commit() is never reached, so all DB mutations are rolled back.
+    for old_path, new_path, *_ in renames:
+        if new_path != old_path:
+            rename_with_sidecar(old_path, new_path)
 
     await db.commit()
     return {"moved": len(rows), "subfolder": target}

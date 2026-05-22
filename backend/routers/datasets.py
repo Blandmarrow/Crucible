@@ -28,8 +28,15 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
 @router.get("/", response_model=list[DatasetOut])
-async def list_datasets(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Dataset).order_by(Dataset.created_at.desc()))
+async def list_datasets(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(0, ge=0, description="Maximum number of datasets to return; 0 means no limit"),
+    db: AsyncSession = Depends(get_db),
+):
+    q = select(Dataset).order_by(Dataset.created_at.desc())
+    if limit > 0:
+        q = q.offset(skip).limit(limit)
+    result = await db.execute(q)
     datasets = result.scalars().all()
 
     previews: defaultdict[str, list[str]] = defaultdict(list)

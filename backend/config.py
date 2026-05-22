@@ -51,6 +51,19 @@ class Settings(BaseSettings):
                 "HF_TOKEN is not set. PaliGemma-2 downloads will fail. "
                 "Set HF_TOKEN in .env if you plan to use PaliGemma-2."
             )
+        # Warn about keys in the .env file that don't match any known setting.
+        # We parse the file directly so that regular OS env vars are not flagged.
+        env_path = Path(__file__).parent.parent / ".env"
+        if env_path.exists():
+            known = {f.upper() for f in type(self).model_fields}
+            with env_path.open() as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    key = line.split("=", 1)[0].strip().upper()
+                    if key not in known:
+                        logger.warning("Unrecognised .env key (will be ignored): %s", key)
         return self
 
     def ensure_dirs(self) -> None:

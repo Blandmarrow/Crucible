@@ -1,16 +1,16 @@
 import asyncio
 import mimetypes
+import os
 import shutil
 import string
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from backend.config import settings
 from backend.database import get_db
@@ -34,8 +34,14 @@ def _sanitize_path(path: str) -> Path:
 
 async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset | None:
     """Return the Dataset whose folder contains file_path, or None."""
-    result = await db.execute(select(Dataset))
-    for ds in result.scalars().all():
+    path_str = str(file_path)
+    # Use a LIKE pre-filter to avoid loading every dataset; relative_to is the authoritative check.
+    result = await db.execute(
+        select(Dataset)
+        .where(literal(path_str).like(Dataset.folder_path + "%"))
+        .order_by(func.length(Dataset.folder_path).desc())
+    )
+    for ds in result.scalars():
         try:
             file_path.relative_to(ds.folder_path)
             return ds
@@ -89,7 +95,7 @@ async def list_directory(path: str = Query(...)):
         return result
 
     try:
-        entries = await asyncio.get_event_loop().run_in_executor(None, _list_dir)
+        entries = await asyncio.get_running_loop().run_in_executor(None, _list_dir)
     except PermissionError:
         raise HTTPException(403, "Access denied")
 
@@ -164,7 +170,7 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
             await db.commit()
     elif src.is_dir():
         # Update all images whose file_path started with old dir path
-        old_prefix = str(src)
+        old_prefix = str(src) + os.sep
         result = await db.execute(select(Image).where(Image.file_path.startswith(old_prefix)))
         imgs = result.scalars().all()
         for img in imgs:
@@ -225,25 +231,29 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     if not p.exists():
         raise HTTPException(404, "Path not found")
 
-    # Remove DB record(s) first
-    if p.is_file():
-        result = await db.execute(select(Image).where(Image.file_path == str(p)))
-        img = result.scalar_one_or_none()
-        if img:
-            await db.delete(img)
-            await db.commit()
-    elif p.is_dir():
-        old_prefix = str(p)
-        await db.execute(delete(Image).where(Image.file_path.startswith(old_prefix)))
-        await db.commit()
+    # Capture type before any mutation; build dir prefix with separator to avoid
+    # matching sibling paths that share a common prefix (e.g. /foo/bar vs /foo/bar_2).
+    is_dir = p.is_dir()
+    old_prefix = str(p) + os.sep if is_dir else None
 
+    # Delete from filesystem first — if this fails, DB records are left intact.
     try:
-        if p.is_dir():
+        if is_dir:
             shutil.rmtree(str(p))
         else:
             p.unlink()
     except PermissionError:
         raise HTTPException(403, "Access denied")
+
+    # Filesystem deletion succeeded; now remove DB records.
+    if not is_dir:
+        result = await db.execute(select(Image).where(Image.file_path == str(p)))
+        img = result.scalar_one_or_none()
+        if img:
+            await db.delete(img)
+    else:
+        await db.execute(delete(Image).where(Image.file_path.startswith(old_prefix)))
+    await db.commit()
 
     return {"ok": True}
 

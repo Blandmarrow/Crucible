@@ -94,7 +94,7 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 
 | Method | Effect |
 |---|---|
-| `await model_manager.unload(model_id)` | Unloads one model by ID, acquires its per-model lock, moves weights to CPU, deletes the entry, and calls `torch.cuda.empty_cache()`. |
+| `await model_manager.unload(model_id)` | Unloads one model by ID, acquires its per-model lock, moves weights to CPU, deletes both the model and processor objects, removes the entry, and calls `torch.cuda.empty_cache()`. |
 | `await model_manager.evict_all()` | Calls `unload()` for every currently registered model and does a final `cuda.empty_cache()`. Returns the list of model IDs that were unloaded. Used by `POST /api/v1/models/unload-all`. |
 
 **`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`, registered in `main.py`) — evicts all ML models from VRAM without restarting the server. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Intended to be called after quality scoring completes so that scoring models (aesthetic, CLIP, DINOv2) do not occupy VRAM when they are no longer needed.
@@ -180,7 +180,7 @@ Flag thresholds:
 
 Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request.
 
-**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces two rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma). `watermark_threshold` (default `0.6`) is a configurable field — set `WATERMARK_THRESHOLD=` in `.env` to tune it without a code change.
+**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces three rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma); (3) any key found in the `.env` file that is not a recognised settings field is logged at WARNING level — `extra="ignore"` is retained so OS environment variables are never flagged. `watermark_threshold` (default `0.6`) is a configurable field — set `WATERMARK_THRESHOLD=` in `.env` to tune it without a code change.
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
@@ -336,7 +336,7 @@ Three performance indexes exist:
 
 `DatasetsPage` uses `queryKey: ["datasets"]` with `staleTime: 0` so the list is always refetched on mount.
 
-**Preview strip**: `GET /datasets/` (`DatasetOut`) includes `preview_image_ids: list[str]` — up to 8 image IDs fetched in a single batch query alongside the datasets list. The card renders these as `<img src="/api/v1/images/{id}/thumbnail">` tiles. When a dataset has no images the strip falls back to deterministic colour gradients.
+**Preview strip**: `GET /datasets/` (`DatasetOut`) accepts optional `skip` (default 0) and `limit` (default 0 = no limit) query params for pagination. Includes `preview_image_ids: list[str]` — up to 8 image IDs fetched in a single batch query alongside the datasets list. The card renders these as `<img src="/api/v1/images/{id}/thumbnail">` tiles. When a dataset has no images the strip falls back to deterministic colour gradients.
 
 **Import job tracking**: after starting an import (`POST /datasets/{id}/import`) `DatasetsPage` stores the returned `job_id` and watches it in `jobStore` via `useEffect`. The `["datasets"]` query is invalidated only when the job status becomes `"completed"` — not when the job is created — so image counts update after the import actually finishes.
 
@@ -368,7 +368,7 @@ It makes five queries:
 
 All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` resets to `undefined` on dataset change. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
 
-**`DatasetStats` subfolder invariant**: `get_dataset_stats()` has two scalar queries that run outside the main row-scan — embedding count and disk usage — and both must include `.where(Image.subfolder == subfolder)` when subfolder is not None. The row-scan itself drives all other fields (distributions, caption coverage, mean aesthetic, quality flags). `total_size_mb` is derived from the filtered `file_sizes_mb` list when a subfolder is active; `ds.total_size_bytes` (the cached dataset total) is only used for the all-images case.
+**`DatasetStats` subfolder invariant**: `get_dataset_stats()` has several queries that run outside the main row-scan, all of which must include `.where(Image.subfolder == subfolder)` when subfolder is not None: (a) embedding count, (b) score coverage (`func.count` per score column), and (c) quality flag counts (`json_extract` + `SUM(CASE …)` per flag key). The row-scan drives histogram distributions, caption coverage, and file size summaries. `total_size_mb` is derived from the filtered `file_sizes_mb` list when a subfolder is active; `ds.total_size_bytes` (the cached dataset total) is only used for the all-images case.
 
 **`DatasetStats` schema** (in `backend/schemas/dataset.py`) includes these distribution dicts on top of the basic summary fields. All are computed in a single row-scan in `dataset_service.get_dataset_stats()`:
 
@@ -439,7 +439,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 ### System GPU stats
 
-`GET /api/v1/system/gpu` (router: `backend/routers/system.py`) returns `{ name, used_mb, total_mb, utilization_pct }` using `torch.cuda.memory_allocated()` and `torch.cuda.get_device_properties(0)`. Returns `{ name: null }` when CUDA is unavailable. The Sidebar's GPU meter (`useGpuStats` hook in `frontend/src/hooks/useGpuStats.ts`) polls this every 5 s via TanStack Query.
+`GET /api/v1/system/gpu` (router: `backend/routers/system.py`) returns `{ name, used_mb, total_mb, utilization_pct }` using `torch.cuda.memory_allocated()` and `torch.cuda.get_device_properties(0)`. `utilization_pct` is VRAM utilization (`memory_allocated / total_memory × 100`), not GPU core utilization. Returns `{ name: null }` when CUDA is unavailable. The Sidebar's GPU meter (`useGpuStats` hook in `frontend/src/hooks/useGpuStats.ts`) polls this every 5 s via TanStack Query.
 
 ### Captioning post-processing
 
@@ -534,7 +534,7 @@ Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered
 | `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB |
 | `POST /move` | Move file/dir; syncs `Image.file_path`, `Image.filename`, `Image.dataset_id` when path is inside a dataset folder |
 | `POST /rename` | Rename in place; same DB sync |
-| `POST /delete` | Delete file or directory (recursive); deletes `Image` DB records first |
+| `POST /delete` | Delete file or directory (recursive); deletes files from filesystem first, then removes `Image` DB records — so a failed FS deletion leaves DB records intact |
 | `POST /mkdir` | Create directory |
 
 **DB sync**: `_find_dataset_for_path(path, session)` checks if `path` is inside any dataset's `folder_path` and returns the dataset. Move/rename/delete use this to keep `Image` records consistent without a separate import step.

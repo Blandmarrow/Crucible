@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import tiktoken
 
-from sqlalchemy import func, select, update as sa_update
+from sqlalchemy import case, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -290,13 +290,52 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         Image.aesthetic_score, Image.caption_text,
         Image.blur_score, Image.noise_score, Image.uniformity_score,
         Image.watermark_score, Image.color_score, Image.saturation_score,
-        Image.file_size_bytes, Image.quality_flags,
+        Image.file_size_bytes,
         Image.style_similarity_score,
     ).where(Image.dataset_id == dataset_id)
     if subfolder is not None:
         q = q.where(Image.subfolder == subfolder)
     result = await db.execute(q)
     rows = result.all()
+
+    # Score coverage: count rows where each score column is non-null.
+    _base_where = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        _base_where.append(Image.subfolder == subfolder)
+    cov_row = (await db.execute(
+        select(
+            func.count(Image.aesthetic_score).label("aesthetic"),
+            func.count(Image.blur_score).label("technical"),
+            func.count(Image.watermark_score).label("watermark"),
+        ).where(*_base_where)
+    )).one()
+    score_cov = {
+        "aesthetic": cov_row.aesthetic,
+        "technical": cov_row.technical,
+        "watermark": cov_row.watermark,
+    }
+
+    # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
+    def _flag_sum(json_key: str):
+        return func.coalesce(
+            func.sum(case((func.json_extract(Image.quality_flags, f"$.{json_key}") == 1, 1), else_=0)), 0
+        )
+    flag_row = (await db.execute(
+        select(
+            _flag_sum("is_blurry").label("blurry"),
+            _flag_sum("is_noisy").label("noisy"),
+            _flag_sum("is_uniform").label("uniform"),
+            _flag_sum("has_watermark").label("watermarked"),
+            _flag_sum("is_duplicate").label("duplicate"),
+        ).where(*_base_where)
+    )).one()
+    flag_counts = {
+        "blurry": flag_row.blurry,
+        "noisy": flag_row.noisy,
+        "uniform": flag_row.uniform,
+        "watermarked": flag_row.watermarked,
+        "duplicate": flag_row.duplicate,
+    }
 
     # Bucket edge/label definitions
     blur_edges =       [20, 40, 80, 150, 300]
@@ -338,8 +377,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     tc_dist: dict[str, int] = {}
 
     ssim_dist: dict[str, int] = {}
-    flag_counts = {"blurry": 0, "noisy": 0, "uniform": 0, "watermarked": 0, "duplicate": 0}
-    score_cov = {"aesthetic": 0, "technical": 0, "watermark": 0}
 
     captioned = 0
     enc = tiktoken.get_encoding("gpt2")
@@ -380,7 +417,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         if r.aesthetic_score is None:
             score_buckets["unscored"] += 1
         else:
-            score_cov["aesthetic"] += 1
             if r.aesthetic_score < 4:
                 score_buckets["low (0-4)"] += 1
             elif r.aesthetic_score < 6:
@@ -390,7 +426,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
 
         # Technical scores
         if r.blur_score is not None:
-            score_cov["technical"] += 1
             b = _bucket(r.blur_score, blur_edges, blur_labels)
             blur_dist[b] = blur_dist.get(b, 0) + 1
         if r.noise_score is not None:
@@ -408,7 +443,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
 
         # Watermark
         if r.watermark_score is not None:
-            score_cov["watermark"] += 1
             b = _watermark_bucket(r.watermark_score)
             wm_dist[b] = wm_dist.get(b, 0) + 1
 
@@ -416,19 +450,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         if r.style_similarity_score is not None:
             b = _watermark_bucket(r.style_similarity_score)
             ssim_dist[b] = ssim_dist.get(b, 0) + 1
-
-        # Quality flags
-        flags = r.quality_flags or {}
-        if flags.get("is_blurry"):
-            flag_counts["blurry"] += 1
-        if flags.get("is_noisy"):
-            flag_counts["noisy"] += 1
-        if flags.get("is_uniform"):
-            flag_counts["uniform"] += 1
-        if flags.get("has_watermark"):
-            flag_counts["watermarked"] += 1
-        if flags.get("is_duplicate"):
-            flag_counts["duplicate"] += 1
 
         text = r.caption_text or ""
         trimmed = text.strip()

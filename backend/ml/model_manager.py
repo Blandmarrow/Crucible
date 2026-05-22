@@ -73,7 +73,8 @@ class ModelManager:
 
             loop = asyncio.get_event_loop()
             entry = await loop.run_in_executor(None, self._load_florence2_sync, model_id, variant)
-            self._registry[model_id] = entry
+            with self._sync_lock:
+                self._registry[model_id] = entry
             return entry
 
     def _load_florence2_sync(self, model_id: str, variant: str) -> ModelEntry:
@@ -127,7 +128,8 @@ class ModelManager:
 
             loop = asyncio.get_event_loop()
             entry = await loop.run_in_executor(None, self._load_paligemma2_sync)
-            self._registry[model_id] = entry
+            with self._sync_lock:
+                self._registry[model_id] = entry
             return entry
 
     def _load_paligemma2_sync(self) -> ModelEntry:
@@ -172,7 +174,8 @@ class ModelManager:
                 return entry
             loop = asyncio.get_event_loop()
             entry = await loop.run_in_executor(None, self._load_aesthetic_sync)
-            self._registry[model_id] = entry
+            with self._sync_lock:
+                self._registry[model_id] = entry
             return entry
 
     def _load_aesthetic_sync(self) -> ModelEntry:
@@ -224,7 +227,8 @@ class ModelManager:
                 return entry
             loop = asyncio.get_event_loop()
             entry = await loop.run_in_executor(None, self._load_dino_sync)
-            self._registry[model_id] = entry
+            with self._sync_lock:
+                self._registry[model_id] = entry
             return entry
 
     def _load_dino_sync(self) -> ModelEntry:
@@ -259,14 +263,17 @@ class ModelManager:
     async def unload(self, model_id: str) -> None:
         import torch
         async with self._get_lock(model_id):
-            if model_id in self._registry:
+            with self._sync_lock:
+                if model_id not in self._registry:
+                    return
                 entry = self._registry.pop(model_id)
-                try:
-                    entry.model.cpu()
-                except Exception:
-                    pass
-                del entry.model
-                torch.cuda.empty_cache()
+            try:
+                entry.model.cpu()
+            except Exception:
+                pass
+            del entry.model
+            del entry.processor
+            torch.cuda.empty_cache()
 
     async def evict_all(self) -> list[str]:
         """Unload every registered ML model from VRAM and return their IDs."""

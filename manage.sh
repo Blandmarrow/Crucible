@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# manage.sh - Dataset Manager launcher (Linux / macOS)
+# manage.sh - Crucible launcher (Linux / macOS)
 # Usage: ./manage.sh <setup|start|update|dev>
 
 set -euo pipefail
@@ -56,7 +56,7 @@ _migrate() {
 
 cmd_setup() {
     echo ""
-    echo "=== Dataset Manager - First-Time Setup ==="
+    echo "=== Crucible - First-Time Setup ==="
     echo ""
 
     _check_deps
@@ -107,7 +107,7 @@ cmd_start() {
     _activate
 
     echo ""
-    echo "=== Dataset Manager ==="
+    echo "=== Crucible ==="
 
     _migrate
 
@@ -137,7 +137,7 @@ cmd_start() {
 
 cmd_update() {
     echo ""
-    echo "=== Dataset Manager - Update ==="
+    echo "=== Crucible - Update ==="
     echo ""
 
     echo "[1/4] Pulling latest changes..."

@@ -62,7 +62,7 @@ function Breadcrumbs() {
       </div>
     );
   }
-  return <div className="crumbs"><span className="here">Dataset Manager</span></div>;
+  return <div className="crumbs"><span className="here">Crucible</span></div>;
 }
 
 export default function TopBar() {

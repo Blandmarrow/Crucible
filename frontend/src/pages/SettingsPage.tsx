@@ -114,7 +114,7 @@ export default function SettingsPage() {
     <div style={{ padding: "28px 32px", maxWidth: 640 }}>
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Settings</h1>
       <p style={{ color: "var(--fg-mute)", fontSize: 13, marginBottom: 28 }}>
-        Global configuration for this Dataset Manager instance.
+        Global configuration for this Crucible instance.
       </p>
 
       <div className="panel" style={{ marginBottom: 16 }}>

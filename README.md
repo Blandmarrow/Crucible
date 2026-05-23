@@ -1,6 +1,6 @@
-# Dataset-Manager
+# Crucible
 
-A web-based application for building, curating, and exporting Stable Diffusion training datasets. Manage your image collections with AI-powered captioning, multi-metric quality scoring, and flexible export to the most common training formats.
+A local web-based application for building, curating, and exporting Stable Diffusion training datasets. Manage your image collections with AI-powered captioning, multi-metric quality scoring, and flexible export to the most common training formats.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -8,29 +8,50 @@ A web-based application for building, curating, and exporting Stable Diffusion t
 
 ## What it does
 
-
-Dataset-Manger gives you a single interface to go from raw image folders to a clean, captioned, scored, and filtered training dataset ready to drop into Kohya SS, AI Toolkit, or any other training framework.
+Crucible gives you a single interface to go from raw image folders to a clean, captioned, scored, and filtered training dataset ready to drop into Kohya SS, AI Toolkit, or any other training framework.
 
 - **Import** images from local folders into named datasets
-- **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, Ollama)
+- **Caption** images in batch using local ML models (Ollama, Florence-2, PaliGemma-2)
+- **Detect** objects and ground phrases in images using Florence-2 bounding-box detection
+- **Process** images with ML upscaling and LUT color grading
 - **Score** every image across aesthetic quality, technical quality, watermark detection, and style similarity
 - **Filter & curate** via search, quality flags, and score ranges
-- **Batch edit** captions, tags, crops, and resizes across selected images
+- **Batch edit** captions, crops, and resizes across selected images
+- **Version** datasets with named snapshots and branches — restore any prior state
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets
 - **Look up** booru tags to build tag vocabularies for your training subjects
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing
-- **Split view** — run any pages side-by-side in independently scrollable panes, can be split multiple times.
+- **Split view** — run any pages side-by-side in independently scrollable panes
 
 All long-running operations (import, captioning, scoring, export) run in a background job queue and stream real-time progress to the UI via SSE.
 
-![alt text](docs/images/image.png)
 ![alt text](docs/images/image-1.png)
-![alt text](docs/images/image-6.png)
-![alt text](docs/images/image-7.png)
 ![alt text](docs/images/image-2.png)
 ![alt text](docs/images/image-3.png)
-![alt text](docs/images/image-4.png)
-![alt text](docs/images/image-5.png)
+
+---
+
+## Contents
+
+- [Features](#features)
+  - [Datasets & Gallery](#datasets--gallery)
+  - [AI Captioning](#ai-captioning)
+  - [Object Detection](#object-detection)
+  - [Image Processing](#image-processing)
+  - [Quality Scoring](#quality-scoring)
+  - [Batch Operations](#batch-operations)
+  - [Statistics Dashboard](#statistics-dashboard)
+  - [Dataset Versioning](#dataset-versioning)
+  - [Export](#export)
+  - [File Browser](#file-browser)
+  - [Settings](#settings)
+  - [Booru Tag Lookup](#booru-tag-lookup)
+  - [Split View](#split-view)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Tech Stack](#tech-stack)
+- [Common Issues](#common-issues)
 
 ---
 
@@ -42,7 +63,8 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 - Gallery view with search (filename or caption text), pagination, and sort
 - Filter by caption status, quality flags, score ranges, aspect ratio, file size, and format
 - Drag-and-drop image files onto the gallery to add them to the dataset
-- Per-image detail view with metadata, caption editor, tag editor, and crop/rotate tools
+- Organize images into subfolders (logical groupings — images stay flat on disk)
+- Per-image detail view with metadata, caption editor, and crop/rotate tools
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 
 ### AI Captioning
@@ -55,23 +77,52 @@ Batch-caption any selection of images using one of three backends:
 | **PaliGemma-2 3B** | ~6 GB | Requires HuggingFace token; styles: short, detailed, tags, booru |
 
 Caption post-processing options:
-- Merge existing tags into the generated caption
 - Strip common AI refusal phrases automatically
 - Back up the original `.txt` sidecar before overwriting
-- **Target resolution preprocessing** — center-crop and resize images to a target aspect ratio before inference so captions describe the composition the model will actually see at training time
+- **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
 
 **Prompt Preset Manager** — save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.
 
-### Batch Operations
-Select any images in the gallery to perform bulk actions:
+### Object Detection
+Run Florence-2 bounding-box detection on any selection of images as a background job.
 
-- **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
-- **Batch score** — run technical, aesthetic, watermark, and/or embedding scoring on the selection
-- **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
-- **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
-- **Batch tag operations** — add tags to, remove tags from, or completely replace the tag list on selected images
-- **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
-- **Bulk delete** — remove selected images from the dataset and disk
+Two detection tasks:
+
+| Task | Description |
+|---|---|
+| **Object Detection** (`<OD>`) | Fixed-vocabulary detection — finds categories the model was trained on, no prompt needed |
+| **Phrase Grounding** (`<CAPTION_TO_PHRASE_GROUNDING>`) | Draws boxes around noun phrases in a text prompt; use "Use caption as prompt" to automatically ground each image's own caption |
+
+Results are shown in the **DETECTIONS** panel on the Image Detail page:
+- Label chips with per-label counts
+- SVG overlay on the image with per-label colour coding
+- Click any label chip to toggle its boxes on/off
+- Eye icon in the toolbar hides/shows all boxes at once
+
+Available from the **Detect** button in the SelectionToolbar, and from the Object Detection section on the Captioning page when a Florence-2 model is selected.
+
+### Image Processing
+
+#### Upscaling
+ML-based image upscaling via the [`spandrel`](https://github.com/chaiNNer-org/spandrel) library, which auto-detects architecture from model files:
+- Supported architectures: RealESRGAN/RRDB, SwinIR, HAT, OmniSR, and more (anything spandrel recognises)
+- Place `.pth` or `.safetensors` model files in `models/upscale_models/` — or point `UPSCALE_MODELS_DIR=` in `.env` at an existing models folder
+- Two output modes: **Replace** (overwrites source image, updates DB record) or **New file** (`{stem}_upNx{ext}`, creates a new DB record)
+- Optional target width × height — upscales first, then resizes down to fit, preserving aspect ratio
+
+Available from: the **Upscale** button in the ImageDetailPage toolbar, the **Upscale** modal in SelectionToolbar, and the **Upscale** tab on the Bulk Edit page.
+
+#### LUT Color Grading
+Apply 3D colour look-up tables (`.cube` or `.3dl`) to images:
+- Adjustable blend intensity (0.0 – 1.0) — 0 = original, 1 = full LUT applied
+- Place LUT files in `models/lut/` — or set `LUT_MODELS_DIR=` in `.env`
+- Same **Replace** / **New file** output modes as upscaling
+
+Available from: the **LUT** button in the ImageDetailPage toolbar (mutually exclusive with Crop and Upscale), the **LUT** modal in SelectionToolbar, and the **Apply LUT** tab on the Bulk Edit page.
+
+#### Crop & Resize
+- **Crop** — by default creates a new image record (non-destructive); toggle **Replace** to overwrite the source instead; choose aspect ratio, anchor point, and optional output pixel dimensions; supports atomic crop + upscale in one step
+- **Resize** — downscale the longest side of selected images to a target pixel count (original untouched)
 
 ### Quality Scoring
 
@@ -92,23 +143,62 @@ Select any images in the gallery to perform bulk actions:
 | `combined` | Weighted blend: 38% CLIP + 62% DINOv2 — best overall style consistency signal |
 | `dino_all_layers` / `combined_all_layers` | Score each of the 12 DINOv2 layers independently and store all results |
 
-Quality flags are set automatically when metrics cross thresholds:
+Quality flags are set automatically when metrics cross thresholds (all configurable in [Settings](#settings)):
 
-| Flag | Threshold |
+| Flag | Default threshold |
 |---|---|
-| `is_blurry` | Laplacian variance < 80 |
+| `is_blurry` | Laplacian variance < 100 |
 | `is_noisy` | Noise std dev > 15 |
 | `is_uniform` | Grayscale std dev < 12 |
 | `has_watermark` | CLIP watermark score ≥ 0.6 |
-| `is_duplicate` | pHash match with another image in the dataset |
+| `is_duplicate` | pHash Hamming distance < 8 vs another image in the dataset |
 
-**Model unload** — a button in the Quality page frees a loaded model's VRAM without restarting the server, useful when switching between captioning and scoring.
+All five thresholds are configurable in [Settings](#settings) — changes take effect on the next scoring run.
+
+### Batch Operations
+Select any images in the gallery to perform bulk actions:
+
+- **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
+- **Batch score** — run technical, aesthetic, watermark, and/or embedding scoring on the selection
+- **Batch upscale** — upscale selected images using any installed upscale model (see [Image Processing](#image-processing))
+- **Batch LUT** — apply a LUT to selected images with a chosen intensity (see [Image Processing](#image-processing))
+- **Batch detect** — run Florence-2 object detection or phrase grounding on the selection
+- **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
+- **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
+- **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
+- **Bulk delete** — remove selected images from the dataset and disk
 
 ### Statistics Dashboard
-- 13+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, watermark, megapixels, file size, caption length, style similarity, aspect ratio, quality flags
-- Editable histogram bucket edges — rebucketing runs entirely client-side
+- 14+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, watermark, megapixels, file size, aspect ratio, caption length, caption token distribution, style similarity, quality flags
+  - **Caption token distribution** uses GPT-2 BPE tokenisation and highlights captions that exceed CLIP's 77-token truncation limit
+- Editable histogram bucket edges — rebucketing runs entirely client-side against raw score arrays
 - Top-500 tag frequency chart and tag co-occurrence matrix
-- Click any histogram bar to open a filtered thumbnail grid
+- Click any histogram bar or quality flag card to open a filtered thumbnail grid
+- A gear icon in the page header opens a settings drawer to toggle individual histogram panels on/off; visibility state is persisted per-browser
+- All histograms and charts can be scoped to a specific subfolder via a dropdown in the page header
+
+### Dataset Versioning
+Snapshot-based version control for datasets — similar in concept to git commits.
+
+**Three versioning modes** (configured in [Settings](#settings)):
+
+| Mode | Behaviour |
+|---|---|
+| **Off** | Versioning disabled; all versioning endpoints return an error |
+| **Manual** | Every snapshot eagerly copies all image files to a content-addressable object store (full point-in-time backup) |
+| **Auto** | Snapshot records metadata only; files are copied lazily on first overwrite (copy-on-write) — storage only grows when you actually change an image |
+
+In both Manual and Auto modes, image files are automatically backed up before deletion so that a pre-deletion snapshot can always be restored.
+
+**Features:**
+- **Snapshots** — create named, time-stamped checkpoints of a dataset with an optional description
+- **Branches** — create named branches, each with its own independent snapshot history; switch branches via the branch selector on the Versions page
+- **Restore** — rewind the entire dataset to any prior snapshot (runs as a background job); optionally auto-snapshot the current state first
+- **Diff** — compare any two snapshots to see which images were added, removed, or modified (field-level changes)
+
+The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
+
+Access via the **Versions** sidebar item on any dataset page.
 
 ### Export
 Three fully implemented export formats, all with identical filter and processing options:
@@ -127,6 +217,7 @@ Per-export options:
 - Image format conversion (original / JPEG with quality setting)
 - Resize longest side (downscale only)
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`
+- Subfolder scoping — export only images from a specific subfolder
 - **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run
 
 ### File Browser
@@ -137,6 +228,23 @@ A three-panel filesystem explorer built into the app:
 - Right panel: image preview + dimensions/format/size metadata + generation metadata (A1111 / ComfyUI)
 - Create folders, rename files and directories, delete items (syncs DB records automatically)
 - Import any folder of images directly into an existing dataset without leaving the browser
+
+### Settings
+Route: `/settings` — accessible from the sidebar.
+
+**Quality flag thresholds** — five configurable number inputs:
+
+| Setting | Controls |
+|---|---|
+| Blur threshold | Laplacian variance cutoff for `is_blurry` (default 100) |
+| Noise threshold | Smooth-region std dev cutoff for `is_noisy` (default 15) |
+| Uniformity threshold | Grayscale std dev cutoff for `is_uniform` (default 12) |
+| Watermark threshold | CLIP zero-shot score cutoff for `has_watermark` (default 0.6) |
+| Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
+
+Changes take effect on the next scoring run — existing scored images are not automatically re-flagged.
+
+**Versioning mode** — switch between Off, Manual, and Auto (see [Dataset Versioning](#dataset-versioning)).
 
 ### Booru Tag Lookup
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:
@@ -150,10 +258,10 @@ Search booru image boards for tag vocabulary when building tag lists for your tr
 Split the main content area into two independently operating panes:
 
 - Toggle via the **Columns** icon in the top-right toolbar
-- Split any pane horizontally or vertically with the split buttons in the pane header
+- Split any pane horizontally or vertically with the split buttons in the pane header, split panes can be split again
 - Each pane has its own page selector and dataset selector — run Gallery in one pane and Stats in another, for example
 - Drag the resize handle between panes to adjust the split ratio
-- Close a pane to return to single-view
+- Close all panes to return to single-view
 
 ---
 
@@ -246,8 +354,18 @@ To shut down, click the power icon in the top-right of the app and confirm, or p
 
 ---
 
+## Common Issues
+
+### Changes not showing up / stale UI
+
+If the app appears to be showing old data or not reflecting a recent change (wrong image counts, outdated captions, gallery not refreshing), the most likely cause is the browser serving a cached version of the frontend assets.
+
+**Fix:** clear your browser cache for `localhost:8000`, or open the app in a private/incognito window. If the problem persists, do a hard refresh (`Ctrl+Shift+R` on Windows/Linux, `Cmd+Shift+R` on macOS).
+
+---
+
 ## Tech Stack
 
-**Backend:** Python · FastAPI · SQLAlchemy (async) · SQLite · Alembic · Pillow · OpenCV · PyTorch · Transformers · OpenCLIP
+**Backend:** Python · FastAPI · SQLAlchemy (async) · SQLite · Alembic · Pillow · OpenCV · PyTorch · Transformers · OpenCLIP · spandrel
 
 **Frontend:** React 19 · TypeScript · Vite · TanStack Query · Zustand · Tailwind CSS · Recharts

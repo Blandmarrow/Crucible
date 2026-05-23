@@ -45,56 +45,6 @@ async def set_caption(
     await db.commit()
 
 
-async def patch_tags(db: AsyncSession, image_id: str, add: list[str], remove: list[str]) -> list[str]:
-    img = await db.get(Image, image_id)
-    if not img:
-        return []
-    current = set(img.tags_json)
-    current.update(t.strip() for t in add if t.strip())
-    current -= set(remove)
-    new_tags = list(current)
-    img.tags_json = new_tags
-    img.captioned_at = datetime.utcnow()
-    await _sync_tags(db, img, new_tags, "manual")
-    _write_txt_sidecar(img.file_path, img.caption_text or ", ".join(new_tags))
-    await db.commit()
-    return new_tags
-
-
-async def batch_set_tags(
-    db: AsyncSession,
-    image_ids: list[str],
-    tags: list[str],
-    mode: str = "append",
-) -> None:
-    tags = [t.strip() for t in tags if t.strip()]
-    result = await db.execute(select(Image).where(Image.id.in_(image_ids)))
-    images = result.scalars().all()
-    for img in images:
-        if mode == "replace":
-            new_tags = tags
-        else:
-            existing = set(img.tags_json)
-            existing.update(tags)
-            new_tags = list(existing)
-        img.tags_json = new_tags
-        img.captioned_at = datetime.utcnow()
-        await _sync_tags(db, img, new_tags, "manual")
-        _write_txt_sidecar(img.file_path, img.caption_text or ", ".join(new_tags))
-    await db.commit()
-
-
-async def batch_remove_tags(db: AsyncSession, image_ids: list[str], tags: list[str]) -> None:
-    remove_set = set(tags)
-    result = await db.execute(select(Image).where(Image.id.in_(image_ids)))
-    images = result.scalars().all()
-    for img in images:
-        new_tags = [t for t in img.tags_json if t not in remove_set]
-        img.tags_json = new_tags
-        await _sync_tags(db, img, new_tags, "manual")
-        _write_txt_sidecar(img.file_path, img.caption_text or ", ".join(new_tags))
-    await db.commit()
-
 
 async def bulk_edit_captions(
     db: AsyncSession,

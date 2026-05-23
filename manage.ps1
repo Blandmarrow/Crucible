@@ -1,4 +1,4 @@
-# manage.ps1 - Dataset Manager launcher (Windows)
+# manage.ps1 - Crucible launcher (Windows)
 # Usage: .\manage.ps1 <setup|start|update|dev>
 
 param(
@@ -68,7 +68,7 @@ function Run-Migrations {
 
 function Cmd-Setup {
     Write-Host ""
-    Write-Host "=== Dataset Manager - First-Time Setup ===" -ForegroundColor Cyan
+    Write-Host "=== Crucible - First-Time Setup ===" -ForegroundColor Cyan
     Write-Host ""
 
     Check-Deps
@@ -128,7 +128,7 @@ function Cmd-Start {
     Activate-Venv
 
     Write-Host ""
-    Write-Host "=== Dataset Manager ===" -ForegroundColor Cyan
+    Write-Host "=== Crucible ===" -ForegroundColor Cyan
 
     Run-Migrations
 
@@ -156,7 +156,7 @@ function Cmd-Start {
 
 function Cmd-Update {
     Write-Host ""
-    Write-Host "=== Dataset Manager - Update ===" -ForegroundColor Cyan
+    Write-Host "=== Crucible - Update ===" -ForegroundColor Cyan
     Write-Host ""
 
     Write-Host "[1/4] Pulling latest changes..." -ForegroundColor Yellow

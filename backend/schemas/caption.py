@@ -9,21 +9,6 @@ class CaptionUpdate(BaseModel):
     caption_style: str = ""
 
 
-class TagPatch(BaseModel):
-    add: list[str] = []
-    remove: list[str] = []
-
-
-class BatchTagSet(BaseModel):
-    image_ids: list[str]
-    tags: list[str]
-    mode: str = "append"  # "append" or "replace"
-
-
-class BatchTagRemove(BaseModel):
-    image_ids: list[str]
-    tags: list[str]
-
 
 class FindReplaceRequest(BaseModel):
     find: str

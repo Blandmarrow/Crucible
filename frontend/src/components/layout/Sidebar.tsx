@@ -174,7 +174,7 @@ export default function Sidebar() {
           boxShadow: "0 0 0 1px var(--line-2)",
         }} />
         <div>
-          <div style={{ fontWeight: 600, letterSpacing: "-0.01em", fontSize: 14 }}>Dataset Manager</div>
+          <div style={{ fontWeight: 600, letterSpacing: "-0.01em", fontSize: 14 }}>Crucible</div>
           <div style={{ color: "var(--fg-dim)", fontSize: 11, marginTop: 1, letterSpacing: ".02em", fontFamily: "Geist Mono, monospace" }}>
             local
           </div>

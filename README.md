@@ -50,8 +50,8 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Usage](#usage)
-- [Tech Stack](#tech-stack)
 - [Common Issues](#common-issues)
+- [Tech Stack](#tech-stack)
 
 ---
 
@@ -296,7 +296,7 @@ Split the main content area into two independently operating panes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Blandmarrow/Dataset-manager
+git clone https://github.com/Blandmarrow/Crucible
 ```
 
 Copy `.env.example` to `.env` and fill in any optional values:

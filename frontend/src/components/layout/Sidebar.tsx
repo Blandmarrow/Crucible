@@ -205,9 +205,9 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/captioning`} icon={<IcoCaptioning />} label="Captioning" />
             <NavItem to={`/datasets/${datasetId}/quality`} icon={<IcoQuality />} label="Score images" />
             <NavItem to={`/datasets/${datasetId}/stats`} icon={<IcoStats />} label="Stats" />
-            <NavItem to={`/datasets/${datasetId}/export`} icon={<IcoExport />} label="Export" />
             <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
             <NavItem to={`/datasets/${datasetId}/versions`} icon={<IcoVersions />} label="Versions" />
+            <NavItem to={`/datasets/${datasetId}/export`} icon={<IcoExport />} label="Export" />
           </>
         )}
       </nav>

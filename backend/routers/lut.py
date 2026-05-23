@@ -65,6 +65,7 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             lut_path = cfg["lut_path"]
             intensity = cfg["intensity"]
             replace = cfg["replace"]
+            lut_filename = Path(lut_path).name
 
             last_image_id: str | None = None
 
@@ -115,8 +116,15 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                 actual_out_path = info.get("out_path", dest_path_str)
 
                 if replace:
+                    now = datetime.now(timezone.utc)
                     img.file_size_bytes = info["file_size_bytes"]
-                    img.updated_at = datetime.now(timezone.utc)
+                    img.updated_at = now
+                    img.processing_history = (img.processing_history or []) + [{
+                        "op": "lut",
+                        "lut": lut_filename,
+                        "intensity": intensity,
+                        "at": now.isoformat(),
+                    }]
                     if img.thumbnail_path:
                         await loop.run_in_executor(
                             None, generate_thumbnail, actual_out_path, img.thumbnail_path

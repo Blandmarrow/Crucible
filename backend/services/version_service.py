@@ -185,6 +185,7 @@ async def create_snapshot(
     branch_id: str | None = None,
     parent_id: str | None = None,
     job_id: str | None = None,
+    source: str = "manual",
 ) -> DatasetVersion:
     from backend.workers.progress import broadcaster
 
@@ -223,6 +224,7 @@ async def create_snapshot(
         name=name,
         description=description,
         image_count=len(images),
+        source=source,
     )
     db.add(version)
     await db.flush()
@@ -269,6 +271,7 @@ async def create_snapshot(
             style_similarity_score=img.style_similarity_score,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
+            processing_history=img.processing_history,
             is_present=True,
         ))
 
@@ -311,6 +314,7 @@ _DIFF_COLS = (
     VersionImageState.uniformity_score,
     VersionImageState.watermark_score,
     VersionImageState.style_similarity_score,
+    VersionImageState.processing_history,
 )
 
 
@@ -362,7 +366,7 @@ async def diff_versions(
 
         for field in ("caption_text", "tags_json", "quality_flags", "subfolder",
                       "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-                      "watermark_score", "style_similarity_score"):
+                      "watermark_score", "style_similarity_score", "processing_history"):
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
                 changes[field] = {"from": va, "to": vb}
@@ -425,6 +429,7 @@ async def restore_snapshot(
                 name=None,
                 description="Pre-restore auto-snapshot",
                 job_id=None,
+                source="pre_restore",
             )
             pre_restore_version_id = pre.id
         except Exception as exc:
@@ -527,6 +532,7 @@ async def restore_snapshot(
             img.style_similarity_score = state.style_similarity_score
             img.dino_layer_scores = state.dino_layer_scores
             img.generation_metadata = state.generation_metadata
+            img.processing_history = state.processing_history
             if state.width:
                 img.width = state.width
             if state.height:
@@ -608,6 +614,7 @@ async def create_branch(
         description=f"Branch created from version {from_version_id}",
         branch_id=branch.id,
         parent_id=from_version_id,
+        source="branch_init",
     )
     return branch, version
 

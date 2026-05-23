@@ -15,6 +15,8 @@ export interface Version {
   description: string;
   image_count: number;
   created_at: string;
+  source: "manual" | "pre_restore" | "branch_init";
+  is_pinned: boolean;
 }
 
 export interface DiffImageEntry {

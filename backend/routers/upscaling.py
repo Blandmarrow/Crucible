@@ -67,6 +67,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             replace = cfg["replace"]
             target_w = cfg["target_width"]
             target_h = cfg["target_height"]
+            model_filename = Path(model_path).name
 
             # Detect model scale for naming (heuristic from filename)
             from backend.ml.upscaler import _detect_scale
@@ -114,10 +115,16 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     continue
 
                 if replace:
+                    now = datetime.now(timezone.utc)
                     img.width = info["width"]
                     img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
-                    img.updated_at = datetime.now(timezone.utc)
+                    img.updated_at = now
+                    img.processing_history = (img.processing_history or []) + [{
+                        "op": "upscale",
+                        "model": model_filename,
+                        "at": now.isoformat(),
+                    }]
                     if img.thumbnail_path:
                         await loop.run_in_executor(
                             None, generate_thumbnail, str(src_path), img.thumbnail_path

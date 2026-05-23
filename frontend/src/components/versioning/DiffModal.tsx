@@ -38,6 +38,64 @@ function Section({
   );
 }
 
+type ProcessingEntry = { op: string; model?: string; lut?: string; intensity?: number; at: string };
+
+function formatProcessingEntry(e: ProcessingEntry): string {
+  if (e.op === "upscale") return `Upscale (${e.model ?? "unknown"})`;
+  if (e.op === "lut") return `LUT: ${e.lut ?? "unknown"}${e.intensity !== undefined ? ` @ ${Math.round(e.intensity * 100)}%` : ""}`;
+  return e.op;
+}
+
+const changeRowStyle = { fontSize: 11, color: "var(--fg-mute)", paddingLeft: 12, paddingTop: 2 };
+
+function ChangeRow({ field, change }: { field: string; change: { from: unknown; to: unknown } }) {
+  if (field === "processing_history") {
+    const from = (change.from as ProcessingEntry[] | null) ?? [];
+    const to = (change.to as ProcessingEntry[] | null) ?? [];
+    const added = to.filter((e) => !from.some((f) => f.at === e.at && f.op === e.op));
+    const removed = from.filter((f) => !to.some((e) => e.at === f.at && e.op === f.op));
+    return (
+      <div style={changeRowStyle}>
+        <span style={{ color: "var(--fg)" }}>processing</span>:{" "}
+        {added.map((e, i) => (
+          <span key={i} style={{
+            display: "inline-block", background: "#ff980022", border: "1px solid #ff980055",
+            borderRadius: 3, padding: "1px 5px", marginRight: 4, color: "var(--fg)",
+          }}>
+            +{formatProcessingEntry(e)}
+          </span>
+        ))}
+        {removed.map((e, i) => (
+          <span key={i} style={{
+            display: "inline-block", background: "#f4433622", border: "1px solid #f4433655",
+            borderRadius: 3, padding: "1px 5px", marginRight: 4, color: "var(--fg)",
+          }}>
+            −{formatProcessingEntry(e)}
+          </span>
+        ))}
+        {added.length === 0 && removed.length === 0 && (
+          <span>{from.length} op{from.length !== 1 ? "s" : ""} → {to.length} op{to.length !== 1 ? "s" : ""}</span>
+        )}
+      </div>
+    );
+  }
+
+  if (field === "file") {
+    return (
+      <div style={changeRowStyle}>
+        <span style={{ color: "var(--fg)" }}>file content</span>: changed
+      </div>
+    );
+  }
+
+  return (
+    <div style={changeRowStyle}>
+      <span style={{ color: "var(--fg)" }}>{field}</span>:{" "}
+      {JSON.stringify(change.from).slice(0, 40)} → {JSON.stringify(change.to).slice(0, 40)}
+    </div>
+  );
+}
+
 export default function DiffModal({ datasetId, versions, onClose }: Props) {
   const [v1Id, setV1Id] = useState(versions[1]?.id ?? "");
   const [v2Id, setV2Id] = useState(versions[0]?.id ?? "");
@@ -128,9 +186,7 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
                   <div key={i} style={{ fontSize: 12, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
                     <div style={{ fontFamily: "Geist Mono, monospace", marginBottom: 3 }}>{item.filename}</div>
                     {Object.entries(item.changes).map(([field, change]) => (
-                      <div key={field} style={{ fontSize: 11, color: "var(--fg-mute)", paddingLeft: 12 }}>
-                        <span style={{ color: "var(--fg)" }}>{field}</span>: {JSON.stringify(change.from).slice(0, 40)} → {JSON.stringify(change.to).slice(0, 40)}
-                      </div>
+                      <ChangeRow key={field} field={field} change={change} />
                     ))}
                   </div>
                 ))}

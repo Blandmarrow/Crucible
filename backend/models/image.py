@@ -51,6 +51,9 @@ class Image(Base):
     # AI generation metadata (PNG text chunks from SD/ComfyUI/Flux)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Log of destructive replace operations: [{op, params..., at}]
+    processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     # Caption / tags
     caption_text: Mapped[str] = mapped_column(Text, default="")
     caption_style: Mapped[str] = mapped_column(String(32), default="")

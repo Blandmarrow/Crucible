@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { Pin } from "lucide-react";
 import { settingsApi } from "../api/settings";
 import { versioningApi } from "../api/versioning";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
@@ -12,12 +13,24 @@ import RestoreConfirmModal from "../components/versioning/RestoreConfirmModal";
 import BranchSelector from "../components/versioning/BranchSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  manual:      { label: "Manual",      cls: "badge solid" },
+  pre_restore: { label: "Pre-restore", cls: "badge warn" },
+  branch_init: { label: "Branch init", cls: "badge info" },
+};
+
+function SourceBadge({ source }: { source: string }) {
+  const cfg = SOURCE_BADGE[source] ?? { label: source, cls: "badge solid" };
+  return <span className={cfg.cls} style={{ fontSize: 10 }}>{cfg.label}</span>;
+}
+
 function VersionCard({
-  version, onRestore, onDelete, isHead,
+  version, onRestore, onDelete, onTogglePin, isHead,
 }: {
   version: Version;
   onRestore: (v: Version) => void;
   onDelete: (v: Version) => void;
+  onTogglePin: (v: Version, pinned: boolean) => void;
   isHead: boolean;
 }) {
   const date = new Date(version.created_at);
@@ -25,6 +38,7 @@ function VersionCard({
     <div style={{
       display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px",
       borderBottom: "1px solid var(--line)",
+      background: version.is_pinned ? "rgba(16,185,129,.04)" : undefined,
     }}>
       <div style={{
         width: 10, height: 10, borderRadius: "50%", marginTop: 4, flexShrink: 0,
@@ -33,21 +47,34 @@ function VersionCard({
       }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-          <span style={{ fontWeight: 500, fontSize: 13 }}>{version.name ?? `Snapshot ${version.id.slice(0, 8)}`}</span>
-          {isHead && (
-            <span className="badge solid" style={{ fontSize: 10 }}>Current</span>
-          )}
+          <span style={{ fontWeight: 500, fontSize: 13 }}>
+            {version.name ?? `Snapshot ${version.id.slice(0, 8)}`}
+          </span>
+          {isHead && <span className="badge solid" style={{ fontSize: 10 }}>Current</span>}
+          <SourceBadge source={version.source} />
         </div>
         {version.description && (
-          <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 2 }}>{version.description}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 2 }}>
+            {version.description}
+          </div>
         )}
         <div style={{ fontSize: 11, color: "var(--fg-dim)" }}>
           {version.image_count} images · {date.toLocaleString()}
         </div>
       </div>
-      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+        <button
+          className="icon-btn"
+          title={version.is_pinned ? "Unpin" : "Pin"}
+          style={{ color: version.is_pinned ? "var(--accent)" : undefined }}
+          onClick={() => onTogglePin(version, !version.is_pinned)}
+        >
+          <Pin size={14} />
+        </button>
         <button className="btn sm ghost" onClick={() => onRestore(version)}>Restore</button>
-        <button className="btn sm ghost" style={{ color: "var(--bad)" }} onClick={() => onDelete(version)}>Delete</button>
+        <button className="btn sm ghost" style={{ color: "var(--bad)" }} onClick={() => onDelete(version)}>
+          Delete
+        </button>
       </div>
     </div>
   );
@@ -64,6 +91,16 @@ export default function VersionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Version | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string | undefined>(undefined);
 
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [createdAfter, setCreatedAfter] = useState("");
+  const [createdBefore, setCreatedBefore] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
   const { data: settings } = useQuery({
     queryKey: ["settings", "thresholds"],
     queryFn: settingsApi.getThresholds,
@@ -76,9 +113,16 @@ export default function VersionsPage() {
     enabled: !!datasetId && settings?.versioning_mode !== "off",
   });
 
+  const versionsQueryKey = ["versions", datasetId, activeBranchId, search, createdAfter, createdBefore];
+
   const { data: versions = [], isLoading: versionsLoading } = useQuery({
-    queryKey: ["versions", datasetId, activeBranchId],
-    queryFn: () => versioningApi.listVersions(datasetId!, activeBranchId),
+    queryKey: versionsQueryKey,
+    queryFn: () => versioningApi.listVersions(datasetId!, {
+      branchId: activeBranchId,
+      search: search || undefined,
+      createdAfter: createdAfter || undefined,
+      createdBefore: createdBefore || undefined,
+    }),
     enabled: !!datasetId && settings?.versioning_mode !== "off",
   });
 
@@ -92,6 +136,22 @@ export default function VersionsPage() {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Delete failed";
       toast.error(msg);
     },
+  });
+
+  const pinMutation = useMutation({
+    mutationFn: ({ version, pinned }: { version: Version; pinned: boolean }) =>
+      versioningApi.updateVersion(datasetId!, version.id, { is_pinned: pinned }),
+    onSuccess: (updated) => {
+      qc.setQueryData<Version[]>(versionsQueryKey, (old) => {
+        if (!old) return old;
+        const next = old.map((v) => (v.id === updated.id ? updated : v));
+        return next.sort((a, b) => {
+          if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+      });
+    },
+    onError: () => { toast.error("Failed to update pin"); },
   });
 
   if (!datasetId) return null;
@@ -127,6 +187,7 @@ export default function VersionsPage() {
 
   const activeBranch = branches.find((b) => b.id === activeBranchId) ?? branches[0];
   const headVersionId = activeBranch?.head_version_id;
+  const hasActiveFilter = !!(searchInput || createdAfter || createdBefore);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -153,13 +214,62 @@ export default function VersionsPage() {
         </button>
       </div>
 
+      {/* Filter bar */}
+      <div style={{
+        padding: "8px 16px", borderBottom: "1px solid var(--line)",
+        display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
+        background: "var(--surface-1)",
+      }}>
+        <input
+          className="input"
+          style={{ width: 220 }}
+          type="search"
+          placeholder="Search by name or description…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--fg-dim)", whiteSpace: "nowrap" }}>After</span>
+          <input
+            className="input"
+            style={{ width: 140 }}
+            type="date"
+            value={createdAfter}
+            onChange={(e) => setCreatedAfter(e.target.value)}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--fg-dim)", whiteSpace: "nowrap" }}>Before</span>
+          <input
+            className="input"
+            style={{ width: 140 }}
+            type="date"
+            value={createdBefore}
+            onChange={(e) => setCreatedBefore(e.target.value)}
+          />
+        </div>
+        {hasActiveFilter && (
+          <button
+            className="btn sm ghost"
+            onClick={() => {
+              setSearchInput(""); setSearch("");
+              setCreatedAfter(""); setCreatedBefore("");
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       {/* Version list */}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {versionsLoading ? (
           <div style={{ padding: 24, color: "var(--fg-mute)", fontSize: 13 }}>Loading versions…</div>
         ) : versions.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--fg-mute)", fontSize: 13 }}>
-            No snapshots yet. Create one to start tracking changes.
+            {hasActiveFilter
+              ? "No snapshots match the current filters."
+              : "No snapshots yet. Create one to start tracking changes."}
           </div>
         ) : (
           versions.map((v) => (
@@ -169,6 +279,7 @@ export default function VersionsPage() {
               isHead={v.id === headVersionId}
               onRestore={setRestoreTarget}
               onDelete={setDeleteTarget}
+              onTogglePin={(ver, pinned) => pinMutation.mutate({ version: ver, pinned })}
             />
           ))
         )}

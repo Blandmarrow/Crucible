@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -28,6 +28,8 @@ class VersionOut(BaseModel):
     description: str
     image_count: int
     created_at: datetime
+    source: Literal["manual", "pre_restore", "branch_init"]
+    is_pinned: bool
 
     model_config = {"from_attributes": True}
 
@@ -36,6 +38,10 @@ class SnapshotCreate(BaseModel):
     name: str | None = None
     description: str = ""
     branch_id: str | None = None
+
+
+class VersionUpdate(BaseModel):
+    is_pinned: bool | None = None
 
 
 class RestoreRequest(BaseModel):

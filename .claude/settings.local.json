@@ -62,7 +62,8 @@
       "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\python.exe\" -c \"import pydantic_settings; print\\('OK'\\)\" 2>&1)",
       "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\pip.exe\" install \"pydantic-settings>=2.0\" 2>&1)",
       "Bash(xargs grep -l \"VersionOut\")",
-      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in {**d.get\\('dependencies',{}\\),**d.get\\('devDependencies',{}\\)}.items\\(\\)]\")"
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in {**d.get\\('dependencies',{}\\),**d.get\\('devDependencies',{}\\)}.items\\(\\)]\")",
+      "Bash(../venv/Scripts/python.exe -m alembic upgrade head)"
     ]
   }
 }

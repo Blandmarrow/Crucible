@@ -39,6 +39,8 @@ class DatasetVersion(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     image_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     branch: Mapped["DatasetBranch | None"] = relationship(
         "DatasetBranch",
@@ -85,6 +87,7 @@ class VersionImageState(Base):
 
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     is_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

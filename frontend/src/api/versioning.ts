@@ -1,6 +1,19 @@
 import client from "./client";
 import type { Branch, Version, VersionDiff } from "../types";
 
+export interface ListVersionsParams {
+  branchId?: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+}
+
+export interface VersionUpdateRequest {
+  is_pinned?: boolean;
+}
+
 export interface SnapshotCreateRequest {
   name?: string;
   description?: string;
@@ -37,10 +50,17 @@ export const versioningApi = {
       .post<{ job_id: string }>(`/datasets/${datasetId}/versions/branches/${branchId}/checkout`)
       .then((r) => r.data),
 
-  listVersions: (datasetId: string, branchId?: string, limit = 50, offset = 0) =>
+  listVersions: (datasetId: string, params: ListVersionsParams = {}) =>
     client
       .get<Version[]>(`/datasets/${datasetId}/versions`, {
-        params: { branch_id: branchId, limit, offset },
+        params: {
+          branch_id: params.branchId,
+          limit: params.limit ?? 50,
+          offset: params.offset ?? 0,
+          search: params.search || undefined,
+          created_after: params.createdAfter || undefined,
+          created_before: params.createdBefore || undefined,
+        },
       })
       .then((r) => r.data),
 
@@ -54,6 +74,11 @@ export const versioningApi = {
 
   deleteVersion: (datasetId: string, versionId: string) =>
     client.delete(`/datasets/${datasetId}/versions/${versionId}`),
+
+  updateVersion: (datasetId: string, versionId: string, body: VersionUpdateRequest) =>
+    client
+      .patch<Version>(`/datasets/${datasetId}/versions/${versionId}`, body)
+      .then((r) => r.data),
 
   restoreVersion: (datasetId: string, versionId: string, body: RestoreRequest) =>
     client

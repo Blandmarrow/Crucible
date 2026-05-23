@@ -211,7 +211,7 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 - `upscale_image_sync(src, dest, model_path, replace, target_w, target_h)` — loads via `spandrel.ModelLoader().load_from_file()`, tiles if either dimension > 1024 px (512 px tiles, 64 px overlap, linear-ramp seam blending), optional LANCZOS resize post-upscale.
 - Model caching uses `model_manager._registry` under ID `upscale:{abs_path}`; `_ensure_upscaler_loaded` includes a double-check after re-acquiring `_sync_lock` to prevent the TOCTOU double-load race.
 
-**Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at` on existing record, thumbnail regenerated.
+**Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
 
 **History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked. This ensures that deleting the upscaled image (which navigates to the adjacent image with another `replace: true`) leaves a single clean history entry, so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression.
 
@@ -244,7 +244,7 @@ Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-control
 
 **LUT axis-ordering invariant**: The `.cube` spec (and `.3dl`) stores data with **R varying fastest, B slowest**. After `reshape(N, N, N, 3)` numpy's axis order is `[B, G, R]`. Both `_parse_cube` and `_parse_3dl` therefore call `.transpose(2, 1, 0, 3)` to produce a `[R, G, B]`-indexed array, so that `lut[r, g, b]` is the natural lookup in `_apply_lut_array`. Do not remove this transpose — without it R and B are swapped in the lookup, producing visually wrong results.
 
-**Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `file_size_bytes`/`updated_at` on existing record, thumbnail regenerated.
+**Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
 
 **Frontend surfaces**:
 - `ImageDetailPage` — "LUT" toolbar button (mutually exclusive with Crop and Upscale) toggles inline controls: LUT `<select>`, intensity slider, Replace checkbox, Run button. Non-replace completion calls `injectNavId` + `paneGo` to navigate to the new image (same pattern as upscaling).
@@ -630,7 +630,7 @@ Files are stored **only once per unique content** (idempotent copy). No GC in v1
 |---|---|
 | `dataset_branches` | Named branches; `head_version_id` FK to latest snapshot on the branch |
 | `dataset_versions` | Snapshot records; `parent_id` self-ref for chain; auto-named `Snapshot YYYY-MM-DD HH:MM` if name omitted |
-| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) |
+| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) |
 
 `datasets.current_branch_id` — tracks the active branch (updated on checkout).
 
@@ -641,10 +641,11 @@ Files are stored **only once per unique content** (idempotent copy). No GC in v1
 | `GET` | `/{id}/versions/branches` | List branches |
 | `POST` | `/{id}/versions/branches` | Create branch (sync ≤100 images, else bg job) |
 | `POST` | `/{id}/versions/branches/{branch_id}/checkout` | Checkout branch (always bg job) |
-| `GET` | `/{id}/versions` | List versions (filter by `branch_id`, `limit`, `offset`) |
+| `GET` | `/{id}/versions` | List versions — filters: `branch_id`, `search` (name/description ilike), `created_after`/`created_before` (ISO date strings); sorted pinned-first then `created_at DESC` |
 | `POST` | `/{id}/versions` | Create snapshot (manual mode always bg job; auto mode inline ≤100 images) |
 | `GET` | `/{id}/versions/diff` | Diff two versions (`?v1=&v2=`) — declared BEFORE `/{version_id}` to prevent FastAPI collision |
 | `GET` | `/{id}/versions/{version_id}` | Get version detail |
+| `PATCH` | `/{id}/versions/{version_id}` | Update version (`is_pinned`) |
 | `DELETE` | `/{id}/versions/{version_id}` | Delete version (400 if last on branch) |
 | `POST` | `/{id}/versions/{version_id}/restore` | Restore (always bg job → `{job_id}`) |
 
@@ -654,9 +655,9 @@ Key functions:
 - `protect_file_before_overwrite(image_id, file_path, db)` — COW hook; no-op unless `"auto"` mode and the image has NULL-hash snapshot rows
 - `mark_image_deleted_in_versions(image_id, file_path, db)` — deletion hook; no-op if `"off"` or no snapshot rows exist for image
 - `_backup_and_record_hash(image_id, file_path, dataset_folder, db)` — shared helper: hash → copy to object store → backfill all NULL `file_hash` rows for the image in one `UPDATE`
-- `create_snapshot(db, dataset_id, name, description, branch_id, job_id)` — creates snapshot; `"manual"` mode also copies every file eagerly
+- `create_snapshot(db, dataset_id, name, description, branch_id, job_id, source)` — creates snapshot; `source` is `"manual"` (user-triggered), `"pre_restore"` (auto before restore), or `"branch_init"` (new branch). `"manual"` mode also copies every file eagerly.
 - `restore_snapshot(db, dataset_id, version_id, handle_extra_images, pre_restore_snapshot, job_id)` — restores files from object store + updates DB; optionally auto-snapshots current state first
-- `diff_versions(db, dataset_id, v1, v2)` — pure DB, no background job; uses `_DIFF_COLS` column-explicit select for efficiency
+- `diff_versions(db, dataset_id, v1, v2)` — pure DB, no background job; uses `_DIFF_COLS` column-explicit select for efficiency; `processing_history` changes render as `+`/`−` operation badges in `DiffModal`
 
 **Copy-on-write injection points** (existing routers, all fire before the file operation):
 
@@ -668,16 +669,18 @@ Key functions:
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 
 **Frontend**:
-- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, version history timeline, and action buttons.
+- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch).
 - `frontend/src/components/versioning/CreateSnapshotModal.tsx` — name + description inputs; shows `JobProgressBar` during bg job
 - `frontend/src/components/versioning/RestoreConfirmModal.tsx` — keep/remove radio for extra images, pre-restore snapshot checkbox, file-unavailability warning, `JobProgressBar`
 - `frontend/src/components/versioning/DiffModal.tsx` — select two versions; shows Added/Removed/Modified sections with field-level changes
 - `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option; checkout triggers a bg job; `onSelect` is called only after the job completes (not immediately on select change) to avoid showing stale data
 - `frontend/src/components/common/JobProgressBar.tsx` — shared progress bar (message + animated fill bar); used by snapshot and restore modals
-- `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch`, `checkoutBranch`, `listVersions`, `createSnapshot`, `getVersion`, `deleteVersion`, `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
+- `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch`, `checkoutBranch`, `listVersions` (accepts `ListVersionsParams` object with `branchId`, `search`, `createdAfter`, `createdBefore`), `createSnapshot`, `getVersion`, `deleteVersion`, `updateVersion` (PATCH for `is_pinned`), `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
 
 **TanStack Query keys**:
 - `["branches", datasetId]` — invalidated after snapshot creation, restore, checkout
-- `["versions", datasetId, activeBranchId]` — invalidated after snapshot creation, delete, restore
+- `["versions", datasetId, activeBranchId, search, createdAfter, createdBefore]` — invalidated after snapshot creation, delete, restore; pin toggle uses `setQueryData` instead of invalidation
 - `["images", datasetId]` — invalidated after restore (image set changes)
 - `["dataset", datasetId]` — invalidated after restore (image count in sidebar)
+
+**`DatasetVersion` fields**: `id`, `dataset_id`, `branch_id`, `parent_id`, `name`, `description`, `image_count`, `created_at`, `source` (`Literal["manual", "pre_restore", "branch_init"]`), `is_pinned` (`bool`).

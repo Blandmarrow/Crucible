@@ -1,7 +1,8 @@
 import logging
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -11,7 +12,7 @@ from backend.schemas.versioning import (
     BranchCreate, BranchOut,
     DiffOut,
     RestoreRequest, RestoreSummary,
-    SnapshotCreate, VersionOut,
+    SnapshotCreate, VersionOut, VersionUpdate,
 )
 from backend.services import version_service
 from backend.workers.job_queue import job_queue
@@ -115,12 +116,34 @@ async def list_versions(
     branch_id: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    created_after: str | None = Query(default=None),
+    created_before: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     q = select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id)
     if branch_id is not None:
         q = q.where(DatasetVersion.branch_id == branch_id)
-    q = q.order_by(DatasetVersion.created_at.desc()).offset(offset).limit(limit)
+    if search:
+        term = f"%{search}%"
+        q = q.where(or_(
+            DatasetVersion.name.ilike(term),
+            DatasetVersion.description.ilike(term),
+        ))
+    if created_after:
+        try:
+            q = q.where(DatasetVersion.created_at >= datetime.fromisoformat(created_after))
+        except ValueError:
+            pass
+    if created_before:
+        try:
+            q = q.where(DatasetVersion.created_at < datetime.fromisoformat(created_before) + timedelta(days=1))
+        except ValueError:
+            pass
+    q = q.order_by(
+        DatasetVersion.is_pinned.desc(),
+        DatasetVersion.created_at.desc(),
+    ).offset(offset).limit(limit)
     result = await db.execute(q)
     return result.scalars().all()
 
@@ -203,6 +226,23 @@ async def get_version(
     ver = await db.get(DatasetVersion, version_id)
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
+    return ver
+
+
+@router.patch("/{dataset_id}/versions/{version_id}", response_model=VersionOut)
+async def update_version(
+    dataset_id: str,
+    version_id: str,
+    body: VersionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    ver = await db.get(DatasetVersion, version_id)
+    if ver is None or ver.dataset_id != dataset_id:
+        raise HTTPException(404, "Version not found")
+    if body.is_pinned is not None:
+        ver.is_pinned = body.is_pinned
+    await db.commit()
+    await db.refresh(ver)
     return ver
 
 

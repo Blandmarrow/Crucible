@@ -57,7 +57,10 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
       "Bash(..\\\\venv\\\\Scripts\\\\python.exe -m alembic upgrade head)",
-      "PowerShell(Get-ChildItem -Path \"b:\\\\Dataset_manager\" -Force | Select-Object -Property Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\) {\"Directory\"} else {\"File\"}}} | Format-Table -AutoSize)"
+      "PowerShell(Get-ChildItem -Path \"b:\\\\Dataset_manager\" -Force | Select-Object -Property Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\) {\"Directory\"} else {\"File\"}}} | Format-Table -AutoSize)",
+      "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\pip.exe\" install -r \"B:\\\\Crucible\\\\backend\\\\requirements.txt\" 2>&1)",
+      "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\python.exe\" -c \"import pydantic_settings; print\\('OK'\\)\" 2>&1)",
+      "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\pip.exe\" install \"pydantic-settings>=2.0\" 2>&1)"
     ]
   }
 }

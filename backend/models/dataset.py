@@ -24,4 +24,6 @@ class Dataset(Base):
     captioned_count: Mapped[int] = mapped_column(Integer, default=0)
     total_size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
+    current_branch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
     images: Mapped[list["Image"]] = relationship("Image", back_populates="dataset", cascade="all, delete-orphan")

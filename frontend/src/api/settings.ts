@@ -6,6 +6,7 @@ export interface Thresholds {
   uniformity_threshold: number;
   duplicate_threshold: number;
   watermark_threshold: number;
+  versioning_mode: "off" | "manual" | "auto";
 }
 
 export const settingsApi = {

@@ -52,7 +52,11 @@
       "Bash(\"../venv/Scripts/python.exe\" -m alembic revision --autogenerate -m \"add_threshold_settings\")",
       "Bash(\"../venv/Scripts/python.exe\" -m alembic upgrade head)",
       "Bash(npm run *)",
-      "Bash(venv/Scripts/python.exe -c \"from backend.routers.settings import router; from backend.services.threshold_service import get_thresholds; from backend.models.threshold_settings import ThresholdSettings; print\\('All imports OK'\\)\")"
+      "Bash(venv/Scripts/python.exe -c \"from backend.routers.settings import router; from backend.services.threshold_service import get_thresholds; from backend.models.threshold_settings import ThresholdSettings; print\\('All imports OK'\\)\")",
+      "Bash(Get-ChildItem -Path \"b:\\\\Dataset_manager\\\\backend\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(..\\\\venv\\\\Scripts\\\\python.exe -m alembic upgrade head)"
     ]
   }
 }

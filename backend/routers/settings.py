@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,8 @@ from backend.services.threshold_service import DEFAULTS, get_thresholds
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
+_VALID_VERSIONING_MODES = {"off", "manual", "auto"}
+
 
 class ThresholdsOut(BaseModel):
     blur_threshold: float
@@ -16,6 +18,7 @@ class ThresholdsOut(BaseModel):
     uniformity_threshold: float
     duplicate_threshold: float
     watermark_threshold: float
+    versioning_mode: str = "off"
 
     model_config = {"from_attributes": True}
 
@@ -26,6 +29,14 @@ class ThresholdsUpdate(BaseModel):
     uniformity_threshold: float | None = Field(default=None, gt=0)
     duplicate_threshold: float | None = Field(default=None, ge=1)
     watermark_threshold: float | None = Field(default=None, gt=0, le=1.0)
+    versioning_mode: str | None = Field(default=None)
+
+    @field_validator("versioning_mode")
+    @classmethod
+    def validate_versioning_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in _VALID_VERSIONING_MODES:
+            raise ValueError(f"versioning_mode must be one of {_VALID_VERSIONING_MODES}")
+        return v
 
 
 @router.get("/thresholds", response_model=ThresholdsOut)

@@ -9,6 +9,7 @@ const DEFAULTS: Thresholds = {
   uniformity_threshold: 12,
   duplicate_threshold: 8,
   watermark_threshold: 0.6,
+  versioning_mode: "off",
 };
 
 interface ThresholdField {
@@ -87,8 +88,11 @@ export default function SettingsPage() {
     const changed: Partial<Thresholds> = {};
     for (const field of FIELDS) {
       if (form[field.key] !== thresholds[field.key]) {
-        (changed as Record<string, number>)[field.key] = form[field.key];
+        (changed as Record<string, unknown>)[field.key] = form[field.key];
       }
+    }
+    if (form.versioning_mode !== thresholds.versioning_mode) {
+      changed.versioning_mode = form.versioning_mode;
     }
     if (Object.keys(changed).length === 0) {
       toast("No changes to save", { icon: "ℹ️" });
@@ -101,7 +105,10 @@ export default function SettingsPage() {
     setForm(DEFAULTS);
   }
 
-  const isChanged = thresholds && FIELDS.some((f) => form[f.key] !== thresholds[f.key]);
+  const isChanged =
+    thresholds &&
+    (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
+      form.versioning_mode !== thresholds.versioning_mode);
 
   return (
     <div style={{ padding: "28px 32px", maxWidth: 640 }}>
@@ -161,6 +168,76 @@ export default function SettingsPage() {
                 Changes apply to the next quality scoring run. Existing scored images are not re-flagged automatically.
               </p>
 
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="btn primary"
+                  onClick={handleSave}
+                  disabled={mutation.isPending || !isChanged}
+                >
+                  {mutation.isPending ? "Saving…" : "Save"}
+                </button>
+                <button className="btn ghost" onClick={handleReset}>
+                  Reset to defaults
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-h">
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Versioning</span>
+        </div>
+        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {isLoading ? (
+            <div style={{ color: "var(--fg-mute)", fontSize: 13 }}>Loading…</div>
+          ) : (
+            <>
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Version control mode</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(
+                    [
+                      { value: "off", label: "Off", desc: "No version tracking. No disk space used." },
+                      { value: "manual", label: "Manual snapshots", desc: "Snapshots only when you create them. All files are backed up at snapshot time (full point-in-time backup)." },
+                      { value: "auto", label: "Automatic (copy-on-write)", desc: "Files are automatically backed up before any resize, upscale replace, or LUT replace. Lightweight snapshots; backups happen lazily on first overwrite." },
+                    ] as { value: "off" | "manual" | "auto"; label: string; desc: string }[]
+                  ).map((opt) => (
+                    <label
+                      key={opt.value}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 10,
+                        cursor: "pointer",
+                        padding: "8px 10px",
+                        borderRadius: "var(--r)",
+                        background: form.versioning_mode === opt.value ? "var(--surface-2)" : "transparent",
+                        border: `1px solid ${form.versioning_mode === opt.value ? "var(--accent)" : "var(--line)"}`,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="versioning_mode"
+                        value={opt.value}
+                        checked={form.versioning_mode === opt.value}
+                        onChange={() => setForm((prev) => ({ ...prev, versioning_mode: opt.value }))}
+                        style={{ marginTop: 2 }}
+                      />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{opt.label}</div>
+                        <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 2 }}>{opt.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                {thresholds && thresholds.versioning_mode !== "off" && form.versioning_mode === "off" && (
+                  <p style={{ fontSize: 12, color: "var(--warn)", marginTop: 10, marginBottom: 0 }}>
+                    Switching to Off preserves existing snapshots and the object store, but no new backups will be taken.
+                  </p>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   className="btn primary"

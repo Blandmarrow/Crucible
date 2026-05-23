@@ -1,0 +1,210 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
+import { settingsApi } from "../api/settings";
+import { versioningApi } from "../api/versioning";
+import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
+import type { Version } from "../types";
+import CreateSnapshotModal from "../components/versioning/CreateSnapshotModal";
+import DiffModal from "../components/versioning/DiffModal";
+import RestoreConfirmModal from "../components/versioning/RestoreConfirmModal";
+import BranchSelector from "../components/versioning/BranchSelector";
+import ConfirmDialog from "../components/common/ConfirmDialog";
+
+function VersionCard({
+  version, onRestore, onDelete, isHead,
+}: {
+  version: Version;
+  onRestore: (v: Version) => void;
+  onDelete: (v: Version) => void;
+  isHead: boolean;
+}) {
+  const date = new Date(version.created_at);
+  return (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px",
+      borderBottom: "1px solid var(--line)",
+    }}>
+      <div style={{
+        width: 10, height: 10, borderRadius: "50%", marginTop: 4, flexShrink: 0,
+        background: isHead ? "var(--accent)" : "var(--surface-3)",
+        border: "2px solid var(--line)",
+      }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+          <span style={{ fontWeight: 500, fontSize: 13 }}>{version.name ?? `Snapshot ${version.id.slice(0, 8)}`}</span>
+          {isHead && (
+            <span className="badge solid" style={{ fontSize: 10 }}>Current</span>
+          )}
+        </div>
+        {version.description && (
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 2 }}>{version.description}</div>
+        )}
+        <div style={{ fontSize: 11, color: "var(--fg-dim)" }}>
+          {version.image_count} images · {date.toLocaleString()}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <button className="btn sm ghost" onClick={() => onRestore(version)}>Restore</button>
+        <button className="btn sm ghost" style={{ color: "var(--bad)" }} onClick={() => onDelete(version)}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
+export default function VersionsPage() {
+  const datasetId = usePaneDatasetId();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showDiffModal, setShowDiffModal] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<Version | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Version | null>(null);
+  const [activeBranchId, setActiveBranchId] = useState<string | undefined>(undefined);
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings", "thresholds"],
+    queryFn: settingsApi.getThresholds,
+    staleTime: 60_000,
+  });
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ["branches", datasetId],
+    queryFn: () => versioningApi.listBranches(datasetId!),
+    enabled: !!datasetId && settings?.versioning_mode !== "off",
+  });
+
+  const { data: versions = [], isLoading: versionsLoading } = useQuery({
+    queryKey: ["versions", datasetId, activeBranchId],
+    queryFn: () => versioningApi.listVersions(datasetId!, activeBranchId),
+    enabled: !!datasetId && settings?.versioning_mode !== "off",
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (v: Version) => versioningApi.deleteVersion(datasetId!, v.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["versions", datasetId] });
+      toast.success("Version deleted");
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Delete failed";
+      toast.error(msg);
+    },
+  });
+
+  if (!datasetId) return null;
+
+  const mode = settings?.versioning_mode ?? "off";
+
+  if (mode === "off") {
+    return (
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 16, padding: 40, color: "var(--fg-mute)",
+      }}>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" opacity={0.4}>
+          <circle cx="12" cy="4.5" r="2.5"/>
+          <circle cx="4.5" cy="19.5" r="2.5"/>
+          <circle cx="19.5" cy="19.5" r="2.5"/>
+          <path d="M12 7v7M12 14L4.5 17M12 14L19.5 17"/>
+        </svg>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--fg)", marginBottom: 6 }}>
+            Version control is disabled
+          </div>
+          <div style={{ fontSize: 13, maxWidth: 320 }}>
+            Enable it in Settings to start tracking snapshots, restore points, and branches for your datasets.
+          </div>
+        </div>
+        <button className="btn primary" onClick={() => navigate("/settings")}>
+          → Go to Settings
+        </button>
+      </div>
+    );
+  }
+
+  const activeBranch = branches.find((b) => b.id === activeBranchId) ?? branches[0];
+  const headVersionId = activeBranch?.head_version_id;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{
+        padding: "14px 20px", borderBottom: "1px solid var(--line)",
+        display: "flex", alignItems: "center", gap: 12, flexShrink: 0,
+      }}>
+        <h1 style={{ fontSize: 16, fontWeight: 600, flex: 1, margin: 0 }}>Versions</h1>
+        <span className={`badge ${mode === "auto" ? "info" : "solid"}`} style={{ fontSize: 11 }}>
+          {mode === "auto" ? "Auto" : "Manual"}
+        </span>
+        <BranchSelector
+          datasetId={datasetId}
+          branches={branches}
+          activeBranchId={activeBranchId}
+          onSelect={setActiveBranchId}
+        />
+        <button className="btn sm ghost" onClick={() => setShowDiffModal(true)} disabled={versions.length < 2}>
+          Compare ▾
+        </button>
+        <button className="btn sm primary" onClick={() => setShowCreateModal(true)}>
+          + Create Snapshot
+        </button>
+      </div>
+
+      {/* Version list */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {versionsLoading ? (
+          <div style={{ padding: 24, color: "var(--fg-mute)", fontSize: 13 }}>Loading versions…</div>
+        ) : versions.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--fg-mute)", fontSize: 13 }}>
+            No snapshots yet. Create one to start tracking changes.
+          </div>
+        ) : (
+          versions.map((v) => (
+            <VersionCard
+              key={v.id}
+              version={v}
+              isHead={v.id === headVersionId}
+              onRestore={setRestoreTarget}
+              onDelete={setDeleteTarget}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Modals */}
+      {showCreateModal && (
+        <CreateSnapshotModal datasetId={datasetId} onClose={() => setShowCreateModal(false)} />
+      )}
+      {showDiffModal && (
+        <DiffModal datasetId={datasetId} versions={versions} onClose={() => setShowDiffModal(false)} />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Snapshot"
+          message={`Delete snapshot "${deleteTarget.name ?? deleteTarget.id.slice(0, 8)}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => { deleteMutation.mutate(deleteTarget); setDeleteTarget(null); }}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+      {restoreTarget && (
+        <RestoreConfirmModal
+          datasetId={datasetId}
+          version={restoreTarget}
+          onClose={() => setRestoreTarget(null)}
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["datasets"] });
+            qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+            qc.invalidateQueries({ queryKey: ["versions", datasetId] });
+            qc.invalidateQueries({ queryKey: ["branches", datasetId] });
+            qc.invalidateQueries({ queryKey: ["images", datasetId] });
+          }}
+        />
+      )}
+    </div>
+  );
+}

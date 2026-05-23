@@ -602,3 +602,82 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 - `MainContent` renders `<PaneContainer node={layout}>` when `paneStore.enabled`, otherwise the normal `<Routes>` tree.
 - `RouteSyncer` (child of `BrowserRouter`) uses `useEffect` on `location.pathname` to call `syncFromRoute()` when pane mode is active — keeps the primary pane in sync with sidebar/URL navigation.
 - Toggle: `<Columns2>` icon button in `TopBar` calls `paneStore.toggleEnabled()`.
+
+### Dataset versioning
+
+Snapshot-based version control for datasets. Users can create named snapshots, restore to any prior state, compare two snapshots (diff), and maintain named branches.
+
+**Versioning mode** — stored in `threshold_settings.versioning_mode` (same singleton row as quality thresholds, same `GET/PATCH /api/v1/settings/thresholds` endpoints). Three values:
+
+| Mode | Snapshot behaviour | COW overwrite hook |
+|---|---|---|
+| `"off"` | Disabled — all versioning endpoints return 400 | No-op |
+| `"manual"` | Snapshot copies every file to the object store eagerly (full point-in-time backup). Always runs as a background job. | No-op |
+| `"auto"` | Snapshot records metadata + `file_hash=NULL`; object store copies are made lazily on first overwrite (copy-on-write). | Fires before in-place resize/upscale/LUT replace |
+
+Deletion protection fires in both `"manual"` and `"auto"` because deletion is irreversible — the file is backed up before `Path.unlink()`.
+
+**Object store** — content-addressable, git-style:
+`{dataset.folder_path}/.versions/objects/{sha256[:2]}/{sha256[2:]}`
+
+Files are stored **only once per unique content** (idempotent copy). No GC in v1 — deleted versions leave orphaned objects.
+
+**`is_present` invariant**: A `VersionImageState` row always has `is_present=True` — it records that the image was present at snapshot time. When an image is deleted, post-deletion snapshots simply have no row for it. This means restoring a pre-deletion snapshot correctly re-creates the image from the object store (the deletion hook backs up the file before it is unlinked). Do not retroactively set `is_present=False` on old rows.
+
+**DB tables** (`backend/models/versioning.py`):
+
+| Table | Purpose |
+|---|---|
+| `dataset_branches` | Named branches; `head_version_id` FK to latest snapshot on the branch |
+| `dataset_versions` | Snapshot records; `parent_id` self-ref for chain; auto-named `Snapshot YYYY-MM-DD HH:MM` if name omitted |
+| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) |
+
+`datasets.current_branch_id` — tracks the active branch (updated on checkout).
+
+**Backend router** (`backend/routers/versioning.py`, prefix `/datasets`, registered in `main.py`):
+
+| Method | Path | Behaviour |
+|---|---|---|
+| `GET` | `/{id}/versions/branches` | List branches |
+| `POST` | `/{id}/versions/branches` | Create branch (sync ≤100 images, else bg job) |
+| `POST` | `/{id}/versions/branches/{branch_id}/checkout` | Checkout branch (always bg job) |
+| `GET` | `/{id}/versions` | List versions (filter by `branch_id`, `limit`, `offset`) |
+| `POST` | `/{id}/versions` | Create snapshot (manual mode always bg job; auto mode inline ≤100 images) |
+| `GET` | `/{id}/versions/diff` | Diff two versions (`?v1=&v2=`) — declared BEFORE `/{version_id}` to prevent FastAPI collision |
+| `GET` | `/{id}/versions/{version_id}` | Get version detail |
+| `DELETE` | `/{id}/versions/{version_id}` | Delete version (400 if last on branch) |
+| `POST` | `/{id}/versions/{version_id}/restore` | Restore (always bg job → `{job_id}`) |
+
+**Backend service** (`backend/services/version_service.py`):
+
+Key functions:
+- `protect_file_before_overwrite(image_id, file_path, db)` — COW hook; no-op unless `"auto"` mode and the image has NULL-hash snapshot rows
+- `mark_image_deleted_in_versions(image_id, file_path, db)` — deletion hook; no-op if `"off"` or no snapshot rows exist for image
+- `_backup_and_record_hash(image_id, file_path, dataset_folder, db)` — shared helper: hash → copy to object store → backfill all NULL `file_hash` rows for the image in one `UPDATE`
+- `create_snapshot(db, dataset_id, name, description, branch_id, job_id)` — creates snapshot; `"manual"` mode also copies every file eagerly
+- `restore_snapshot(db, dataset_id, version_id, handle_extra_images, pre_restore_snapshot, job_id)` — restores files from object store + updates DB; optionally auto-snapshots current state first
+- `diff_versions(db, dataset_id, v1, v2)` — pure DB, no background job; uses `_DIFF_COLS` column-explicit select for efficiency
+
+**Copy-on-write injection points** (existing routers, all fire before the file operation):
+
+| File | Operation |
+|---|---|
+| `backend/routers/images.py` | `resize` endpoint, batch crop `_run` — calls `protect_file_before_overwrite` |
+| `backend/routers/images.py` | `delete_image`, `batch_delete` — calls `mark_image_deleted_in_versions` |
+| `backend/routers/upscaling.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
+| `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
+
+**Frontend**:
+- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, version history timeline, and action buttons.
+- `frontend/src/components/versioning/CreateSnapshotModal.tsx` — name + description inputs; shows `JobProgressBar` during bg job
+- `frontend/src/components/versioning/RestoreConfirmModal.tsx` — keep/remove radio for extra images, pre-restore snapshot checkbox, file-unavailability warning, `JobProgressBar`
+- `frontend/src/components/versioning/DiffModal.tsx` — select two versions; shows Added/Removed/Modified sections with field-level changes
+- `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option; checkout triggers a bg job; `onSelect` is called only after the job completes (not immediately on select change) to avoid showing stale data
+- `frontend/src/components/common/JobProgressBar.tsx` — shared progress bar (message + animated fill bar); used by snapshot and restore modals
+- `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch`, `checkoutBranch`, `listVersions`, `createSnapshot`, `getVersion`, `deleteVersion`, `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
+
+**TanStack Query keys**:
+- `["branches", datasetId]` — invalidated after snapshot creation, restore, checkout
+- `["versions", datasetId, activeBranchId]` — invalidated after snapshot creation, delete, restore
+- `["images", datasetId]` — invalidated after restore (image set changes)
+- `["dataset", datasetId]` — invalidated after restore (image count in sidebar)

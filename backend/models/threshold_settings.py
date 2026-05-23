@@ -1,4 +1,4 @@
-from sqlalchemy import Float, Integer
+from sqlalchemy import Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -13,3 +13,4 @@ class ThresholdSettings(Base):
     uniformity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="12.0")
     duplicate_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="8.0")
     watermark_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.6")
+    versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'off'")

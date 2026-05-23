@@ -9,6 +9,7 @@ import ExportPage from "../../pages/ExportPage";
 import BulkEditPage from "../../pages/BulkEditPage";
 import FileBrowserPage from "../../pages/FileBrowserPage";
 import BooruPage from "../../pages/BooruPage";
+import VersionsPage from "../../pages/VersionsPage";
 
 export default function PageRenderer({ view }: { view: PaneView }) {
   switch (view.page) {
@@ -20,6 +21,7 @@ export default function PageRenderer({ view }: { view: PaneView }) {
     case "stats":        return <StatsPage />;
     case "export":       return <ExportPage />;
     case "bulk-edit":    return <BulkEditPage />;
+    case "versions":     return <VersionsPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
     default:             return <DatasetsPage />;

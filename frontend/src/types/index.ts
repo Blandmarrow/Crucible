@@ -1,3 +1,44 @@
+export interface Branch {
+  id: string;
+  dataset_id: string;
+  name: string;
+  head_version_id: string | null;
+  created_at: string;
+}
+
+export interface Version {
+  id: string;
+  dataset_id: string;
+  branch_id: string | null;
+  parent_id: string | null;
+  name: string | null;
+  description: string;
+  image_count: number;
+  created_at: string;
+}
+
+export interface DiffImageEntry {
+  image_id: string | null;
+  filename: string;
+  subfolder: string;
+  caption: string;
+}
+
+export interface ModifiedImageDiff {
+  image_id: string | null;
+  filename: string;
+  subfolder: string;
+  changes: Record<string, { from: unknown; to: unknown }>;
+}
+
+export interface VersionDiff {
+  added: DiffImageEntry[];
+  removed: DiffImageEntry[];
+  modified: ModifiedImageDiff[];
+  unchanged_count: number;
+  summary: { added: number; removed: number; modified: number; unchanged: number };
+}
+
 export interface Dataset {
   id: string;
   name: string;

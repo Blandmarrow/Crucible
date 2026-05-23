@@ -13,6 +13,7 @@ from backend.models import BackgroundJob, Image
 from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
+from backend.services import version_service
 from backend.utils import slugify_filename, unique_filename, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
@@ -90,6 +91,9 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     db_names: set[str] = {r[0] for r in existing.all()}
                     new_filename = unique_filename(dest_images, dest_stem, src_path.suffix, db_names)
                     dest_path_str = str(dest_images / new_filename)
+
+                if replace:
+                    await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
 
                 try:
                     info = await loop.run_in_executor(

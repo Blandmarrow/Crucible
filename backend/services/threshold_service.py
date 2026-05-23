@@ -10,6 +10,7 @@ DEFAULTS = dict(
     uniformity_threshold=12.0,
     duplicate_threshold=8.0,
     watermark_threshold=0.6,
+    versioning_mode="off",
 )
 
 

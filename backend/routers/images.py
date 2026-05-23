@@ -26,6 +26,7 @@ from backend.schemas.image import (
     RenameImageRequest,
 )
 from backend.services.dataset_service import refresh_stats
+from backend.services import version_service
 from backend.services.image_service import (
     crop_image_to_dest,
     crop_to_aspect,
@@ -243,6 +244,7 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
     p = Path(img.file_path)
     t = Path(img.thumbnail_path) if img.thumbnail_path else None
     txt = p.with_suffix(".txt")
+    await version_service.mark_image_deleted_in_versions(img.id, img.file_path, db)
     await db.delete(img)
     await db.commit()
     for f in [p, t, txt]:
@@ -265,6 +267,7 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
     files_to_delete: list[Path] = []
     for r in rows:
         p = Path(r.file_path)
+        await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
         files_to_delete.extend([p, p.with_suffix(".txt")])
         if r.thumbnail_path:
             files_to_delete.append(Path(r.thumbnail_path))
@@ -311,6 +314,7 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
+    await version_service.protect_file_before_overwrite(image_id, img.file_path, db)
     new_w, new_h = await asyncio.get_event_loop().run_in_executor(
         None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
     )
@@ -493,6 +497,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
             images = result.scalars().all()
             for i, img in enumerate(images):
                 loop = asyncio.get_event_loop()
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 new_w, new_h = await loop.run_in_executor(
                     None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
                 )

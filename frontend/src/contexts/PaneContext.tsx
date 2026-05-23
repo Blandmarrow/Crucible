@@ -10,7 +10,8 @@ export type PageType =
   | "file-browser"
   | "image-detail"
   | "booru"
-  | "bulk-edit";
+  | "bulk-edit"
+  | "versions";
 
 export interface PaneView {
   page: PageType;

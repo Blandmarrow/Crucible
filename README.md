@@ -25,6 +25,7 @@ Crucible gives you a single interface to go from raw image folders to a clean, c
 
 All long-running operations (import, captioning, scoring, export) run in a background job queue and stream real-time progress to the UI via SSE.
 
+<video controls src="docs/Video/CrucibleShowCase.mov" title="Title"></video>
 ![alt text](docs/images/image-1.png)
 ![alt text](docs/images/image-2.png)
 ![alt text](docs/images/image-3.png)

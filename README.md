@@ -63,9 +63,9 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 - Create multiple named datasets, each pointing to a folder of images
 - Rename datasets — folder is moved on disk and all image paths are updated automatically
 - Gallery view with search (filename or caption text), pagination, and sort
-- Filter by caption status, quality flags, score ranges, aspect ratio, file size, and format
+- Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset
-- Organize images into subfolders (logical groupings — images stay flat on disk)
+- Organize images into subfolders (logical groupings — images stay flat on disk); move images or entire subfolders to a different dataset in one operation
 - Per-image detail view with metadata, caption editor, and crop/rotate tools
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 
@@ -81,6 +81,7 @@ Batch-caption any selection of images using one of three backends:
 Caption post-processing options:
 - Strip common AI refusal phrases automatically
 - Back up the original `.txt` sidecar before overwriting
+- **Rename on caption** — after each caption is saved, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root images); useful for building consistently named datasets
 - **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
 
 **Prompt Preset Manager** — save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.
@@ -157,6 +158,8 @@ Quality flags are set automatically when metrics cross thresholds (all configura
 
 All five thresholds are configurable in [Settings](#settings) — changes take effect on the next scoring run.
 
+The scoring run can be scoped to a specific subfolder via a dropdown in the Quality page header (shown only when subfolders exist), so you can score one subset at a time without touching the rest of the dataset.
+
 ### Batch Operations
 Select any images in the gallery to perform bulk actions:
 
@@ -220,6 +223,7 @@ Per-export options:
 - Resize longest side (downscale only)
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`
 - Subfolder scoping — export only images from a specific subfolder
+- **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested
 - **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run
 
 ### File Browser
@@ -247,6 +251,8 @@ Route: `/settings` — accessible from the sidebar.
 Changes take effect on the next scoring run — existing scored images are not automatically re-flagged.
 
 **Versioning mode** — switch between Off, Manual, and Auto (see [Dataset Versioning](#dataset-versioning)).
+
+**UI Behavior** — set the default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows). Persisted per-browser.
 
 ### Booru Tag Lookup
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:

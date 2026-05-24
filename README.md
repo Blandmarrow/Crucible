@@ -307,14 +307,6 @@ Split the main content area into two independently operating panes:
 git clone https://github.com/Blandmarrow/Crucible
 ```
 
-Copy `.env.example` to `.env` and fill in any optional values:
-
-```env
-HF_TOKEN=hf_...           # Required for PaliGemma-2
-GELBOORU_API_KEY=...      # Optional, for Gelbooru tag fetching
-GELBOORU_USER_ID=...
-```
-
 ### Windows
 
 Double-click **`Setup Dataset Manager.bat`** to create the virtual environment, install all dependencies, and build the frontend. The window stays open so you can see the output.
@@ -333,6 +325,16 @@ chmod +x manage.sh
 ```
 
 > **GPU inference note**: the venv is created with `--system-site-packages` so it inherits PyTorch from your system Python. If you need CUDA support, install PyTorch in your system Python first ([pytorch.org/get-started](https://pytorch.org/get-started/locally/)), then run `./manage.sh setup`. The technical scorer and duplicate detector run on CPU with no GPU requirement.
+
+### Optional: API keys
+
+The app works out of the box with no configuration. A `.env` file is only needed if you want to use PaliGemma-2 or Gelbooru. Copy `.env.example` to `.env` and fill in the values you need:
+
+```env
+HF_TOKEN=hf_...           # Required for PaliGemma-2 (accept the model license at huggingface.co first)
+GELBOORU_API_KEY=...      # Optional — Gelbooru tag fetching (Safebooru works without a key)
+GELBOORU_USER_ID=...
+```
 
 ---
 

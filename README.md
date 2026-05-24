@@ -26,6 +26,8 @@ Crucible gives you a single interface to go from raw image folders to a clean, c
 All long-running operations (import, captioning, scoring, export) run in a background job queue and stream real-time progress to the UI via SSE.
 
 [![Watch the demo](https://img.youtube.com/vi/Ig4j5ijovCI/maxresdefault.jpg)](https://www.youtube.com/watch?v=Ig4j5ijovCI)
+
+▶ [Watch the demo on YouTube](https://www.youtube.com/watch?v=Ig4j5ijovCI)
 ![alt text](docs/images/image-1.png)
 ![alt text](docs/images/image-2.png)
 ![alt text](docs/images/image-3.png)

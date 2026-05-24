@@ -197,7 +197,7 @@ In both Manual and Auto modes, image files are automatically backed up before de
 
 **Features:**
 - **Snapshots** — create named, time-stamped checkpoints of a dataset with an optional description
-- **Branches** — create named branches, each with its own independent snapshot history; switch branches via the branch selector on the Versions page; a compact indicator in the sidebar shows the current branch and active snapshot at a glance
+- **Branches** — create named branches, each with its own independent snapshot history; switch branches via the branch selector on the Versions page; delete any non-active branch (and all its snapshots) via the trash icon — the active branch must be switched away from before it can be deleted; a compact indicator in the sidebar shows the current branch and active snapshot at a glance
 - **Restore** — rewind the entire dataset to any prior snapshot (runs as a background job with a live progress bar); optionally auto-snapshot the current state first; the "Current" indicator moves to the restored snapshot on completion
 - **Diff** — compare any two snapshots to see which images were added, removed, or modified (field-level changes)
 - **Branch snapshot prompts** — configurable in Settings: prompt before checkout or branch creation (*Ask* mode) or always create snapshots automatically (*Auto* mode)

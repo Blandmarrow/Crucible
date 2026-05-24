@@ -75,6 +75,9 @@ export const versioningApi = {
   getVersion: (datasetId: string, versionId: string) =>
     client.get<Version>(`/datasets/${datasetId}/versions/${versionId}`).then((r) => r.data),
 
+  deleteBranch: (datasetId: string, branchId: string) =>
+    client.delete(`/datasets/${datasetId}/versions/branches/${branchId}`),
+
   deleteVersion: (datasetId: string, versionId: string) =>
     client.delete(`/datasets/${datasetId}/versions/${versionId}`),
 

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -104,6 +104,28 @@ async def create_branch(
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
+
+
+@router.delete("/{dataset_id}/versions/branches/{branch_id}", status_code=204)
+async def delete_branch(
+    dataset_id: str, branch_id: str, db: AsyncSession = Depends(get_db)
+):
+    branch = await db.get(DatasetBranch, branch_id)
+    if branch is None or branch.dataset_id != dataset_id:
+        raise HTTPException(404, "Branch not found")
+
+    count_result = await db.execute(
+        select(func.count(DatasetBranch.id)).where(DatasetBranch.dataset_id == dataset_id)
+    )
+    if count_result.scalar() <= 1:
+        raise HTTPException(400, "Cannot delete the only branch")
+
+    dataset = await db.get(Dataset, dataset_id)
+    if dataset.current_branch_id == branch_id:
+        raise HTTPException(400, "Cannot delete the active branch. Switch to another branch first.")
+
+    await db.delete(branch)
+    await db.commit()
 
 
 @router.post("/{dataset_id}/versions/branches/{branch_id}/checkout")

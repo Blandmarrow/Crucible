@@ -224,6 +224,7 @@ export default function VersionsPage() {
           datasetId={datasetId}
           branches={branches}
           activeBranchId={activeBranchId}
+          currentBranchId={dataset?.current_branch_id ?? undefined}
           onSelect={handleBranchSelect}
         />
         <button className="btn sm ghost" onClick={() => setShowDiffModal(true)} disabled={versions.length < 2}>

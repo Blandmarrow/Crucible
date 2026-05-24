@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { Pin } from "lucide-react";
 import { settingsApi } from "../api/settings";
 import { versioningApi } from "../api/versioning";
+import { datasetsApi } from "../api/datasets";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import type { Version } from "../types";
 import CreateSnapshotModal from "../components/versioning/CreateSnapshotModal";
@@ -89,7 +90,14 @@ export default function VersionsPage() {
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<Version | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Version | null>(null);
-  const [activeBranchId, setActiveBranchId] = useState<string | undefined>(undefined);
+  const [activeBranchId, setActiveBranchId] = useState<string | undefined>(
+    () => sessionStorage.getItem(`versions-branch-${datasetId}`) ?? undefined
+  );
+
+  function handleBranchSelect(branchId: string) {
+    sessionStorage.setItem(`versions-branch-${datasetId}`, branchId);
+    setActiveBranchId(branchId);
+  }
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -107,23 +115,36 @@ export default function VersionsPage() {
     staleTime: 60_000,
   });
 
+  const { data: dataset } = useQuery({
+    queryKey: ["dataset", datasetId],
+    queryFn: () => datasetsApi.get(datasetId!),
+    enabled: !!datasetId,
+    staleTime: 30_000,
+  });
+
   const { data: branches = [] } = useQuery({
     queryKey: ["branches", datasetId],
     queryFn: () => versioningApi.listBranches(datasetId!),
     enabled: !!datasetId && settings?.versioning_mode !== "off",
   });
 
-  const versionsQueryKey = ["versions", datasetId, activeBranchId, search, createdAfter, createdBefore];
+  const activeBranch =
+    branches.find((b) => b.id === activeBranchId) ??
+    branches.find((b) => b.id === dataset?.current_branch_id) ??
+    branches[0];
+  const resolvedBranchId = activeBranch?.id;
+
+  const versionsQueryKey = ["versions", datasetId, resolvedBranchId, search, createdAfter, createdBefore];
 
   const { data: versions = [], isLoading: versionsLoading } = useQuery({
     queryKey: versionsQueryKey,
     queryFn: () => versioningApi.listVersions(datasetId!, {
-      branchId: activeBranchId,
+      branchId: resolvedBranchId,
       search: search || undefined,
       createdAfter: createdAfter || undefined,
       createdBefore: createdBefore || undefined,
     }),
-    enabled: !!datasetId && settings?.versioning_mode !== "off",
+    enabled: !!datasetId && settings?.versioning_mode !== "off" && !!resolvedBranchId,
   });
 
   const deleteMutation = useMutation({
@@ -185,7 +206,6 @@ export default function VersionsPage() {
     );
   }
 
-  const activeBranch = branches.find((b) => b.id === activeBranchId) ?? branches[0];
   const headVersionId = activeBranch?.head_version_id;
   const hasActiveFilter = !!(searchInput || createdAfter || createdBefore);
 
@@ -204,7 +224,7 @@ export default function VersionsPage() {
           datasetId={datasetId}
           branches={branches}
           activeBranchId={activeBranchId}
-          onSelect={setActiveBranchId}
+          onSelect={handleBranchSelect}
         />
         <button className="btn sm ghost" onClick={() => setShowDiffModal(true)} disabled={versions.length < 2}>
           Compare ▾
@@ -287,7 +307,11 @@ export default function VersionsPage() {
 
       {/* Modals */}
       {showCreateModal && (
-        <CreateSnapshotModal datasetId={datasetId} onClose={() => setShowCreateModal(false)} />
+        <CreateSnapshotModal
+          datasetId={datasetId}
+          activeBranchId={activeBranch?.id}
+          onClose={() => setShowCreateModal(false)}
+        />
       )}
       {showDiffModal && (
         <DiffModal datasetId={datasetId} versions={versions} onClose={() => setShowDiffModal(false)} />
@@ -313,6 +337,8 @@ export default function VersionsPage() {
             qc.invalidateQueries({ queryKey: ["versions", datasetId] });
             qc.invalidateQueries({ queryKey: ["branches", datasetId] });
             qc.invalidateQueries({ queryKey: ["images", datasetId] });
+            qc.invalidateQueries({ queryKey: ["image"] });
+            qc.invalidateQueries({ queryKey: ["caption"] });
           }}
         />
       )}

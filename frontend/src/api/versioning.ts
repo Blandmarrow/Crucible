@@ -37,17 +37,20 @@ export const versioningApi = {
   listBranches: (datasetId: string) =>
     client.get<Branch[]>(`/datasets/${datasetId}/versions/branches`).then((r) => r.data),
 
-  createBranch: (datasetId: string, name: string, fromVersionId?: string) =>
+  createBranch: (datasetId: string, name: string, fromVersionId?: string, includeSnapshot = true) =>
     client
       .post<Branch | { job_id: string }>(`/datasets/${datasetId}/versions/branches`, {
         name,
         from_version_id: fromVersionId,
+        include_snapshot: includeSnapshot,
       })
       .then((r) => r.data),
 
-  checkoutBranch: (datasetId: string, branchId: string) =>
+  checkoutBranch: (datasetId: string, branchId: string, preRestoreSnapshot = true) =>
     client
-      .post<{ job_id: string }>(`/datasets/${datasetId}/versions/branches/${branchId}/checkout`)
+      .post<{ job_id: string }>(`/datasets/${datasetId}/versions/branches/${branchId}/checkout`, {
+        pre_restore_snapshot: preRestoreSnapshot,
+      })
       .then((r) => r.data),
 
   listVersions: (datasetId: string, params: ListVersionsParams = {}) =>

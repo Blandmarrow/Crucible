@@ -3,6 +3,7 @@ export interface Branch {
   dataset_id: string;
   name: string;
   head_version_id: string | null;
+  head_version_name: string | null;
   created_at: string;
 }
 
@@ -52,6 +53,7 @@ export interface Dataset {
   captioned_count: number;
   total_size_bytes: number;
   preview_image_ids: string[];
+  current_branch_id: string | null;
 }
 
 export interface DatasetStats {

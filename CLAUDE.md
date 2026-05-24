@@ -292,7 +292,7 @@ Three performance indexes exist:
 
 `frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
 
-`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). Add new `localStorage` keys here rather than defining them inline in components.
+`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). `BRANCH_SNAPSHOT_KEY`: the `localStorage` key for the branch/checkout snapshot behavior preference (`"ask"` or `"auto"`). Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage`. Add new `localStorage` keys here rather than defining them inline in components.
 
 ### Layout
 
@@ -437,7 +437,9 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 
 **Frontend**: `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
-The Settings page also includes a **UI Behavior** panel (above Versioning) with a `RadioGroup` for the delete-confirmation default button (`cancel` / `confirm`). This preference is stored in `localStorage` under `CONFIRM_DEFAULT_KEY` and takes effect immediately — no Save button. It is read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
+The Settings page also includes a **UI Behavior** panel (above Versioning) with two `RadioGroup` controls:
+- Delete-confirmation default button (`cancel` / `confirm`). Stored in `localStorage` under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
+- Branch snapshot behavior (`ask` / `auto`). Stored in `localStorage` under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting. Takes effect immediately — no Save button.
 
 ### Styling
 
@@ -643,8 +645,8 @@ Files are stored **only once per unique content** (idempotent copy). No GC in v1
 | Method | Path | Behaviour |
 |---|---|---|
 | `GET` | `/{id}/versions/branches` | List branches |
-| `POST` | `/{id}/versions/branches` | Create branch (sync ≤100 images, else bg job) |
-| `POST` | `/{id}/versions/branches/{branch_id}/checkout` | Checkout branch (always bg job) |
+| `POST` | `/{id}/versions/branches` | Create branch; body: `BranchCreate { name, from_version_id?, include_snapshot: bool = true }`. Sync ≤100 images or when `include_snapshot=false`, else bg job |
+| `POST` | `/{id}/versions/branches/{branch_id}/checkout` | Checkout branch (always bg job); body: `CheckoutRequest { pre_restore_snapshot: bool = true }` |
 | `GET` | `/{id}/versions` | List versions — filters: `branch_id`, `search` (name/description ilike), `created_after`/`created_before` (ISO date strings); sorted pinned-first then `created_at DESC` |
 | `POST` | `/{id}/versions` | Create snapshot (manual mode always bg job; auto mode inline ≤100 images) |
 | `GET` | `/{id}/versions/diff` | Diff two versions (`?v1=&v2=`) — declared BEFORE `/{version_id}` to prevent FastAPI collision |
@@ -660,7 +662,7 @@ Key functions:
 - `mark_image_deleted_in_versions(image_id, file_path, db)` — deletion hook; no-op if `"off"` or no snapshot rows exist for image
 - `_backup_and_record_hash(image_id, file_path, dataset_folder, db)` — shared helper: hash → copy to object store → backfill all NULL `file_hash` rows for the image in one `UPDATE`
 - `create_snapshot(db, dataset_id, name, description, branch_id, job_id, source)` — creates snapshot; `source` is `"manual"` (user-triggered), `"pre_restore"` (auto before restore), or `"branch_init"` (new branch). `"manual"` mode also copies every file eagerly.
-- `restore_snapshot(db, dataset_id, version_id, handle_extra_images, pre_restore_snapshot, job_id)` — restores files from object store + updates DB; optionally auto-snapshots current state first
+- `restore_snapshot(db, dataset_id, version_id, handle_extra_images, pre_restore_snapshot, job_id)` — restores files from object store + updates DB; optionally auto-snapshots current state first; after all files are restored, sets `branch.head_version_id = version_id` so the UI "Current" badge moves to the restored snapshot
 - `diff_versions(db, dataset_id, v1, v2)` — pure DB, no background job; uses `_DIFF_COLS` column-explicit select for efficiency; `processing_history` changes render as `+`/`−` operation badges in `DiffModal`
 
 **Copy-on-write injection points** (existing routers, all fire before the file operation):
@@ -674,18 +676,21 @@ Key functions:
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 
 **Frontend**:
-- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch).
-- `frontend/src/components/versioning/CreateSnapshotModal.tsx` — name + description inputs; shows `JobProgressBar` during bg job
+- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch). Active branch is persisted to `sessionStorage` under `versions-branch-${datasetId}`; falls back to `dataset.current_branch_id` when sessionStorage is empty (e.g. after server restart), then to `branches[0]`.
+- `frontend/src/components/versioning/CreateSnapshotModal.tsx` — name + description inputs; shows `JobProgressBar` during bg job; passes `activeBranchId` in the snapshot body so new snapshots land on the correct branch.
 - `frontend/src/components/versioning/RestoreConfirmModal.tsx` — keep/remove radio for extra images, pre-restore snapshot checkbox, file-unavailability warning, `JobProgressBar`
 - `frontend/src/components/versioning/DiffModal.tsx` — select two versions; shows Added/Removed/Modified sections with field-level changes
-- `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option; checkout triggers a bg job; `onSelect` is called only after the job completes (not immediately on select change) to avoid showing stale data
-- `frontend/src/components/common/JobProgressBar.tsx` — shared progress bar (message + animated fill bar); used by snapshot and restore modals
-- `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch`, `checkoutBranch`, `listVersions` (accepts `ListVersionsParams` object with `branchId`, `search`, `createdAfter`, `createdBefore`), `createSnapshot`, `getVersion`, `deleteVersion`, `updateVersion` (PATCH for `is_pinned`), `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
+- `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option; checkout and branch creation each show a `SnapshotPrompt` dialog first when `BRANCH_SNAPSHOT_KEY === "ask"`, otherwise proceed automatically. Checkout triggers a bg job; while running a fixed-position progress card appears bottom-right showing `JobProgressBar` with SSE progress. `onSelect` is called only after the job completes (not immediately on select change) to avoid showing stale data.
+- `frontend/src/components/common/JobProgressBar.tsx` — shared progress bar (message + animated fill bar); used by snapshot, restore, and branch-checkout flows
+- `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch(datasetId, name, fromVersionId?, includeSnapshot = true)`, `checkoutBranch(datasetId, branchId, preRestoreSnapshot = true)`, `listVersions` (accepts `ListVersionsParams` object with `branchId`, `search`, `createdAfter`, `createdBefore`), `createSnapshot`, `getVersion`, `deleteVersion`, `updateVersion` (PATCH for `is_pinned`), `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
+- **Sidebar branch indicator** — `Sidebar.tsx` queries `["branches", datasetId]` and shows a compact clickable row (links to `/versions`) below the "Active dataset" label displaying the current branch name (monospace) and its head snapshot name separated by `·`. Only shown when branches exist.
 
 **TanStack Query keys**:
 - `["branches", datasetId]` — invalidated after snapshot creation, restore, checkout
-- `["versions", datasetId, activeBranchId, search, createdAfter, createdBefore]` — invalidated after snapshot creation, delete, restore; pin toggle uses `setQueryData` instead of invalidation
-- `["images", datasetId]` — invalidated after restore (image set changes)
-- `["dataset", datasetId]` — invalidated after restore (image count in sidebar)
+- `["versions", datasetId, resolvedBranchId, search, createdAfter, createdBefore]` — invalidated after snapshot creation, delete, restore; pin toggle uses `setQueryData` instead of invalidation
+- `["images", datasetId]` — invalidated after restore and after checkout (image set and captions change)
+- `["image"]` — prefix invalidation (no imageId) after restore and checkout; clears all cached image detail pages so `ImageDetailPage` refetches immediately
+- `["caption"]` — prefix invalidation after restore and checkout; clears all cached caption data
+- `["dataset", datasetId]` — invalidated after restore and checkout (image count, `current_branch_id`)
 
 **`DatasetVersion` fields**: `id`, `dataset_id`, `branch_id`, `parent_id`, `name`, `description`, `image_count`, `created_at`, `source` (`Literal["manual", "pre_restore", "branch_init"]`), `is_pinned` (`bool`).

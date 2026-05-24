@@ -10,6 +10,7 @@ from backend.models import BackgroundJob, Dataset
 from backend.models.versioning import DatasetBranch, DatasetVersion
 from backend.schemas.versioning import (
     BranchCreate, BranchOut,
+    CheckoutRequest,
     DiffOut,
     RestoreRequest, RestoreSummary,
     SnapshotCreate, VersionOut, VersionUpdate,
@@ -32,7 +33,30 @@ async def list_branches(dataset_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(DatasetBranch).where(DatasetBranch.dataset_id == dataset_id)
     )
-    return result.scalars().all()
+    branches = result.scalars().all()
+
+    head_ids = [b.head_version_id for b in branches if b.head_version_id]
+    version_names: dict[str, str | None] = {}
+    if head_ids:
+        vr = await db.execute(
+            select(DatasetVersion.id, DatasetVersion.name).where(
+                DatasetVersion.id.in_(head_ids)
+            )
+        )
+        for vid, vname in vr.all():
+            version_names[vid] = vname
+
+    return [
+        BranchOut.model_validate({
+            "id": b.id,
+            "dataset_id": b.dataset_id,
+            "name": b.name,
+            "head_version_id": b.head_version_id,
+            "head_version_name": version_names.get(b.head_version_id) if b.head_version_id else None,
+            "created_at": b.created_at,
+        })
+        for b in branches
+    ]
 
 
 @router.post("/{dataset_id}/versions/branches", response_model=BranchOut)
@@ -51,10 +75,10 @@ async def create_branch(
     )
     image_count = count_result.scalar() or 0
 
-    if image_count <= _SNAPSHOT_INLINE_LIMIT:
+    if image_count <= _SNAPSHOT_INLINE_LIMIT or not body.include_snapshot:
         try:
             branch, _ = await version_service.create_branch(
-                db, dataset_id, body.name, body.from_version_id
+                db, dataset_id, body.name, body.from_version_id, body.include_snapshot
             )
             return branch
         except ValueError as e:
@@ -67,12 +91,13 @@ async def create_branch(
 
     branch_name = body.name
     from_vid = body.from_version_id
+    inc_snap = body.include_snapshot
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
             try:
-                await version_service.create_branch(session, dataset_id, branch_name, from_vid)
+                await version_service.create_branch(session, dataset_id, branch_name, from_vid, inc_snap)
             except Exception as exc:
                 logger.error("create_branch job failed: %s", exc)
                 raise
@@ -83,7 +108,9 @@ async def create_branch(
 
 @router.post("/{dataset_id}/versions/branches/{branch_id}/checkout")
 async def checkout_branch(
-    dataset_id: str, branch_id: str, db: AsyncSession = Depends(get_db)
+    dataset_id: str, branch_id: str,
+    body: CheckoutRequest = CheckoutRequest(),
+    db: AsyncSession = Depends(get_db),
 ):
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
@@ -97,10 +124,16 @@ async def checkout_branch(
     db.add(job)
     await db.commit()
 
+    pre_restore = body.pre_restore_snapshot
+
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
-            await version_service.checkout_branch(session, dataset_id, branch_id, job_id)
+            await version_service.checkout_branch(
+                session, dataset_id, branch_id,
+                pre_restore_snapshot=pre_restore,
+                job_id=job_id,
+            )
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

@@ -9,6 +9,7 @@ class BranchOut(BaseModel):
     dataset_id: str
     name: str
     head_version_id: str | None
+    head_version_name: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -17,6 +18,11 @@ class BranchOut(BaseModel):
 class BranchCreate(BaseModel):
     name: str
     from_version_id: str | None = None
+    include_snapshot: bool = True
+
+
+class CheckoutRequest(BaseModel):
+    pre_restore_snapshot: bool = True
 
 
 class VersionOut(BaseModel):

@@ -42,6 +42,7 @@ class DatasetOut(BaseModel):
     captioned_count: int
     total_size_bytes: int
     preview_image_ids: list[str] = []
+    current_branch_id: str | None = None
 
     model_config = {"from_attributes": True}
 

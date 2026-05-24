@@ -8,10 +8,11 @@ import JobProgressBar from "../common/JobProgressBar";
 
 interface Props {
   datasetId: string;
+  activeBranchId?: string;
   onClose: () => void;
 }
 
-export default function CreateSnapshotModal({ datasetId, onClose }: Props) {
+export default function CreateSnapshotModal({ datasetId, activeBranchId, onClose }: Props) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -41,6 +42,7 @@ export default function CreateSnapshotModal({ datasetId, onClose }: Props) {
       const body: SnapshotCreateRequest = {
         name: name.trim() || undefined,
         description: description.trim(),
+        branch_id: activeBranchId,
       };
       const result = await versioningApi.createSnapshot(datasetId, body);
       if ("job_id" in result) {

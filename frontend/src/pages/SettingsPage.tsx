@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
-import { CONFIRM_DEFAULT_KEY } from "../constants/storage";
+import { CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY } from "../constants/storage";
 import RadioGroup from "../components/common/RadioGroup";
 
 const DEFAULTS: Thresholds = {
@@ -67,6 +67,9 @@ export default function SettingsPage() {
   const [form, setForm] = useState<Thresholds>(DEFAULTS);
   const [confirmDefault, setConfirmDefault] = useState<"cancel" | "confirm">(
     () => (localStorage.getItem(CONFIRM_DEFAULT_KEY) === "confirm" ? "confirm" : "cancel")
+  );
+  const [branchSnapshot, setBranchSnapshot] = useState<"ask" | "auto">(
+    () => (localStorage.getItem(BRANCH_SNAPSHOT_KEY) === "auto" ? "auto" : "ask")
   );
 
   const { data: thresholds, isLoading } = useQuery({
@@ -241,6 +244,24 @@ export default function SettingsPage() {
                   </p>
                 )}
               </div>
+
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Branch snapshot behavior</div>
+                <RadioGroup
+                  name="branch_snapshot"
+                  options={[
+                    { value: "ask", label: "Ask before branching (Recommended)", desc: "Show a prompt when creating a new branch or switching branches, letting you choose whether to save a snapshot." },
+                    { value: "auto", label: "Auto-create snapshots", desc: "Always create snapshots automatically when branching or switching, without asking." },
+                  ]}
+                  value={branchSnapshot}
+                  onChange={(v) => {
+                    setBranchSnapshot(v as "ask" | "auto");
+                    localStorage.setItem(BRANCH_SNAPSHOT_KEY, v);
+                    toast.success("Preference saved");
+                  }}
+                />
+              </div>
+
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   className="btn primary"

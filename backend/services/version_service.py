@@ -203,10 +203,13 @@ async def create_snapshot(
     if parent_id is None and branch is not None:
         parent_id = branch.head_version_id
 
-    # Auto-generate name if not supplied
+    # Auto-generate name if not supplied (scoped to the branch so names only need to be unique per branch)
     if name is None:
         existing = await db.execute(
-            select(DatasetVersion.name).where(DatasetVersion.dataset_id == dataset_id)
+            select(DatasetVersion.name).where(
+                DatasetVersion.dataset_id == dataset_id,
+                DatasetVersion.branch_id == branch_id,
+            )
         )
         existing_names = {r[0] for r in existing.all() if r[0]}
         name = _auto_snapshot_name(existing_names)
@@ -563,6 +566,13 @@ async def restore_snapshot(
             await db.delete(extra_img)
             images_removed += 1
 
+    # Move branch head to the restored version so the UI marks it as Current
+    ver = await db.get(DatasetVersion, version_id)
+    if ver and ver.branch_id:
+        branch = await db.get(DatasetBranch, ver.branch_id)
+        if branch:
+            branch.head_version_id = version_id
+
     await db.commit()
     await refresh_stats(db, dataset_id)
     await db.commit()
@@ -585,7 +595,8 @@ async def create_branch(
     dataset_id: str,
     branch_name: str,
     from_version_id: str | None = None,
-) -> tuple[DatasetBranch, DatasetVersion]:
+    include_snapshot: bool = True,
+) -> tuple[DatasetBranch, DatasetVersion | None]:
     # Validate name uniqueness
     existing = await db.execute(
         select(DatasetBranch).where(
@@ -598,16 +609,17 @@ async def create_branch(
 
     # Resolve source version
     if from_version_id is None:
-        # Default: create snapshot from current state on main
         main_branch = await _ensure_main_branch(db, dataset_id)
         from_version_id = main_branch.head_version_id
 
-    # Create branch (head will be set after snapshot)
     branch = DatasetBranch(dataset_id=dataset_id, name=branch_name)
     db.add(branch)
     await db.flush()
 
-    # Create initial snapshot on this branch pointing to same parent
+    if not include_snapshot:
+        await db.commit()
+        return branch, None
+
     version = await create_snapshot(
         db, dataset_id,
         name=f"Initial snapshot ({branch_name})",
@@ -623,6 +635,7 @@ async def checkout_branch(
     db: AsyncSession,
     dataset_id: str,
     target_branch_id: str,
+    pre_restore_snapshot: bool = True,
     job_id: str | None = None,
 ) -> dict:
     branch = await db.get(DatasetBranch, target_branch_id)
@@ -646,7 +659,7 @@ async def checkout_branch(
         db, dataset_id,
         version_id=branch.head_version_id,
         handle_extra_images="keep",
-        pre_restore_snapshot=True,
+        pre_restore_snapshot=pre_restore_snapshot,
         job_id=job_id,
     )
 

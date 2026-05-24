@@ -63,7 +63,10 @@
       "PowerShell(& \"B:\\\\Crucible\\\\venv\\\\Scripts\\\\pip.exe\" install \"pydantic-settings>=2.0\" 2>&1)",
       "Bash(xargs grep -l \"VersionOut\")",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in {**d.get\\('dependencies',{}\\),**d.get\\('devDependencies',{}\\)}.items\\(\\)]\")",
-      "Bash(../venv/Scripts/python.exe -m alembic upgrade head)"
+      "Bash(../venv/Scripts/python.exe -m alembic upgrade head)",
+      "WebFetch(domain:civitai.red)",
+      "WebFetch(domain:developer.civitai.com)",
+      "WebFetch(domain:civitai.com)"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { CONFIRM_DEFAULT_KEY } from "../../constants/storage";
 
 interface Props {
   title: string;
@@ -7,14 +8,22 @@ interface Props {
   onCancel: () => void;
   confirmLabel?: string;
   danger?: boolean;
+  defaultFocus?: "cancel" | "confirm";
 }
 
-export default function ConfirmDialog({ title, message, onConfirm, onCancel, confirmLabel = "Confirm", danger = false }: Props) {
+export default function ConfirmDialog({ title, message, onConfirm, onCancel, confirmLabel = "Confirm", danger = false, defaultFocus }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    cancelRef.current?.focus();
+    const focusConfirm =
+      defaultFocus === "confirm" ||
+      (defaultFocus === undefined && danger && localStorage.getItem(CONFIRM_DEFAULT_KEY) === "confirm");
+    if (focusConfirm) {
+      confirmRef.current?.focus();
+    } else {
+      cancelRef.current?.focus();
+    }
   }, []);
 
   useEffect(() => {

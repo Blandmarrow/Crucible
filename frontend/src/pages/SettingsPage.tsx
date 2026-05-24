@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
+import { CONFIRM_DEFAULT_KEY } from "../constants/storage";
+import RadioGroup from "../components/common/RadioGroup";
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -63,6 +65,9 @@ const FIELDS: ThresholdField[] = [
 export default function SettingsPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<Thresholds>(DEFAULTS);
+  const [confirmDefault, setConfirmDefault] = useState<"cancel" | "confirm">(
+    () => (localStorage.getItem(CONFIRM_DEFAULT_KEY) === "confirm" ? "confirm" : "cancel")
+  );
 
   const { data: thresholds, isLoading } = useQuery({
     queryKey: ["settings", "thresholds"],
@@ -187,6 +192,30 @@ export default function SettingsPage() {
 
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-h">
+          <span style={{ fontWeight: 600, fontSize: 13 }}>UI Behavior</span>
+        </div>
+        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Delete confirmation default button</div>
+            <RadioGroup
+              name="confirm_default"
+              options={[
+                { value: "cancel", label: "Cancel (safe default)", desc: "The Cancel button is focused — pressing Enter will dismiss without deleting." },
+                { value: "confirm", label: "Confirm delete", desc: "The confirm button is focused — pressing Enter will proceed with deletion." },
+              ]}
+              value={confirmDefault}
+              onChange={(v) => {
+                setConfirmDefault(v as "cancel" | "confirm");
+                localStorage.setItem(CONFIRM_DEFAULT_KEY, v);
+                toast.success("Preference saved");
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-h">
           <span style={{ fontWeight: 600, fontSize: 13 }}>Versioning</span>
         </div>
         <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -196,42 +225,16 @@ export default function SettingsPage() {
             <>
               <div>
                 <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Version control mode</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {(
-                    [
-                      { value: "off", label: "Off", desc: "No version tracking. No disk space used." },
-                      { value: "manual", label: "Manual snapshots", desc: "Snapshots only when you create them. All files are backed up at snapshot time (full point-in-time backup)." },
-                      { value: "auto", label: "Automatic (copy-on-write)", desc: "Files are automatically backed up before any resize, upscale replace, or LUT replace. Lightweight snapshots; backups happen lazily on first overwrite." },
-                    ] as { value: "off" | "manual" | "auto"; label: string; desc: string }[]
-                  ).map((opt) => (
-                    <label
-                      key={opt.value}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 10,
-                        cursor: "pointer",
-                        padding: "8px 10px",
-                        borderRadius: "var(--r)",
-                        background: form.versioning_mode === opt.value ? "var(--surface-2)" : "transparent",
-                        border: `1px solid ${form.versioning_mode === opt.value ? "var(--accent)" : "var(--line)"}`,
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="versioning_mode"
-                        value={opt.value}
-                        checked={form.versioning_mode === opt.value}
-                        onChange={() => setForm((prev) => ({ ...prev, versioning_mode: opt.value }))}
-                        style={{ marginTop: 2 }}
-                      />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{opt.label}</div>
-                        <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 2 }}>{opt.desc}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
+                <RadioGroup
+                  name="versioning_mode"
+                  options={[
+                    { value: "off", label: "Off", desc: "No version tracking. No disk space used." },
+                    { value: "manual", label: "Manual snapshots", desc: "Snapshots only when you create them. All files are backed up at snapshot time (full point-in-time backup)." },
+                    { value: "auto", label: "Automatic (copy-on-write)", desc: "Files are automatically backed up before any resize, upscale replace, or LUT replace. Lightweight snapshots; backups happen lazily on first overwrite." },
+                  ]}
+                  value={form.versioning_mode}
+                  onChange={(v) => setForm((prev) => ({ ...prev, versioning_mode: v as "off" | "manual" | "auto" }))}
+                />
                 {thresholds && thresholds.versioning_mode !== "off" && form.versioning_mode === "off" && (
                   <p style={{ fontSize: 12, color: "var(--warn)", marginTop: 10, marginBottom: 0 }}>
                     Switching to Off preserves existing snapshots and the object store, but no new backups will be taken.

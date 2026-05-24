@@ -292,6 +292,8 @@ Three performance indexes exist:
 
 `frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
 
+`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). Add new `localStorage` keys here rather than defining them inline in components.
+
 ### Layout
 
 **Sidebar** uses `useMatch("/datasets/:datasetId/*")` (not `useParams`) to detect the active dataset, because the Sidebar renders outside the `<Routes>` tree and `useParams` would always return `{}` there.
@@ -435,6 +437,8 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 
 **Frontend**: `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
+The Settings page also includes a **UI Behavior** panel (above Versioning) with a `RadioGroup` for the delete-confirmation default button (`cancel` / `confirm`). This preference is stored in `localStorage` under `CONFIRM_DEFAULT_KEY` and takes effect immediately — no Save button. It is read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
+
 ### Styling
 
 Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties defined in `index.css` (`:root { --bg, --surface-1/2/3, --accent, --line, --fg, --warn, --bad, --info }`) and aliased in `tailwind.config.js` so they can be used as Tailwind classes. Geist/Geist Mono fonts are loaded via Google Fonts in `index.html`. Reusable component classes are defined in `frontend/src/index.css` under `@layer components`:
@@ -456,7 +460,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | `.nav-section`, `.nav-tail` | Sidebar section header and count badge |
 | `.tabs`, `.tab` | Tab bar with accent underline active state |
 
-**`ConfirmDialog`** (`frontend/src/components/common/ConfirmDialog.tsx`) — shared modal for destructive confirmations. Keyboard-aware: auto-focuses Cancel on mount (safe default for destructive actions), ArrowLeft/ArrowRight switch focus between Cancel and the confirm button, Enter fires the focused button natively. When adding any global `keydown` listener that handles ArrowLeft/ArrowRight, suppress it while a `ConfirmDialog` is open to avoid background navigation competing with dialog focus — see `showDeleteConfirm` guard in `ImageDetailPage`'s arrow-key effect.
+**`ConfirmDialog`** (`frontend/src/components/common/ConfirmDialog.tsx`) — shared modal for destructive confirmations. Keyboard-aware: auto-focuses Cancel on mount by default (safe default for destructive actions), ArrowLeft/ArrowRight switch focus between Cancel and the confirm button, Enter fires the focused button natively. When adding any global `keydown` listener that handles ArrowLeft/ArrowRight, suppress it while a `ConfirmDialog` is open to avoid background navigation competing with dialog focus — see `showDeleteConfirm` guard in `ImageDetailPage`'s arrow-key effect. Accepts an optional `defaultFocus?: "cancel" | "confirm"` prop to override the focused button per-callsite. When `danger=true` and no `defaultFocus` is provided, the component reads `localStorage.getItem(CONFIRM_DEFAULT_KEY)` (from `constants/storage.ts`) to respect the user's preference set in Settings → UI Behavior.
 
 **CSS hist bars**: The `.hist` class sets `display: grid; align-items: end; height: 90px`. For percentage `height` on bar children to resolve, you must also set `gridTemplateRows: "1fr"` as an inline style on the `.hist` div. Without this the single implicit row has no definite height and percentage heights collapse to 0.
 

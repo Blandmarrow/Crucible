@@ -197,9 +197,10 @@ In both Manual and Auto modes, image files are automatically backed up before de
 
 **Features:**
 - **Snapshots** — create named, time-stamped checkpoints of a dataset with an optional description
-- **Branches** — create named branches, each with its own independent snapshot history; switch branches via the branch selector on the Versions page
-- **Restore** — rewind the entire dataset to any prior snapshot (runs as a background job); optionally auto-snapshot the current state first
+- **Branches** — create named branches, each with its own independent snapshot history; switch branches via the branch selector on the Versions page; a compact indicator in the sidebar shows the current branch and active snapshot at a glance
+- **Restore** — rewind the entire dataset to any prior snapshot (runs as a background job with a live progress bar); optionally auto-snapshot the current state first; the "Current" indicator moves to the restored snapshot on completion
 - **Diff** — compare any two snapshots to see which images were added, removed, or modified (field-level changes)
+- **Branch snapshot prompts** — configurable in Settings: prompt before checkout or branch creation (*Ask* mode) or always create snapshots automatically (*Auto* mode)
 
 The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
 
@@ -252,7 +253,9 @@ Changes take effect on the next scoring run — existing scored images are not a
 
 **Versioning mode** — switch between Off, Manual, and Auto (see [Dataset Versioning](#dataset-versioning)).
 
-**UI Behavior** — set the default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows). Persisted per-browser.
+**UI Behavior** — two browser-local preferences, each taking effect immediately without a Save button:
+- Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
+- Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
 
 ### Booru Tag Lookup
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:

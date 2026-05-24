@@ -115,6 +115,7 @@ export default function ImageDetailPage() {
   const captionRef = useRef<HTMLTextAreaElement>(null);
   const [captionDirty, setCaptionDirty] = useState(false);
   const [cropMode, setCropMode] = useState(false);
+  const [cropReplace, setCropReplace] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [aspect, setAspect] = useState<number | undefined>(undefined);
@@ -425,7 +426,10 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       setCropUpscaleJobId(null);
       setCropMode(false);
-      if (cropUpscaleJobProgress.image_id) {
+      if (cropReplace) {
+        qc.invalidateQueries({ queryKey: ["image", imageId] });
+        toast.success("Crop & upscale applied");
+      } else if (cropUpscaleJobProgress.image_id) {
         if (datasetId && imageId) injectNavId(datasetId, imageId, cropUpscaleJobProgress.image_id);
         toast.success(`Created upscaled crop`);
         paneGo(
@@ -437,7 +441,7 @@ export default function ImageDetailPage() {
       setCropUpscaleJobId(null);
       toast.error("Crop+upscale failed");
     }
-  }, [cropUpscaleJobProgress?.status, cropUpscaleJobId, datasetId, qc, paneGo]);
+  }, [cropUpscaleJobProgress?.status, cropUpscaleJobId, datasetId, imageId, cropReplace, qc, paneGo]);
 
   useEffect(() => {
     if (captionData && !captionDirty) {
@@ -505,6 +509,7 @@ export default function ImageDetailPage() {
         ...croppedArea,
         output_width: owNum > 0 ? owNum : undefined,
         output_height: ohNum > 0 ? ohNum : undefined,
+        replace: cropReplace || undefined,
         upscale_model: cropUpscaleModel || undefined,
         upscale_target_width: cropUpscaleModel && parseInt(cropUpscaleTargetW) > 0 ? parseInt(cropUpscaleTargetW) : undefined,
         upscale_target_height: cropUpscaleModel && parseInt(cropUpscaleTargetH) > 0 ? parseInt(cropUpscaleTargetH) : undefined,
@@ -516,7 +521,12 @@ export default function ImageDetailPage() {
       if ("job_id" in data) {
         // Crop+upscale — async job
         setCropUpscaleJobId(data.job_id);
-        toast("Upscaling crop…");
+        toast(cropUpscaleModel ? "Upscaling crop…" : "Applying crop…");
+      } else if (cropReplace) {
+        // Replace mode: stay on the same image
+        qc.invalidateQueries({ queryKey: ["image", imageId] });
+        setCropMode(false);
+        toast.success(`Crop applied (${data.width}×${data.height})`);
       } else {
         setCropMode(false);
         if (datasetId && imageId) injectNavId(datasetId, imageId, data.id);
@@ -757,6 +767,15 @@ export default function ImageDetailPage() {
                   if (owNum > 0 && parseInt(newH) > 0) resetCrop();
                 }}
               />
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={cropReplace}
+                  onChange={(e) => setCropReplace(e.target.checked)}
+                />
+                Replace
+              </label>
               {/* Crop + upscale toggle */}
               {upscaleModels.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, borderLeft: "1px solid var(--line)", paddingLeft: 8 }}>
@@ -799,7 +818,12 @@ export default function ImageDetailPage() {
                 onClick={() => cropMutation.mutate()}
                 disabled={!croppedArea || cropMutation.isPending || cropUpscaleRunning}
               >
-                {cropUpscaleRunning ? "Upscaling…" : cropMutation.isPending ? "Saving…" : cropUpscaleModel ? "Crop & Upscale" : "Save Crop"}
+                {(() => {
+                  if (cropUpscaleRunning) return "Upscaling…";
+                  if (cropMutation.isPending) return "Saving…";
+                  if (cropUpscaleModel) return "Crop & Upscale";
+                  return cropReplace ? "Apply Crop" : "Save Crop";
+                })()}
               </button>
             </>
           )}
@@ -900,7 +924,7 @@ export default function ImageDetailPage() {
         <div className="flex-1 relative bg-black/40">
           {cropMode ? (
             <Cropper
-              image={imagesApi.fileUrl(imageId!)}
+              image={imagesApi.fileUrlVersioned(imageId!, image.updated_at)}
               crop={crop}
               zoom={zoom}
               aspect={effectiveAspect}
@@ -912,7 +936,7 @@ export default function ImageDetailPage() {
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", lineHeight: 0 }}>
                 <img
-                  src={imagesApi.fileUrl(imageId!)}
+                  src={imagesApi.fileUrlVersioned(imageId!, image.updated_at)}
                   alt={image.filename}
                   style={{ display: "block", maxWidth: "100%", maxHeight: "calc(100vh - 120px)", objectFit: "contain" }}
                 />

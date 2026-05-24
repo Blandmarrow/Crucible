@@ -69,7 +69,9 @@
       "WebFetch(domain:civitai.com)",
       "PowerShell($f = Get-Item \"b:\\\\Crucible\\\\docs\\\\Video\\\\CrucibleShowCase.mp4\"; \"{0:N2} MB\" -f \\($f.Length / 1MB\\))",
       "Bash(ls \"b:\\\\Crucible\\\\\")",
-      "Read(//b//**)"
+      "Read(//b//**)",
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem -Path \"B:\\\\Crucible\\\\frontend\" -Filter \"*images*\" -File -Recurse -ErrorAction SilentlyContinue)"
     ]
   }
 }

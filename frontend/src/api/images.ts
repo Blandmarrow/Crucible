@@ -44,6 +44,8 @@ export const imagesApi = {
   batchDelete: (image_ids: string[]) =>
     client.delete("/images/batch/delete", { data: image_ids }),
   fileUrl: (id: string) => `/api/v1/images/${id}/file`,
+  fileUrlVersioned: (id: string, updatedAt: string) =>
+    `/api/v1/images/${id}/file?v=${Date.parse(updatedAt)}`,
   thumbnailUrl: (id: string) => `/api/v1/images/${id}/thumbnail`,
   thumbnailUrlVersioned: (id: string, updatedAt: string) =>
     `/api/v1/images/${id}/thumbnail?v=${Date.parse(updatedAt)}`,
@@ -62,6 +64,7 @@ export const imagesApi = {
     box: {
       x: number; y: number; width: number; height: number;
       output_width?: number; output_height?: number;
+      replace?: boolean;
       upscale_model?: string;
       upscale_target_width?: number;
       upscale_target_height?: number;

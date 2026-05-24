@@ -334,7 +334,91 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     src_path = Path(img.file_path)
     dest_images = src_path.parent
     dest_thumbs = src_path.parent.parent / "thumbnails"
+    loop = asyncio.get_running_loop()
 
+    # --- Replace mode: overwrite the original image ---
+    if body.replace:
+        await version_service.protect_file_before_overwrite(img.id, img.file_path, db)
+        tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+
+        if not body.upscale_model:
+            # Synchronous replace crop
+            info = await loop.run_in_executor(
+                None, crop_image_to_dest,
+                str(src_path), str(tmp_path),
+                body.x, body.y, body.width, body.height,
+                body.output_width, body.output_height,
+            )
+            tmp_path.replace(src_path)
+            if img.thumbnail_path:
+                await loop.run_in_executor(None, generate_thumbnail, str(src_path), img.thumbnail_path)
+            img.width = info["width"]
+            img.height = info["height"]
+            img.file_size_bytes = info["file_size_bytes"]
+            img.format = info["format"]
+            img.phash = info["phash"]
+            await db.commit()
+            return {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
+
+        # Replace + upscale: crop to temp, enqueue job that upscales to original path
+        await loop.run_in_executor(
+            None, crop_image_to_dest,
+            str(src_path), str(tmp_path),
+            body.x, body.y, body.width, body.height,
+            body.output_width, body.output_height,
+        )
+        replace_cfg = {
+            "tmp_path": str(tmp_path),
+            "dest_path": str(src_path),
+            "thumb_path": img.thumbnail_path or thumbnail_path_for(src_path),
+            "image_id": img.id,
+            "upscale_model": body.upscale_model,
+            "upscale_target_width": body.upscale_target_width,
+            "upscale_target_height": body.upscale_target_height,
+        }
+        job = BackgroundJob(job_type="crop_upscale", dataset_id=img.dataset_id, total_items=1, config=replace_cfg)
+        db.add(job)
+        await db.commit()
+
+        async def _run_crop_upscale_replace(job_id: str) -> None:
+            import os
+            from backend.database import AsyncSessionLocal
+            from backend.ml.upscaler import upscale_image_sync
+            from backend.workers.progress import broadcaster
+
+            loop2 = asyncio.get_running_loop()
+            try:
+                info = await loop2.run_in_executor(
+                    None, upscale_image_sync,
+                    replace_cfg["tmp_path"], replace_cfg["dest_path"], replace_cfg["upscale_model"], False,
+                    replace_cfg["upscale_target_width"], replace_cfg["upscale_target_height"],
+                )
+            finally:
+                try:
+                    os.remove(replace_cfg["tmp_path"])
+                except OSError:
+                    pass
+
+            await loop2.run_in_executor(None, generate_thumbnail, replace_cfg["dest_path"], replace_cfg["thumb_path"])
+
+            async with AsyncSessionLocal() as session:
+                updated = await session.get(Image, replace_cfg["image_id"])
+                if updated:
+                    updated.width = info["width"]
+                    updated.height = info["height"]
+                    updated.file_size_bytes = info["file_size_bytes"]
+                    await session.commit()
+
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": "crop_upscale",
+                "status": "completed", "done": 1, "total": 1, "percent": 100.0,
+                "replace": True,
+            })
+
+        await job_queue.enqueue(job, _run_crop_upscale_replace)
+        return {"job_id": job.id}
+
+    # --- New-file mode (original behaviour) ---
     crop_stem = slugify_filename(src_path.stem + "_crop")
     existing = await db.execute(
         select(Image.filename).where(
@@ -346,11 +430,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     new_filename = unique_filename(dest_images, crop_stem, src_path.suffix, db_names)
     dest_path = dest_images / new_filename
 
-    # --- Crop + upscale path (async background job) ---
+    # Crop + upscale path (async background job)
     if body.upscale_model:
-        # Crop to a temp file; the job will upscale it to the final dest
         tmp_path = dest_images / (dest_path.stem + "_tmp" + dest_path.suffix)
-        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None, crop_image_to_dest,
             str(src_path), str(tmp_path),
@@ -425,8 +507,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
         await job_queue.enqueue(job, _run_crop_upscale)
         return {"job_id": job.id}
 
-    # --- Synchronous crop-only path (original behaviour) ---
-    loop = asyncio.get_running_loop()
+    # Synchronous crop-only path
     info = await loop.run_in_executor(
         None, crop_image_to_dest,
         str(src_path), str(dest_path),

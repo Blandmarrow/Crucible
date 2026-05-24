@@ -6,13 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Launch
 
-**Windows** — double-click the `.bat` files in Explorer, or run `manage.ps1` directly in PowerShell:
+**Windows** — double-click `Crucible.bat` in Explorer (shows a setup/start/update menu), or run `manage.ps1` directly in PowerShell:
 
 | File | Purpose |
 |---|---|
-| `Setup Dataset Manager.bat` | Double-click to set up (runs `manage.ps1 setup`) |
-| `Start Dataset Manager.bat` | Double-click to launch (runs `manage.ps1 start`) |
-| `Update Dataset Manager.bat` | Double-click to update (runs `manage.ps1 update`) |
+| `Crucible.bat` | Double-click to launch — shows menu (setup / start / update) |
 | `manage.ps1 setup` | First time only — creates venv, installs deps, builds frontend |
 | `manage.ps1 start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
 | `manage.ps1 update` | `git pull` → update pip deps → `npm install` → rebuild frontend |

@@ -3,8 +3,8 @@
 
 param(
     [Parameter(Mandatory = $false, Position = 0)]
-    [ValidateSet("setup", "start", "update", "dev", "")]
-    [string]$Command = ""
+    [ValidateSet("setup", "start", "update", "dev")]
+    [string]$Command
 )
 
 $ErrorActionPreference = "Stop"

@@ -309,7 +309,7 @@ git clone https://github.com/Blandmarrow/Crucible
 
 ### Windows
 
-Double-click **`Setup Dataset Manager.bat`** to create the virtual environment, install all dependencies, and build the frontend. The window stays open so you can see the output.
+Double-click **`Crucible.bat`** and choose **Setup** from the menu to create the virtual environment, install all dependencies, and build the frontend.
 
 You can also run it directly in PowerShell:
 
@@ -342,7 +342,7 @@ GELBOORU_USER_ID=...
 
 ### Windows
 
-Double-click **`Start Dataset Manager.bat`** in Explorer to launch the app. It opens on `http://localhost:8000` automatically. To update, double-click **`Update Dataset Manager.bat`**.
+Double-click **`Crucible.bat`** and choose **Start** to launch the app on `http://localhost:8000`, or **Update** to pull the latest changes and rebuild.
 
 Or run directly in PowerShell:
 

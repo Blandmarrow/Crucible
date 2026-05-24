@@ -1,7 +1,6 @@
 export const STYLE_LABELS: Record<string, string[]> = {
   florence2: ["short", "detailed", "tags", "dense", "promptgen"],
   paligemma2: ["short", "detailed", "tags", "booru"],
-  ollama: ["short", "detailed", "tags", "booru"],
 };
 
 export function modelType(model: string): string | null {

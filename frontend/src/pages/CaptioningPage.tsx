@@ -70,7 +70,7 @@ export default function CaptioningPage() {
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
 
   const selectedModelType = modelType(selectedModel);
-  const availableStyles = selectedModelType ? STYLE_LABELS[selectedModelType] : [];
+  const availableStyles = selectedModelType ? (STYLE_LABELS[selectedModelType] ?? []) : [];
 
   const unloadMutation = useMutation({
     mutationFn: (modelId: string) => captioningApi.unloadModel(modelId),

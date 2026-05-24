@@ -203,11 +203,30 @@ cmd_dev() {
 # Dispatch
 # ---------------------------------------------------------------------------
 
+_menu() {
+    echo ""
+    echo "=== Crucible ==="
+    echo ""
+    echo "  1) Setup   - First-time install (creates venv, installs deps, builds frontend)"
+    echo "  2) Start   - Launch the app at http://localhost:8000"
+    echo "  3) Update  - Pull latest changes and rebuild"
+    echo ""
+    printf "Enter choice [1-3]: "
+    read -r choice
+    case "$choice" in
+        1) cmd_setup  ;;
+        2) cmd_start  ;;
+        3) cmd_update ;;
+        *) echo "Invalid choice. Run: $0 <setup|start|update|dev>" >&2; exit 1 ;;
+    esac
+}
+
 case "${1:-}" in
     setup)  cmd_setup  ;;
     start)  cmd_start  ;;
     update) cmd_update ;;
     dev)    cmd_dev    ;;
+    "")     _menu      ;;
     *)
         echo "Usage: $0 <setup|start|update|dev>" >&2
         exit 1

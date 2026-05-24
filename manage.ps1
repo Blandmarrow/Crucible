@@ -2,9 +2,9 @@
 # Usage: .\manage.ps1 <setup|start|update|dev>
 
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("setup", "start", "update", "dev")]
-    [string]$Command
+    [Parameter(Mandatory = $false, Position = 0)]
+    [ValidateSet("setup", "start", "update", "dev", "")]
+    [string]$Command = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -243,6 +243,26 @@ function Cmd-Dev {
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+
+if ($Command -eq "") {
+    Write-Host ""
+    Write-Host "=== Crucible ===" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  1) Setup   - First-time install (creates venv, installs deps, builds frontend)"
+    Write-Host "  2) Start   - Launch the app at http://localhost:8000"
+    Write-Host "  3) Update  - Pull latest changes and rebuild"
+    Write-Host ""
+    $choice = Read-Host "Enter choice [1-3]"
+    switch ($choice) {
+        "1" { $Command = "setup" }
+        "2" { $Command = "start" }
+        "3" { $Command = "update" }
+        default {
+            Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev>" -ForegroundColor Red
+            exit 1
+        }
+    }
+}
 
 switch ($Command) {
     "setup"  { Cmd-Setup }

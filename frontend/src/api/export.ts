@@ -9,6 +9,7 @@ interface ExportFilters {
   style_sim_min?: number | null;
   subfolders?: string[] | null;
   strip_metadata?: boolean;
+  captions_only?: boolean;
 }
 
 export const exportApi = {

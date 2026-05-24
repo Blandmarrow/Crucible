@@ -45,6 +45,7 @@ export default function ExportPage() {
   const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set());
 
   const [stripMetadata, setStripMetadata] = useState(false);
+  const [captionsOnly, setCaptionsOnly] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   useJobSSE(activeJobId);
@@ -86,13 +87,14 @@ export default function ExportPage() {
 
   const buildFilters = () => ({
     caption_format: captionFmt,
-    resize_to: customResize ? (parseInt(customResizeVal, 10) || null) : resizeTo,
+    resize_to: captionsOnly ? null : (customResize ? (parseInt(customResizeVal, 10) || null) : resizeTo),
     aesthetic_min: filterAesthetic ? aestheticMin : null,
     captioned_only: filterCaptioned,
     exclude_flags: [...excludeFlags].join(","),
     style_sim_min: filterStyleSim ? styleSimMin : null,
     subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
-    strip_metadata: stripMetadata,
+    strip_metadata: !captionsOnly && stripMetadata,
+    captions_only: captionsOnly,
   });
 
   const exportMutation = useMutation({
@@ -267,7 +269,7 @@ export default function ExportPage() {
             </div>
 
             {/* Resize */}
-            <div className="form-row">
+            <div className={`form-row${captionsOnly ? " disabled" : ""}`}>
               <div className="lbl-col">
                 <h4>Resize on export</h4>
                 <p>
@@ -362,8 +364,20 @@ export default function ExportPage() {
               </div>
             )}
 
+            {/* Captions only */}
+            <div className="form-row">
+              <div className="lbl-col">
+                <h4>Captions only</h4>
+                <p>Skip image files — export caption files only.</p>
+              </div>
+              <label className="row-flex" style={{ gap: 8 }}>
+                <input type="checkbox" className="checkbox" checked={captionsOnly} onChange={(e) => setCaptionsOnly(e.target.checked)} />
+                <span style={{ fontSize: 12.5 }}>Enabled</span>
+              </label>
+            </div>
+
             {/* Image format */}
-            <div className="form-row" style={{ borderBottom: "none" }}>
+            <div className={`form-row${captionsOnly ? " disabled" : ""}`} style={{ borderBottom: "none" }}>
               <div className="lbl-col">
                 <h4>Image format</h4>
                 <p>Convert images when copying to the export folder.</p>

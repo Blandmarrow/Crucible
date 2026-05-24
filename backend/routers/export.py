@@ -31,6 +31,7 @@ class KohyaExportRequest(BaseModel):
     style_sim_min: float | None = None
     subfolders: list[str] | None = None
     strip_metadata: bool = False
+    captions_only: bool = False
 
 
 class AIToolkitExportRequest(BaseModel):
@@ -48,6 +49,7 @@ class AIToolkitExportRequest(BaseModel):
     style_sim_min: float | None = None
     subfolders: list[str] | None = None
     strip_metadata: bool = False
+    captions_only: bool = False
 
 
 class PlainExportRequest(BaseModel):
@@ -63,6 +65,7 @@ class PlainExportRequest(BaseModel):
     style_sim_min: float | None = None
     subfolders: list[str] | None = None
     strip_metadata: bool = False
+    captions_only: bool = False
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -100,6 +103,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,
+                body.captions_only,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -142,6 +146,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,
+                body.captions_only,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -182,6 +187,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,
+                body.captions_only,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:

@@ -177,6 +177,7 @@
     border-bottom: 1px solid var(--line);
   }
   .form-row:last-child { border-bottom: 0; }
+  .form-row.disabled { opacity: 0.4; pointer-events: none; }
   .lbl-col h4 { margin: 0 0 4px; font-size: 13px; font-weight: 500; }
   .lbl-col p  { margin: 0; font-size: 11.5px; color: var(--fg-mute); line-height: 1.5; }
 

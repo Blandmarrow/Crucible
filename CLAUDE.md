@@ -530,6 +530,8 @@ Filter params are debounced 350 ms on the frontend; the preview query (`GET /exp
 
 **Strip metadata** (`strip_metadata: bool`, default `False`): when `True`, forces a PIL round-trip even for the "original format, no resize" case, which naturally discards PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, etc.) and EXIF. The PIL paths (format conversion, resize) already strip metadata — this flag only affects the `shutil.copy2()` fast path.
 
+**Captions only** (`captions_only: bool`, default `False`): when `True`, skips all image file writes. The `src.exists()` check is also bypassed so images with missing files are still included (their caption data is in the DB). For kohya/aitoolkit, only sidecar/JSONL caption files are written to the concept subdirectory. For plain, no `images/` subdirectory is created — only `captions.jsonl` and `tags.csv` are written to `output_dir`. In captions-only mode, JSONL/CSV entries always use `img.filename` (the original filename) regardless of `output_format`, since no format conversion occurs. Image format, resize, and strip-metadata settings are ignored when this flag is set.
+
 
 ### AI generation metadata
 

@@ -225,6 +225,7 @@ Per-export options:
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`
 - Subfolder scoping — export only images from a specific subfolder
 - **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested
+- **Captions only** — skip image files entirely and export only caption sidecars / JSONL manifests; useful for updating captions in an existing dataset without re-copying images
 - **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run
 
 ### File Browser

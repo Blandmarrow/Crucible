@@ -120,6 +120,7 @@ async def _run_export_loop(
     accumulate_plain: bool = False,
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
+    captions_only: bool = False,
 ) -> dict:
     """
     Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
@@ -141,13 +142,17 @@ async def _run_export_loop(
 
     for i, img in enumerate(images):
         src = Path(img.file_path)
-        if not src.exists():
+        if not captions_only and not src.exists():
             continue
         if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
             continue
 
-        dest_img = _dest_img_path(dest_dir, img, output_format)
-        _write_image(src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata)
+        if captions_only:
+            # Don't read or write image files; use original filename for any manifest entries.
+            dest_img = dest_dir / img.filename
+        else:
+            dest_img = _dest_img_path(dest_dir, img, output_format)
+            _write_image(src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata)
 
         caption = _caption_text(img)
         tags = img.tags_json or []
@@ -195,6 +200,7 @@ async def export_kohya(
     style_sim_min: float | None = None,
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
+    captions_only: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -205,6 +211,7 @@ async def export_kohya(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
+        captions_only=captions_only,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -232,6 +239,7 @@ async def export_aitoolkit(
     style_sim_min: float | None = None,
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
+    captions_only: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -242,6 +250,7 @@ async def export_aitoolkit(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
+        captions_only=captions_only,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -267,16 +276,22 @@ async def export_plain(
     style_sim_min: float | None = None,
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
+    captions_only: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
-    images_dir = Path(output_dir) / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
+    out = Path(output_dir)
+    if captions_only:
+        dest_dir = out
+    else:
+        dest_dir = out / "images"
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     loop_result = await _run_export_loop(
-        db, dataset_id, image_ids, images_dir, output_format, jpeg_quality,
+        db, dataset_id, image_ids, dest_dir, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
-        job_id, "export", None, accumulate_plain=True, subfolders=subfolders, strip_metadata=strip_metadata,
+        job_id, "export", None, accumulate_plain=True, subfolders=subfolders,
+        strip_metadata=strip_metadata, captions_only=captions_only,
     )
 
     jsonl_path = Path(output_dir) / "captions.jsonl"

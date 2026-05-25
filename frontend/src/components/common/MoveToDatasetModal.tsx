@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightFromLine } from "lucide-react";
 import { datasetsApi } from "../../api/datasets";
@@ -10,11 +10,12 @@ interface Props {
   onMove: (targetDatasetId: string, subfolder: string) => void;
   isPending: boolean;
   onClose: () => void;
+  sourceInfo?: ReactNode;
 }
 
 const CUSTOM = "__custom__";
 
-export default function MoveToDatasetModal({ count, currentDatasetId, onMove, isPending, onClose }: Props) {
+export default function MoveToDatasetModal({ count, currentDatasetId, onMove, isPending, onClose, sourceInfo }: Props) {
   const [selectedId, setSelectedId] = useState("");
   // selectValue: "" = root/placeholder, existing path, or CUSTOM sentinel
   const [selectValue, setSelectValue] = useState("");
@@ -48,6 +49,7 @@ export default function MoveToDatasetModal({ count, currentDatasetId, onMove, is
         <h4 className="font-medium flex items-center gap-2">
           <ArrowRightFromLine size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Dataset
         </h4>
+        {sourceInfo}
 
         {choices.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--fg-mute)" }}>No other datasets available.</p>

@@ -161,7 +161,7 @@ All five thresholds are configurable in [Settings](#settings) — changes take e
 The scoring run can be scoped to a specific subfolder via a dropdown in the Quality page header (shown only when subfolders exist), so you can score one subset at a time without touching the rest of the dataset.
 
 ### Batch Operations
-Select any images in the gallery to perform bulk actions:
+Select any images in the gallery (or use **Space** while viewing an image in the detail view) to add them to the selection. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch score** — run technical, aesthetic, watermark, and/or embedding scoring on the selection

@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -14,6 +14,7 @@ import { detectionApi } from "../api/detection";
 import { upscalingApi } from "../api/upscaling";
 import { lutApi } from "../api/lut";
 import { useJobStore } from "../store/jobStore";
+import { useSelectionStore } from "../store/selectionStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
@@ -112,6 +113,8 @@ export default function ImageDetailPage() {
   const qc = useQueryClient();
   const paneCtx = usePaneContext();
   const activePaneId = usePaneStore((s) => s.activePaneId);
+  const isImageSelected = useSelectionStore((s) => (imageId ? s.isSelected(imageId) : false));
+  const toggle = useSelectionStore((s) => s.toggle);
 
   const [tags, setTags] = useState<string[]>([]);
   const [captionText, setCaptionText] = useState("");
@@ -275,12 +278,17 @@ export default function ImageDetailPage() {
       if (showDeleteConfirm) return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (e.key === " " && imageId && !showDetectModal) {
+        e.preventDefault();
+        toggle(imageId, datasetId ?? "");
+        return;
+      }
       if (e.key === "ArrowLeft" && prevId) goTo(prevId);
       if (e.key === "ArrowRight" && nextId) goTo(nextId);
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, paneCtx, activePaneId]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, toggle, imageId, paneCtx, activePaneId]);
 
   useEffect(() => {
     const anyModalOpen = showDetectModal || showDeleteConfirm;
@@ -686,6 +694,14 @@ export default function ImageDetailPage() {
 
           <span className="text-sm text-gray-400 truncate">{image.filename}</span>
           <div className="flex-1" />
+          <button
+            className={`btn-sm flex items-center gap-1.5 ${isImageSelected ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => toggle(imageId!, datasetId ?? "")}
+            title={isImageSelected ? "Deselect (Space)" : "Select (Space)"}
+          >
+            {isImageSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+            {isImageSelected ? "Selected" : "Select"}
+          </button>
           {(image?.detections?.length ?? 0) > 0 && !cropMode && (
             <button
               className={`btn-sm flex items-center gap-1.5 ${overlayVisible ? "btn-primary" : "btn-ghost"}`}

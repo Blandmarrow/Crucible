@@ -449,7 +449,7 @@ export default function GalleryPage() {
 
         <button
           className="btn ghost sm"
-          onClick={() => count === images.length ? clear() : selectAll(images.map(i => i.id))}
+          onClick={() => count === images.length ? clear() : selectAll(images.map(i => i.id), datasetId ?? "")}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
             <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>

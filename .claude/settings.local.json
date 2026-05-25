@@ -75,7 +75,9 @@
       "Bash(sed -n '34,60p' backend/schemas/dataset.py)",
       "Bash(sed -n '1,30p' backend/schemas/versioning.py)",
       "Bash(xargs grep -l \"addEventListener.*key\")",
-      "Bash(xargs grep -l \"JobProgress\")"
+      "Bash(xargs grep -l \"JobProgress\")",
+      "Bash(Get-ChildItem b:\\\\Crucible -Name -Recurse -Include \"*.py\")",
+      "Bash(Select-Object -First 20)"
     ]
   }
 }

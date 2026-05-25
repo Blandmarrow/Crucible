@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
 import toast from "react-hot-toast";
@@ -8,6 +8,7 @@ import LutForm from "../lut/LutForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
+import { datasetsApi } from "../../api/datasets";
 import { captioningApi } from "../../api/captioning";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
@@ -25,6 +26,7 @@ interface Props {
 
 export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) {
   const { selectedIds, clear, count } = useSelectionStore();
+  const datasetByImageId = useSelectionStore((s) => s.datasetByImageId);
   const qc = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
@@ -100,6 +102,36 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     queryFn: captioningApi.models,
     enabled: showCaption,
   });
+
+  const { data: allDatasets } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: datasetsApi.list,
+    staleTime: 30_000,
+  });
+
+  const datasetGroups = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const id of selectedIds) {
+      const dsId = datasetByImageId.get(id);
+      if (dsId) counts.set(dsId, (counts.get(dsId) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([id, cnt]) => ({
+      id,
+      name: allDatasets?.find((d) => d.id === id)?.name ?? id,
+      count: cnt,
+      isCurrent: id === datasetId,
+    }));
+  }, [selectedIds, datasetByImageId, allDatasets, datasetId]);
+
+  const datasetBreakdown = datasetGroups.length > 0 ? (
+    <div className="flex flex-wrap gap-1 mt-1.5">
+      {datasetGroups.map(({ id, name, count: cnt, isCurrent }) => (
+        <span key={id} className={`badge ${isCurrent ? "badge-solid" : "badge-warn"}`}>
+          {name} ×{cnt}
+        </span>
+      ))}
+    </div>
+  ) : null;
 
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
@@ -235,6 +267,19 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     <>
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 card flex items-center gap-3 px-4 py-3 shadow-xl">
         <span className="text-sm font-medium text-accent">{count} selected</span>
+        {datasetGroups.length > 0 && (
+          <div className="flex items-center gap-1">
+            {datasetGroups.map(({ id, name, count: cnt, isCurrent }) => (
+              <span
+                key={id}
+                className={`badge ${isCurrent ? "badge-solid" : "badge-warn"}`}
+                title={isCurrent ? name : `From a different dataset: ${name}`}
+              >
+                {name}{datasetGroups.length > 1 || !isCurrent ? ` ×${cnt}` : ""}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="w-px h-4 bg-gray-600" />
 
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
@@ -276,6 +321,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <h4 className="font-medium flex items-center gap-2">
               <Sparkles size={16} /> Caption {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
 
             <div className="space-y-2">
               <label className="label">Model</label>
@@ -390,6 +436,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <h4 className="font-medium flex items-center gap-2">
               <Star size={16} /> Score {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
             <div className="space-y-2">
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runAesthetic} onChange={e => setRunAesthetic(e.target.checked)} />
@@ -429,6 +476,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <h4 className="font-medium flex items-center gap-2">
               <ScanSearch size={16} /> Detect Objects in {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
 
             <div>
               <label className="label">Model</label>
@@ -513,9 +561,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       {showBulkEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-3">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
               <Pencil size={15} /> Edit Captions — {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
             <BulkEditForm
               datasetId={datasetId}
               imageIds={ids}
@@ -530,9 +579,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       {showUpscale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-3">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
               <Maximize2 size={15} /> Upscale {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
             <UpscaleForm
               datasetId={datasetId}
               imageIds={ids}
@@ -547,9 +597,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       {showLut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-3">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
               <Palette size={15} /> Apply LUT — {count} Image{count !== 1 ? "s" : ""}
             </h4>
+            {datasetBreakdown}
             <LutForm
               datasetId={datasetId}
               imageIds={ids}
@@ -579,6 +630,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           isPending={moveDatasetMutation.isPending}
           onMove={(targetId, subfolder) => moveDatasetMutation.mutate({ targetId, subfolder })}
           onClose={() => setShowMoveDataset(false)}
+          sourceInfo={datasetBreakdown}
         />
       )}
 
@@ -589,6 +641,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <h4 className="font-medium flex items-center gap-2">
               <FolderInput size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Subfolder
             </h4>
+            {datasetBreakdown}
             {subfolders.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 <button

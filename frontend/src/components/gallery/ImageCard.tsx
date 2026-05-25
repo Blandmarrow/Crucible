@@ -57,7 +57,7 @@ export default function ImageCard({ image, onShowGenMeta }: Props) {
         {/* Checkbox */}
         <div
           style={{ position: "absolute", top: 8, left: 8, zIndex: 3 }}
-          onClick={(e) => { e.stopPropagation(); toggle(image.id); }}
+          onClick={(e) => { e.stopPropagation(); toggle(image.id, datasetId ?? ""); }}
         >
           <div style={{
             width: 18, height: 18,

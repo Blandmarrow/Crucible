@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -46,6 +46,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
   const [showMoveDataset, setShowMoveDataset] = useState(false);
+  const [showCopyDataset, setShowCopyDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
@@ -178,6 +179,19 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onError: () => toast.error("Move to dataset failed"),
   });
 
+  const copyDatasetMutation = useMutation({
+    mutationFn: (params: { targetId: string; subfolder: string }) =>
+      imagesApi.batchCopyDataset({ image_ids: ids }, params.targetId, params.subfolder),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      setShowCopyDataset(false);
+      toast.success(`Copied ${data.copied} image${data.copied !== 1 ? "s" : ""} to dataset`);
+    },
+    onError: () => toast.error("Copy to dataset failed"),
+  });
+
   const captionMutation = useMutation({
     mutationFn: () =>
       captioningApi.run({
@@ -305,6 +319,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowMoveDataset(true)}>
           <ArrowRightFromLine size={14} /> Move to Dataset
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCopyDataset(true)}>
+          <Copy size={14} /> Copy to Dataset
         </button>
         <button className="btn-danger btn-sm flex items-center gap-1.5" onClick={() => setShowDeleteConfirm(true)}>
           <Trash2 size={14} /> Delete
@@ -628,8 +645,21 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           count={count}
           currentDatasetId={datasetId}
           isPending={moveDatasetMutation.isPending}
-          onMove={(targetId, subfolder) => moveDatasetMutation.mutate({ targetId, subfolder })}
+          onConfirm={(targetId, subfolder) => moveDatasetMutation.mutate({ targetId, subfolder })}
           onClose={() => setShowMoveDataset(false)}
+          sourceInfo={datasetBreakdown}
+        />
+      )}
+
+      {/* Copy to dataset modal */}
+      {showCopyDataset && (
+        <MoveToDatasetModal
+          mode="copy"
+          count={count}
+          currentDatasetId={datasetId}
+          isPending={copyDatasetMutation.isPending}
+          onConfirm={(targetId, subfolder) => copyDatasetMutation.mutate({ targetId, subfolder })}
+          onClose={() => setShowCopyDataset(false)}
           sourceInfo={datasetBreakdown}
         />
       )}

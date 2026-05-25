@@ -65,7 +65,7 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 - Gallery view with search (filename or caption text), pagination, and sort
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset
-- Organize images into subfolders (logical groupings — images stay flat on disk); move images or entire subfolders to a different dataset in one operation
+- Organize images into subfolders (logical groupings — images stay flat on disk); move or copy images or entire subfolders to a different dataset in one operation
 - Per-image detail view with metadata, caption editor, and crop/rotate tools
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 

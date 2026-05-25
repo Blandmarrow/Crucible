@@ -1,4 +1,5 @@
 import re
+import shutil
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -42,6 +43,14 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
         old_txt.rename(new_path.with_suffix(".txt"))
+
+
+def copy_with_sidecar(old_path: Path, new_path: Path) -> None:
+    """Copy a file and its .txt sidecar (if it exists) to new_path."""
+    shutil.copy2(old_path, new_path)
+    old_txt = old_path.with_suffix(".txt")
+    if old_txt.exists():
+        shutil.copy2(old_txt, new_path.with_suffix(".txt"))
 
 
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:

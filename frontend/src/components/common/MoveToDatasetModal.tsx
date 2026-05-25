@@ -1,21 +1,22 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightFromLine } from "lucide-react";
+import { ArrowRightFromLine, Copy } from "lucide-react";
 import { datasetsApi } from "../../api/datasets";
 import type { Dataset, SubfolderInfo } from "../../types";
 
 interface Props {
   count: number;
   currentDatasetId: string;
-  onMove: (targetDatasetId: string, subfolder: string) => void;
+  onConfirm: (targetDatasetId: string, subfolder: string) => void;
   isPending: boolean;
   onClose: () => void;
   sourceInfo?: ReactNode;
+  mode?: "move" | "copy";
 }
 
 const CUSTOM = "__custom__";
 
-export default function MoveToDatasetModal({ count, currentDatasetId, onMove, isPending, onClose, sourceInfo }: Props) {
+export default function MoveToDatasetModal({ count, currentDatasetId, onConfirm, isPending, onClose, sourceInfo, mode = "move" }: Props) {
   const [selectedId, setSelectedId] = useState("");
   // selectValue: "" = root/placeholder, existing path, or CUSTOM sentinel
   const [selectValue, setSelectValue] = useState("");
@@ -47,7 +48,8 @@ export default function MoveToDatasetModal({ count, currentDatasetId, onMove, is
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="card p-5 w-full max-w-sm space-y-3">
         <h4 className="font-medium flex items-center gap-2">
-          <ArrowRightFromLine size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Dataset
+          {mode === "copy" ? <Copy size={15} /> : <ArrowRightFromLine size={15} />}
+          {mode === "copy" ? "Copy" : "Move"} {count} Image{count !== 1 ? "s" : ""} to Dataset
         </h4>
         {sourceInfo}
 
@@ -101,10 +103,10 @@ export default function MoveToDatasetModal({ count, currentDatasetId, onMove, is
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <button
             className="btn-primary"
-            onClick={() => onMove(selectedId, effectiveSubfolder)}
+            onClick={() => onConfirm(selectedId, effectiveSubfolder)}
             disabled={!selectedId || isPending}
           >
-            Move
+            {mode === "copy" ? "Copy" : "Move"}
           </button>
         </div>
       </div>

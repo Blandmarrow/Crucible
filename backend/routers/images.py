@@ -2,6 +2,8 @@ import asyncio
 import json
 import shutil
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, or_, select, update as sa_update
@@ -9,12 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename
+from backend.utils import ALLOWED_FLAG_KEYS, copy_with_sidecar, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
+    BatchCopyDatasetResult,
     BatchCropRequest,
     BatchMoveDatasetRequest,
     BatchMoveSubfolderRequest,
@@ -753,4 +756,107 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     await refresh_stats(db, source_dataset_id)
     await refresh_stats(db, body.target_dataset_id)
     return {"moved": len(rows), "target_dataset_id": body.target_dataset_id}
+
+
+@router.post("/batch/copy-dataset", response_model=BatchCopyDatasetResult)
+async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = Depends(get_db)):
+    target = normalize_subfolder(body.subfolder)
+
+    cols = (
+        Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
+        Image.original_filename, Image.width, Image.height, Image.file_size_bytes, Image.format,
+        Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
+        Image.tags_json, Image.quality_flags, Image.aesthetic_score, Image.blur_score,
+        Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
+        Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
+        Image.generation_metadata,
+    )
+
+    if body.image_ids:
+        result = await db.execute(select(*cols).where(Image.id.in_(body.image_ids)))
+        rows = result.all()
+        source_dataset_id = rows[0].dataset_id if rows else None
+    elif body.source_dataset_id is not None and body.source_subfolder is not None:
+        source_subfolder = normalize_subfolder(body.source_subfolder)
+        result = await db.execute(
+            select(*cols)
+            .where(Image.dataset_id == body.source_dataset_id)
+            .where(Image.subfolder == source_subfolder)
+        )
+        rows = result.all()
+        source_dataset_id = body.source_dataset_id
+    else:
+        raise HTTPException(400, "Provide image_ids or source_dataset_id+source_subfolder")
+
+    if not rows:
+        raise HTTPException(404, "No matching images found")
+    if source_dataset_id == body.target_dataset_id:
+        raise HTTPException(400, "Source and target dataset must differ")
+
+    target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
+    target_dataset = target_ds_result.scalar_one_or_none()
+    if not target_dataset:
+        raise HTTPException(404, "Target dataset not found")
+
+    target_images_dir = Path(target_dataset.folder_path) / "images"
+    target_images_dir.mkdir(parents=True, exist_ok=True)
+    (Path(target_dataset.folder_path) / "thumbnails").mkdir(parents=True, exist_ok=True)
+
+    existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
+    db_names: set[str] = {r[0] for r in existing.all()}
+
+    target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
+
+    plan: list[tuple[Path, Path, Path, Path, Any]] = []
+    for row in rows:
+        old_path = Path(row.file_path)
+        suf = old_path.suffix.lower()
+        new_fn = unique_filename(target_images_dir, target_stem, suf, db_names)
+        new_path = target_images_dir / new_fn
+        old_thumb = Path(thumbnail_path_for(str(old_path)))
+        new_thumb = Path(thumbnail_path_for(str(new_path)))
+        db_names.add(new_fn)
+        plan.append((old_path, new_path, old_thumb, new_thumb, row))
+
+    for old_path, new_path, old_thumb, new_thumb, row in plan:
+        db.add(Image(
+            id=str(uuid4()),
+            dataset_id=body.target_dataset_id,
+            subfolder=target,
+            filename=new_path.name,
+            original_filename=row.original_filename,
+            file_path=str(new_path),
+            thumbnail_path=str(new_thumb),
+            is_auto_named=True,
+            width=row.width,
+            height=row.height,
+            file_size_bytes=row.file_size_bytes,
+            format=row.format,
+            phash=row.phash,
+            caption_text=row.caption_text,
+            caption_style=row.caption_style,
+            captioned_by=row.captioned_by,
+            captioned_at=row.captioned_at,
+            tags_json=row.tags_json,
+            quality_flags=row.quality_flags,
+            aesthetic_score=row.aesthetic_score,
+            blur_score=row.blur_score,
+            noise_score=row.noise_score,
+            uniformity_score=row.uniformity_score,
+            watermark_score=row.watermark_score,
+            color_score=row.color_score,
+            saturation_score=row.saturation_score,
+            style_similarity_score=row.style_similarity_score,
+            dino_layer_scores=row.dino_layer_scores,
+            generation_metadata=row.generation_metadata,
+        ))
+
+    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
+        copy_with_sidecar(old_path, new_path)
+        if old_thumb.exists():
+            shutil.copy2(old_thumb, new_thumb)
+
+    await db.commit()
+    await refresh_stats(db, body.target_dataset_id)
+    return {"copied": len(rows), "target_dataset_id": body.target_dataset_id}
 

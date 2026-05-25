@@ -11,6 +11,11 @@ export interface BatchMoveDatasetResult {
   target_dataset_id: string;
 }
 
+export interface BatchCopyDatasetResult {
+  copied: number;
+  target_dataset_id: string;
+}
+
 export interface ImageListParams {
   dataset_id: string;
   page?: number;
@@ -85,6 +90,12 @@ export const imagesApi = {
     subfolder: string,
   ) =>
     client.post<BatchMoveDatasetResult>("/images/batch/move-dataset", { ...params, target_dataset_id, subfolder }).then((r) => r.data),
+  batchCopyDataset: (
+    params: { image_ids?: string[]; source_dataset_id?: string; source_subfolder?: string },
+    target_dataset_id: string,
+    subfolder: string,
+  ) =>
+    client.post<BatchCopyDatasetResult>("/images/batch/copy-dataset", { ...params, target_dataset_id, subfolder }).then((r) => r.data),
   renameImage: (id: string, newStem: string) =>
     client.patch<{ filename: string }>(`/images/${id}/rename`, { new_stem: newStem }).then((r) => r.data),
 };

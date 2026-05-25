@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { ArrowRightFromLine } from "lucide-react";
+import { ArrowRightFromLine, Copy } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -84,6 +84,7 @@ export default function GalleryPage() {
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingMoveSubfolder, setPendingMoveSubfolder] = useState<SubfolderInfo | null>(null);
+  const [pendingCopySubfolder, setPendingCopySubfolder] = useState<SubfolderInfo | null>(null);
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -240,6 +241,23 @@ export default function GalleryPage() {
       setPendingMoveSubfolder(null);
     },
     onError: () => toast.error("Move to dataset failed"),
+  });
+
+  const copySubfolderToDatasetMutation = useMutation({
+    mutationFn: (params: { targetId: string; subfolder: string }) =>
+      imagesApi.batchCopyDataset(
+        { source_dataset_id: datasetId!, source_subfolder: pendingCopySubfolder!.path },
+        params.targetId,
+        params.subfolder,
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      toast.success(`Copied ${data.copied} image${data.copied !== 1 ? "s" : ""} to dataset`);
+      setPendingCopySubfolder(null);
+    },
+    onError: () => toast.error("Copy to dataset failed"),
   });
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -578,10 +596,15 @@ export default function GalleryPage() {
                     <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{sf.image_count}</span>
                   </button>
                   <button
-                    className="subfolder-move-btn"
+                    className="subfolder-action-btn subfolder-move-btn"
                     title={`Move "${sf.path || "(root)"}" to another dataset`}
                     onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(sf); }}
                   ><ArrowRightFromLine size={11} /></button>
+                  <button
+                    className="subfolder-action-btn subfolder-copy-btn"
+                    title={`Copy "${sf.path || "(root)"}" to another dataset`}
+                    onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(sf); }}
+                  ><Copy size={11} /></button>
                   <button
                     className="subfolder-delete-btn"
                     title={`Delete "${sf.path || "(root)"}"`}
@@ -720,8 +743,19 @@ export default function GalleryPage() {
           count={pendingMoveSubfolder.image_count}
           currentDatasetId={datasetId!}
           isPending={moveSubfolderToDatasetMutation.isPending}
-          onMove={(targetId, subfolder) => moveSubfolderToDatasetMutation.mutate({ targetId, subfolder })}
+          onConfirm={(targetId, subfolder) => moveSubfolderToDatasetMutation.mutate({ targetId, subfolder })}
           onClose={() => setPendingMoveSubfolder(null)}
+        />
+      )}
+
+      {pendingCopySubfolder && (
+        <MoveToDatasetModal
+          mode="copy"
+          count={pendingCopySubfolder.image_count}
+          currentDatasetId={datasetId!}
+          isPending={copySubfolderToDatasetMutation.isPending}
+          onConfirm={(targetId, subfolder) => copySubfolderToDatasetMutation.mutate({ targetId, subfolder })}
+          onClose={() => setPendingCopySubfolder(null)}
         />
       )}
     </div>

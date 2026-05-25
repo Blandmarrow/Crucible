@@ -119,3 +119,8 @@ class BatchMoveDatasetRequest(BaseModel):
     source_subfolder: str | None = None
     target_dataset_id: str
     subfolder: str = ""
+
+
+class BatchCopyDatasetResult(BaseModel):
+    copied: int
+    target_dataset_id: str

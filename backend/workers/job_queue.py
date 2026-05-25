@@ -64,19 +64,21 @@ class JobQueue:
 
             try:
                 await fn(job_id=job.id, **kwargs)
+                final_total = 0
                 async with AsyncSessionLocal() as db:
                     job_row = await db.get(BackgroundJob, job.id)
                     if job_row:
                         job_row.status = "completed"
                         job_row.finished_at = datetime.utcnow()
                         await db.commit()
+                        final_total = job_row.total_items
                 await broadcaster.emit(job.id, {
                     "type": "progress",
                     "job_id": job.id,
                     "job_type": job.job_type,
                     "status": "completed",
-                    "done": job.total_items,
-                    "total": job.total_items,
+                    "done": final_total,
+                    "total": final_total,
                     "percent": 100.0,
                     "message": "Done.",
                 })

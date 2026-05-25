@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
+import { usePaneContext } from "../contexts/PaneContext";
+import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette } from "lucide-react";
 import Cropper from "react-easy-crop";
@@ -108,6 +110,8 @@ export default function ImageDetailPage() {
   const imageId = usePaneImageId();
   const { go: paneGo, back: paneBack } = usePaneNavigate();
   const qc = useQueryClient();
+  const paneCtx = usePaneContext();
+  const activePaneId = usePaneStore((s) => s.activePaneId);
 
   const [tags, setTags] = useState<string[]>([]);
   const [captionText, setCaptionText] = useState("");
@@ -263,9 +267,11 @@ export default function ImageDetailPage() {
     setRenameStem("");
   }, [imageId]);
 
-  // Arrow-key navigation — skip when focus is inside a text field or a dialog is open
+  // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
+  // or this pane is not the active pane in split-pane mode.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
       if (showDeleteConfirm) return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
@@ -274,7 +280,7 @@ export default function ImageDetailPage() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, paneCtx, activePaneId]);
 
   useEffect(() => {
     const anyModalOpen = showDetectModal || showDeleteConfirm;
@@ -294,6 +300,7 @@ export default function ImageDetailPage() {
     queryKey: ["image", imageId],
     queryFn: () => imagesApi.get(imageId!),
     enabled: !!imageId,
+    staleTime: 0,
   });
 
   const { data: captionData } = useQuery({

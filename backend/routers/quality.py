@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -214,6 +214,11 @@ async def compute_style_similarity(
 
     loop = asyncio.get_event_loop()
 
+    total_count_result = await db.execute(
+        select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id)
+    )
+    total_images = total_count_result.scalar() or 0
+
     # --- CLIP branch (unchanged behaviour) ---
     if body.embedding_type == "clip":
         col = Image.clip_embedding
@@ -236,7 +241,7 @@ async def compute_style_similarity(
         scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
         await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
         await db.commit()
-        return {"updated": len(cand_rows)}
+        return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
 
     # --- DINOv2 branch ---
     if body.embedding_type == "dino":
@@ -262,7 +267,7 @@ async def compute_style_similarity(
             scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
             await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
             await db.commit()
-            return {"updated": len(cand_rows)}
+            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
         else:
             # Per-layer mode
             from backend.ml.dino_scorer import slice_layer_embedding
@@ -293,7 +298,7 @@ async def compute_style_similarity(
             scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
             await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
             await db.commit()
-            return {"updated": len(cand_rows)}
+            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
 
     # --- Combined branch ---
     if body.embedding_type in ("combined", "combined_all_layers"):
@@ -375,13 +380,13 @@ async def compute_style_similarity(
                         dino_scores = _cosine_sim(r_slices, [c_slice])
                         clip_scores = _cosine_sim(ref_clip, [cand_clip[i]])
                         layer_scores[str(lyr)] = round(0.38 * clip_scores[0] + 0.62 * dino_scores[0], 4)
-                    results.append({"id": img_id, "dino_layer_scores": layer_scores})
+                    results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
                 return results
 
             updates = await loop.run_in_executor(None, _combined_all_layers)
             await db.execute(update(Image), updates)
             await db.commit()
-            return {"updated": len(updates)}
+            return {"updated": len(updates), "skipped": total_images - len(updates)}
         else:
             # Single layer or final layer combined score
             if layer is not None:
@@ -393,7 +398,7 @@ async def compute_style_similarity(
             scores = await loop.run_in_executor(None, compute_combined_similarity, ref_clip, cand_clip, ref_dino, cand_dino)
             await db.execute(update(Image), [{"id": r[0], "style_similarity_score": s} for r, s in zip(cand_rows_full, scores)])
             await db.commit()
-            return {"updated": len(cand_rows_full)}
+            return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full)}
 
     # --- All DINOv2 layers branch ---
     if body.embedding_type == "dino_all_layers":
@@ -424,13 +429,13 @@ async def compute_style_similarity(
                     c_slice = slice_layer_embedding(blob, layer)
                     score = _cosine_sim(r_slices, [c_slice])[0]
                     layer_scores[str(layer)] = score
-                results.append({"id": img_id, "dino_layer_scores": layer_scores})
+                results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
             return results
 
         updates = await loop.run_in_executor(None, _all_layer_scores)
         await db.execute(update(Image), updates)
         await db.commit()
-        return {"updated": len(updates)}
+        return {"updated": len(updates), "skipped": total_images - len(updates)}
 
     raise HTTPException(status_code=422, detail=f"Unknown embedding_type '{body.embedding_type}'. Use 'clip', 'dino', 'combined', or 'dino_all_layers'.")
 

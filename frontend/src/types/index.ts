@@ -200,6 +200,8 @@ export interface JobProgress {
   current_item?: string;
   message?: string;
   image_id?: string;
+  throughput_ips?: number;
+  vram_used_mb?: number;
 }
 
 export interface BooruTag {

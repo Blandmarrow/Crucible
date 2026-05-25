@@ -41,5 +41,5 @@ export const qualityApi = {
     embedding_type?: "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers";
     dino_layer?: number;
   }) =>
-    client.post<{ updated: number }>("/quality/style-similarity", params).then((r) => r.data),
+    client.post<{ updated: number; skipped: number }>("/quality/style-similarity", params).then((r) => r.data),
 };

@@ -132,11 +132,17 @@ export default function QualityPage() {
       });
     },
     onSuccess: (data) => {
-      toast.success(`Style similarity scored for ${data.updated} images`);
+      const skipped = data.skipped ?? 0;
+      const msg = skipped > 0
+        ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
+        : `Style similarity scored for ${data.updated} images`;
+      toast.success(msg);
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image"] });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : "Style similarity scoring failed");
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ?? (err instanceof Error ? err.message : "Style similarity scoring failed"));
     },
   });
 

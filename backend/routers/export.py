@@ -110,6 +110,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = result
+                job_row.total_items = result.get("exported", 0)
                 await session.commit()
 
     await job_queue.enqueue(job, _run)
@@ -153,6 +154,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = result
+                job_row.total_items = result.get("exported", 0)
                 await session.commit()
 
     await job_queue.enqueue(job, _run)
@@ -194,6 +196,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = result
+                job_row.total_items = result.get("exported", 0)
                 await session.commit()
 
     await job_queue.enqueue(job, _run)

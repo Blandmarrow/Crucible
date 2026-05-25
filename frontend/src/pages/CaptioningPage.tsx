@@ -558,16 +558,16 @@ export default function CaptioningPage() {
                 <div className="divider" />
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, marginBottom: 14 }}>
-                  {(jobProgress as any).throughput_ips && (
+                  {(jobProgress.throughput_ips ?? 0) > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ color: "var(--fg-mute)" }}>Throughput</span>
-                      <span className="mono">{((jobProgress as any).throughput_ips as number).toFixed(1)} img/s</span>
+                      <span className="mono">{jobProgress.throughput_ips!.toFixed(2)} img/s</span>
                     </div>
                   )}
-                  {(jobProgress as any).vram_used_mb ? (
+                  {(jobProgress.vram_used_mb ?? 0) > 0 ? (
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ color: "var(--fg-mute)" }}>VRAM</span>
-                      <span className="mono">{Math.round((jobProgress as any).vram_used_mb / 1024 * 10) / 10} GB used</span>
+                      <span className="mono">{Math.round(jobProgress.vram_used_mb! / 1024 * 10) / 10} GB used</span>
                     </div>
                   ) : null}
                   <div style={{ display: "flex", justifyContent: "space-between" }}>

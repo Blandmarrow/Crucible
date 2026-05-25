@@ -73,7 +73,9 @@
       "Bash(npx tsc *)",
       "Bash(Get-ChildItem -Path \"B:\\\\Crucible\\\\frontend\" -Filter \"*images*\" -File -Recurse -ErrorAction SilentlyContinue)",
       "Bash(sed -n '34,60p' backend/schemas/dataset.py)",
-      "Bash(sed -n '1,30p' backend/schemas/versioning.py)"
+      "Bash(sed -n '1,30p' backend/schemas/versioning.py)",
+      "Bash(xargs grep -l \"addEventListener.*key\")",
+      "Bash(xargs grep -l \"JobProgress\")"
     ]
   }
 }

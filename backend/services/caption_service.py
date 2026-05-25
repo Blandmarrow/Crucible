@@ -28,10 +28,10 @@ async def set_caption(
     tags: list[str],
     caption_style: str = "",
     captioned_by: str = "manual",
-) -> None:
+) -> str | None:
     img = await db.get(Image, image_id)
     if not img:
-        return
+        return None
 
     tags = [t.strip() for t in tags if t.strip()]
     img.caption_text = caption_text
@@ -43,6 +43,7 @@ async def set_caption(
     await _sync_tags(db, img, tags, captioned_by)
     _write_txt_sidecar(img.file_path, caption_text or ", ".join(tags))
     await db.commit()
+    return img.dataset_id
 
 
 

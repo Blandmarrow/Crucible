@@ -511,6 +511,7 @@ export default function ImageDetailPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["caption", imageId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
       setCaptionDirty(false);
       toast.success("Saved");
     },

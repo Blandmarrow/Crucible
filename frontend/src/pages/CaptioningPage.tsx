@@ -13,6 +13,7 @@ import { usePresetsStore } from "../store/promptPresetsStore";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
+import { FLAG_OPTIONS } from "../constants/flags";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
@@ -29,6 +30,9 @@ export default function CaptioningPage() {
   const [targetWidth, setTargetWidth] = useState<number | null>(null);
   const [targetHeight, setTargetHeight] = useState<number | null>(null);
   const [scope, setScope] = useState<Scope>("uncaptioned");
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const [minAestheticScore, setMinAestheticScore] = useState("");
+  const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set());
   const [stripRefusals, setStripRefusals] = useState(true);
   const [saveBackup, setSaveBackup] = useState(false);
   const [renameOnCaption, setRenameOnCaption] = useState(false);
@@ -65,6 +69,11 @@ export default function CaptioningPage() {
     queryFn: () => datasetsApi.get(datasetId!),
     enabled: !!datasetId,
   });
+  const { data: subfolders = [] } = useQuery({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
 
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
@@ -85,10 +94,13 @@ export default function CaptioningPage() {
       overwrite: scope === "all",
       custom_prompt: customPrompt,
       image_ids: scope === "selected" ? [...selectedIds] : undefined,
+      subfolder: scope !== "selected" ? activeSubfolder : undefined,
       ...(targetWidth && targetHeight ? { target_width: targetWidth, target_height: targetHeight } : {}),
       strip_refusals: stripRefusals,
       save_backup: saveBackup,
       rename_on_caption: renameOnCaption,
+      min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
+      exclude_flags: excludeFlags.size > 0 ? [...excludeFlags] : undefined,
     }),
     onSuccess: (data) => {
       if (data.job_id) {
@@ -421,6 +433,76 @@ export default function CaptioningPage() {
                     </span>
                   </label>
                 ))}
+              </div>
+            </div>
+
+            {/* Subfolder */}
+            {subfolders.length > 0 && (
+              <div className="form-row">
+                <div className="lbl-col">
+                  <h4>Subfolder</h4>
+                  <p>Limit captioning to a specific subfolder. Ignored when scope is "Selected".</p>
+                </div>
+                <select
+                  className="select"
+                  value={activeSubfolder ?? ""}
+                  onChange={(e) => setActiveSubfolder(e.target.value || undefined)}
+                  disabled={canStop}
+                >
+                  <option value="">All subfolders</option>
+                  {subfolders.map((sf) => (
+                    <option key={sf.path} value={sf.path}>
+                      {sf.path || "(root)"} ({sf.image_count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Quality Filters */}
+            <div className="form-row">
+              <div className="lbl-col">
+                <h4>Quality filters</h4>
+                <p>Skip images that don't meet quality criteria.</p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <label style={{ fontSize: 12.5, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>
+                    Min aesthetic score
+                  </label>
+                  <input
+                    type="number"
+                    className="input"
+                    style={{ width: 80 }}
+                    placeholder="None"
+                    min={0}
+                    max={10}
+                    step={0.5}
+                    value={minAestheticScore}
+                    onChange={(e) => setMinAestheticScore(e.target.value)}
+                    disabled={canStop}
+                  />
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {FLAG_OPTIONS.map((opt) => (
+                    <label key={opt.key} className="row-flex" style={{ gap: 6, cursor: "pointer", fontSize: 12.5 }}>
+                      <input
+                        type="checkbox"
+                        className="checkbox"
+                        checked={excludeFlags.has(opt.key)}
+                        onChange={(e) =>
+                          setExcludeFlags((prev) => {
+                            const next = new Set(prev);
+                            e.target.checked ? next.add(opt.key) : next.delete(opt.key);
+                            return next;
+                          })
+                        }
+                        disabled={canStop}
+                      />
+                      <span>Skip {opt.label.toLowerCase()}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
 

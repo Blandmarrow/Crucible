@@ -17,6 +17,7 @@ from backend.services.caption_service import (
     get_tag_stats,
     set_caption,
 )
+from backend.services.dataset_service import refresh_stats
 
 router = APIRouter(prefix="/captions", tags=["captions"])
 
@@ -31,7 +32,9 @@ async def get(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/image/{image_id}", response_model=CaptionOut)
 async def update(image_id: str, body: CaptionUpdate, db: AsyncSession = Depends(get_db)):
-    await set_caption(db, image_id, body.caption_text, body.tags, body.caption_style, "manual")
+    dataset_id = await set_caption(db, image_id, body.caption_text, body.tags, body.caption_style, "manual")
+    if dataset_id:
+        await refresh_stats(db, dataset_id)
     return await get_caption(db, image_id)
 
 

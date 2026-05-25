@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,7 @@ from backend.database import get_db
 from backend.ml import ollama_captioner
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/captioning", tags=["captioning"])
@@ -34,6 +35,7 @@ def _strip_refusals(text: str) -> str:
 class CaptionJobRequest(BaseModel):
     dataset_id: str
     image_ids: list[str] | None = None
+    subfolder: str | None = None
     model: str  # "florence2_large" | "florence2_promptgen" | "paligemma2" | "ollama:model_name"
     style: str = "detailed"
     overwrite: bool = False
@@ -44,6 +46,17 @@ class CaptionJobRequest(BaseModel):
     strip_refusals: bool = True
     save_backup: bool = False
     rename_on_caption: bool = False
+    min_aesthetic_score: float | None = None
+    exclude_flags: list[str] | None = None
+
+    @field_validator("exclude_flags")
+    @classmethod
+    def _validate_flags(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            invalid = [f for f in v if f not in ALLOWED_FLAG_KEYS]
+            if invalid:
+                raise ValueError(f"Unknown flag keys: {invalid}")
+        return v
 
 
 @router.get("/models")
@@ -70,8 +83,15 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     )
     if body.image_ids:
         query = query.where(Image.id.in_(body.image_ids))
+    elif body.subfolder is not None:
+        query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     if not body.overwrite:
         query = query.where(Image.caption_text == "")
+    if body.min_aesthetic_score is not None:
+        query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
+    if body.exclude_flags:
+        for flag_key in body.exclude_flags:
+            query = query.where(Image.quality_flags[flag_key].as_boolean().is_not(True))
     result = await db.execute(query)
     rows = result.all()
 

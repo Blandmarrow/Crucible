@@ -133,6 +133,8 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
         qc.invalidateQueries({ queryKey: ["branches", datasetId] });
         onSelect(result.id);
         toast.success(`Branch '${name}' created`);
+        // pre_restore_snapshot=false: branch was just created from current state, no snapshot needed
+        doCheckout(result.id, false);
       }
       setShowNew(false);
       setNewName("");

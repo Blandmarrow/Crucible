@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -7,6 +7,7 @@ import { settingsApi } from "../api/settings";
 import { versioningApi } from "../api/versioning";
 import { datasetsApi } from "../api/datasets";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
+import { VERSIONS_BRANCH_KEY } from "../constants/storage";
 import type { Version } from "../types";
 import CreateSnapshotModal from "../components/versioning/CreateSnapshotModal";
 import DiffModal from "../components/versioning/DiffModal";
@@ -91,11 +92,11 @@ export default function VersionsPage() {
   const [restoreTarget, setRestoreTarget] = useState<Version | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Version | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string | undefined>(
-    () => sessionStorage.getItem(`versions-branch-${datasetId}`) ?? undefined
+    () => sessionStorage.getItem(`${VERSIONS_BRANCH_KEY}-${datasetId}`) ?? undefined
   );
 
   function handleBranchSelect(branchId: string) {
-    sessionStorage.setItem(`versions-branch-${datasetId}`, branchId);
+    sessionStorage.setItem(`${VERSIONS_BRANCH_KEY}-${datasetId}`, branchId);
     setActiveBranchId(branchId);
   }
 
@@ -127,6 +128,20 @@ export default function VersionsPage() {
     queryFn: () => versioningApi.listBranches(datasetId!),
     enabled: !!datasetId && settings?.versioning_mode !== "off",
   });
+
+  // Sync activeBranchId when current_branch_id changes externally (e.g. sidebar branch switch).
+  // Only fires on changes after the initial data load — sessionStorage preference is preserved on mount.
+  const prevCurrentBranchId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const curr = dataset?.current_branch_id;
+    if (!curr) return;
+    const prev = prevCurrentBranchId.current;
+    prevCurrentBranchId.current = curr;
+    if (prev !== undefined && prev !== curr) {
+      setActiveBranchId(curr);
+      sessionStorage.setItem(`${VERSIONS_BRANCH_KEY}-${datasetId}`, curr);
+    }
+  }, [dataset?.current_branch_id, datasetId]);
 
   const activeBranch =
     branches.find((b) => b.id === activeBranchId) ??

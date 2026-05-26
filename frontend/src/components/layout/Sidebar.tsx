@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
 import { versioningApi } from "../../api/versioning";
 import { useGpuStats } from "../../hooks/useGpuStats";
+import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
 
 /* ── SVG icons matching the design spec ── */
 const IcoDatasets = () => (
@@ -208,42 +209,12 @@ export default function Sidebar() {
             </div>
 
             {activeBranch && (
-              <NavLink
-                to={`/datasets/${datasetId}/versions`}
-                style={{ textDecoration: "none" }}
-              >
-                {({ isActive }) => (
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    margin: "2px 0 6px", padding: "5px 10px",
-                    borderRadius: "var(--r)",
-                    background: isActive ? "var(--surface-3)" : "var(--surface-2)",
-                    border: "1px solid var(--line)",
-                    fontSize: 11, color: "var(--fg-dim)", cursor: "pointer",
-                    overflow: "hidden",
-                    borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
-                    marginLeft: -2,
-                  }}>
-                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ flexShrink: 0, opacity: 0.6 }}>
-                      <circle cx="5" cy="3.5" r="1.8"/>
-                      <circle cx="11" cy="3.5" r="1.8"/>
-                      <circle cx="5" cy="12.5" r="1.8"/>
-                      <path d="M5 5.3v5.4M11 5.3c0 3-1.8 4.8-6 5.4"/>
-                    </svg>
-                    <span style={{ fontFamily: "Geist Mono, monospace", flexShrink: 0, color: "var(--fg-mute)" }}>
-                      {activeBranch.name}
-                    </span>
-                    {(activeBranch.head_version_name ?? activeBranch.head_version_id) && (
-                      <>
-                        <span style={{ opacity: 0.35, flexShrink: 0 }}>·</span>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {activeBranch.head_version_name ?? activeBranch.head_version_id!.slice(0, 8)}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )}
-              </NavLink>
+              <SidebarVersionPanel
+                datasetId={datasetId}
+                branches={branches}
+                activeBranch={activeBranch}
+                currentBranchId={dataset?.current_branch_id ?? undefined}
+              />
             )}
 
             <NavItem

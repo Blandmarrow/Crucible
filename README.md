@@ -61,7 +61,7 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 
 ### Datasets & Gallery
 - Create multiple named datasets, each pointing to a folder of images
-- Rename datasets — folder is moved on disk and all image paths are updated automatically
+- Edit datasets — rename (folder is moved on disk and all image paths are updated automatically) or update the description
 - Gallery view with search (filename or caption text), pagination, and sort
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset

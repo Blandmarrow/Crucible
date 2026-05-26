@@ -41,6 +41,7 @@ export default function DatasetsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
   const [renameTarget, setRenameTarget] = useState<Dataset | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [renameDesc, setRenameDesc] = useState("");
   const [importTarget, setImportTarget] = useState<Dataset | null>(null);
   const [importPath, setImportPath] = useState("");
   const [importSubfolder, setImportSubfolder] = useState("");
@@ -94,13 +95,13 @@ export default function DatasetsPage() {
   });
 
   const renameMutation = useMutation({
-    mutationFn: () => datasetsApi.update(renameTarget!.id, { name: renameName }),
+    mutationFn: () => datasetsApi.update(renameTarget!.id, { name: renameName, description: renameDesc }),
     onSuccess: (ds) => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setRenameTarget(null);
-      toast.success(`Renamed to "${ds.name}"`);
+      toast.success(`Updated "${ds.name}"`);
     },
-    onError: () => toast.error("Failed to rename dataset"),
+    onError: () => toast.error("Failed to update dataset"),
   });
 
   const importMutation = useMutation({
@@ -280,9 +281,9 @@ export default function DatasetsPage() {
               >
                 <button
                   className="icon-btn"
-                  title="Rename"
+                  title="Edit"
                   style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-                  onClick={() => { setRenameTarget(ds); setRenameName(ds.name); }}
+                  onClick={() => { setRenameTarget(ds); setRenameName(ds.name); setRenameDesc(ds.description ?? ""); }}
                 >
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
                     <path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z"/>
@@ -346,21 +347,33 @@ export default function DatasetsPage() {
       {/* Hover row-actions reveal via style injection */}
       <style>{`.ds-card-wrapper:hover .ds-row-actions { opacity: 1 !important; }`}</style>
 
-      {/* Rename Modal */}
+      {/* Edit Dataset Modal */}
       {renameTarget && (
         <div className="dialog-bg">
           <div className="dialog">
-            <h3>Rename Dataset</h3>
-            <p>Current name: <strong style={{ color: "var(--fg)" }}>{renameTarget.name}</strong></p>
+            <h3>Edit Dataset</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
               <div>
-                <label className="label">New name</label>
+                <label className="label">Name</label>
                 <input
                   className="input"
                   value={renameName}
                   autoFocus
                   onChange={(e) => setRenameName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && renameName && renameName !== renameTarget.name && renameMutation.mutate()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && renameName && (renameName !== renameTarget.name || renameDesc !== (renameTarget.description ?? ""))) {
+                      renameMutation.mutate();
+                    }
+                  }}
+                />
+              </div>
+              <div>
+                <label className="label">Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
+                <input
+                  className="input"
+                  placeholder="…"
+                  value={renameDesc}
+                  onChange={(e) => setRenameDesc(e.target.value)}
                 />
               </div>
             </div>
@@ -369,9 +382,13 @@ export default function DatasetsPage() {
               <button
                 className="btn primary"
                 onClick={() => renameMutation.mutate()}
-                disabled={!renameName || renameName === renameTarget.name || renameMutation.isPending}
+                disabled={
+                  !renameName ||
+                  (renameName === renameTarget.name && renameDesc === (renameTarget.description ?? "")) ||
+                  renameMutation.isPending
+                }
               >
-                Rename
+                Save
               </button>
             </div>
           </div>

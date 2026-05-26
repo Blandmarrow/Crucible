@@ -366,7 +366,7 @@ Three performance indexes exist:
 
 **Dataset folder naming**: `create_dataset()` in `dataset_service.py` derives the folder name from the dataset name via `_name_to_slug()` (lowercase, spaces → underscores, special chars stripped, max 80 chars) rather than using the UUID. The UUID is still the DB primary key. If the slug folder already exists (name collision edge case), a `{slug}_{uuid8}` suffix is appended. Example: dataset named `"My Portraits"` creates `data/datasets/my_portraits/`.
 
-**Dataset rename**: `PATCH /datasets/{id}` accepts `{ name?, description? }`. When the name changes, `rename_dataset()` renames the folder on disk, bulk-updates all `Image.file_path`/`thumbnail_path` records via string prefix replacement, and updates `Dataset.folder_path`/`name` — all in one transaction. Returns 400 on name conflict.
+**Dataset edit**: the pencil (Edit) button on each dataset card opens a modal for editing both the name and description. `PATCH /datasets/{id}` accepts `{ name?, description? }`. When the name changes, `rename_dataset()` renames the folder on disk, bulk-updates all `Image.file_path`/`thumbnail_path` records via string prefix replacement, and updates `Dataset.folder_path`/`name` — all in one transaction. Returns 400 on name conflict. The Save button is enabled when either field differs from the current values.
 
 ### Statistics page
 

@@ -238,7 +238,7 @@ export default function VersionsPage() {
         <BranchSelector
           datasetId={datasetId}
           branches={branches}
-          activeBranchId={activeBranchId}
+          activeBranchId={resolvedBranchId}
           currentBranchId={dataset?.current_branch_id ?? undefined}
           onSelect={handleBranchSelect}
         />

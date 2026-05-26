@@ -6,24 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Launch
 
-**Windows** — double-click `Crucible.bat` in Explorer (shows a setup/start/update menu), or run `manage.ps1` directly in PowerShell:
-
-| File | Purpose |
-|---|---|
-| `Crucible.bat` | Double-click to launch — shows menu (setup / start / update) |
-| `manage.ps1 setup` | First time only — creates venv, installs deps, builds frontend |
-| `manage.ps1 start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
-| `manage.ps1 update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
-| `manage.ps1 dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
-
-**Linux / macOS** — run `manage.sh` (make it executable once with `chmod +x manage.sh`):
+**Windows**: `manage.ps1 <cmd>` (or double-click `Crucible.bat`) | **Linux/macOS**: `./manage.sh <cmd>` (run `chmod +x manage.sh` once)
 
 | Command | Purpose |
 |---|---|
-| `./manage.sh setup` | First time only — creates venv, installs deps, builds frontend |
-| `./manage.sh start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
-| `./manage.sh update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
-| `./manage.sh dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
+| `setup` | First time — creates venv, installs deps, builds frontend |
+| `start` | Production: runs migrations, rebuilds frontend if needed, serves on :8000 |
+| `update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
+| `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
 To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal.
 
@@ -99,24 +89,24 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 
 | Method | Effect |
 |---|---|
-| `await model_manager.unload(model_id)` | Unloads one model by ID, acquires its per-model lock, moves weights to CPU, deletes both the model and processor objects, removes the entry, and calls `torch.cuda.empty_cache()`. |
-| `await model_manager.evict_all()` | Calls `unload()` for every currently registered model and does a final `cuda.empty_cache()`. Returns the list of model IDs that were unloaded. Used by `POST /api/v1/models/unload-all`. |
+| `await model_manager.unload(model_id)` | Acquires per-model lock, moves weights to CPU, deletes model + processor objects, removes entry, calls `torch.cuda.empty_cache()`. |
+| `await model_manager.evict_all()` | Calls `unload()` for every registered model + final `cuda.empty_cache()`. Returns list of unloaded IDs. Used by `POST /api/v1/models/unload-all`. |
 
-**`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`, registered in `main.py`) — evicts all ML models from VRAM without restarting the server. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Intended to be called after quality scoring completes so that scoring models (aesthetic, CLIP, DINOv2) do not occupy VRAM when they are no longer needed.
+**`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`) — evicts all ML models from VRAM without restarting. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Call after quality scoring so scoring models don't occupy VRAM when no longer needed.
+
+`HF_TOKEN` from `.env` is injected into `os.environ` early in `main.py` so all `hf_hub_download` calls pick it up automatically.
 
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|
 | `florence2*` | `ml/florence_captioner.py` |
 | `paligemma2` | `ml/paligemma_captioner.py` (needs `HF_TOKEN` in `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448) |
-
-`HF_TOKEN` from `.env` is injected into `os.environ` early in `main.py` so all `hf_hub_download` calls pick it up automatically.
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
 | `upscale:{abs_path}` | `ml/upscaler.py` (spandrel; keyed by absolute model file path to support multiple loaded upscalers) |
-
-**Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All three captioners (Florence-2, PaliGemma-2, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `dino` | `ml/dino_scorer.py` (`facebook/dinov2-base` via HuggingFace `transformers`; ~1.2 GB VRAM; used for DINOv2 embedding extraction) |
+
+**Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All three captioners (Florence-2, PaliGemma-2, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 
 Quality scorers and what they add to `Image`:
 | Module | Columns written | Notes |
@@ -159,8 +149,8 @@ Bounding-box detection runs as a background job, same pattern as quality scoring
 
 **Frontend surfaces**:
 - `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, overwrite toggle).
-- `CaptioningPage` — "Object Detection" section shown when a Florence-2 model is selected; uses the same model as captioning.
-- `ImageDetailPage` — DETECTIONS panel in the right column (collapsible, shows label chips with counts); SVG overlay on the image with per-label color coding. Label chips are toggle buttons — clicking a chip adds/removes that label from a `hiddenLabels: Set<string>` that filters the SVG overlay. State resets on image navigation. Eye icon in the toolbar shows/hides all boxes at once.
+- `CaptioningPage` — "Object Detection" section when a Florence-2 model is selected; uses the same model as captioning.
+- `ImageDetailPage` — DETECTIONS panel (collapsible, label chips with counts + SVG overlay with per-label color coding). Label chips toggle `hiddenLabels: Set<string>` to filter the overlay; state resets on navigation. Eye icon shows/hides all boxes.
 
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
@@ -171,8 +161,7 @@ Flag thresholds:
 | `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `watermark_threshold` in `threshold_settings` DB table |
 | `is_duplicate` | `phash` (perceptual hash Hamming distance) | < 8 | `duplicate_threshold` in `threshold_settings` DB table |
 
-All five thresholds are user-configurable via the Settings page (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Changes take effect on the next scoring run; existing scored images are not re-flagged. The constants in `technical_scorer.py` (`BLUR_THRESHOLD`, `NOISE_THRESHOLD`, `UNIFORMITY_THRESHOLD`, `DUPLICATE_THRESHOLD`) serve only as parameter defaults — the quality router always passes the DB-fetched values at runtime via `backend/services/threshold_service.py::get_thresholds()`.
-
+All five thresholds are user-configurable via Settings (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Changes take effect on the next scoring run; existing images are not re-flagged. Constants in `technical_scorer.py` serve only as parameter defaults — the quality router always passes DB-fetched values via `backend/services/threshold_service.py::get_thresholds()`.
 
 **Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
 
@@ -188,7 +177,7 @@ All five thresholds are user-configurable via the Settings page (`/settings` →
 
 Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request.
 
-**Config validation** (`backend/config.py`): A `@model_validator(mode="after")` in the Pydantic `Settings` class enforces three rules at startup: (1) `max_vram_mb < 1000` raises `ValueError` with a clear message so misconfigured deployments fail fast; (2) an empty `hf_token` logs a debug-level warning (not a hard error, since most users don't use PaliGemma); (3) any key found in the `.env` file that is not a recognised settings field is logged at WARNING level — `extra="ignore"` is retained so OS environment variables are never flagged. Note: `config.py` still declares a `watermark_threshold` field for legacy `.env` compatibility but the quality router no longer reads it — all five flag thresholds are now read from the `threshold_settings` DB table (see Settings page below).
+**Config validation** (`backend/config.py`): `@model_validator(mode="after")` enforces at startup: (1) `max_vram_mb < 1000` → `ValueError` (fail fast); (2) empty `hf_token` → debug-level warning (not hard error); (3) unrecognised `.env` keys → WARNING log; `extra="ignore"` retained so OS env vars are never flagged. `config.py` still declares `watermark_threshold` for legacy `.env` compatibility but the quality router reads all five thresholds from the `threshold_settings` DB table instead.
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
@@ -216,7 +205,7 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 
 **Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
 
-**History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked. This ensures that deleting the upscaled image (which navigates to the adjacent image with another `replace: true`) leaves a single clean history entry, so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression.
+**History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked, leaving a single clean entry so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression.
 
 **Frontend surfaces**:
 - `ImageDetailPage` — "Upscale" toolbar button toggles inline controls (model select, Replace checkbox, optional W×H). Uses `upscalingApi.run()` with `image_ids: [imageId]`.
@@ -262,17 +251,13 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 
 **Subfolders** (`Image.subfolder`, `Dataset.declared_subfolders`): images are physically flat in `{dataset.folder_path}/images/`; `subfolder` is pure string metadata (empty string = root/ungrouped; nested paths use `/`). `Dataset.declared_subfolders` (JSON column, default `[]`) stores explicitly-created subfolder paths so empty subfolders survive a `list_subfolders()` call — that function GROUP BYs images, so any path not in `declared_subfolders` with zero images would disappear. `declare_subfolder()` adds a path; `delete_subfolder()` bulk-moves images to root and removes the declared entry. `normalize_subfolder()` in `backend/utils.py` sanitizes path strings before storage. API: `GET/POST/DELETE /datasets/{id}/subfolders`.
 
-Three performance indexes exist:
-- `ix_images_dataset_created_at` on `(dataset_id, created_at)` — gallery page loads sorted by date
-- `ix_images_file_path` on `file_path` — filesystem move/rename/delete lookups
-- `ix_images_dataset_caption` on `(dataset_id, caption_text)` — caption filter + listing
+Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, created_at)` (gallery sort), `ix_images_file_path` on `file_path` (filesystem lookups), `ix_images_dataset_caption` on `(dataset_id, caption_text)` (caption filter + listing).
 
 **Deferred blob columns**: `clip_embedding`, `dino_embedding`, and `dino_layer_embeddings` are declared with `deferred=True` on their `mapped_column`. SQLAlchemy omits them from `SELECT *` queries — they are only fetched when explicitly accessed or when `undefer()` is passed as a load option. The `GET /images/{image_id}` endpoint undefers `dino_layer_embeddings` so the `has_dino_layer_embeddings` property on `ImageOut` works. Quality/similarity routers use column-explicit selects (`select(Image.id, Image.clip_embedding, ...)`) and are unaffected. Never access these columns from a full-row ORM load without adding `undefer()`.
 
 ### SSE progress
 
 `ProgressBroadcaster` (singleton in `workers/progress.py`) maintains per-job `asyncio.Queue`s. Emitting a progress event pushes to the job-specific channel and the `"all"` channel. A 25-second heartbeat keeps proxies from closing idle connections. Per-job streams (`GET /jobs/stream/{job_id}`) close when status becomes `completed`, `failed`, or `cancelled`. The global stream (`GET /jobs/stream/all/events`) uses `stop_on_terminal=False` and stays open for the session lifetime. All progress events include `dataset_id` (nullable for jobs with no associated dataset).
-
 
 ### Frontend state
 
@@ -340,7 +325,7 @@ Three performance indexes exist:
 | `gallery-state-${datasetId}` | `{ page, sortIdx, captionedFilter, scrollTop }` | Restores page/sort/filter/scroll when returning from detail view |
 | `gallery-nav-${datasetId}` | `{ ids, page, sort, order, captionedFilter }` | Ordered image ID list + query context for prev/next navigation in the detail view |
 
-`ImageDetailPage` reads `gallery-nav-*` to support arrow-key navigation. When the user reaches the boundary of the current page it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`) and on crossing writes the new page's context back to `gallery-nav-*` and updates `gallery-state-*` so that **Back** returns to the correct gallery page. Arrow keys are suppressed when an `<input>`, `<textarea>`, or `<select>` has focus, or when `isContentEditable` is true. The `Delete` key opens a confirm dialog when images are selected in the gallery (`SelectionToolbar`) or when viewing an image in `ImageDetailPage`; both handlers share the same focus guard. The arrow-key handler in `ImageDetailPage` is additionally suppressed while the delete confirm dialog is open (`showDeleteConfirm`) to prevent background image navigation while the dialog is focused.
+`ImageDetailPage` reads `gallery-nav-*` for arrow-key navigation. At page boundaries it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`); on crossing, writes the new context back to `gallery-nav-*` and updates `gallery-state-*` so **Back** returns to the correct gallery page. Arrow keys are suppressed when an `<input>`, `<textarea>`, or `<select>` has focus, or when `isContentEditable` is true. The `Delete` key opens a confirm dialog in both gallery and detail view; both handlers share the same focus guard. The arrow-key handler is additionally suppressed while the delete confirm dialog is open (`showDeleteConfirm`) to prevent background navigation.
 
 **Nav context invariant for newly created images**: When navigating to an image that was just created (crop, upscale new-file), the new image ID is not in the existing `gallery-nav-*` list, so `currentIndex === -1` and arrow keys would silently do nothing. Always call `injectNavId(datasetId, sourceImageId, newImageId)` (defined at module level in `ImageDetailPage.tsx`) before calling `paneGo` to insert the new ID immediately after the source in the nav context. This applies to: sync crop, crop+upscale job completion, and standalone upscale (non-replace) completion. Conversely, call `removeNavId(datasetId, imageId)` when deleting an image from `ImageDetailPage` to remove the stale ID so arrow-key navigation on adjacent images cannot land on it. Both functions delegate to `mutateNavIds(datasetId, transform)` — the shared helper that handles sessionStorage read/parse/write.
 
@@ -362,7 +347,7 @@ Three performance indexes exist:
 
 **Card navigation**: Dataset card clicks use `usePaneNavigate().go(url, view)` (not raw `useNavigate`) so that clicking a dataset inside a split pane updates that pane's view rather than the URL. Do not revert to `useNavigate` here.
 
-**Drag-and-drop upload**: `GalleryPage` supports dropping image files onto the grid (`onDragEnter`/`onDragLeave`/`onDrop` on the scroll container wrapper) — this works. `DatasetsPage` has the plumbing in place (native `dragover`/`drop` listeners via `useEffect` on `pageRef`, `data-dataset-id` attributes on cards, `dragOverId` state for the overlay) but the drop does not trigger uploads reliably — **TODO: debug and fix**. Approaches already tried without success: React synthetic `onDragEnter`+`onDragLeave`, `onDragOver`-based debounce timer, native `addEventListener` on the page container with `elementFromPoint`.
+**Drag-and-drop upload**: `GalleryPage` supports dropping onto the grid (`onDragEnter`/`onDragLeave`/`onDrop` on the scroll container) — works. `DatasetsPage` has the plumbing (native `dragover`/`drop` via `useEffect` on `pageRef`, `data-dataset-id` attrs, `dragOverId` state) but drop does not trigger reliably — **TODO: debug and fix**. Already tried: React synthetic events, `onDragOver`-based debounce timer, `addEventListener` with `elementFromPoint`.
 
 **Dataset folder naming**: `create_dataset()` in `dataset_service.py` derives the folder name from the dataset name via `_name_to_slug()` (lowercase, spaces → underscores, special chars stripped, max 80 chars) rather than using the UUID. The UUID is still the DB primary key. If the slug folder already exists (name collision edge case), a `{slug}_{uuid8}` suffix is appended. Example: dataset named `"My Portraits"` creates `data/datasets/my_portraits/`.
 
@@ -387,9 +372,9 @@ It makes six queries:
 
 All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` resets to `undefined` on dataset change. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
 
-**`DatasetStats` subfolder invariant**: `get_dataset_stats()` has several queries that run outside the main row-scan, all of which must include `.where(Image.subfolder == subfolder)` when subfolder is not None: (a) embedding count, (b) score coverage (`func.count` per score column), and (c) quality flag counts (`json_extract` + `SUM(CASE …)` per flag key). The row-scan drives histogram distributions, caption coverage, and file size summaries. `total_size_mb` is derived from the filtered `file_sizes_mb` list when a subfolder is active; `ds.total_size_bytes` (the cached dataset total) is only used for the all-images case.
+**`DatasetStats` subfolder invariant**: When subfolder is not None, all out-of-row-scan queries in `get_dataset_stats()` must include `.where(Image.subfolder == subfolder)`: (a) embedding count, (b) score coverage (`func.count` per score column), (c) quality flag counts (`json_extract` + `SUM(CASE …)` per flag key). `total_size_mb` derives from the filtered `file_sizes_mb` list; `ds.total_size_bytes` only used for the all-images case.
 
-**`DatasetStats` schema** (in `backend/schemas/dataset.py`) includes these distribution dicts on top of the basic summary fields. All are computed in a single row-scan in `dataset_service.get_dataset_stats()`:
+**`DatasetStats` schema** (`backend/schemas/dataset.py`; all computed in one row-scan in `dataset_service.get_dataset_stats()`):
 
 | Field | Description |
 |---|---|
@@ -527,7 +512,7 @@ Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filte
 - `SelectionToolbar` — **Edit** button (pencil icon) opens a modal with `<BulkEditForm imageIds={selectedIds} />`. On success, invalidates `["images", datasetId]` and clears the selection.
 - `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — five tabs: *Edit Captions*, *Upscale*, *Apply LUT*, *Rename*, and *Delete*. All tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*) and a **Subfolder** filter dropdown (shown when subfolders exist; hidden for the "Currently selected" scope). A `POST /images/bulk-count` query fires on every scope/flag/subfolder change and shows "N images will be affected" at the bottom of the scope panel. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
 
-`BulkEditForm` (`frontend/src/components/caption/BulkEditForm.tsx`) — reusable form component. When the `qualityFlags` prop is provided it uses those and hides its own flag selector; when omitted the internal flag selector is shown. The `disabled` prop prevents submission (used by `BulkEditPage` when scope is "flags" but nothing is selected).
+`BulkEditForm` (`frontend/src/components/caption/BulkEditForm.tsx`) — reusable form. `qualityFlags` prop: uses those flags and hides the internal selector; when omitted the internal selector is shown. `disabled` prop prevents submission (used by `BulkEditPage` when scope is "flags" but nothing is selected).
 
 `BulkRenameForm` (`frontend/src/components/image/BulkRenameForm.tsx`) — base-name input with live slug preview (`{slug}_001.ext, …`); `useMutation` → `imagesApi.bulkRename`; on success invalidates `["images", datasetId]`.
 
@@ -558,7 +543,6 @@ Filter params are debounced 350 ms on the frontend; the preview query (`GET /exp
 
 **Captions only** (`captions_only: bool`, default `False`): when `True`, skips all image file writes. The `src.exists()` check is also bypassed so images with missing files are still included (their caption data is in the DB). For kohya/aitoolkit, only sidecar/JSONL caption files are written to the concept subdirectory. For plain, no `images/` subdirectory is created — only `captions.jsonl` and `tags.csv` are written to `output_dir`. In captions-only mode, JSONL/CSV entries always use `img.filename` (the original filename) regardless of `output_format`, since no format conversion occurs. Image format, resize, and strip-metadata settings are ignored when this flag is set.
 
-
 ### AI generation metadata
 
 Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Included in both `ImageOut` and `ImageListItem` schemas.
@@ -577,7 +561,6 @@ Supported formats:
 Frontend: `components/image/GenerationMetadata.tsx` — collapsible section titled **GENERATION METADATA** (default expanded) with source badge, prompt + copy button, negative prompt, param grid (model/sampler/steps/CFG/seed/size/VAE), and optional ComfyUI raw workflow viewer.
 
 **Lazy backfill**: `GET /images/{image_id}` calls `extract_generation_metadata` and commits if the field is NULL, transparently backfilling pre-feature images.
-
 
 ### File browser
 
@@ -705,14 +688,14 @@ Key functions:
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 
 **Frontend**:
-- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (with link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch). Active branch is persisted to `sessionStorage` under `VERSIONS_BRANCH_KEY-${datasetId}`; falls back to `dataset.current_branch_id` when sessionStorage is empty (e.g. after server restart), then to `branches[0]`. The resolved branch ID (`resolvedBranchId = activeBranch?.id`) is passed to `BranchSelector` — **not** the raw `activeBranchId` state — so the dropdown always shows the same branch as the sidebar after a restart (when `activeBranchId` is `undefined`, both fall back to `dataset.current_branch_id`). A `useRef`+`useEffect` watches `dataset.current_branch_id` after the initial mount; when it changes externally (e.g. sidebar branch switch), `activeBranchId` state and sessionStorage are updated — but the guard (`prev !== undefined`) prevents the initial data load from clobbering the stored preference.
+- `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch). Active branch persisted to `sessionStorage` under `VERSIONS_BRANCH_KEY-${datasetId}`; falls back to `dataset.current_branch_id`, then `branches[0]`. `resolvedBranchId = activeBranch?.id` is passed to `BranchSelector` (not raw `activeBranchId`) so the dropdown stays in sync after restarts. A `useRef`+`useEffect` watches `dataset.current_branch_id` post-mount; the guard (`prev !== undefined`) prevents the initial data load from clobbering the stored preference.
 - `frontend/src/components/versioning/CreateSnapshotModal.tsx` — name + description inputs; shows `JobProgressBar` during bg job; passes `activeBranchId` in the snapshot body so new snapshots land on the correct branch.
 - `frontend/src/components/versioning/RestoreConfirmModal.tsx` — keep/remove radio for extra images, pre-restore snapshot checkbox, file-unavailability warning, `JobProgressBar`
 - `frontend/src/components/versioning/DiffModal.tsx` — select two versions; shows Added/Removed/Modified sections with field-level changes
-- `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option; checkout and branch creation each show a `SnapshotPrompt` dialog first when `BRANCH_SNAPSHOT_KEY === "ask"`, otherwise proceed automatically. Checkout triggers a bg job; while running a fixed-position progress card appears bottom-right showing `JobProgressBar` with SSE progress. `onSelect` is called only after the job completes (not immediately on select change) to avoid showing stale data. For sync branch creation (≤100 images), `doCheckout(result.id, false)` is called immediately after creation so `current_branch_id` updates on the backend — `pre_restore_snapshot=false` because the branch was just created from current state. A trash icon button opens a delete modal with its own branch `<select>` (filtered to exclude `currentBranchId` — the currently checked-out branch), so branch deletion is independent of the checkout dropdown. The active branch cannot be deleted; the user must switch branches first.
+- `frontend/src/components/versioning/BranchSelector.tsx` — branch `<select>` + "New branch…" option. Checkout and branch creation show a `SnapshotPrompt` dialog first when `BRANCH_SNAPSHOT_KEY === "ask"`. Checkout triggers a bg job; a fixed-position progress card appears bottom-right; `onSelect` fires only after job completion to avoid stale data. For sync branch creation (≤100 images), `doCheckout(result.id, false)` is called immediately so `current_branch_id` updates — `pre_restore_snapshot=false` because the branch was just created. A trash icon opens a delete modal with its own `<select>` (excluding `currentBranchId`); the active branch cannot be deleted.
 - `frontend/src/components/common/JobProgressBar.tsx` — shared progress bar (message + animated fill bar); used by snapshot, restore, and branch-checkout flows
 - `frontend/src/api/versioning.ts` — `versioningApi`: `listBranches`, `createBranch(datasetId, name, fromVersionId?, includeSnapshot = true)`, `checkoutBranch(datasetId, branchId, preRestoreSnapshot = true)`, `deleteBranch(datasetId, branchId)`, `listVersions` (accepts `ListVersionsParams` object with `branchId`, `search`, `createdAfter`, `createdBefore`), `createSnapshot`, `getVersion`, `deleteVersion`, `updateVersion` (PATCH for `is_pinned`), `restoreVersion`, `diff`. `createSnapshot`/`createBranch` return `Version | { job_id: string }` — discriminate with `"job_id" in data`.
-- **Sidebar version panel** (`SidebarVersionPanel.tsx`) — interactive accordion rendered below the "Active dataset" label. Collapsed: shows current branch name (monospace) · head snapshot name and a chevron toggle. Expanded: embeds `<BranchSelector>` for switching branches, the 7 most recent snapshots with relative timestamps and `[Restore]` buttons (current snapshot shows "Now"), and a "View all →" link to `VersionsPage`. Snapshot query (`["versions", datasetId, activeBranch.id, "sidebar"]`) is gated on `expanded` with `limit: 7`. `onSelect` writes `VERSIONS_BRANCH_KEY-${datasetId}` to sessionStorage so `VersionsPage` shows the correct branch when navigated to later. `onSuccess` after restore invalidates branches, dataset, images, captions, and versions queries. Only rendered when `activeBranch` is defined (i.e. versioning is on and branches exist).
+- **Sidebar version panel** (`SidebarVersionPanel.tsx`) — accordion below "Active dataset" label. Collapsed: branch name · head snapshot + chevron. Expanded: `<BranchSelector>`, the 7 most recent snapshots with `[Restore]` buttons (current shows "Now"), and "View all →" link. Snapshot query (`["versions", datasetId, activeBranch.id, "sidebar"]`) gated on `expanded` with `limit: 7`. `onSelect` writes `VERSIONS_BRANCH_KEY-${datasetId}` to sessionStorage; `onSuccess` after restore invalidates branches, dataset, images, captions, and versions queries. Only rendered when `activeBranch` is defined.
 
 **TanStack Query keys**:
 - `["branches", datasetId]` — invalidated after snapshot creation, restore, checkout

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ArrowRightFromLine, Copy } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
@@ -49,7 +49,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = sessionStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; scrollTop: number };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; scrollTop: number; activeSubfolder?: string | null };
   } catch {}
   return null;
 }
@@ -59,7 +59,7 @@ export default function GalleryPage() {
   const qc = useQueryClient();
   const { selectAll, clear, count } = useSelectionStore();
 
-  const saved = datasetId ? loadSavedState(datasetId) : null;
+  const saved = useMemo(() => (datasetId ? loadSavedState(datasetId) : null), [datasetId]);
   const [page, setPage] = useState(saved?.page ?? 1);
   const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? 0);
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
@@ -78,7 +78,9 @@ export default function GalleryPage() {
   const [uploading, setUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [genMetaImage, setGenMetaImage] = useState<ImageListItem | null>(null);
-  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
+    saved?.activeSubfolder == null ? undefined : saved.activeSubfolder
+  );
   const [uploadSubfolder, setUploadSubfolder] = useState("");
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
@@ -89,8 +91,8 @@ export default function GalleryPage() {
   const sortOpt = SORT_OPTIONS[sortIdx];
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
-  const liveState = useRef({ page, sortIdx, captionedFilter });
-  liveState.current = { page, sortIdx, captionedFilter };
+  const liveState = useRef({ page, sortIdx, captionedFilter, activeSubfolder });
+  liveState.current = { page, sortIdx, captionedFilter, activeSubfolder };
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -113,11 +115,11 @@ export default function GalleryPage() {
   useEffect(() => {
     return () => {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter } = liveState.current;
+      const { page, sortIdx, captionedFilter, activeSubfolder } = liveState.current;
       if (datasetId) {
         sessionStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, scrollTop })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, scrollTop, activeSubfolder: activeSubfolder ?? null })
         );
       }
     };

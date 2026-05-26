@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,21 +48,27 @@ async def tag_stats(dataset_id: str, subfolder: str | None = Query(None), db: As
 
 @router.post("/dataset/{dataset_id}/find-replace")
 async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSession = Depends(get_db)):
-    count = await find_replace_captions(
-        db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
-    )
+    try:
+        count = await find_replace_captions(
+            db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
     return {"updated": count}
 
 
 @router.post("/dataset/{dataset_id}/bulk-edit", response_model=BulkEditResponse)
 async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = Depends(get_db)):
-    return await bulk_edit_captions(
-        db,
-        dataset_id,
-        operation=body.operation,
-        text=body.text,
-        replacement=body.replacement,
-        use_regex=body.use_regex,
-        image_ids=body.image_ids,
-        quality_flags=body.quality_flags,
-    )
+    try:
+        return await bulk_edit_captions(
+            db,
+            dataset_id,
+            operation=body.operation,
+            text=body.text,
+            replacement=body.replacement,
+            use_regex=body.use_regex,
+            image_ids=body.image_ids,
+            quality_flags=body.quality_flags,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")

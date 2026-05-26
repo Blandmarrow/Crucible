@@ -1,5 +1,8 @@
+import asyncio
 import re
 from datetime import datetime
+
+_REGEX_TIMEOUT = 30.0  # seconds; protects event loop from catastrophic backtracking
 
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +74,47 @@ async def bulk_edit_captions(
     affected = 0
     skipped = 0
 
+    # Regex remove/find_replace: run matching in a thread so catastrophic backtracking
+    # doesn't block the event loop; asyncio.wait_for enforces a hard timeout.
+    if use_regex and operation in ("remove", "find_replace"):
+        try:
+            compiled = re.compile(text)
+        except re.error:
+            return {"affected": 0, "skipped": len(images)}
+
+        repl = "" if operation == "remove" else replacement
+        items = [(img.id, img.caption_text or "") for img in images]
+
+        def _apply_regex(batch: list[tuple[str, str]]) -> dict[str, str]:
+            updates: dict[str, str] = {}
+            for img_id, old_text in batch:
+                if not old_text:
+                    continue
+                try:
+                    new_text = " ".join(compiled.sub(repl, old_text).split())
+                    if new_text != old_text:
+                        updates[img_id] = new_text
+                except re.error:
+                    pass
+            return updates
+
+        loop = asyncio.get_running_loop()
+        new_texts = await asyncio.wait_for(
+            loop.run_in_executor(None, _apply_regex, items),
+            timeout=_REGEX_TIMEOUT,
+        )
+
+        img_map = {img.id: img for img in images}
+        for img_id, new_text in new_texts.items():
+            img = img_map[img_id]
+            img.caption_text = new_text
+            img.captioned_at = datetime.utcnow()
+            _write_txt_sidecar(img.file_path, new_text or ", ".join(img.tags_json))
+            affected += 1
+        skipped = len(images) - affected
+        await db.commit()
+        return {"affected": affected, "skipped": skipped}
+
     for img in images:
         old_text = img.caption_text or ""
 
@@ -83,7 +127,7 @@ async def bulk_edit_captions(
                 if not old_text:
                     skipped += 1
                     continue
-                new_text = re.sub(text, "", old_text) if use_regex else old_text.replace(text, "")
+                new_text = old_text.replace(text, "")
                 new_text = " ".join(new_text.split())
                 if new_text == old_text:
                     skipped += 1
@@ -92,7 +136,7 @@ async def bulk_edit_captions(
                 if not old_text:
                     skipped += 1
                     continue
-                new_text = re.sub(text, replacement, old_text) if use_regex else old_text.replace(text, replacement)
+                new_text = old_text.replace(text, replacement)
                 new_text = " ".join(new_text.split())
                 if new_text == old_text:
                     skipped += 1
@@ -127,12 +171,44 @@ async def find_replace_captions(
     result = await db.execute(query)
     images = result.scalars().all()
     updated = 0
+
+    if use_regex:
+        try:
+            compiled = re.compile(find)
+        except re.error:
+            return 0
+
+        items = [(img.id, img.caption_text or "") for img in images]
+
+        def _apply_regex(batch: list[tuple[str, str]]) -> dict[str, str]:
+            updates: dict[str, str] = {}
+            for img_id, old_text in batch:
+                try:
+                    new_text = compiled.sub(replace, old_text)
+                    if new_text != old_text:
+                        updates[img_id] = new_text
+                except re.error:
+                    pass
+            return updates
+
+        loop = asyncio.get_running_loop()
+        new_texts = await asyncio.wait_for(
+            loop.run_in_executor(None, _apply_regex, items),
+            timeout=_REGEX_TIMEOUT,
+        )
+
+        img_map = {img.id: img for img in images}
+        for img_id, new_text in new_texts.items():
+            img = img_map[img_id]
+            img.caption_text = new_text
+            _write_txt_sidecar(img.file_path, new_text)
+            updated += 1
+        await db.commit()
+        return updated
+
     for img in images:
         old = img.caption_text
-        if use_regex:
-            new = re.sub(find, replace, old)
-        else:
-            new = old.replace(find, replace)
+        new = old.replace(find, replace)
         if new != old:
             img.caption_text = new
             _write_txt_sidecar(img.file_path, new)

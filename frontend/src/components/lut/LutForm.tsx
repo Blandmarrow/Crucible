@@ -8,11 +8,12 @@ import { useJobStore } from "../../store/jobStore";
 interface Props {
   datasetId: string;
   imageIds?: string[];
+  subfolder?: string;
   onSuccess?: () => void;
   onCancel?: () => void;
 }
 
-export default function LutForm({ datasetId, imageIds, onSuccess, onCancel }: Props) {
+export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
 
   const [lutPath, setLutPath] = useState("");
@@ -46,6 +47,7 @@ export default function LutForm({ datasetId, imageIds, onSuccess, onCancel }: Pr
       lutApi.run({
         dataset_id: datasetId,
         image_ids: imageIds,
+        subfolder,
         lut_path: lutPath,
         intensity: intensity / 100,
         replace,

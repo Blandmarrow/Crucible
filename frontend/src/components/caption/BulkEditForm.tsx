@@ -11,12 +11,13 @@ interface Props {
   imageIds?: string[];
   /** When provided, use these flags and hide the internal flag selector. */
   qualityFlags?: string[];
+  subfolder?: string;
   disabled?: boolean;
   onSuccess?: (affected: number, skipped: number) => void;
   onCancel?: () => void;
 }
 
-export default function BulkEditForm({ datasetId, imageIds, qualityFlags, disabled, onSuccess, onCancel }: Props) {
+export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfolder, disabled, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
   const [operation, setOperation] = useState<Operation>("append");
   const [text, setText] = useState("");
@@ -44,6 +45,7 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, disabl
         use_regex: useRegex,
         image_ids: imageIds,
         quality_flags: activeFlags.length > 0 ? activeFlags : undefined,
+        subfolder,
       };
       return captionsApi.bulkEdit(datasetId, req);
     },

@@ -1,14 +1,26 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useSelectionStore } from "../store/selectionStore";
 import { FLAG_OPTIONS } from "../constants/flags";
+import { datasetsApi } from "../api/datasets";
+import { imagesApi } from "../api/images";
 import BulkEditForm from "../components/caption/BulkEditForm";
 import UpscaleForm from "../components/upscale/UpscaleForm";
 import LutForm from "../components/lut/LutForm";
+import BulkRenameForm from "../components/image/BulkRenameForm";
+import BulkDeleteForm from "../components/image/BulkDeleteForm";
 
 type Scope = "all" | "flags" | "selected";
-type Tab = "captions" | "upscale" | "lut";
+type Tab = "captions" | "upscale" | "lut" | "rename" | "delete";
+
+function getCountLabel(data: { count: number } | undefined, fetching: boolean): string {
+  if (fetching) return "Counting…";
+  if (!data) return "";
+  if (data.count === 0) return "No matching images";
+  return `${data.count.toLocaleString()} image${data.count !== 1 ? "s" : ""} will be affected`;
+}
 
 export default function BulkEditPage() {
   const datasetId = usePaneDatasetId();
@@ -17,6 +29,25 @@ export default function BulkEditPage() {
   const [tab, setTab] = useState<Tab>("captions");
   const [scope, setScope] = useState<Scope>("all");
   const [selectedFlags, setSelectedFlags] = useState<Set<string>>(new Set());
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>();
+
+  const imageIds = useMemo(() => scope === "selected" ? [...selectedIds] : undefined, [scope, selectedIds]);
+  const qualityFlags = useMemo(() => scope === "flags" ? [...selectedFlags] : undefined, [scope, selectedFlags]);
+  const subfolder = scope !== "selected" ? activeSubfolder : undefined;
+  const formDisabled = scope === "flags" && selectedFlags.size === 0;
+
+  const { data: subfolders = [] } = useQuery({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId!),
+    enabled: !!datasetId,
+  });
+
+  const { data: countData, isFetching: countFetching } = useQuery({
+    queryKey: ["bulk-count", datasetId, imageIds ?? null, qualityFlags ?? null, subfolder ?? null],
+    queryFn: () => imagesApi.bulkCount(datasetId!, { imageIds, qualityFlags, subfolder }),
+    enabled: !!datasetId && !formDisabled,
+    staleTime: 10_000,
+  });
 
   const toggleFlag = (key: string) => {
     setSelectedFlags(prev => {
@@ -29,10 +60,6 @@ export default function BulkEditPage() {
   if (!datasetId) {
     return <div style={{ padding: 32, color: "var(--fg-mute)" }}>No dataset selected.</div>;
   }
-
-  const imageIds = scope === "selected" ? [...selectedIds] : undefined;
-  const qualityFlags = scope === "flags" ? [...selectedFlags] : undefined;
-  const formDisabled = scope === "flags" && selectedFlags.size === 0;
 
   return (
     <div style={{ padding: "24px 32px", maxWidth: 680, flex: 1, overflowY: "auto" }}>
@@ -52,9 +79,15 @@ export default function BulkEditPage() {
         <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
           Apply LUT
         </button>
+        <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
+          Rename
+        </button>
+        <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
+          Delete
+        </button>
       </div>
 
-      {/* Scope — shared between both tabs */}
+      {/* Scope — shared across all tabs */}
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-h">Scope</div>
         <div className="panel-b space-y-2">
@@ -76,6 +109,11 @@ export default function BulkEditPage() {
             />
             Currently selected ({selectedCount} image{selectedCount !== 1 ? "s" : ""})
           </label>
+          {!formDisabled && (
+            <p className="text-xs pt-1" style={{ color: countData?.count === 0 ? "var(--warn)" : "var(--fg-mute)" }}>
+              {getCountLabel(countData, countFetching)}
+            </p>
+          )}
         </div>
       </div>
 
@@ -102,6 +140,27 @@ export default function BulkEditPage() {
         </div>
       )}
 
+      {/* Subfolder filter — shown when subfolders exist and scope is not "selected" */}
+      {subfolders.length > 0 && scope !== "selected" && (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-h">Subfolder</div>
+          <div className="panel-b">
+            <select
+              className="select"
+              value={activeSubfolder ?? ""}
+              onChange={(e) => setActiveSubfolder(e.target.value || undefined)}
+            >
+              <option value="">All subfolders</option>
+              {subfolders.map((sf) => (
+                <option key={sf.path} value={sf.path}>
+                  {sf.path === "" ? "(root)" : sf.path}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Tab content */}
       {tab === "captions" && (
         <div className="panel">
@@ -112,6 +171,7 @@ export default function BulkEditPage() {
               datasetId={datasetId}
               imageIds={imageIds}
               qualityFlags={qualityFlags}
+              subfolder={subfolder}
               disabled={formDisabled}
             />
           </div>
@@ -126,6 +186,7 @@ export default function BulkEditPage() {
               key={scope}
               datasetId={datasetId}
               imageIds={imageIds}
+              subfolder={subfolder}
             />
           </div>
         </div>
@@ -139,6 +200,39 @@ export default function BulkEditPage() {
               key={scope}
               datasetId={datasetId}
               imageIds={imageIds}
+              subfolder={subfolder}
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "rename" && (
+        <div className="panel">
+          <div className="panel-h">Rename Images</div>
+          <div className="panel-b">
+            <BulkRenameForm
+              key={scope}
+              datasetId={datasetId}
+              imageIds={imageIds}
+              qualityFlags={qualityFlags}
+              subfolder={subfolder}
+              disabled={formDisabled}
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "delete" && (
+        <div className="panel">
+          <div className="panel-h">Delete Images</div>
+          <div className="panel-b">
+            <BulkDeleteForm
+              key={scope}
+              datasetId={datasetId}
+              imageIds={imageIds}
+              qualityFlags={qualityFlags}
+              subfolder={subfolder}
+              disabled={formDisabled}
             />
           </div>
         </div>

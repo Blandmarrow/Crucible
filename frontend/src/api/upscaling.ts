@@ -13,6 +13,7 @@ export interface UpscaleRunRequest {
   replace: boolean;
   target_width?: number | null;
   target_height?: number | null;
+  subfolder?: string;
 }
 
 export const upscalingApi = {

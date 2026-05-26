@@ -171,6 +171,7 @@ Select any images in the gallery (or use **Space** while viewing an image in the
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
+- **Bulk rename** — rename matching images to a sequential base name pattern (`{slug}_001.ext`, `_002`, …)
 - **Bulk delete** — remove selected images from the dataset and disk
 
 ### Statistics Dashboard

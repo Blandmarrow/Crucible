@@ -8,7 +8,7 @@ from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image, Tag
-from backend.utils import ALLOWED_FLAG_KEYS
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
 
 
 async def get_caption(db: AsyncSession, image_id: str) -> dict:
@@ -59,10 +59,13 @@ async def bulk_edit_captions(
     use_regex: bool = False,
     image_ids: list[str] | None = None,
     quality_flags: list[str] | None = None,
+    subfolder: str | None = None,
 ) -> dict:
     query = select(Image).where(Image.dataset_id == dataset_id)
-    if image_ids:
+    if image_ids is not None:
         query = query.where(Image.id.in_(image_ids))
+    elif subfolder is not None:
+        query = query.where(Image.subfolder == normalize_subfolder(subfolder))
     if quality_flags:
         valid_flags = [f for f in quality_flags if f in ALLOWED_FLAG_KEYS]
         if valid_flags:

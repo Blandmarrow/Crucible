@@ -14,7 +14,7 @@ from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import slugify_filename, unique_filename, thumbnail_path_for
+from backend.utils import normalize_subfolder, slugify_filename, unique_filename, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -35,9 +35,10 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
         )
         image_ids = [r[0] for r in result.all()]
     else:
-        result = await db.execute(
-            select(Image.id).where(Image.dataset_id == body.dataset_id)
-        )
+        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
+        if body.subfolder is not None:
+            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
+        result = await db.execute(q)
         image_ids = [r[0] for r in result.all()]
 
     total = len(image_ids)

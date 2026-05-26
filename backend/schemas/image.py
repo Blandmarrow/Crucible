@@ -124,3 +124,22 @@ class BatchMoveDatasetRequest(BaseModel):
 class BatchCopyDatasetResult(BaseModel):
     copied: int
     target_dataset_id: str
+
+
+class BulkFilterBase(BaseModel):
+    dataset_id: str
+    image_ids: list[str] | None = None
+    quality_flags: list[str] | None = None
+    subfolder: str | None = None
+
+
+class BulkRenameRequest(BulkFilterBase):
+    new_stem: str
+
+
+class BulkDeleteRequest(BulkFilterBase):
+    pass
+
+
+class BulkCountRequest(BulkFilterBase):
+    pass

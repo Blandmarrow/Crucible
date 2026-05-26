@@ -8,6 +8,7 @@ export interface BulkEditRequest {
   use_regex?: boolean;
   image_ids?: string[];
   quality_flags?: string[];
+  subfolder?: string;
 }
 
 export interface BulkEditResponse {

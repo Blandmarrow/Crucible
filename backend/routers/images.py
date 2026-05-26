@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, or_, select, update as sa_update
+from sqlalchemy import and_, delete, func, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
@@ -22,6 +22,9 @@ from backend.schemas.image import (
     BatchMoveDatasetRequest,
     BatchMoveSubfolderRequest,
     BatchResizeRequest,
+    BulkCountRequest,
+    BulkDeleteRequest,
+    BulkRenameRequest,
     ImageCropRequest,
     ImageListItem,
     ImageOut,
@@ -54,6 +57,18 @@ def _safe_path(path_str: str, base_dir: Path) -> Path:
     if not str(resolved).startswith(str(base_dir.resolve())):
         raise HTTPException(403, "Access denied")
     return resolved
+
+
+def _apply_bulk_filters(query, image_ids, subfolder, quality_flags):
+    if image_ids is not None:
+        query = query.where(Image.id.in_(image_ids))
+    elif subfolder is not None:
+        query = query.where(Image.subfolder == normalize_subfolder(subfolder))
+    if quality_flags:
+        valid_flags = [f for f in quality_flags if f in ALLOWED_FLAG_KEYS]
+        if valid_flags:
+            query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+    return query
 
 
 
@@ -283,6 +298,100 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
 
     for did in dataset_ids:
         await refresh_stats(db, did)
+
+
+@router.post("/bulk-count")
+async def bulk_count(body: BulkCountRequest, db: AsyncSession = Depends(get_db)):
+    query = _apply_bulk_filters(
+        select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+    )
+    count = (await db.execute(query)).scalar_one()
+    return {"count": count}
+
+
+@router.post("/bulk-rename")
+async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db)):
+    raw = body.new_stem.strip()
+    if not raw:
+        raise HTTPException(400, "new_stem cannot be empty")
+    stem = slugify_filename(raw)
+    if not stem:
+        raise HTTPException(400, "new_stem produces empty slug")
+
+    query = _apply_bulk_filters(
+        select(Image.id, Image.file_path, Image.filename).where(Image.dataset_id == body.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+    ).order_by(Image.created_at)
+
+    rows = (await db.execute(query)).all()
+    if not rows:
+        return {"affected": 0}
+
+    images_dir = Path(rows[0].file_path).parent
+
+    batch_ids = [r.id for r in rows]
+    existing = await db.execute(
+        select(Image.filename).where(
+            Image.dataset_id == body.dataset_id,
+            ~Image.id.in_(batch_ids),
+        )
+    )
+    db_names: set[str] = {r[0] for r in existing.all()}
+
+    plan: list[tuple[Path, Path, str, str]] = []
+    for row in rows:
+        old_path = Path(row.file_path)
+        new_filename = unique_filename(images_dir, stem, old_path.suffix.lower(), db_names)
+        new_path = images_dir / new_filename
+        db_names.add(new_filename)
+        plan.append((old_path, new_path, row.id, new_filename))
+
+    await db.execute(
+        sa_update(Image),
+        [{"id": img_id, "filename": new_fn, "file_path": str(new_path), "is_auto_named": True}
+         for _, new_path, img_id, new_fn in plan],
+    )
+
+    for old_path, new_path, *_ in plan:
+        if new_path != old_path:
+            rename_with_sidecar(old_path, new_path)
+
+    await db.commit()
+    return {"affected": len(plan)}
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depends(get_db)):
+    query = _apply_bulk_filters(
+        select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path).where(
+            Image.dataset_id == body.dataset_id
+        ),
+        body.image_ids, body.subfolder, body.quality_flags,
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+    if not rows:
+        return {"deleted": 0}
+
+    image_ids = [r.id for r in rows]
+    files_to_delete: list[Path] = []
+    for r in rows:
+        p = Path(r.file_path)
+        await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
+        files_to_delete.extend([p, p.with_suffix(".txt")])
+        if r.thumbnail_path:
+            files_to_delete.append(Path(r.thumbnail_path))
+
+    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    await db.commit()
+
+    for f in files_to_delete:
+        f.unlink(missing_ok=True)
+
+    await refresh_stats(db, body.dataset_id)
+    return {"deleted": len(image_ids)}
 
 
 @router.get("/{image_id}/file")

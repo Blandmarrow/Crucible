@@ -12,6 +12,7 @@ export interface LutRunRequest {
   lut_path: string;
   intensity: number;
   replace: boolean;
+  subfolder?: string;
 }
 
 export const lutApi = {

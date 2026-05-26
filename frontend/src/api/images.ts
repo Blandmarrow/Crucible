@@ -16,6 +16,19 @@ export interface BatchCopyDatasetResult {
   target_dataset_id: string;
 }
 
+export interface BulkFilterParams {
+  imageIds?: string[];
+  qualityFlags?: string[];
+  subfolder?: string;
+}
+
+export interface BulkRenameParams extends BulkFilterParams {
+  newStem: string;
+}
+
+export type BulkDeleteParams = BulkFilterParams;
+export type BulkCountParams = BulkFilterParams;
+
 export interface ImageListParams {
   dataset_id: string;
   page?: number;
@@ -98,4 +111,26 @@ export const imagesApi = {
     client.post<BatchCopyDatasetResult>("/images/batch/copy-dataset", { ...params, target_dataset_id, subfolder }).then((r) => r.data),
   renameImage: (id: string, newStem: string) =>
     client.patch<{ filename: string }>(`/images/${id}/rename`, { new_stem: newStem }).then((r) => r.data),
+  bulkRename: (datasetId: string, params: BulkRenameParams) =>
+    client.post<{ affected: number }>("/images/bulk-rename", {
+      dataset_id: datasetId,
+      new_stem: params.newStem,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+    }).then((r) => r.data),
+  bulkDelete: (datasetId: string, params: BulkDeleteParams) =>
+    client.post<{ deleted: number }>("/images/bulk-delete", {
+      dataset_id: datasetId,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+    }).then((r) => r.data),
+  bulkCount: (datasetId: string, params: BulkCountParams) =>
+    client.post<{ count: number }>("/images/bulk-count", {
+      dataset_id: datasetId,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+    }).then((r) => r.data),
 };

@@ -207,7 +207,7 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 
 **Config**: `settings.upscale_models_dir` (default `models/upscale_models/`). Override with `UPSCALE_MODELS_DIR=` in `.env` (e.g. pointing at a ComfyUI models folder). The directory is created automatically on startup.
 
-**`UpscaleRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `model_path`, `replace` (overwrite source vs. new file), `target_width`/`target_height` (optional: upscale then resize down to fit, maintaining AR).
+**`UpscaleRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `model_path`, `replace` (overwrite source vs. new file), `target_width`/`target_height` (optional: upscale then resize down to fit, maintaining AR), `subfolder` (null = all; applied only when `image_ids` is null).
 
 **ML inference** (`backend/ml/upscaler.py`):
 - `scan_upscale_models(dir)` — globs `*.pth`/`*.safetensors`, detects scale from filename heuristics (`4x-`, `_x4`, `_X4`, etc.), returns `[{name, path, scale}]` without loading weights.
@@ -238,7 +238,7 @@ Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-control
 
 **Config**: `settings.lut_models_dir` (default `models/lut/`). The directory is created automatically on startup.
 
-**`LutRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `lut_path`, `intensity` (0.0–1.0, clamped by validator), `replace` (overwrite source vs. new file).
+**`LutRunRequest`** fields: `dataset_id`, `image_ids` (null = whole dataset), `lut_path`, `intensity` (0.0–1.0, clamped by validator), `replace` (overwrite source vs. new file), `subfolder` (null = all; applied only when `image_ids` is null).
 
 **ML processing** (`backend/ml/lut_processor.py`):
 - `scan_lut_models(dir)` — globs `*.cube`/`*.3dl`, returns `[{name, path, format}]`.
@@ -507,14 +507,31 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | `use_regex` | `false` | Treat `text` (and `replacement`) as a Python regex; invalid patterns skip the image. Regex matching runs in a thread executor with a 30-second `asyncio.wait_for` timeout to prevent catastrophic backtracking from blocking the event loop; returns 408 on timeout. |
 | `image_ids` | `null` | If set, restrict to these image IDs |
 | `quality_flags` | `null` | If set, additionally **exclude** images where any of these flags is `True` (AND IS NOT TRUE per flag); validated against `ALLOWED_FLAG_KEYS` from `utils.py` |
+| `subfolder` | `null` | If set, restrict to images in this subfolder (ignored when `image_ids` is provided) |
 
 Images with no `caption_text` are skipped for `remove` and `find_replace`. For `prepend`/`append` they receive just the added text. A single `db.commit()` is made after the loop — not per image.
 
+### Bulk image operations (rename / delete / count)
+
+Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filters(query, image_ids, subfolder, quality_flags)` helper (module-level private function) that applies the triple filter — `image_ids` takes precedence over `subfolder`; `quality_flags` always applies as exclusion. All three accept a `BulkFilterBase`-derived schema (`backend/schemas/image.py`).
+
+`BulkFilterBase` fields (shared by all three schemas): `dataset_id`, `image_ids: list[str] | None`, `quality_flags: list[str] | None`, `subfolder: str | None`.
+
+| Endpoint | Extra fields | Returns |
+|---|---|---|
+| `POST /images/bulk-count` | — | `{ count: int }` — count of matching images without making any changes |
+| `POST /images/bulk-rename` | `new_stem: str` | `{ affected: int }` — renames matching images to `{slug}_001.ext`, `_002`, … Uses `slugify_filename` + `unique_filename`; pre-plans all renames before touching the filesystem; DB updated via ORM bulk-by-PK executemany then `rename_with_sidecar` per file; sets `is_auto_named=True` |
+| `POST /images/bulk-delete` | — | `{ deleted: int }` — permanently deletes matching images; calls `mark_image_deleted_in_versions` per image for versioning hooks; unlinks image, `.txt` sidecar, and thumbnail; calls `refresh_stats` |
+
 **Frontend surfaces**:
 - `SelectionToolbar` — **Edit** button (pencil icon) opens a modal with `<BulkEditForm imageIds={selectedIds} />`. On success, invalidates `["images", datasetId]` and clears the selection.
-- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — three tabs: *Edit Captions*, *Upscale*, and *Apply LUT*. All tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*). The captions tab embeds `<BulkEditForm>`; the upscale tab embeds `<UpscaleForm>`; the LUT tab embeds `<LutForm>`. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
+- `BulkEditPage` (`/datasets/:datasetId/bulk-edit`, sidebar "Bulk Edit") — five tabs: *Edit Captions*, *Upscale*, *Apply LUT*, *Rename*, and *Delete*. All tabs share the same scope radio (*All images* / *Exclude images with quality flags* / *Currently selected*) and a **Subfolder** filter dropdown (shown when subfolders exist; hidden for the "Currently selected" scope). A `POST /images/bulk-count` query fires on every scope/flag/subfolder change and shows "N images will be affected" at the bottom of the scope panel. The "Exclude flags" scope requires at least one flag to be chosen before the form can submit.
 
 `BulkEditForm` (`frontend/src/components/caption/BulkEditForm.tsx`) — reusable form component. When the `qualityFlags` prop is provided it uses those and hides its own flag selector; when omitted the internal flag selector is shown. The `disabled` prop prevents submission (used by `BulkEditPage` when scope is "flags" but nothing is selected).
+
+`BulkRenameForm` (`frontend/src/components/image/BulkRenameForm.tsx`) — base-name input with live slug preview (`{slug}_001.ext, …`); `useMutation` → `imagesApi.bulkRename`; on success invalidates `["images", datasetId]`.
+
+`BulkDeleteForm` (`frontend/src/components/image/BulkDeleteForm.tsx`) — amber warning panel + danger button; `useMutation` → `imagesApi.bulkDelete`; on success invalidates `["images", datasetId]` and calls `selectionStore.clear()`.
 
 ### Export page
 

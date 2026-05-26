@@ -13,6 +13,7 @@ class LutRunRequest(BaseModel):
     lut_path: str
     intensity: float = 1.0
     replace: bool = False
+    subfolder: str | None = None
 
     @field_validator("intensity")
     @classmethod

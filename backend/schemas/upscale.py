@@ -14,3 +14,4 @@ class UpscaleRunRequest(BaseModel):
     replace: bool = False
     target_width: int | None = None
     target_height: int | None = None
+    subfolder: str | None = None

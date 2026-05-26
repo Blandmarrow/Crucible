@@ -24,6 +24,7 @@ class BulkEditRequest(BaseModel):
     use_regex: bool = False
     image_ids: list[str] | None = None
     quality_flags: list[str] | None = None
+    subfolder: str | None = None
 
 
 class BulkEditResponse(BaseModel):

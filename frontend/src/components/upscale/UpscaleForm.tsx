@@ -8,11 +8,12 @@ import { useJobStore } from "../../store/jobStore";
 interface Props {
   datasetId: string;
   imageIds?: string[];
+  subfolder?: string;
   onSuccess?: () => void;
   onCancel?: () => void;
 }
 
-export default function UpscaleForm({ datasetId, imageIds, onSuccess, onCancel }: Props) {
+export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
 
   const [modelPath, setModelPath] = useState("");
@@ -47,6 +48,7 @@ export default function UpscaleForm({ datasetId, imageIds, onSuccess, onCancel }
       upscalingApi.run({
         dataset_id: datasetId,
         image_ids: imageIds,
+        subfolder,
         model_path: modelPath,
         replace,
         target_width: parseInt(targetW) > 0 ? parseInt(targetW) : null,

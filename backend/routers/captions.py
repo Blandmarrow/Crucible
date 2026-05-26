@@ -69,6 +69,7 @@ async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = D
             use_regex=body.use_regex,
             image_ids=body.image_ids,
             quality_flags=body.quality_flags,
+            subfolder=body.subfolder,
         )
     except asyncio.TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")

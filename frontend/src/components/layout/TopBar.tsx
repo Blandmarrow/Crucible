@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useMatch } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
 import { useJobStore } from "../../store/jobStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
 import { Columns2 } from "lucide-react";
+
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale"]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -67,12 +69,31 @@ function Breadcrumbs() {
 
 export default function TopBar() {
   useAllJobsSSE();
+  const qc = useQueryClient();
   const jobs = useJobStore((s) => s.activeJobs);
   const runningJobs = [...jobs.values()].filter((j) => j.status === "running");
   const active = runningJobs[0];
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const { enabled: paneEnabled, toggleEnabled: togglePane } = usePaneStore();
+
+  // Page-level job watchers (e.g. in ImageDetailPage) stop when the component
+  // unmounts, so jobs that finish after navigation never invalidate the gallery.
+  // TopBar is always mounted, making it the right place for this side effect.
+  const processedJobsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    jobs.forEach((progress, jobId) => {
+      if (
+        progress.status === "completed" &&
+        progress.dataset_id &&
+        IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type) &&
+        !processedJobsRef.current.has(jobId)
+      ) {
+        processedJobsRef.current.add(jobId);
+        qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+      }
+    });
+  }, [jobs, qc]);
 
   async function handleShutdown() {
     setShowConfirm(false);

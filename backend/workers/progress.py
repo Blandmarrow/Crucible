@@ -36,14 +36,14 @@ class ProgressBroadcaster:
             except asyncio.QueueFull:
                 pass
 
-    async def stream(self, channel: str) -> AsyncGenerator[dict, None]:
+    async def stream(self, channel: str, stop_on_terminal: bool = True) -> AsyncGenerator[dict, None]:
         q = self.subscribe(channel)
         try:
             while True:
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=25.0)
                     yield event
-                    if event.get("status") in ("completed", "failed", "cancelled"):
+                    if stop_on_terminal and event.get("status") in ("completed", "failed", "cancelled"):
                         break
                 except asyncio.TimeoutError:
                     yield {"type": "heartbeat"}

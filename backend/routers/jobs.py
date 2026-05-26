@@ -53,7 +53,7 @@ async def stream_job(job_id: str, request: Request):
 @router.get("/stream/all/events")
 async def stream_all(request: Request):
     async def generate():
-        async for event in broadcaster.stream("all"):
+        async for event in broadcaster.stream("all", stop_on_terminal=False):
             if await request.is_disconnected():
                 break
             yield {"data": json.dumps(event)}

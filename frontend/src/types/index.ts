@@ -193,6 +193,7 @@ export interface JobProgress {
   type: string;
   job_id: string;
   job_type: string;
+  dataset_id?: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   done: number;
   total: number;

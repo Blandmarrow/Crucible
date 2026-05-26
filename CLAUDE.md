@@ -504,7 +504,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | `operation` | required | `"prepend"` / `"append"` / `"remove"` / `"find_replace"` |
 | `text` | required | Text to add (prepend/append) or text to find (remove/find_replace) |
 | `replacement` | `""` | Replacement string for `find_replace` |
-| `use_regex` | `false` | Treat `text` (and `replacement`) as a Python regex; invalid patterns skip the image |
+| `use_regex` | `false` | Treat `text` (and `replacement`) as a Python regex; invalid patterns skip the image. Regex matching runs in a thread executor with a 30-second `asyncio.wait_for` timeout to prevent catastrophic backtracking from blocking the event loop; returns 408 on timeout. |
 | `image_ids` | `null` | If set, restrict to these image IDs |
 | `quality_flags` | `null` | If set, additionally **exclude** images where any of these flags is `True` (AND IS NOT TRUE per flag); validated against `ALLOWED_FLAG_KEYS` from `utils.py` |
 

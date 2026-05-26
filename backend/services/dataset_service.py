@@ -142,24 +142,33 @@ async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> Non
     if not ds:
         return
     current: list[str] = list(ds.declared_subfolders or [])
-    if path not in current:
-        current.append(path)
+    parts = path.split("/")
+    changed = False
+    for i in range(1, len(parts) + 1):
+        ancestor = "/".join(parts[:i])
+        if ancestor not in current:
+            current.append(ancestor)
+            changed = True
+    if changed:
         ds.declared_subfolders = current
         await db.commit()
 
 
 async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
-    """Move all images in the subfolder to root and remove from declared list. Returns image count moved."""
+    """Move all images in the subfolder and its children to root, remove all from declared list."""
+    prefix = path + "/"
     result = await db.execute(
         sa_update(Image)
-        .where(Image.dataset_id == dataset_id, Image.subfolder == path)
+        .where(Image.dataset_id == dataset_id)
+        .where((Image.subfolder == path) | Image.subfolder.like(prefix + "%"))
         .values(subfolder="")
     )
     moved = result.rowcount
 
     ds = await db.get(Dataset, dataset_id)
     if ds:
-        current = [p for p in (ds.declared_subfolders or []) if p != path]
+        current = [p for p in (ds.declared_subfolders or [])
+                   if p != path and not p.startswith(prefix)]
         ds.declared_subfolders = current
 
     await db.commit()

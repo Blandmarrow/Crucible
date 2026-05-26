@@ -381,4 +381,13 @@
   .subfolder-row:hover .subfolder-copy-btn { opacity: 1; }
   .subfolder-move-btn:hover { color: var(--accent) !important; }
   .subfolder-copy-btn:hover { color: var(--info) !important; }
+
+  .subfolder-add-child-btn {
+    flex-shrink: 0; width: 16px; height: 16px; padding: 0;
+    border: none; cursor: pointer; border-radius: var(--r);
+    background: transparent; color: var(--accent);
+    font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .1s;
+  }
+  .subfolder-row:hover .subfolder-add-child-btn { opacity: 1; }
 }

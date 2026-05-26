@@ -146,7 +146,7 @@ async def list_images(
         q = q.where(Image.format == format_filter)
 
     if subfolder is not None:
-        q = q.where(Image.subfolder == subfolder)
+        q = q.where((Image.subfolder == subfolder) | Image.subfolder.like(subfolder + "/%"))
 
     if detection_label:
         q = q.where(

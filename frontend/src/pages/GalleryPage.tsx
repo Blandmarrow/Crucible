@@ -38,6 +38,45 @@ const SCORE_FIELDS = [
   { value: "saturation_score",       label: "Saturation",        short: "Saturation" },
 ];
 
+interface SubfolderNode extends SubfolderInfo {
+  label: string;
+  depth: number;
+  children: SubfolderNode[];
+  totalCount: number;
+}
+
+function buildSubfolderTree(items: SubfolderInfo[]): SubfolderNode[] {
+  const map = new Map<string, SubfolderNode>();
+  for (const item of items) {
+    if (!item.path) continue;
+    map.set(item.path, {
+      ...item,
+      label: item.path.split("/").pop()!,
+      depth: item.path.split("/").length - 1,
+      children: [],
+      totalCount: item.image_count,
+    });
+  }
+  const roots: SubfolderNode[] = [];
+  for (const node of map.values()) {
+    const parts = node.path.split("/");
+    if (parts.length === 1) {
+      roots.push(node);
+    } else {
+      const parent = map.get(parts.slice(0, -1).join("/"));
+      if (parent) parent.children.push(node); else roots.push(node);
+    }
+  }
+  function computeTotals(n: SubfolderNode): void {
+    n.children.sort((a, b) => a.label.localeCompare(b.label));
+    for (const c of n.children) computeTotals(c);
+    n.totalCount = n.image_count + n.children.reduce((s, c) => s + c.totalCount, 0);
+  }
+  roots.sort((a, b) => a.label.localeCompare(b.label));
+  roots.forEach(computeTotals);
+  return roots;
+}
+
 function scoreChipLabel(f: ScoreFilter): string {
   const short = SCORE_FIELDS.find(s => s.value === f.field)?.short ?? f.field;
   if (f.min && f.max) return `${short}: ${f.min}–${f.max}`;
@@ -87,6 +126,9 @@ export default function GalleryPage() {
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingMoveSubfolder, setPendingMoveSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingCopySubfolder, setPendingCopySubfolder] = useState<SubfolderInfo | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [createChildOf, setCreateChildOf] = useState<string | null>(null);
+  const [newChildName, setNewChildName] = useState("");
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -136,6 +178,8 @@ export default function GalleryPage() {
     queryFn: () => datasetsApi.subfolders(datasetId!),
     enabled: !!datasetId,
   });
+
+  const subfolderTree = useMemo(() => buildSubfolderTree(subfolders), [subfolders]);
 
   useEffect(() => {
     setUploadSubfolder(activeSubfolder ?? "");
@@ -207,6 +251,17 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       setShowCreateSubfolder(false);
       setNewSubfolderName("");
+      setCreateChildOf(null);
+      setNewChildName("");
+      // Auto-expand all ancestor paths so the new subfolder is visible
+      const parts = data.path.split("/");
+      if (parts.length > 1) {
+        setExpandedPaths(prev => {
+          const next = new Set(prev);
+          for (let i = 1; i < parts.length; i++) next.add(parts.slice(0, i).join("/"));
+          return next;
+        });
+      }
       setActiveSubfolder(data.path);
       toast.success(`Created subfolder "${data.path}"`);
     },
@@ -219,7 +274,10 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       setPendingDeleteSubfolder(null);
-      if (activeSubfolder === path) { setActiveSubfolder(undefined); resetPage(); }
+      if (activeSubfolder === path || activeSubfolder?.startsWith(path + "/")) {
+        setActiveSubfolder(undefined);
+        resetPage();
+      }
       toast.success(`Deleted subfolder "${path}"`);
     },
     onError: () => toast.error("Failed to delete subfolder"),
@@ -291,6 +349,153 @@ export default function GalleryPage() {
     setDraftMax("");
     setShowAddScore(false);
     resetPage();
+  };
+
+  const rootEntry = subfolders.find(sf => sf.path === "");
+  const isRootActive = activeSubfolder === "";
+
+  const deleteDialogMessage = pendingDeleteSubfolder
+    ? (() => {
+        const childFolders = pendingDeleteSubfolder.path
+          ? subfolders.filter(sf => sf.path.startsWith(pendingDeleteSubfolder.path + "/"))
+          : [];
+        const childCount = childFolders.length;
+        const totalImages = pendingDeleteSubfolder.image_count + childFolders.reduce((s, sf) => s + sf.image_count, 0);
+        const parts: string[] = [];
+        if (childCount > 0) parts.push(`${childCount} child subfolder${childCount !== 1 ? "s" : ""}`);
+        if (totalImages > 0) parts.push(`${totalImages} image${totalImages !== 1 ? "s" : ""}`);
+        return parts.length > 0
+          ? `This will remove ${parts.join(" and ")}. All images will be moved to root (ungrouped) — not deleted.`
+          : "This empty subfolder will be removed.";
+      })()
+    : "";
+
+  const renderSubfolderNode = (node: SubfolderNode) => {
+    const isExpanded = expandedPaths.has(node.path);
+    const isActive = activeSubfolder === node.path;
+    const hasChildren = node.children.length > 0;
+
+    return (
+      <div key={node.path}>
+        <div
+          className="subfolder-row"
+          style={{
+            display: "flex", alignItems: "center",
+            borderRadius: "var(--r)",
+            background: isActive ? "var(--surface-3)" : "transparent",
+          }}
+        >
+          {/* expand/collapse toggle (doubles as indent) */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!hasChildren) return;
+              setExpandedPaths(prev => {
+                const next = new Set(prev);
+                if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
+                return next;
+              });
+            }}
+            style={{
+              flexShrink: 0,
+              width: 8 + node.depth * 12 + 12,
+              minHeight: 28, border: "none",
+              background: "transparent",
+              cursor: hasChildren ? "pointer" : "default",
+              color: "var(--fg-mute)", fontSize: 7,
+              paddingLeft: 8 + node.depth * 12,
+              display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 2,
+            }}
+          >{hasChildren ? (isExpanded ? "▼" : "▶") : ""}</button>
+
+          {/* label + count */}
+          <button
+            onClick={() => { setActiveSubfolder(node.path); resetPage(); }}
+            title={node.path}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              flex: 1, minWidth: 0, padding: "5px 4px",
+              border: "none", cursor: "pointer", textAlign: "left",
+              background: "transparent",
+              color: isActive ? "var(--accent)" : "var(--fg)",
+              fontSize: 12.5, fontWeight: isActive ? 600 : 400,
+            }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{node.label}</span>
+            <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{node.totalCount || ""}</span>
+          </button>
+
+          {/* hover actions */}
+          <button
+            className="subfolder-add-child-btn"
+            title={`Add subfolder inside "${node.path}"`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateChildOf(createChildOf === node.path ? null : node.path);
+              setNewChildName("");
+            }}
+          >+</button>
+          <button
+            className="subfolder-action-btn subfolder-move-btn"
+            title={`Move "${node.path}" to another dataset`}
+            onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(node); }}
+          ><ArrowRightFromLine size={11} /></button>
+          <button
+            className="subfolder-action-btn subfolder-copy-btn"
+            title={`Copy "${node.path}" to another dataset`}
+            onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(node); }}
+          ><Copy size={11} /></button>
+          <button
+            className="subfolder-delete-btn"
+            title={`Delete "${node.path}"`}
+            onClick={(e) => { e.stopPropagation(); setPendingDeleteSubfolder(node); }}
+            style={{
+              flexShrink: 0, width: 18, height: 18, padding: 0,
+              border: "none", cursor: "pointer", borderRadius: "var(--r)",
+              background: "transparent", color: "var(--fg-mute)",
+              fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              marginRight: 4,
+            }}
+          >×</button>
+        </div>
+
+        {/* inline child-create form */}
+        {createChildOf === node.path && (
+          <div style={{ padding: `2px 6px 6px ${8 + (node.depth + 1) * 12 + 12}px` }}>
+            <div style={{ fontSize: 10, color: "var(--fg-mute)", marginBottom: 2 }}>{node.path}/</div>
+            <input
+              className="input"
+              style={{ width: "100%", fontSize: 12, padding: "3px 6px" }}
+              placeholder="child-name"
+              value={newChildName}
+              onChange={(e) => setNewChildName(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newChildName.trim())
+                  createSubfolderMutation.mutate(node.path + "/" + newChildName.trim());
+                if (e.key === "Escape") { setCreateChildOf(null); setNewChildName(""); }
+              }}
+            />
+            <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+              <button
+                className="btn sm"
+                style={{ flex: 1, fontSize: 11 }}
+                disabled={!newChildName.trim() || createSubfolderMutation.isPending}
+                onClick={() => createSubfolderMutation.mutate(node.path + "/" + newChildName.trim())}
+              >Create</button>
+              <button
+                className="btn ghost sm"
+                style={{ fontSize: 11 }}
+                onClick={() => { setCreateChildOf(null); setNewChildName(""); }}
+              >✕</button>
+            </div>
+          </div>
+        )}
+
+        {/* children */}
+        {hasChildren && isExpanded && node.children.map(renderSubfolderNode)}
+      </div>
+    );
   };
 
   return (
@@ -567,61 +772,45 @@ export default function GalleryPage() {
               <span>All</span>
               <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{dataset?.image_count ?? ""}</span>
             </button>
-            {subfolders.map((sf) => {
-              const depth = sf.path === "" ? 0 : (sf.path.split("/").length - 1);
-              const label = sf.path === "" ? "(root)" : sf.path.split("/").pop()!;
-              const isActive = activeSubfolder === sf.path;
-              return (
-                <div
-                  key={sf.path}
-                  className="subfolder-row"
+            {/* (root) entry — images with no subfolder */}
+            {rootEntry && (
+              <div
+                className="subfolder-row"
+                style={{
+                  display: "flex", alignItems: "center",
+                  borderRadius: "var(--r)",
+                  background: isRootActive ? "var(--surface-3)" : "transparent",
+                }}
+              >
+                <button
+                  onClick={() => { setActiveSubfolder(""); resetPage(); }}
+                  title="(root)"
                   style={{
-                    display: "flex", alignItems: "center",
-                    borderRadius: "var(--r)",
-                    background: isActive ? "var(--surface-3)" : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    flex: 1, minWidth: 0, padding: "5px 4px 5px 8px",
+                    border: "none", cursor: "pointer", textAlign: "left",
+                    background: "transparent",
+                    color: isRootActive ? "var(--accent)" : "var(--fg)",
+                    fontSize: 12.5, fontWeight: isRootActive ? 600 : 400, fontStyle: "italic",
                   }}
                 >
-                  <button
-                    onClick={() => { setActiveSubfolder(sf.path); resetPage(); }}
-                    title={sf.path || "(root)"}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      flex: 1, minWidth: 0, padding: "5px 4px 5px 8px",
-                      paddingLeft: 8 + depth * 12,
-                      border: "none", cursor: "pointer", textAlign: "left",
-                      background: "transparent",
-                      color: isActive ? "var(--accent)" : "var(--fg)",
-                      fontSize: 12.5, fontWeight: isActive ? 600 : 400,
-                    }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{label}</span>
-                    <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{sf.image_count}</span>
-                  </button>
-                  <button
-                    className="subfolder-action-btn subfolder-move-btn"
-                    title={`Move "${sf.path || "(root)"}" to another dataset`}
-                    onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(sf); }}
-                  ><ArrowRightFromLine size={11} /></button>
-                  <button
-                    className="subfolder-action-btn subfolder-copy-btn"
-                    title={`Copy "${sf.path || "(root)"}" to another dataset`}
-                    onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(sf); }}
-                  ><Copy size={11} /></button>
-                  <button
-                    className="subfolder-delete-btn"
-                    title={`Delete "${sf.path || "(root)"}"`}
-                    onClick={(e) => { e.stopPropagation(); setPendingDeleteSubfolder(sf); }}
-                    style={{
-                      flexShrink: 0, width: 18, height: 18, padding: 0,
-                      border: "none", cursor: "pointer", borderRadius: "var(--r)",
-                      background: "transparent", color: "var(--fg-mute)",
-                      fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
-                      marginRight: 4,
-                    }}
-                  >×</button>
-                </div>
-              );
-            })}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>(root)</span>
+                  <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{rootEntry.image_count}</span>
+                </button>
+                <button
+                  className="subfolder-action-btn subfolder-move-btn"
+                  title={`Move "(root)" to another dataset`}
+                  onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(rootEntry); }}
+                ><ArrowRightFromLine size={11} /></button>
+                <button
+                  className="subfolder-action-btn subfolder-copy-btn"
+                  title={`Copy "(root)" to another dataset`}
+                  onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(rootEntry); }}
+                ><Copy size={11} /></button>
+              </div>
+            )}
+            {/* nested subfolder tree */}
+            {subfolderTree.map(renderSubfolderNode)}
           </div>
         )}
 
@@ -728,11 +917,7 @@ export default function GalleryPage() {
       {pendingDeleteSubfolder && (
         <ConfirmDialog
           title={`Delete "${pendingDeleteSubfolder.path || "(root)"}"`}
-          message={
-            pendingDeleteSubfolder.image_count > 0
-              ? `This subfolder contains ${pendingDeleteSubfolder.image_count} image${pendingDeleteSubfolder.image_count !== 1 ? "s" : ""}. They will be moved to root (ungrouped). The images themselves will not be deleted.`
-              : "This empty subfolder will be removed."
-          }
+          message={deleteDialogMessage}
           confirmLabel="Delete Subfolder"
           danger
           onConfirm={() => deleteSubfolderMutation.mutate(pendingDeleteSubfolder.path)}

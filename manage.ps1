@@ -42,14 +42,14 @@ function Install-TorchIfNeeded {
     $hasCuda = & "$ROOT\venv\Scripts\python.exe" -c `
         "import torch; print(torch.cuda.is_available())" 2>$null
     if ($hasCuda -eq "True") {
-        Write-Host "  CUDA-enabled PyTorch already available — skipping." -ForegroundColor Green
+        Write-Host "  CUDA-enabled PyTorch already available - skipping." -ForegroundColor Green
         return
     }
 
     # Try to determine the driver's maximum supported CUDA version via nvidia-smi,
     # which ships with every NVIDIA driver (no CUDA toolkit required).
     if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
-        Write-Host "  No NVIDIA GPU detected — PyTorch will be CPU-only." -ForegroundColor DarkGray
+        Write-Host "  No NVIDIA GPU detected - PyTorch will be CPU-only." -ForegroundColor DarkGray
         Write-Host "  ML features (captioning, scoring) require an NVIDIA GPU." -ForegroundColor DarkGray
         return
     }
@@ -57,7 +57,7 @@ function Install-TorchIfNeeded {
     $nvOut = (& nvidia-smi) | Out-String
     if ($nvOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
         $maj = [int]$Matches[1]; $min = [int]$Matches[2]
-        Write-Host "  NVIDIA GPU detected — driver supports CUDA $maj.$min." -ForegroundColor Green
+        Write-Host "  NVIDIA GPU detected - driver supports CUDA $maj.$min." -ForegroundColor Green
 
         # Pick the highest PyTorch CUDA wheel that the driver version supports.
         if ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) {
@@ -81,14 +81,14 @@ function Install-TorchIfNeeded {
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  CUDA-enabled PyTorch ($tag) installed." -ForegroundColor Green
             } else {
-                Write-Host "  WARNING: CUDA torch install failed — CPU-only fallback will be used." -ForegroundColor Yellow
+                Write-Host "  WARNING: CUDA torch install failed - CPU-only fallback will be used." -ForegroundColor Yellow
             }
         } else {
             Write-Host "  CUDA $maj.$min is older than the minimum supported version (11.8)." -ForegroundColor Yellow
             Write-Host "  Update your NVIDIA drivers for GPU support." -ForegroundColor DarkGray
         }
     } else {
-        Write-Host "  Could not parse CUDA version from nvidia-smi — CPU-only PyTorch will be used." -ForegroundColor DarkGray
+        Write-Host "  Could not parse CUDA version from nvidia-smi - CPU-only PyTorch will be used." -ForegroundColor DarkGray
     }
 }
 

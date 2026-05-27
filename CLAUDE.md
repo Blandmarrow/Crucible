@@ -341,6 +341,18 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 **Preview strip**: `GET /datasets/` (`DatasetOut`) accepts optional `skip` (default 0) and `limit` (default 0 = no limit) query params for pagination. Includes `preview_image_ids: list[str]` — up to 8 image IDs fetched in a single batch query alongside the datasets list. The card renders these as `<img src="/api/v1/images/{id}/thumbnail">` tiles. When a dataset has no images the strip falls back to deterministic colour gradients.
 
+**Sort control**: a `<select>` in the page header lets the user sort the dataset list. Sorting is frontend-only (`useMemo` on the already-loaded list). Options: Newest (default) / Oldest / Recently updated / Name A→Z / Name Z→A / Most images / Fewest images / Largest / Smallest / Most captioned %. Sorting applies within each category section when grouped, not across sections.
+
+**Category groups**: `Dataset` has a nullable `category: str` column (default `""`). When at least one dataset has a non-empty category, the page switches from a flat grid to a **folder-sectioned layout**:
+- Each category renders a collapsible section: folder icon + name + count badge + chevron. Section collapse state is `useState<Set<string>>`.
+- Datasets with no category appear at the bottom in a muted "(Uncategorized)" section.
+- When all datasets have `category = ""` the flat grid is restored.
+- **Rename category**: hover the section header to reveal a pencil button. Clicking enters an inline rename form (input + Enter/Escape). On confirm, `renameCategoryMutation` batch-PATCHes all affected datasets via `Promise.all`. Invalidates `["datasets"]` on both success and error (to recover from partial failures).
+- **Delete category**: hover to reveal a trash button. `ConfirmDialog` → `deleteCategoryMutation` batch-PATCHes `category: ""` on all affected datasets. Invalidates `["datasets"]` on both success and error.
+- The "Uncategorized" section has no rename/delete buttons.
+
+**`CategoryPicker` component** (`DatasetsPage.tsx`, module-level): used in both Create and Edit modals. Renders a `<select>` showing existing categories + "(None)" + "New category…"; choosing "New category…" reveals a text input below. Because the component is always inside a conditionally-rendered modal it remounts on each open — `useState(!inExisting)` init is sufficient; no sync `useEffect` is needed or present.
+
 **Import job tracking**: after starting an import (`POST /datasets/{id}/import`) `DatasetsPage` stores the returned `job_id` and watches it in `jobStore` via `useEffect`. The `["datasets"]` query is invalidated only when the job status becomes `"completed"` — not when the job is created — so image counts update after the import actually finishes.
 
 **Import subfolder options**: the import modal accepts `subfolder` (target logical subfolder, empty = root) and `preserve_structure: bool` (when true, recursively walks the source folder and maps each subdirectory level to a logical subfolder matching the relative path; when false, all images land in the specified `subfolder`). Both are passed in the `POST /datasets/{id}/import` body as `DatasetImportWithOptions`.
@@ -351,7 +363,9 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 **Dataset folder naming**: `create_dataset()` in `dataset_service.py` derives the folder name from the dataset name via `_name_to_slug()` (lowercase, spaces → underscores, special chars stripped, max 80 chars) rather than using the UUID. The UUID is still the DB primary key. If the slug folder already exists (name collision edge case), a `{slug}_{uuid8}` suffix is appended. Example: dataset named `"My Portraits"` creates `data/datasets/my_portraits/`.
 
-**Dataset edit**: the pencil (Edit) button on each dataset card opens a modal for editing both the name and description. `PATCH /datasets/{id}` accepts `{ name?, description? }`. When the name changes, `rename_dataset()` renames the folder on disk, bulk-updates all `Image.file_path`/`thumbnail_path` records via string prefix replacement, and updates `Dataset.folder_path`/`name` — all in one transaction. Returns 400 on name conflict. The Save button is enabled when either field differs from the current values.
+**Dataset edit**: the pencil (Edit) button on each dataset card opens a modal for editing the name, description, and category. `PATCH /datasets/{id}` accepts `{ name?, description?, category? }`. When the name changes, `rename_dataset()` renames the folder on disk, bulk-updates all `Image.file_path`/`thumbnail_path` records via string prefix replacement, and updates `Dataset.folder_path`/`name` — all in one transaction. Returns 400 on name conflict. The Save button is enabled when any field differs from the current values.
+
+**Dataset duplicate**: the copy icon button on each card opens a Duplicate modal. `POST /datasets/{id}/duplicate` is a background job that returns `{job_id}` immediately; `DatasetsPage` watches the job in `jobStore` and invalidates `["datasets"]` on completion. The new dataset inherits the source's description, category, and declared subfolders; blob columns (`clip_embedding`, `dino_embedding`, `dino_layer_embeddings`) are not copied. When versioning is enabled and the source dataset has branches, the modal shows a branch + version dropdown; choosing a specific snapshot copies from the object store (using the snapshot's `file_hash` if present, otherwise the current file path). `datasetsApi.duplicate(id, newName, sourceVersionId?)` in `frontend/src/api/datasets.ts`. Backend: `duplicate_dataset()` in `dataset_service.py`; `DatasetDuplicateRequest` schema (`new_name`, `source_version_id?`) in `backend/schemas/dataset.py`.
 
 ### Statistics page
 

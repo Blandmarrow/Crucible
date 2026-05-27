@@ -46,6 +46,7 @@ export interface Dataset {
   id: string;
   name: string;
   description: string;
+  category: string;
   folder_path: string;
   created_at: string;
   updated_at: string;

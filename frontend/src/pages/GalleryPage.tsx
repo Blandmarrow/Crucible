@@ -296,7 +296,7 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
-      if (activeSubfolder === pendingMoveSubfolder?.path) { setActiveSubfolder(undefined); resetPage(); }
+      if (activeSubfolder === pendingMoveSubfolder?.path || activeSubfolder?.startsWith(pendingMoveSubfolder!.path + "/")) { setActiveSubfolder(undefined); resetPage(); }
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
       setPendingMoveSubfolder(null);
     },

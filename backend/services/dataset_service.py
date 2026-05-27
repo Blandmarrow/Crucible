@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.models import Dataset, Image, Tag
 from backend.services.image_service import extract_generation_metadata, generate_thumbnail, get_image_info
+from backend.utils import copy_with_sidecar, thumbnail_path_for
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
@@ -66,7 +67,7 @@ def _p95(sorted_vals: list[float]) -> float:
     return sorted_vals[min(idx, len(sorted_vals) - 1)]
 
 
-async def create_dataset(db: AsyncSession, name: str, description: str = "") -> Dataset:
+async def create_dataset(db: AsyncSession, name: str, description: str = "", category: str = "") -> Dataset:
     ds_id = str(uuid4())
     slug = _name_to_slug(name)
     folder = settings.datasets_dir / slug
@@ -76,7 +77,7 @@ async def create_dataset(db: AsyncSession, name: str, description: str = "") -> 
     (folder / "images").mkdir(exist_ok=True)
     (folder / "thumbnails").mkdir(exist_ok=True)
 
-    ds = Dataset(id=ds_id, name=name, description=description, folder_path=str(folder))
+    ds = Dataset(id=ds_id, name=name, description=description, category=category, folder_path=str(folder))
     db.add(ds)
     await db.commit()
     await db.refresh(ds)
@@ -156,11 +157,11 @@ async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> Non
 
 async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
     """Move all images in the subfolder and its children to root, remove all from declared list."""
-    prefix = path + "/"
+    escaped = path.replace("%", r"\%").replace("_", r"\_")
     result = await db.execute(
         sa_update(Image)
         .where(Image.dataset_id == dataset_id)
-        .where((Image.subfolder == path) | Image.subfolder.like(prefix + "%"))
+        .where((Image.subfolder == path) | Image.subfolder.like(escaped + "/%", escape="\\"))
         .values(subfolder="")
     )
     moved = result.rowcount
@@ -579,6 +580,201 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
         out["caption_tokens"].append(len(enc.encode_ordinary(trimmed)) if trimmed else 0)
 
     return out
+
+
+async def duplicate_dataset(
+    db: AsyncSession,
+    source_dataset: Dataset,
+    new_name: str,
+    job_id: str,
+    source_version_id: str | None = None,
+) -> str:
+    """Deep-clone a dataset into a new one.  Returns the new dataset's id."""
+    import logging
+    from backend.workers.progress import broadcaster
+
+    log = logging.getLogger(__name__)
+
+    # --- Step 1: create fresh destination dataset ---
+    new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
+    new_ds.declared_subfolders = list(source_dataset.declared_subfolders or [])
+    await db.flush()
+
+    dest_images = Path(new_ds.folder_path) / "images"
+    dest_thumbs = Path(new_ds.folder_path) / "thumbnails"
+
+    # --- Step 2A: copy from current on-disk state ---
+    if source_version_id is None:
+        cols = (
+            Image.id, Image.filename, Image.file_path, Image.thumbnail_path,
+            Image.original_filename, Image.subfolder, Image.is_auto_named,
+            Image.width, Image.height, Image.file_size_bytes, Image.format,
+            Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
+            Image.tags_json, Image.quality_flags, Image.aesthetic_score, Image.blur_score,
+            Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
+            Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
+            Image.generation_metadata, Image.processing_history,
+        )
+        result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
+        rows = result.all()
+        total = len(rows)
+
+        # Build copy plan (path mappings)
+        plan: list = []
+        for row in rows:
+            old_path = Path(row.file_path)
+            new_path = dest_images / row.filename  # fresh folder — no collision
+            old_thumb = Path(thumbnail_path_for(str(old_path)))
+            new_thumb = dest_thumbs / old_thumb.name
+            plan.append((old_path, new_path, old_thumb, new_thumb, row))
+
+        # File copies + DB inserts — add() only after successful copy so no ghost records
+        for i, (old_path, new_path, old_thumb, new_thumb, row) in enumerate(plan):
+            try:
+                copy_with_sidecar(old_path, new_path)
+                if old_thumb.exists():
+                    shutil.copy2(old_thumb, new_thumb)
+                db.add(Image(
+                    id=str(uuid4()),
+                    dataset_id=new_ds.id,
+                    filename=row.filename,
+                    original_filename=row.original_filename,
+                    subfolder=row.subfolder,
+                    file_path=str(new_path),
+                    thumbnail_path=str(new_thumb),
+                    is_auto_named=row.is_auto_named,
+                    width=row.width,
+                    height=row.height,
+                    file_size_bytes=row.file_size_bytes,
+                    format=row.format,
+                    phash=row.phash,
+                    caption_text=row.caption_text,
+                    caption_style=row.caption_style,
+                    captioned_by=row.captioned_by,
+                    captioned_at=row.captioned_at,
+                    tags_json=row.tags_json,
+                    quality_flags=row.quality_flags,
+                    aesthetic_score=row.aesthetic_score,
+                    blur_score=row.blur_score,
+                    noise_score=row.noise_score,
+                    uniformity_score=row.uniformity_score,
+                    watermark_score=row.watermark_score,
+                    color_score=row.color_score,
+                    saturation_score=row.saturation_score,
+                    style_similarity_score=row.style_similarity_score,
+                    dino_layer_scores=row.dino_layer_scores,
+                    generation_metadata=row.generation_metadata,
+                    processing_history=row.processing_history,
+                ))
+            except Exception as exc:
+                log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
+
+            if i % 10 == 0:
+                pct = round((i + 1) / total * 100, 1) if total else 100.0
+                await broadcaster.emit(job_id, {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "job_type": "duplicate",
+                    "dataset_id": source_dataset.id,
+                    "status": "running",
+                    "done": i + 1,
+                    "total": total,
+                    "percent": pct,
+                    "message": f"Copying {row.filename}",
+                })
+
+    # --- Step 2B: copy from snapshot ---
+    else:
+        from backend.models.versioning import VersionImageState
+
+        result = await db.execute(
+            select(VersionImageState).where(
+                VersionImageState.version_id == source_version_id,
+                VersionImageState.is_present.is_(True),
+            )
+        )
+        states = result.scalars().all()
+        total = len(states)
+        skipped = 0
+        loop = asyncio.get_event_loop()
+
+        for i, state in enumerate(states):
+            # Resolve source file: object store or current on-disk path
+            if state.file_hash:
+                src_file = (
+                    Path(source_dataset.folder_path)
+                    / ".versions" / "objects"
+                    / state.file_hash[:2]
+                    / state.file_hash[2:]
+                )
+            else:
+                src_file = Path(state.file_path)
+
+            if not src_file.exists():
+                log.warning("duplicate_dataset: source file missing for %s, skipping", state.filename)
+                skipped += 1
+                continue
+
+            new_path = dest_images / state.filename
+            new_thumb = dest_thumbs / (Path(state.filename).stem + ".webp")
+
+            try:
+                shutil.copy2(src_file, new_path)
+                if state.caption_text:
+                    new_path.with_suffix(".txt").write_text(state.caption_text, encoding="utf-8")
+                await loop.run_in_executor(None, generate_thumbnail, str(new_path), str(new_thumb))
+
+                db.add(Image(
+                    id=str(uuid4()),
+                    dataset_id=new_ds.id,
+                    filename=state.filename,
+                    original_filename=state.original_filename,
+                    subfolder=state.subfolder,
+                    file_path=str(new_path),
+                    thumbnail_path=str(new_thumb),
+                    caption_text=state.caption_text,
+                    tags_json=state.tags_json or [],
+                    quality_flags=state.quality_flags or {},
+                    width=state.width,
+                    height=state.height,
+                    file_size_bytes=state.file_size_bytes,
+                    format=state.format,
+                    aesthetic_score=state.aesthetic_score,
+                    blur_score=state.blur_score,
+                    noise_score=state.noise_score,
+                    uniformity_score=state.uniformity_score,
+                    watermark_score=state.watermark_score,
+                    color_score=state.color_score,
+                    style_similarity_score=state.style_similarity_score,
+                    dino_layer_scores=state.dino_layer_scores,
+                    generation_metadata=state.generation_metadata,
+                    processing_history=state.processing_history,
+                ))
+            except Exception as exc:
+                log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)
+                skipped += 1
+
+            if i % 10 == 0:
+                pct = round((i + 1) / total * 100, 1) if total else 100.0
+                await broadcaster.emit(job_id, {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "job_type": "duplicate",
+                    "dataset_id": source_dataset.id,
+                    "status": "running",
+                    "done": i + 1,
+                    "total": total,
+                    "percent": pct,
+                    "message": f"Copying {state.filename}",
+                })
+
+        if skipped:
+            log.warning("duplicate_dataset: skipped %d/%d images (missing files)", skipped, total)
+
+    # --- Step 3: commit and refresh stats ---
+    await db.commit()
+    await refresh_stats(db, new_ds.id)
+    return new_ds.id
 
 
 async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15, subfolder: str | None = None) -> dict:

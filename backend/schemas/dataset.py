@@ -5,11 +5,13 @@ from pydantic import BaseModel, Field
 class DatasetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
+    category: str = ""
 
 
 class DatasetUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
+    category: str | None = None
 
 
 class DatasetImport(BaseModel):
@@ -31,10 +33,16 @@ class SubfolderCreate(BaseModel):
     path: str
 
 
+class DatasetDuplicateRequest(BaseModel):
+    new_name: str = Field(..., min_length=1, max_length=255)
+    source_version_id: str | None = None  # None = duplicate current on-disk state
+
+
 class DatasetOut(BaseModel):
     id: str
     name: str
     description: str
+    category: str = ""
     folder_path: str
     created_at: datetime
     updated_at: datetime

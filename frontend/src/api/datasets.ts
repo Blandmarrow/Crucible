@@ -19,11 +19,18 @@ export interface ScoreValues {
 export const datasetsApi = {
   list: () => client.get<Dataset[]>("/datasets/").then((r) => r.data),
   get: (id: string) => client.get<Dataset>(`/datasets/${id}`).then((r) => r.data),
-  create: (name: string, description = "") =>
-    client.post<Dataset>("/datasets/", { name, description }).then((r) => r.data),
-  update: (id: string, data: { name?: string; description?: string }) =>
+  create: (name: string, description = "", category = "") =>
+    client.post<Dataset>("/datasets/", { name, description, category }).then((r) => r.data),
+  update: (id: string, data: { name?: string; description?: string; category?: string }) =>
     client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
+  duplicate: (id: string, newName: string, sourceVersionId?: string) =>
+    client
+      .post<{ job_id: string }>(`/datasets/${id}/duplicate`, {
+        new_name: newName,
+        source_version_id: sourceVersionId ?? null,
+      })
+      .then((r) => r.data),
   importFolder: (id: string, folder_path: string, subfolder = "", preserve_structure = false) =>
     client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path, subfolder, preserve_structure }).then((r) => r.data),
   subfolders: (id: string) =>

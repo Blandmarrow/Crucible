@@ -61,7 +61,10 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 
 ### Datasets & Gallery
 - Create multiple named datasets, each pointing to a folder of images
-- Edit datasets — rename (folder is moved on disk and all image paths are updated automatically) or update the description
+- Edit datasets — rename (folder is moved on disk and all image paths are updated automatically), update the description, or assign a **category**
+- **Sort** the dataset list by: Newest / Oldest / Recently updated / Name A→Z / Name Z→A / Most images / Fewest images / Largest / Smallest / Most captioned %
+- **Category groups** — assign datasets to named categories; the page switches from a flat grid to collapsible folder sections. Rename or delete a category (batch-updates all datasets in it) by hovering the section header
+- **Duplicate** a dataset — deep-copies all images, captions, subfolders, and metadata into a new dataset as a background job; optionally duplicate from a specific version snapshot instead of the current on-disk state
 - Gallery view with search (filename or caption text), pagination, and sort
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset

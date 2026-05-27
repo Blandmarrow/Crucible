@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import DatasetCreate, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
+from backend.schemas.dataset import DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
     create_dataset,
     declare_subfolder,
     delete_subfolder,
+    duplicate_dataset,
     get_dataset_stats,
     get_score_values,
     get_tag_cooccurrence,
@@ -57,6 +58,7 @@ async def list_datasets(
             id=ds.id,
             name=ds.name,
             description=ds.description,
+            category=ds.category,
             folder_path=ds.folder_path,
             created_at=ds.created_at,
             updated_at=ds.updated_at,
@@ -64,6 +66,7 @@ async def list_datasets(
             captioned_count=ds.captioned_count,
             total_size_bytes=ds.total_size_bytes,
             preview_image_ids=previews[ds.id],
+            current_branch_id=ds.current_branch_id,
         )
         for ds in datasets
     ]
@@ -74,7 +77,7 @@ async def create(body: DatasetCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(Dataset).where(Dataset.name == body.name))
     if existing.scalar():
         raise HTTPException(400, f"Dataset '{body.name}' already exists")
-    return await create_dataset(db, body.name, body.description)
+    return await create_dataset(db, body.name, body.description, body.category)
 
 
 @router.get("/{dataset_id}", response_model=DatasetOut)
@@ -95,10 +98,18 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         conflict = await db.execute(select(Dataset).where(Dataset.name == body.name))
         if conflict.scalar():
             raise HTTPException(400, f"Dataset '{body.name}' already exists")
-        return await rename_dataset(db, ds, body.name, body.description)
+        ds = await rename_dataset(db, ds, body.name, body.description)
+        # Apply category update after rename (rename already committed)
+        if body.category is not None:
+            ds.category = body.category
+            await db.commit()
+            await db.refresh(ds)
+        return ds
 
     if body.description is not None:
         ds.description = body.description
+    if body.category is not None:
+        ds.category = body.category
     await db.commit()
     await db.refresh(ds)
     return ds
@@ -115,6 +126,50 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     if folder.exists():
         import shutil
         shutil.rmtree(folder, ignore_errors=True)
+
+
+@router.post("/{dataset_id}/duplicate")
+async def duplicate_dataset_endpoint(
+    dataset_id: str, body: DatasetDuplicateRequest, db: AsyncSession = Depends(get_db)
+):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    conflict = await db.execute(select(Dataset).where(Dataset.name == body.new_name))
+    if conflict.scalar():
+        raise HTTPException(400, f"Dataset '{body.new_name}' already exists")
+
+    if body.source_version_id is not None:
+        from backend.models.versioning import DatasetVersion
+        ver = await db.get(DatasetVersion, body.source_version_id)
+        if not ver or ver.dataset_id != dataset_id:
+            raise HTTPException(404, "Snapshot not found for this dataset")
+        total = ver.image_count
+    else:
+        total = ds.image_count
+
+    job = BackgroundJob(
+        job_type="duplicate",
+        dataset_id=dataset_id,
+        total_items=total,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            src = await session.get(Dataset, dataset_id)
+            if src is None:
+                return  # dataset deleted after job was enqueued
+            await duplicate_dataset(
+                session, src, body.new_name, job_id,
+                source_version_id=body.source_version_id,
+            )
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
 
 
 @router.post("/{dataset_id}/import")

@@ -25,6 +25,7 @@ logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLeve
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
@@ -85,4 +86,15 @@ async def shutdown():
 # Serve built React frontend — must come last so API routes take priority
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+    # Mount static assets (JS/CSS/images) at their exact paths
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+
+    # Catch-all: serve index.html for any unmatched path so React Router handles
+    # client-side navigation on hard refresh / direct URL access.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # If it's a real file in dist (e.g. favicon.ico, manifest.json), serve it directly
+        candidate = frontend_dist / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(frontend_dist / "index.html"))

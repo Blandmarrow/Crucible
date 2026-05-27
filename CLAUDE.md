@@ -43,6 +43,15 @@ HTTP request → FastAPI router → service layer (pure business logic, no HTTP)
 
 Long-running operations (captioning, quality scoring, import, export, batch ops) are queued: the router creates a `BackgroundJob` DB record, enqueues a coroutine in `workers/job_queue.py`, and immediately returns `{job_id}`. The worker runs the job, emits SSE progress events via `workers/progress.py`, and updates the job row when done. The frontend subscribes to `GET /api/v1/jobs/stream/{job_id}` (or `/stream/all/events` for the global progress bar).
 
+### Frontend serving (production)
+
+`backend/main.py` serves the built React app after all API routers are registered. Two parts:
+
+1. `app.mount("/assets", StaticFiles(directory=frontend_dist/"assets"))` — serves JS/CSS/fonts at their exact paths with correct content-type headers.
+2. `@app.get("/{full_path:path}")` catch-all — for any unmatched path, serves the file directly if it exists in `frontend/dist/` (favicon, manifest, etc.), otherwise returns `index.html` so React Router handles client-side navigation.
+
+**Do not replace this with a bare `StaticFiles(html=True)` mount.** Starlette's `html=True` only falls back to `index.html` for directory-style paths (`/`); it returns 404 for deep URLs like `/datasets/abc123` on hard refresh. The catch-all route is required for SPA routing to work correctly.
+
 ### Shared utilities
 
 `backend/utils.py` — thin module for helpers shared across multiple routers. Currently contains:

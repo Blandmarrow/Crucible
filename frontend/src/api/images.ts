@@ -75,6 +75,14 @@ export const imagesApi = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
+  uploadSingle: (dataset_id: string, file: File, subfolder = "") => {
+    const form = new FormData();
+    form.append("files", file);
+    const qs = subfolder ? `&subfolder=${encodeURIComponent(subfolder)}` : "";
+    return client.post(`/images/upload?dataset_id=${dataset_id}${qs}`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
   resize: (id: string, opts: { width?: number; height?: number; scale?: number; maintain_ar?: boolean }) =>
     client.post(`/images/${id}/resize`, opts).then((r) => r.data),
   crop: (

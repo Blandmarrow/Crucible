@@ -12,6 +12,7 @@ import { datasetsApi } from "../api/datasets";
 import ImageCard from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
+import { useUploadStore } from "../store/uploadStore";
 
 const SORT_OPTIONS = [
   { label: "Newest first", sort: "created_at", order: "desc" },
@@ -114,7 +115,10 @@ export default function GalleryPage() {
   const [draftField, setDraftField] = useState(SCORE_FIELDS[0].value);
   const [draftMin, setDraftMin] = useState("");
   const [draftMax, setDraftMax] = useState("");
-  const [uploading, setUploading] = useState(false);
+  const { progress: globalUploadProgress, setProgress: setUploadProgress } = useUploadStore();
+  // Only treat as "uploading" when the active upload is for this dataset
+  const uploadProgress = globalUploadProgress?.datasetId === datasetId ? globalUploadProgress : null;
+  const uploading = uploadProgress !== null;
   const [isDragOver, setIsDragOver] = useState(false);
   const [genMetaImage, setGenMetaImage] = useState<ImageListItem | null>(null);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
@@ -231,19 +235,31 @@ export default function GalleryPage() {
 
   const handleUpload = useCallback(async (files: FileList, sf?: string) => {
     if (!datasetId) return;
-    setUploading(true);
-    try {
-      await imagesApi.upload(datasetId, Array.from(files), sf ?? uploadSubfolder);
-      await refetch();
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      toast.success(`Uploaded ${files.length} image(s)`);
-    } catch {
-      toast.error("Upload failed");
-    } finally {
-      setUploading(false);
+    const fileArray = Array.from(files);
+    const subfolder = sf ?? uploadSubfolder;
+    setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0 });
+    let errors = 0;
+    for (let i = 0; i < fileArray.length; i++) {
+      try {
+        await imagesApi.uploadSingle(datasetId, fileArray[i], subfolder);
+        // Invalidate after each success so images appear in the gallery live.
+        // cancelRefetch: false lets in-flight fetches finish instead of being
+        // restarted on every file, coalescing rapid invalidations into fewer GETs.
+        qc.invalidateQueries({ queryKey: ["images", datasetId] }, { cancelRefetch: false });
+      } catch {
+        errors++;
+      }
+      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors });
     }
-  }, [datasetId, refetch, qc, uploadSubfolder]);
+    // Final refresh to ensure the gallery is fully up-to-date
+    await refetch();
+    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    const succeeded = fileArray.length - errors;
+    if (succeeded > 0) toast.success(`Uploaded ${succeeded} image(s)`);
+    if (errors > 0) toast.error(`${errors} file(s) failed to upload`);
+    setUploadProgress(null);
+  }, [datasetId, refetch, qc, uploadSubfolder]); // setUploadProgress omitted — Zustand setters are stable references
 
   const createSubfolderMutation = useMutation({
     mutationFn: (path: string) => datasetsApi.createSubfolder(datasetId!, path),
@@ -335,7 +351,7 @@ export default function GalleryPage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files.length) handleUpload(e.dataTransfer.files);
+    if (!uploading && e.dataTransfer.files.length) handleUpload(e.dataTransfer.files);
   };
 
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
@@ -697,7 +713,7 @@ export default function GalleryPage() {
               ))}
             </select>
           )}
-          <label className="btn" style={{ cursor: "pointer" }}>
+          <label className="btn" style={{ cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.65 : 1, pointerEvents: uploading ? "none" : "auto" }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
             </svg>
@@ -707,6 +723,36 @@ export default function GalleryPage() {
           </label>
         </div>
       </div>
+
+      {/* Upload progress bar */}
+      {uploadProgress && (
+        <div style={{
+          padding: "6px 28px", borderBottom: "1px solid var(--line)",
+          background: "var(--surface-1)", flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              flex: 1, height: 4, background: "var(--surface-3)",
+              borderRadius: 2, overflow: "hidden",
+            }}>
+              <div style={{
+                height: "100%",
+                width: `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%`,
+                background: uploadProgress.errors > 0 ? "var(--warn)" : "var(--accent)",
+                borderRadius: 2,
+                transition: "width 0.15s ease",
+              }} />
+            </div>
+            <span style={{
+              fontSize: 12, color: "var(--fg-mute)",
+              whiteSpace: "nowrap", minWidth: 90, textAlign: "right",
+            }}>
+              {uploadProgress.done} / {uploadProgress.total} images
+              {uploadProgress.errors > 0 && ` · ${uploadProgress.errors} failed`}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Grid area with subfolder sidebar */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>

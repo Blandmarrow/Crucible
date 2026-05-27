@@ -3,6 +3,7 @@ import { Link, useMatch } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
 import { useJobStore } from "../../store/jobStore";
+import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
@@ -73,6 +74,7 @@ export default function TopBar() {
   const jobs = useJobStore((s) => s.activeJobs);
   const runningJobs = [...jobs.values()].filter((j) => j.status === "running");
   const active = runningJobs[0];
+  const uploadProgress = useUploadStore((s) => s.progress);
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const { enabled: paneEnabled, toggleEnabled: togglePane } = usePaneStore();
@@ -111,6 +113,16 @@ export default function TopBar() {
         <Breadcrumbs />
         <div style={{ flex: 1 }} />
 
+        {uploadProgress && (
+          <div className="progress-pill">
+            <span className="pp-dot" />
+            <span className="pp-label">Uploading images</span>
+            <div className="pp-bar">
+              <div className="pp-fill" style={{ width: `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%`, background: uploadProgress.errors > 0 ? "var(--warn)" : undefined }} />
+            </div>
+            <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total}</span>
+          </div>
+        )}
         {active && (
           <div className="progress-pill">
             <span className="pp-dot" />
@@ -119,7 +131,7 @@ export default function TopBar() {
             <span className="pp-num mono">{active.done ?? 0} / {active.total ?? 0}</span>
           </div>
         )}
-        {!active && (
+        {!active && !uploadProgress && (
           <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>
             {shuttingDown ? "Shutting down…" : "Ready"}
           </span>

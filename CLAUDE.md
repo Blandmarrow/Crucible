@@ -194,6 +194,8 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 
 **PyTorch CUDA auto-detection**: `manage.ps1 setup` / `manage.sh setup` (and `update`) run `Install-TorchIfNeeded` / `_install_torch_if_needed` **before** `pip install -r requirements.txt`. The helper: (1) skips if `torch.cuda.is_available()` is already True; (2) checks for `nvidia-smi` (ships with every NVIDIA driver); (3) parses the `CUDA Version: X.Y` line to find the driver's maximum supported CUDA version; (4) installs `torch>=2.0` from the matching PyTorch wheel index (`cu128`, `cu126`, `cu124`, `cu121`, or `cu118`). If no NVIDIA GPU is detected, CPU-only torch is installed as a fallback via PyPI.
 
+**`manage.ps1` encoding constraint**: PowerShell 5.1 reads `.ps1` files using Windows-1252 by default (no BOM = legacy encoding). Non-ASCII characters in string literals are misread — the UTF-8 byte sequence for an em dash (`E2 80 94`) decodes as `a`, Euro sign, `"` in Windows-1252, and that stray `"` silently terminates the string, corrupting the parser state for the rest of the file. **Never use non-ASCII characters (em dashes, curly quotes, ellipses, etc.) anywhere in `manage.ps1`.** Use plain ASCII equivalents: ` - ` instead of ` — `, `...` instead of `…`, etc. This constraint does not apply to `manage.sh` (bash reads UTF-8 natively) or to any `.md`/`.py`/`.ts` files.
+
 ### Upscaling
 
 ML-based image upscaling via the `spandrel` library, which auto-detects architecture from `.pth`/`.safetensors` files (RealESRGAN/RRDB, SwinIR, HAT, OmniSR, and more).

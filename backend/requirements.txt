@@ -19,8 +19,16 @@ tiktoken>=0.7
 psutil>=5.9
 spandrel>=0.4
 spandrel_extra_arches>=0.1
-# ML packages — installed from system Python via --system-site-packages venv.
-# If your venv was NOT created with that flag, install manually with the
-# appropriate CUDA index URL, e.g.:
+# ML packages required for captioning and quality scoring.
+# torch is listed last and without a CUDA index URL so that pip uses it only
+# as a fallback (CPU-only).  For GPU inference you should install a
+# CUDA-enabled build BEFORE running setup, e.g.:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
-#   pip install transformers open_clip_torch accelerate safetensors timm
+# With --system-site-packages the venv will pick up an already-installed
+# CUDA torch from the system Python, so this line is a no-op in that case.
+transformers>=4.36
+open_clip_torch>=2.20
+accelerate>=0.27
+safetensors>=0.4
+timm>=0.9
+torch>=2.0

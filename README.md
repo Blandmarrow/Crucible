@@ -332,7 +332,7 @@ chmod +x manage.sh
 ./manage.sh setup
 ```
 
-> **GPU inference note**: the venv is created with `--system-site-packages` so it inherits PyTorch from your system Python. If you need CUDA support, install PyTorch in your system Python first ([pytorch.org/get-started](https://pytorch.org/get-started/locally/)), then run `./manage.sh setup`. The technical scorer and duplicate detector run on CPU with no GPU requirement.
+> **GPU inference**: setup automatically detects your NVIDIA GPU via `nvidia-smi` and installs the matching CUDA-enabled PyTorch wheel (`cu118` through `cu128`) — no manual pre-install needed. If no NVIDIA GPU is found, a CPU-only build is installed instead and ML features (captioning, aesthetic/DINOv2 scoring) will not be available. The technical scorer and duplicate detector run on CPU with no GPU requirement.
 
 ### Optional: API keys
 

@@ -50,6 +50,59 @@ _migrate() {
     echo "  Migrations applied."
 }
 
+_install_torch_if_needed() {
+    # If a CUDA-capable torch is already reachable there is nothing to do.
+    if "$ROOT/venv/bin/python" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+        echo "  CUDA-enabled PyTorch already available — skipping."
+        return
+    fi
+
+    # nvidia-smi ships with every NVIDIA driver; no CUDA toolkit required.
+    if ! command -v nvidia-smi &>/dev/null; then
+        echo "  No NVIDIA GPU detected — PyTorch will be CPU-only."
+        echo "  ML features (captioning, scoring) require an NVIDIA GPU."
+        return
+    fi
+
+    local nv_out
+    nv_out=$(nvidia-smi 2>/dev/null || true)
+    local cuda_ver
+    cuda_ver=$(echo "$nv_out" | grep -oE "CUDA Version: [0-9]+\.[0-9]+" | grep -oE "[0-9]+\.[0-9]+" | head -1)
+
+    if [ -z "$cuda_ver" ]; then
+        echo "  Could not parse CUDA version from nvidia-smi — CPU-only PyTorch will be used."
+        return
+    fi
+
+    local maj min
+    maj=$(echo "$cuda_ver" | cut -d. -f1)
+    min=$(echo "$cuda_ver" | cut -d. -f2)
+    echo "  NVIDIA GPU detected — driver supports CUDA $maj.$min."
+
+    # Pick the highest PyTorch CUDA wheel the driver version supports.
+    local tag=""
+    if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
+    elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
+    elif [ "$maj" -eq 12 ] && [ "$min" -ge 4 ]; then tag="cu124"
+    elif [ "$maj" -eq 12 ] && [ "$min" -ge 1 ]; then tag="cu121"
+    elif [ "$maj" -gt 11 ] || { [ "$maj" -eq 11 ] && [ "$min" -ge 8 ]; }; then tag="cu118"
+    fi
+
+    if [ -z "$tag" ]; then
+        echo "  CUDA $maj.$min is older than the minimum supported version (11.8)."
+        echo "  Update your NVIDIA drivers for GPU support."
+        return
+    fi
+
+    local index_url="https://download.pytorch.org/whl/$tag"
+    echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
+    if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
+        echo "  CUDA-enabled PyTorch ($tag) installed."
+    else
+        echo "  WARNING: CUDA torch install failed — CPU-only fallback will be used."
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -75,6 +128,9 @@ cmd_setup() {
 
     echo "[4/5] Installing Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
+    # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
+    # packages like open_clip_torch link against the GPU build, not the CPU fallback.
+    _install_torch_if_needed
     "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
     echo "  Python dependencies installed."
 
@@ -160,6 +216,7 @@ cmd_update() {
 
     echo "[2/4] Updating Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
+    _install_torch_if_needed
     "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
     echo "  Done."
 

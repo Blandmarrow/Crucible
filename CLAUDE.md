@@ -190,7 +190,9 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 
-**Venv ML packages**: torch, transformers, open_clip, etc. are installed in the system Python (`C:\Users\Tom\AppData\Local\Programs\Python\Python310`) and exposed to the venv via `venv/lib/site-packages/system_ml_packages.pth`. The venv was created with `--system-site-packages` and `huggingface-hub` is pinned to `>=0.30,<1.0` in the venv to stay compatible with those system packages.
+**Venv ML packages**: `torch`, `transformers`, `open_clip_torch`, `accelerate`, `safetensors`, and `timm` are listed as real dependencies in `backend/requirements.txt`. The venv is created with `--system-site-packages`, so if any of these are already present in the system Python they are reused (no reinstall). `huggingface-hub` is pinned to `>=0.30,<1.0` to stay compatible with system-installed ML packages.
+
+**PyTorch CUDA auto-detection**: `manage.ps1 setup` / `manage.sh setup` (and `update`) run `Install-TorchIfNeeded` / `_install_torch_if_needed` **before** `pip install -r requirements.txt`. The helper: (1) skips if `torch.cuda.is_available()` is already True; (2) checks for `nvidia-smi` (ships with every NVIDIA driver); (3) parses the `CUDA Version: X.Y` line to find the driver's maximum supported CUDA version; (4) installs `torch>=2.0` from the matching PyTorch wheel index (`cu128`, `cu126`, `cu124`, `cu121`, or `cu118`). If no NVIDIA GPU is detected, CPU-only torch is installed as a fallback via PyPI.
 
 ### Upscaling
 

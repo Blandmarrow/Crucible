@@ -60,12 +60,19 @@ function Install-TorchIfNeeded {
         Write-Host "  NVIDIA GPU detected — driver supports CUDA $maj.$min." -ForegroundColor Green
 
         # Pick the highest PyTorch CUDA wheel that the driver version supports.
-        if     ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) { $tag = "cu128" }
-        elseif ($maj -eq 12 -and $min -ge 6)                   { $tag = "cu126" }
-        elseif ($maj -eq 12 -and $min -ge 4)                   { $tag = "cu124" }
-        elseif ($maj -eq 12 -and $min -ge 1)                   { $tag = "cu121" }
-        elseif ($maj -gt 11 -or ($maj -eq 11 -and $min -ge 8)) { $tag = "cu118" }
-        else                                                    { $tag = $null   }
+        if ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) {
+            $tag = "cu128"
+        } elseif ($maj -eq 12 -and $min -ge 6) {
+            $tag = "cu126"
+        } elseif ($maj -eq 12 -and $min -ge 4) {
+            $tag = "cu124"
+        } elseif ($maj -eq 12 -and $min -ge 1) {
+            $tag = "cu121"
+        } elseif ($maj -gt 11 -or ($maj -eq 11 -and $min -ge 8)) {
+            $tag = "cu118"
+        } else {
+            $tag = $null
+        }
 
         if ($tag) {
             $indexUrl = "https://download.pytorch.org/whl/$tag"

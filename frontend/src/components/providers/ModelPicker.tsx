@@ -16,6 +16,7 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
 
   const presets = useMemo(() => getPresetsForUrl(baseUrl ?? ""), [baseUrl]);
 
@@ -76,10 +77,12 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
 
   function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const v = e.target.value;
-    if (v !== CUSTOM_SENTINEL) {
+    if (v === CUSTOM_SENTINEL) {
+      setShowCustom(true);
+    } else {
+      setShowCustom(false);
       onChange(v);
     }
-    // CUSTOM_SENTINEL: do nothing — the text input below is already visible and shows value
   }
 
   // No known models — plain text input
@@ -114,7 +117,7 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
   }
 
   // Known models — show select + optional custom input (value used directly, no sync state needed)
-  const selectValue = isCustom ? CUSTOM_SENTINEL : (value || "");
+  const selectValue = (isCustom || showCustom) ? CUSTOM_SENTINEL : (value || "");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
@@ -143,7 +146,7 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
           </button>
         )}
       </div>
-      {(isCustom || selectValue === CUSTOM_SENTINEL) && (
+      {(isCustom || showCustom) && (
         <input
           className="input"
           placeholder={placeholder ?? "Enter model name"}

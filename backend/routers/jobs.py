@@ -34,7 +34,7 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await db.get(BackgroundJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.status == "running":
+    if job.status in ("running", "pending"):
         job.status = "cancelled"
         await db.commit()
 

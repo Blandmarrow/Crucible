@@ -2,8 +2,11 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
+import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
 import { CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY, getGalleryPageSize } from "../constants/storage";
 import RadioGroup from "../components/common/RadioGroup";
+import ConfirmDialog from "../components/common/ConfirmDialog";
+import ModelPicker from "../components/providers/ModelPicker";
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -122,7 +125,63 @@ export default function SettingsPage() {
     (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
       form.versioning_mode !== thresholds.versioning_mode);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "ui" | "quality" | "versioning">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "ui" | "quality" | "versioning" | "providers">("gallery");
+
+  // Providers state
+  const { data: providers = [], refetch: refetchProviders } = useQuery({
+    queryKey: ["providers"],
+    queryFn: providersApi.list,
+    staleTime: 30_000,
+  });
+  const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [deletingProvider, setDeletingProvider] = useState<ProviderOut | null>(null);
+
+  const createProviderMutation = useMutation({
+    mutationFn: (body: ProviderCreate) => providersApi.create(body),
+    onSuccess: () => { toast.success("Provider added"); refetchProviders(); setShowProviderForm(false); setEditingProviderId(null); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to save provider"),
+  });
+  const updateProviderMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Parameters<typeof providersApi.update>[1] }) =>
+      providersApi.update(id, body),
+    onSuccess: () => { toast.success("Provider updated"); refetchProviders(); setShowProviderForm(false); setEditingProviderId(null); },
+    onError: () => toast.error("Failed to update provider"),
+  });
+  const deleteProviderMutation = useMutation({
+    mutationFn: (id: string) => providersApi.delete(id),
+    onSuccess: () => { toast.success("Provider deleted"); refetchProviders(); setDeletingProvider(null); },
+    onError: () => toast.error("Failed to delete provider"),
+  });
+
+  function openAddProvider() {
+    setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
+    setEditingProviderId(null);
+    setShowProviderForm(true);
+  }
+
+  function openEditProvider(p: ProviderOut) {
+    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens });
+    setEditingProviderId(p.id);
+    setShowProviderForm(true);
+  }
+
+  function handleSaveProvider() {
+    if (!providerForm.name.trim() || !providerForm.base_url.trim()) { toast.error("Name and Base URL are required"); return; }
+    if (editingProviderId) {
+      updateProviderMutation.mutate({ id: editingProviderId, body: {
+        name: providerForm.name,
+        base_url: providerForm.base_url,
+        ...(providerForm.api_key ? { api_key: providerForm.api_key } : {}),
+        default_model: providerForm.default_model,
+        max_image_px: providerForm.max_image_px,
+        max_tokens: providerForm.max_tokens,
+      }});
+    } else {
+      createProviderMutation.mutate(providerForm);
+    }
+  }
 
   return (
     <div style={{ padding: "28px 32px", maxWidth: 640 }}>
@@ -136,6 +195,7 @@ export default function SettingsPage() {
         <button className={`tab${activeTab === "ui" ? " active" : ""}`} onClick={() => setActiveTab("ui")}>UI Behavior</button>
         <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
+        <button className={`tab${activeTab === "providers" ? " active" : ""}`} onClick={() => setActiveTab("providers")}>LLM Providers</button>
       </div>
 
       {activeTab === "gallery" && (
@@ -333,6 +393,143 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+      )}
+      {activeTab === "providers" && (
+        <div className="panel">
+          <div className="panel-h">
+            <h3>OpenAI-Compatible Providers</h3>
+            <div style={{ flex: 1 }} />
+            <button className="btn ghost sm" onClick={openAddProvider}>+ Add Provider</button>
+          </div>
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            <p style={{ fontSize: 12.5, color: "var(--fg-mute)", margin: "0 0 12px" }}>
+              Configure local servers (llama.cpp, LM Studio, kobold.cpp) or remote APIs (OpenAI, Groq, OpenRouter). All use the OpenAI-compatible API format.
+            </p>
+            <div style={{ fontSize: 12, color: "var(--fg-mute)", background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)", padding: "10px 12px", marginBottom: 16, lineHeight: 1.7 }}>
+              <div style={{ fontWeight: 500, color: "var(--fg)", marginBottom: 4, fontSize: 12 }}>Quick setup</div>
+              <div><strong style={{ color: "var(--fg)" }}>LM Studio</strong> — open the Local Server tab, start the server, use <code style={{ fontSize: 11 }}>http://localhost:1234/v1</code> — no API key needed</div>
+              <div><strong style={{ color: "var(--fg)" }}>llama.cpp</strong> — run <code style={{ fontSize: 11 }}>llama-server -m model.gguf --port 8080</code>, use <code style={{ fontSize: 11 }}>http://localhost:8080/v1</code> — no API key needed</div>
+              <div><strong style={{ color: "var(--fg)" }}>Gemini</strong> — get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>aistudio.google.com</a>, use <code style={{ fontSize: 11 }}>https://generativelanguage.googleapis.com/v1beta/openai</code></div>
+              <div><strong style={{ color: "var(--fg)" }}>OpenAI</strong> — get an API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>platform.openai.com/api-keys</a>, use <code style={{ fontSize: 11 }}>https://api.openai.com/v1</code></div>
+              <div><strong style={{ color: "var(--fg)" }}>Groq</strong> — get a free API key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>console.groq.com/keys</a>, use <code style={{ fontSize: 11 }}>https://api.groq.com/openai/v1</code></div>
+            </div>
+
+            {providers.length === 0 && !showProviderForm && (
+              <div className="empty-state" style={{ padding: "32px 20px" }}>
+                <span style={{ color: "var(--fg-dim)", fontSize: 12.5 }}>No providers configured. Add one to use OpenAI-compatible models in Captioning.</span>
+              </div>
+            )}
+
+            {providers.map((p) => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</span>
+                    <span className={`badge dot ${p.is_remote ? "warn" : "good"}`} style={{ fontSize: 10 }}>
+                      {p.is_remote ? "Remote" : "Local"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--fg-mute)", marginTop: 2 }}>
+                    {p.base_url}
+                    {p.default_model && <span style={{ marginLeft: 8, color: "var(--fg-dim)" }}>{p.default_model}</span>}
+                  </div>
+                  {p.api_key_masked && p.api_key_masked !== "" && (
+                    <div style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace", marginTop: 2 }}>
+                      key: {p.api_key_masked}
+                    </div>
+                  )}
+                </div>
+                <button className="btn ghost sm" onClick={() => openEditProvider(p)}>Edit</button>
+                <button className="btn ghost sm" style={{ color: "var(--bad)" }} onClick={() => setDeletingProvider(p)}>Delete</button>
+              </div>
+            ))}
+
+            {showProviderForm && (
+              <div style={{ marginTop: 16, padding: "16px", background: "var(--surface-2)", borderRadius: "var(--r)", border: "1px solid var(--line)" }}>
+                <h4 style={{ margin: "0 0 12px", fontSize: 13 }}>{editingProviderId ? "Edit Provider" : "New Provider"}</h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, minWidth: 120 }}>Name</label>
+                    <input className="input" placeholder="LM Studio" value={providerForm.name} onChange={(e) => setProviderForm((f) => ({ ...f, name: e.target.value }))} style={{ flex: 1 }} />
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, minWidth: 120 }}>Base URL</label>
+                    <input className="input" placeholder="http://localhost:1234/v1" value={providerForm.base_url} onChange={(e) => setProviderForm((f) => ({ ...f, base_url: e.target.value }))} style={{ flex: 1 }} />
+                  </div>
+                  {providerForm.base_url && !/localhost|127\.0\.0\.1/.test(providerForm.base_url) && (
+                    <p style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 0 4px" }}>
+                      Remote URL — images will be sent to this server during captioning.
+                    </p>
+                  )}
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, minWidth: 120 }}>API Key</label>
+                    <input
+                      className="input" type="password"
+                      placeholder={editingProviderId ? "Leave blank to keep existing key" : "sk-… (or leave blank for local servers)"}
+                      value={providerForm.api_key}
+                      onChange={(e) => setProviderForm((f) => ({ ...f, api_key: e.target.value }))}
+                      style={{ flex: 1 }}
+                    />
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, minWidth: 120 }}>Default model</label>
+                    <ModelPicker
+                      value={providerForm.default_model ?? ""}
+                      onChange={(v) => setProviderForm((f) => ({ ...f, default_model: v }))}
+                      providerId={editingProviderId ?? undefined}
+                      baseUrl={providerForm.base_url}
+                      placeholder="e.g. gpt-4o-mini or llava:latest"
+                    />
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, minWidth: 120 }}>Max image size</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="range" min={256} max={2048} step={128}
+                        value={providerForm.max_image_px}
+                        onChange={(e) => setProviderForm((f) => ({ ...f, max_image_px: parseInt(e.target.value) }))}
+                        style={{ width: 140 }}
+                      />
+                      <span className="mono" style={{ fontSize: 12, minWidth: 60 }}>{providerForm.max_image_px}px</span>
+                    </div>
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <div style={{ minWidth: 120 }}>
+                      <label style={{ fontSize: 12.5 }}>Max tokens</label>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Increase for reasoning models (Gemma 4, QwQ, DeepSeek-R1) which use extra tokens for thinking.</p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="range" min={256} max={16384} step={256}
+                        value={providerForm.max_tokens ?? 2048}
+                        onChange={(e) => setProviderForm((f) => ({ ...f, max_tokens: parseInt(e.target.value) }))}
+                        style={{ width: 140 }}
+                      />
+                      <span className="mono" style={{ fontSize: 12, minWidth: 48 }}>{providerForm.max_tokens ?? 2048}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button className="btn primary sm" onClick={handleSaveProvider} disabled={createProviderMutation.isPending || updateProviderMutation.isPending}>
+                      {(createProviderMutation.isPending || updateProviderMutation.isPending) ? "Saving…" : editingProviderId ? "Update" : "Add Provider"}
+                    </button>
+                    <button className="btn ghost sm" onClick={() => { setShowProviderForm(false); setEditingProviderId(null); }}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {deletingProvider && (
+        <ConfirmDialog
+          title={`Delete "${deletingProvider.name}"?`}
+          message="This provider will be removed from Crucible. Any captioning jobs using this provider will fail."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => deleteProviderMutation.mutate(deletingProvider.id)}
+          onCancel={() => setDeletingProvider(null)}
+        />
       )}
     </div>
   );

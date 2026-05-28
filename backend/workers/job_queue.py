@@ -46,6 +46,19 @@ class JobQueue:
             self._current_job_id = job.id
             async with AsyncSessionLocal() as db:
                 job_row = await db.get(BackgroundJob, job.id)
+                if job_row and job_row.status == "cancelled":
+                    # Cancelled while waiting in the queue — skip it
+                    self._current_job_id = None
+                    self._queue.task_done()
+                    await broadcaster.emit(job.id, {
+                        "type": "progress",
+                        "job_id": job.id,
+                        "job_type": job.job_type,
+                        "dataset_id": job.dataset_id,
+                        "status": "cancelled",
+                        "message": "Cancelled before starting.",
+                    })
+                    continue
                 if job_row:
                     job_row.status = "running"
                     job_row.started_at = datetime.utcnow()

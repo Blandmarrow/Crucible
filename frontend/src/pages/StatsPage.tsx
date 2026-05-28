@@ -756,6 +756,10 @@ function escapeCsv(v: string): string {
   return v;
 }
 
+function safeFilename(name: string): string {
+  return name.replace(/[/\\:*?"<>|]/g, "_").trim();
+}
+
 function triggerDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -774,7 +778,7 @@ function meanOf(values: number[] | undefined): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string) {
+function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string, datasetName: string) {
   type Row = [string, string | number];
   const section = (label: string): Row[] => [["", ""], [`## ${label}`, ""]];
   const dist = (prefix: string, d: Record<string, number>): Row[] =>
@@ -783,6 +787,7 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string)
   const rows: Row[] = [
     ...section("SUMMARY"),
     ["dataset_id", datasetId],
+    ["dataset_name", escapeCsv(datasetName)],
     ["image_count", stats.image_count],
     ["captioned_count", stats.captioned_count ?? ""],
     ["caption_coverage_pct", stats.caption_coverage_pct],
@@ -858,14 +863,14 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string)
   ];
 
   const csv = rows.map(([k, v]) => `${k},${v}`).join("\n");
-  triggerDownload(csv, `dataset-${datasetId}-stats.csv`);
+  triggerDownload(csv, `dataset-${safeFilename(datasetName) || datasetId}-stats.csv`);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function downloadTagsCsv(tags: any[], datasetId: string) {
+function downloadTagsCsv(tags: any[], datasetId: string, datasetName: string) {
   const header = "tag,count,category";
   const rows = tags.map(t => `${escapeCsv(String(t.tag))},${t.count},${escapeCsv(String(t.category ?? ""))}`);
-  triggerDownload([header, ...rows].join("\n"), `dataset-${datasetId}-tags.csv`);
+  triggerDownload([header, ...rows].join("\n"), `dataset-${safeFilename(datasetName) || datasetId}-tags.csv`);
 }
 
 // ─── HistPanel ────────────────────────────────────────────────────────────────
@@ -1085,7 +1090,7 @@ export default function StatsPage() {
               ))}
             </select>
           )}
-          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, datasetId!)}>
+          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, datasetId!, stats?.name ?? "")}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
             </svg>
@@ -1094,7 +1099,7 @@ export default function StatsPage() {
           <button
             className="btn"
             disabled={tagStats.length === 0}
-            onClick={() => downloadTagsCsv(tagStats, datasetId!)}
+            onClick={() => downloadTagsCsv(tagStats, datasetId!, stats?.name ?? "")}
             title={tagStats.length === 0 ? "No tags to export" : "Export tag frequency table"}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">

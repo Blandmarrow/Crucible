@@ -751,29 +751,121 @@ function meanAesthetic(values: number[] | undefined): string {
   return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function downloadCsv(stats: any, datasetId: string) {
-  const rows: [string, string | number][] = [
-    ["dataset_id", datasetId],
-    ["image_count", stats.image_count],
-    ["caption_coverage_pct", stats.caption_coverage_pct],
-    ["total_size_mb", stats.total_size_mb],
-    ["avg_width", stats.avg_width ?? ""],
-    ["avg_height", stats.avg_height ?? ""],
-    ...Object.entries(stats.quality_flag_counts as Record<string, number>).map(([k, v]): [string, number] => [`flag_${k}`, v]),
-    ...Object.entries(stats.score_coverage as Record<string, number>).map(([k, v]): [string, number] => [`coverage_${k}`, v]),
-    ...Object.entries(stats.score_distribution as Record<string, number>).map(([k, v]): [string, number] => [`aesthetic_${k.replace(/[^a-z0-9]/gi, "_")}`, v]),
-  ];
-  const csv = rows.map(([k, v]) => `${k},${v}`).join("\n");
+function escapeCsv(v: string): string {
+  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function triggerDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `dataset-${datasetId}-stats.csv`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function meanOf(values: number[] | undefined): string {
+  if (!values || values.length === 0) return "";
+  return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(4);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string) {
+  type Row = [string, string | number];
+  const section = (label: string): Row[] => [["", ""], [`## ${label}`, ""]];
+  const dist = (prefix: string, d: Record<string, number>): Row[] =>
+    Object.entries(d).map(([k, v]) => [`${prefix}_${k.replace(/[^a-z0-9]/gi, "_").replace(/^_+|_+$/g, "").toLowerCase()}`, v]);
+
+  const rows: Row[] = [
+    ...section("SUMMARY"),
+    ["dataset_id", datasetId],
+    ["image_count", stats.image_count],
+    ["captioned_count", stats.captioned_count ?? ""],
+    ["caption_coverage_pct", stats.caption_coverage_pct],
+    ["total_size_mb", stats.total_size_mb],
+    ["avg_width", stats.avg_width ?? ""],
+    ["avg_height", stats.avg_height ?? ""],
+
+    ...section("FILE SIZE SUMMARY"),
+    ["file_size_min_mb",    stats.file_size_summary?.min_mb    ?? ""],
+    ["file_size_median_mb", stats.file_size_summary?.median_mb ?? ""],
+    ["file_size_p95_mb",    stats.file_size_summary?.p95_mb    ?? ""],
+    ["file_size_max_mb",    stats.file_size_summary?.max_mb    ?? ""],
+
+    ...section("QUALITY FLAGS"),
+    ...Object.entries(stats.quality_flag_counts as Record<string, number>).map(([k, v]): Row => [`flag_${k}`, v]),
+
+    ...section("SCORE COVERAGE"),
+    ...Object.entries(stats.score_coverage as Record<string, number>).map(([k, v]): Row => [`coverage_${k}`, v]),
+
+    ...section("MEAN SCORES"),
+    ["mean_aesthetic_score",       meanOf(sv?.aesthetic_score)],
+    ["mean_blur_score",            meanOf(sv?.blur_score)],
+    ["mean_noise_score",           meanOf(sv?.noise_score)],
+    ["mean_uniformity_score",      meanOf(sv?.uniformity_score)],
+    ["mean_watermark_score",       meanOf(sv?.watermark_score)],
+    ["mean_color_score",           meanOf(sv?.color_score)],
+    ["mean_saturation_score",      meanOf(sv?.saturation_score)],
+    ["mean_style_similarity_score",meanOf(sv?.style_similarity_score)],
+
+    ...section("AESTHETIC SCORE DISTRIBUTION"),
+    ...dist("aesthetic", stats.score_distribution),
+
+    ...section("BLUR DISTRIBUTION"),
+    ...dist("blur", stats.blur_distribution),
+
+    ...section("NOISE DISTRIBUTION"),
+    ...dist("noise", stats.noise_distribution),
+
+    ...section("UNIFORMITY DISTRIBUTION"),
+    ...dist("uniformity", stats.uniformity_distribution),
+
+    ...section("WATERMARK DISTRIBUTION"),
+    ...dist("watermark", stats.watermark_distribution),
+
+    ...section("COLOR RICHNESS DISTRIBUTION"),
+    ...dist("color", stats.color_distribution),
+
+    ...section("SATURATION DISTRIBUTION"),
+    ...dist("saturation", stats.saturation_distribution),
+
+    ...section("STYLE SIMILARITY DISTRIBUTION"),
+    ...dist("style_sim", stats.style_similarity_distribution ?? {}),
+
+    ...section("MEGAPIXEL DISTRIBUTION"),
+    ...dist("megapixels", stats.megapixel_distribution),
+
+    ...section("FILE SIZE DISTRIBUTION"),
+    ...dist("file_size", stats.file_size_distribution),
+
+    ...section("ASPECT RATIO DISTRIBUTION"),
+    ...dist("aspect_ratio", Object.keys(stats.aspect_ratio_fine).length > 0
+      ? stats.aspect_ratio_fine
+      : stats.aspect_ratio_distribution),
+
+    ...section("FORMAT DISTRIBUTION"),
+    ...dist("format", stats.format_distribution),
+
+    ...section("CAPTION WORD COUNT DISTRIBUTION"),
+    ...dist("caption_words", stats.caption_length_distribution),
+
+    ...section("CAPTION TOKEN DISTRIBUTION"),
+    ...dist("caption_tokens", stats.caption_token_distribution),
+  ];
+
+  const csv = rows.map(([k, v]) => `${k},${v}`).join("\n");
+  triggerDownload(csv, `dataset-${datasetId}-stats.csv`);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function downloadTagsCsv(tags: any[], datasetId: string) {
+  const header = "tag,count,category";
+  const rows = tags.map(t => `${escapeCsv(String(t.tag))},${t.count},${escapeCsv(String(t.category ?? ""))}`);
+  triggerDownload([header, ...rows].join("\n"), `dataset-${datasetId}-tags.csv`);
 }
 
 // ─── HistPanel ────────────────────────────────────────────────────────────────
@@ -903,7 +995,7 @@ export default function StatsPage() {
     enabled: !!datasetId,
   });
 
-  const { data: sv } = useQuery<ScoreValues>({
+  const { data: sv, isLoading: svLoading } = useQuery<ScoreValues>({
     queryKey: ["score-values", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.scoreValues(datasetId!, activeSubfolder),
     enabled: !!datasetId,
@@ -993,11 +1085,22 @@ export default function StatsPage() {
               ))}
             </select>
           )}
-          <button className="btn" onClick={() => downloadCsv(stats, datasetId!)}>
+          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, datasetId!)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
             </svg>
-            Export CSV
+            Export Stats CSV
+          </button>
+          <button
+            className="btn"
+            disabled={tagStats.length === 0}
+            onClick={() => downloadTagsCsv(tagStats, datasetId!)}
+            title={tagStats.length === 0 ? "No tags to export" : "Export tag frequency table"}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
+            </svg>
+            Export Tags CSV
           </button>
         </div>
       </div>

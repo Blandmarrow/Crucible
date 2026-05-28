@@ -16,7 +16,6 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const [customInput, setCustomInput] = useState("");
 
   const presets = useMemo(() => getPresetsForUrl(baseUrl ?? ""), [baseUrl]);
 
@@ -56,11 +55,6 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
 
   const isCustom = allModels.length > 0 && value !== "" && !allModels.includes(value);
 
-  // Sync customInput with value when it becomes custom
-  useEffect(() => {
-    if (isCustom) setCustomInput(value);
-  }, [isCustom, value]);
-
   async function handleFetch() {
     if (!providerId) return;
     setIsFetching(true);
@@ -82,11 +76,10 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
 
   function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const v = e.target.value;
-    if (v === CUSTOM_SENTINEL) {
-      setCustomInput(value);
-    } else {
+    if (v !== CUSTOM_SENTINEL) {
       onChange(v);
     }
+    // CUSTOM_SENTINEL: do nothing — the text input below is already visible and shows value
   }
 
   // No known models — plain text input
@@ -120,7 +113,7 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
     );
   }
 
-  // Known models — show select + optional custom input
+  // Known models — show select + optional custom input (value used directly, no sync state needed)
   const selectValue = isCustom ? CUSTOM_SENTINEL : (value || "");
 
   return (
@@ -154,8 +147,8 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
         <input
           className="input"
           placeholder={placeholder ?? "Enter model name"}
-          value={customInput}
-          onChange={(e) => { setCustomInput(e.target.value); onChange(e.target.value); }}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           style={{ flex: 1, minWidth: 0 }}
           autoFocus
         />

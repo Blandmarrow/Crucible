@@ -11,7 +11,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 Crucible gives you a single interface to go from raw image folders to a clean, captioned, scored, and filtered training dataset ready to drop into Kohya SS, AI Toolkit, or any other training framework.
 
 - **Import** images from local folders into named datasets
-- **Caption** images in batch using local ML models (Ollama, Florence-2, PaliGemma-2)
+- **Caption** images in batch using local ML models (Ollama, Florence-2, PaliGemma-2, WD14 tagger) or any OpenAI-compatible cloud API (Gemini, Groq, OpenAI, LM Studio, etc.)
 - **Detect** objects and ground phrases in images using Florence-2 bounding-box detection
 - **Process** images with ML upscaling and LUT color grading
 - **Score** every image across aesthetic quality, technical quality, watermark detection, and style similarity
@@ -73,19 +73,23 @@ All long-running operations (import, captioning, scoring, export) run in a backg
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 
 ### AI Captioning
-Batch-caption any selection of images using one of three backends:
+Batch-caption any selection of images using one of several backends:
 
 | Model | VRAM | Notes |
 |---|---|---|
-| **Ollama**  | varies | Points to a local Ollama instance on `localhost:11434` |
+| **Ollama** | varies | Points to a local Ollama instance on `localhost:11434` |
 | **Florence-2** | ~5.5 GB | Styles: short, detailed, tags, dense, promptgen |
 | **PaliGemma-2 3B** | ~6 GB | Requires HuggingFace token; styles: short, detailed, tags, booru |
+| **WD14 Tagger** | CPU only | Booru-style tag output (Eva02 Large, ViT Large, or SwinV2); downloads from SmilingWolf on HuggingFace; adjustable confidence threshold |
+| **OpenAI-compatible** | — | Any provider with a `/v1/chat/completions` vision endpoint — Gemini, Groq, OpenAI, LM Studio, llama.cpp, etc.; configured in Settings → LLM Providers |
 
 Caption post-processing options:
 - Strip common AI refusal phrases automatically
 - Back up the original `.txt` sidecar before overwriting
 - **Rename on caption** — after each caption is saved, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root images); useful for building consistently named datasets
 - **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
+
+**Job queuing** — multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. A queue badge in the page header shows how many jobs are waiting.
 
 **Prompt Preset Manager** — save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.
 
@@ -244,7 +248,7 @@ A three-panel filesystem explorer built into the app:
 - Import any folder of images directly into an existing dataset without leaving the browser
 
 ### Settings
-Route: `/settings` — accessible from the sidebar. Settings are grouped into four tabs.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into five tabs.
 
 **Gallery** — browser-local preferences, each taking effect immediately:
 - Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
@@ -265,6 +269,12 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into fo
 | Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
 
 **Versioning** — version control mode (Off / Manual / Auto; see [Dataset Versioning](#dataset-versioning)) plus branch snapshot behavior. Requires Save for the version control mode.
+
+**LLM Providers** — add, edit, and delete OpenAI-compatible API provider configurations for use as captioning backends:
+- Name and Base URL are required; API key is optional (leave blank for local servers)
+- Default model — selected from a hardcoded preset list for well-known cloud APIs (Gemini, Groq, OpenAI, Together.ai), or fetched live from local servers (LM Studio, llama.cpp) via a refresh button, or typed freely
+- Max image resolution (128–4096 px) — images are JPEG-encoded at this size before being sent
+- Max tokens — controls the length of generated captions (64–32768)
 
 ### Booru Tag Lookup
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:

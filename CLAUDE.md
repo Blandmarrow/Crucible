@@ -111,6 +111,8 @@ Model IDs and their captioner/scorer modules:
 | `florence2*` | `ml/florence_captioner.py` |
 | `paligemma2` | `ml/paligemma_captioner.py` (needs `HF_TOKEN` in `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448) |
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
+| `openai_compat:{id}:{model}` | `ml/openai_compat_captioner.py` (OpenAI-compatible vision API; `id` is the `OpenAIProvider` DB row UUID, `model` is the model name string) |
+| `wd14:{variant}` | `ml/wd14_tagger.py` (ONNX inference via `onnxruntime`; downloads from SmilingWolf HuggingFace repos; not tracked by `model_manager` — uses its own module-level cache with `threading.Lock` and double-check locking; variants: `eva02_large`, `vit_large`, `swinv2`) |
 | `upscale:{abs_path}` | `ml/upscaler.py` (spandrel; keyed by absolute model file path to support multiple loaded upscalers) |
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `dino` | `ml/dino_scorer.py` (`facebook/dinov2-base` via HuggingFace `transformers`; ~1.2 GB VRAM; used for DINOv2 embedding extraction) |
@@ -297,6 +299,8 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 `frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
 
+`frontend/src/constants/providerPresets.ts` — `PROVIDER_PRESETS: Record<string, string[]>` hardcoded model lists keyed by hostname substring (Gemini, Groq, OpenAI, Together.ai). `getPresetsForUrl(baseUrl: string): string[]` parses the URL and returns the matching preset list (or `[]` for unknown/local providers). Used by `ModelPicker` to show a dropdown without requiring a live fetch. Add new cloud provider entries here when preset model lists need updating.
+
 `frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). `BRANCH_SNAPSHOT_KEY`: the `localStorage` key for the branch/checkout snapshot behavior preference (`"ask"` or `"auto"`). Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage`. `VERSIONS_BRANCH_KEY`: the `sessionStorage` key prefix (`"versions-branch"`) for the user's last-browsed branch on `VersionsPage`; append `-${datasetId}` for the full key. Written by `VersionsPage.handleBranchSelect` and by `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount. `GALLERY_PAGE_SIZE_KEY`: the `localStorage` key for images-per-page in the gallery (`25 | 50 | 100 | 200`); read by `GalleryPage`, `ImageDetailPage` (for prefetch limit and end-of-page detection), and `SettingsPage`. `SUBFOLDER_RENAME_KEY`: the `localStorage` key for the subfolder auto-rename preference (`"on" | "off"`); read by `SelectionToolbar` at mutation time and written by `SettingsPage`. `getGalleryPageSize(): number` — shared helper that reads `GALLERY_PAGE_SIZE_KEY`, guards against `NaN`, and returns the default `100` on parse failure. Use this everywhere the page size is read; never inline the `parseInt` + fallback pattern. Add new storage keys here rather than defining them inline in components.
 
 ### Layout
@@ -466,7 +470,7 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 
 **Frontend**: `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
-The Settings page uses a **tab-based layout** with four tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds and versioning mode require an explicit Save.
+The Settings page uses a **tab-based layout** with five tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds and versioning mode require an explicit Save.
 
 **Gallery tab** — two immediate-save preferences:
 - Images per page (`25 | 50 | 100 | 200`). Stored under `GALLERY_PAGE_SIZE_KEY`. Read by `GalleryPage` (gallery list limit) and `ImageDetailPage` (end-of-page detection + prefetch limit for cross-page arrow-key navigation). Parse and default via `getGalleryPageSize()`.
@@ -479,6 +483,8 @@ The Settings page uses a **tab-based layout** with four tabs. All localStorage-b
 **Quality Thresholds tab** — five editable number inputs (blur, noise, uniformity, watermark, duplicate thresholds). Requires Save; changes apply to the next scoring run only.
 
 **Versioning tab** — version control mode radio (`off | manual | auto`) plus branch snapshot behavior radio. Requires Save for the version control mode; branch snapshot behavior is immediate (localStorage).
+
+**LLM Providers tab** — manage OpenAI-compatible provider configurations (see OpenAI-compatible providers section). Add / edit / delete providers. Name and Base URL are required; changes are saved immediately per-mutation (no page-level Save). Provider mutations also invalidate `["captioning-models"]` so the model picker on CaptioningPage reflects changes immediately.
 
 ### Styling
 
@@ -511,17 +517,44 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 ### Captioning post-processing
 
-`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts three post-processing flags:
+`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts three post-processing flags and one WD14-specific field:
 
 | Field | Default | Effect |
 |---|---|---|
 | `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. |
 | `save_backup` | `false` | Before calling `set_caption`, write the existing `.txt` sidecar to `.txt.bak`. |
 | `rename_on_caption` | `false` | After saving each caption, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root). Sets `is_auto_named=True`. Subfolder and original filename are fetched from the initial bulk query — no per-image DB round-trip. |
+| `wd14_threshold` | `0.35` | Minimum confidence (0–1) for a WD14 tag to be included in output. Only used when `model` starts with `wd14:`. |
 
-**Captioning job execution**: `_run` in `routers/captioning.py` processes images one at a time (generate → save → emit SSE). Each event carries `image_id`, `throughput_ips`, and `vram_used_mb` (sampled every 10 images; Ollama always 0). Failed images accumulate in `failed_image_ids`; a `caption_summary` SSE event is emitted after the loop if any failed. Cancellation is checked at each image boundary via the job's DB `status` (`DELETE /jobs/{job_id}` sets it).
+**Captioning job execution**: `_run` in `routers/captioning.py` processes images one at a time (generate → save → emit SSE). Each event carries `image_id`, `throughput_ips`, and `vram_used_mb` (sampled every 10 images; Ollama always 0; WD14 and OpenAI-compat always 0). Failed images accumulate in `failed_image_ids`; a `caption_summary` SSE event is emitted after the loop if any failed. Cancellation is checked at each image boundary via a scalar `SELECT status` on the outer session (not a new `AsyncSessionLocal` per image).
+
+**Job queuing**: The backend `asyncio.Queue` in `workers/job_queue.py` runs caption and pipeline jobs serially — any number of jobs may be submitted while one is running. The worker checks the DB status after dequeuing; if a job was cancelled while pending it emits a `"cancelled"` SSE event and skips without running. The cancel endpoint (`DELETE /jobs/{id}`) accepts both `"running"` and `"pending"` status. The frontend tracks all submitted job IDs in `submittedJobIds: string[]`; `submittedActiveJobId` is the oldest non-terminal entry (gated only by `seenTerminalJobIds` ref, not live store status, to avoid the effectiveJobId race where the gallery invalidation never fires).
 
 **Ollama timeout**: `httpx.AsyncClient` in `ollama_captioner.py` uses a 300-second timeout per image to accommodate slow hardware and cold model loads.
+
+### OpenAI-compatible providers
+
+**Router**: `backend/routers/providers.py`, prefix `/providers`. Registered in `main.py`. No service layer — CRUD is thin enough to live in the router.
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /` | List all providers ordered by `created_at` |
+| `POST /` | Create provider; 409 on duplicate name |
+| `PATCH /{id}` | Update any fields; `exclude_none=True` so omitted fields are not cleared |
+| `DELETE /{id}` | Hard delete |
+| `GET /{id}/models` | Calls provider's `/v1/models` endpoint via `openai.OpenAI` with 5-second timeout; returns `{"models": []}` on any error (provider offline, auth failure) — never raises |
+
+**Model**: `backend/models/openai_provider.py` — `OpenAIProvider` table. Fields: `id` (UUID), `name` (unique), `base_url`, `api_key` (stored plaintext), `default_model`, `max_image_px` (128–4096, default 1024 — image is JPEG-encoded at this resolution before sending), `max_tokens` (64–32768, default 2048), `created_at`.
+
+**Schema**: `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` — true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`. Remote providers show a warning banner in the CaptioningPage and Settings form.
+
+**Captioner**: `ml/openai_compat_captioner.py` — `caption_image(image_path, base_url, api_key, model_name, style, custom_prompt, max_px, max_tokens, target_w, target_h)`. Encodes the image as JPEG base64 (after `preprocess_for_caption` and optional `max_px` downscale), sends via `openai.ChatCompletion` with a `image_url` content block. 120-second per-image timeout. Not tracked by `model_manager`.
+
+**Model ID format** in captioning: `openai_compat:{provider_id}:{model_name}`. The router splits on `:` with `maxsplit=2` to recover `provider_id` and `model_name`. If `model_name` is empty, `openai_provider.default_model` is used.
+
+**Settings UI**: Settings page → "LLM Providers" tab. Add/edit/delete providers. The "Default model" field uses `ModelPicker` (preset dropdown for well-known cloud APIs; fetch button for local servers). Provider mutations also invalidate `["captioning-models"]` so CaptioningPage model list updates immediately.
+
+**`ModelPicker` component** (`frontend/src/components/providers/ModelPicker.tsx`): Props `{ value, onChange, providerId?, baseUrl?, placeholder? }`. On mount with `providerId`, auto-fetches models via `providersApi.fetchModels(providerId)`. Computes `presets = getPresetsForUrl(baseUrl)` from `providerPresets.ts`. When both are empty: plain text input. When either has entries: `<select>` with a "Custom…" sentinel + optional text input below for custom entry. When `value` is not in the list, the select shows "Custom…" and the text input is pre-filled. A refresh button (↻) allows manual re-fetch. `fetchError` shows a muted "Could not reach provider" message on empty result. No intermediate `customInput` state — the text input binds directly to the `value` prop to avoid render-frame flicker.
 
 ### Bulk caption editing
 

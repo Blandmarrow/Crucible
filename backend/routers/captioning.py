@@ -188,11 +188,10 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
         async with AsyncSessionLocal() as session:
             for i, (img_id, file_path, existing_tags, img_filename, img_subfolder) in enumerate(image_data):
-                # Check for user-initiated stop before each image
-                async with AsyncSessionLocal() as cs:
-                    job_row = await cs.get(BackgroundJob, job_id)
-                    if job_row and job_row.status == "cancelled":
-                        raise asyncio.CancelledError()
+                # Check for user-initiated stop before each image (reuse outer session)
+                _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
+                if _status == "cancelled":
+                    raise asyncio.CancelledError()
 
                 # Generate caption for this image
                 caption = ""
@@ -336,6 +335,8 @@ class PipelineStep(BaseModel):
     append_tags: bool = False
     strip_refusals: bool = True
     wd14_threshold: float = 0.35
+    target_width: int | None = None
+    target_height: int | None = None
 
 
 class CaptionPipelineRequest(BaseModel):
@@ -456,9 +457,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 wd14_variant = step.model.removeprefix("wd14:")
                 model_label = f"WD14 ({wd14_variant})"
 
-            # Load current captions from DB for {previous_caption} substitution
+            # Load current captions from DB for {previous_caption} substitution (only when needed)
             prev_captions: dict[str, str] = {}
-            if step_idx > 0:
+            if step_idx > 0 and "{previous_caption}" in step.custom_prompt:
                 async with AsyncSessionLocal() as _cs:
                     ids = [r[0] for r in image_data]
                     caption_result = await _cs.execute(
@@ -469,11 +470,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             async with AsyncSessionLocal() as session:
                 cached_vram_mb = 0
                 for i, (img_id, file_path, existing_tags, img_filename, img_subfolder) in enumerate(image_data):
-                    # Cancellation check
-                    async with AsyncSessionLocal() as cs:
-                        job_row = await cs.get(BackgroundJob, job_id)
-                        if job_row and job_row.status == "cancelled":
-                            raise asyncio.CancelledError()
+                    # Cancellation check (reuse outer session — avoids a new DB session per image)
+                    _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
+                    if _status == "cancelled":
+                        raise asyncio.CancelledError()
 
                     prev_caption = prev_captions.get(img_id, "")
                     resolved_prompt = step.custom_prompt.replace("{previous_caption}", prev_caption)
@@ -482,13 +482,13 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     try:
                         if is_florence:
                             from backend.ml.florence_captioner import caption_image as _fi
-                            caption = await _fi(file_path, florence_entry, step.style, None, None)
+                            caption = await _fi(file_path, florence_entry, step.style, step.target_width, step.target_height)
                         elif is_paligemma:
                             from backend.ml.paligemma_captioner import caption_image as _pi
-                            caption = await _pi(file_path, paligemma_entry, step.style, None, None)
+                            caption = await _pi(file_path, paligemma_entry, step.style, step.target_width, step.target_height)
                         elif is_ollama:
                             caption = await ollama_captioner.caption_image(
-                                file_path, ollama_model_name, step.style, resolved_prompt, None, None
+                                file_path, ollama_model_name, step.style, resolved_prompt, step.target_width, step.target_height
                             )
                         elif is_openai_compat:
                             from backend.ml.openai_compat_captioner import caption_image as _oi
@@ -501,6 +501,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                                 custom_prompt=resolved_prompt,
                                 max_px=openai_provider.max_image_px,
                                 max_tokens=openai_provider.max_tokens,
+                                target_w=step.target_width,
+                                target_h=step.target_height,
                             )
                         elif is_wd14:
                             from backend.ml import wd14_tagger

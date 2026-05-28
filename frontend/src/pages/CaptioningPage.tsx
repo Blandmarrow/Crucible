@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -169,7 +169,15 @@ function StepModelPicker({
 export default function CaptioningPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
-  const { selectedIds, count: selCount } = useSelectionStore();
+  const { selectedIds, datasetByImageId } = useSelectionStore();
+
+  // Only include IDs that belong to the current dataset — global selections persist
+  // across dataset navigation, so raw selectedIds may contain IDs from other datasets.
+  const selectedIdsForDataset = useMemo(
+    () => [...selectedIds].filter((id) => datasetByImageId.get(id) === datasetId),
+    [selectedIds, datasetByImageId, datasetId],
+  );
+  const selCountForDataset = selectedIdsForDataset.length;
   const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
 
   const [selectedModel, setSelectedModel] = useState("");
@@ -200,18 +208,26 @@ export default function CaptioningPage() {
 
   const allActiveJobs = useJobStore((s) => s.activeJobs);
 
+  // Track job IDs we have confirmed as terminal so jobStore TTL eviction
+  // (5-min after completion) doesn't cause them to be mistaken for "pending".
+  const seenTerminalJobIds = useRef(new Set<string>());
+
   // Oldest submitted job that's still active (running or pending-no-events).
   // Pending jobs have no SSE events yet; once they start the worker emits events.
-  // Completed jobs always receive a terminal SSE event before the stream closes,
-  // so a submitted job with no store entry must still be pending.
+  // Completed jobs always emit a terminal SSE event; we record that in seenTerminalJobIds
+  // so eviction from the store doesn't re-treat a completed job as pending.
   const submittedActiveJobId = submittedJobIds.find((id) => {
-    const prog = allActiveJobs.get(id);
-    if (!prog) return true; // no events yet = pending in queue
-    return prog.status !== "completed" && prog.status !== "failed" && prog.status !== "cancelled";
+    // Only drop an ID once the completion effect has recorded it as terminal.
+    // If we checked allActiveJobs.status here, effectiveJobId would change to null
+    // in the same render as status→"completed", causing jobProgress to be undefined
+    // when the completion effect runs — so the gallery invalidation would never fire.
+    return !seenTerminalJobIds.current.has(id);
   }) ?? null;
 
-  // Fall back to any globally-observed caption job when we haven't submitted anything
-  const globalCaptionJob = submittedJobIds.length === 0
+  // Fall back to any globally-observed caption job when we have no active submitted job.
+  // Uses submittedActiveJobId (not submittedJobIds.length) so the fallback re-engages
+  // after all submitted jobs complete — letting SelectionToolbar-started jobs appear here.
+  const globalCaptionJob = submittedActiveJobId === null
     ? Array.from(allActiveJobs.values()).find(
         (j) => (j.job_type === "caption" || j.job_type === "caption_pipeline") && j.status === "running"
       )
@@ -277,6 +293,8 @@ export default function CaptioningPage() {
       append_tags: true,
       strip_refusals: stripRefusals,
       wd14_threshold: wd14Threshold,
+      target_width: targetWidth,
+      target_height: targetHeight,
     };
   }
 
@@ -304,7 +322,7 @@ export default function CaptioningPage() {
         return captioningApi.pipeline({
           dataset_id: datasetId!,
           steps,
-          image_ids: scope === "selected" ? [...selectedIds] : undefined,
+          image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
           subfolder: scope !== "selected" ? activeSubfolder : undefined,
           save_backup: saveBackup,
           rename_on_caption: renameOnCaption,
@@ -318,7 +336,7 @@ export default function CaptioningPage() {
         style: isWd14 ? "tags" : style,
         overwrite: scope === "all",
         custom_prompt: customPrompt,
-        image_ids: scope === "selected" ? [...selectedIds] : undefined,
+        image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
         subfolder: scope !== "selected" ? activeSubfolder : undefined,
         ...(targetWidth && targetHeight ? { target_width: targetWidth, target_height: targetHeight } : {}),
         strip_refusals: stripRefusals,
@@ -373,11 +391,15 @@ export default function CaptioningPage() {
   });
 
   useEffect(() => {
-    if (jobProgress?.status === "completed") {
+    const s = jobProgress?.status;
+    if (s === "completed" || s === "failed" || s === "cancelled") {
+      if (effectiveJobId) seenTerminalJobIds.current.add(effectiveJobId);
+    }
+    if (s === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     }
-  }, [jobProgress?.status, datasetId]);
+  }, [jobProgress?.status, datasetId, effectiveJobId]);
 
   useEffect(() => {
     if (!detectJobId || !detectJobProgress) return;
@@ -652,7 +674,7 @@ export default function CaptioningPage() {
                 <div className="row-flex">
                   {([
                     { value: "uncaptioned", label: "Uncaptioned only", sub: uncaptioned },
-                    { value: "selected", label: "Selected", sub: selCount },
+                    { value: "selected", label: "Selected", sub: selCountForDataset },
                     { value: "all", label: "Re-caption all", sub: null },
                   ] as const).map((opt) => (
                     <label key={opt.value} className="row-flex" style={{ gap: 6, cursor: "pointer" }}>

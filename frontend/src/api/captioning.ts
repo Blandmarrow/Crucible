@@ -27,6 +27,8 @@ export interface PipelineStep {
   append_tags: boolean;
   strip_refusals: boolean;
   wd14_threshold: number;
+  target_width?: number | null;
+  target_height?: number | null;
 }
 
 export interface CaptionPipelineParams {

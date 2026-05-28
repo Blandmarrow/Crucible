@@ -1,5 +1,6 @@
 import csv
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ _VARIANTS = {
 
 # Module-level cache: variant_id -> (session, tag_names)
 _cache: dict[str, tuple] = {}
+_cache_lock = threading.Lock()
 
 
 def list_wd14_models() -> list[dict]:
@@ -35,8 +37,9 @@ def list_wd14_models() -> list[dict]:
 
 
 def _load_model(variant_id: str) -> tuple:
-    if variant_id in _cache:
-        return _cache[variant_id]
+    with _cache_lock:
+        if variant_id in _cache:
+            return _cache[variant_id]
 
     info = _VARIANTS.get(variant_id)
     if info is None:
@@ -64,9 +67,11 @@ def _load_model(variant_id: str) -> tuple:
     sess_options.log_severity_level = 3  # suppress verbose ONNX logs
     session = ort.InferenceSession(model_path, sess_options=sess_options, providers=["CPUExecutionProvider"])
 
-    _cache[variant_id] = (session, tag_names)
-    logger.info("WD14 model loaded: %d tags", len(tag_names))
-    return session, tag_names
+    with _cache_lock:
+        if variant_id not in _cache:  # double-check after acquiring lock
+            _cache[variant_id] = (session, tag_names)
+            logger.info("WD14 model loaded: %d tags", len(tag_names))
+    return _cache[variant_id]
 
 
 def _preprocess(image_path: str, size: int = 448) -> np.ndarray:

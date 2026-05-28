@@ -140,18 +140,18 @@ export default function SettingsPage() {
 
   const createProviderMutation = useMutation({
     mutationFn: (body: ProviderCreate) => providersApi.create(body),
-    onSuccess: () => { toast.success("Provider added"); refetchProviders(); setShowProviderForm(false); setEditingProviderId(null); },
+    onSuccess: () => { toast.success("Provider added"); refetchProviders(); qc.invalidateQueries({ queryKey: ["captioning-models"] }); setShowProviderForm(false); setEditingProviderId(null); },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to save provider"),
   });
   const updateProviderMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Parameters<typeof providersApi.update>[1] }) =>
       providersApi.update(id, body),
-    onSuccess: () => { toast.success("Provider updated"); refetchProviders(); setShowProviderForm(false); setEditingProviderId(null); },
+    onSuccess: () => { toast.success("Provider updated"); refetchProviders(); qc.invalidateQueries({ queryKey: ["captioning-models"] }); setShowProviderForm(false); setEditingProviderId(null); },
     onError: () => toast.error("Failed to update provider"),
   });
   const deleteProviderMutation = useMutation({
     mutationFn: (id: string) => providersApi.delete(id),
-    onSuccess: () => { toast.success("Provider deleted"); refetchProviders(); setDeletingProvider(null); },
+    onSuccess: () => { toast.success("Provider deleted"); refetchProviders(); qc.invalidateQueries({ queryKey: ["captioning-models"] }); setDeletingProvider(null); },
     onError: () => toast.error("Failed to delete provider"),
   });
 

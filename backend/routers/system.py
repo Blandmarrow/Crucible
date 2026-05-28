@@ -1,24 +1,29 @@
+import asyncio
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+_NULL = {"name": None, "used_mb": 0, "total_mb": 0, "utilization_pct": None}
 
 
 @router.get("/gpu")
 async def gpu_stats():
     try:
-        import torch
-        if not torch.cuda.is_available():
-            return {"name": None, "used_mb": 0, "total_mb": 0, "utilization_pct": None}
-        device = torch.device("cuda:0")
-        props = torch.cuda.get_device_properties(device)
-        used_bytes = torch.cuda.memory_allocated(device)
-        total_bytes = props.total_memory
-        utilization_pct = round(used_bytes / total_bytes * 100, 1) if total_bytes else None
-        return {
-            "name": props.name,
-            "used_mb": int(used_bytes / 1024 / 1024),
-            "total_mb": int(total_bytes / 1024 / 1024),
-            "utilization_pct": utilization_pct,
-        }
+        proc = await asyncio.create_subprocess_exec(
+            "nvidia-smi",
+            "--query-gpu=name,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        if proc.returncode != 0:
+            return _NULL
+        line = stdout.decode().strip().splitlines()[0]
+        name, used_str, total_str = [s.strip() for s in line.split(",")]
+        used_mb = int(used_str)
+        total_mb = int(total_str)
+        utilization_pct = round(used_mb / total_mb * 100, 1) if total_mb else None
+        return {"name": name, "used_mb": used_mb, "total_mb": total_mb, "utilization_pct": utilization_pct}
     except Exception:
-        return {"name": None, "used_mb": 0, "total_mb": 0, "utilization_pct": None}
+        return _NULL

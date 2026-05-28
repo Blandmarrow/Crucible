@@ -497,7 +497,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 ### System GPU stats
 
-`GET /api/v1/system/gpu` (router: `backend/routers/system.py`) returns `{ name, used_mb, total_mb, utilization_pct }` using `torch.cuda.memory_allocated()` and `torch.cuda.get_device_properties(0)`. `utilization_pct` is VRAM utilization (`memory_allocated / total_memory × 100`), not GPU core utilization. Returns `{ name: null }` when CUDA is unavailable. The Sidebar's GPU meter (`useGpuStats` hook in `frontend/src/hooks/useGpuStats.ts`) polls this every 5 s via TanStack Query.
+`GET /api/v1/system/gpu` (router: `backend/routers/system.py`) returns `{ name, used_mb, total_mb, utilization_pct }` by shelling out to `nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader,nounits` via `asyncio.create_subprocess_exec`. This gives device-wide VRAM usage across all processes (including Ollama), matching what Task Manager reports. `utilization_pct` is `used_mb / total_mb * 100`. Returns `{ name: null }` when nvidia-smi is unavailable or fails. **Do not revert to `torch.cuda.memory_allocated()` or `torch.cuda.mem_get_info()` here** — both are per-process CUDA context reads that miss VRAM allocated by other processes (e.g. Ollama). The Sidebar's GPU meter (`useGpuStats` hook in `frontend/src/hooks/useGpuStats.ts`) polls this every 5 s via TanStack Query. In-loop SSE progress emitters (captioning, detection) use `torch.cuda.memory_reserved()` — subprocess overhead is unacceptable inside the per-image inference loop, and those emitters only cover PyTorch-loaded models anyway.
 
 ### Captioning post-processing
 

@@ -229,7 +229,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
                 # Refresh VRAM reading only every 10 images (GPU call is not free)
                 if i % 10 == 0 and _torch and _torch.cuda.is_available():
-                    cached_vram_mb = int(_torch.cuda.memory_allocated() / 1024 / 1024)
+                    cached_vram_mb = int(_torch.cuda.memory_reserved() / 1024 / 1024)
 
                 elapsed = time.monotonic() - start_time
                 throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0

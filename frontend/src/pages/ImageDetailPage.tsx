@@ -22,6 +22,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { getGalleryPageSize } from "../constants/storage";
 import { encode } from "gpt-tokenizer";
 
 const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
@@ -184,6 +185,8 @@ export default function ImageDetailPage() {
     return { words, tokens, tokenColor };
   }, [captionText]);
 
+  const pageSize = getGalleryPageSize();
+
   // Navigation context written by GalleryPage — re-read whenever imageId changes (we may have
   // updated sessionStorage just before navigating, so the fresh read gets the new page's data)
   const navCtx = useMemo(() => {
@@ -198,7 +201,7 @@ export default function ImageDetailPage() {
 
   const currentIndex = navCtx ? navCtx.ids.indexOf(imageId ?? "") : -1;
   // "at end" means last slot of a full page — there may be a next page
-  const atEnd = !!navCtx && currentIndex === navCtx.ids.length - 1 && navCtx.ids.length === 100;
+  const atEnd = !!navCtx && currentIndex === navCtx.ids.length - 1 && navCtx.ids.length === pageSize;
   const atStart = currentIndex === 0 && !!navCtx && navCtx.page > 1;
 
   const { data: nextPageData } = useQuery({
@@ -206,7 +209,7 @@ export default function ImageDetailPage() {
     queryFn: () => imagesApi.list({
       dataset_id: datasetId!,
       page: navCtx!.page + 1,
-      limit: 100,
+      limit: pageSize,
       sort: navCtx!.sort,
       order: navCtx!.order,
       captioned: navCtx?.captionedFilter ?? undefined,
@@ -220,7 +223,7 @@ export default function ImageDetailPage() {
     queryFn: () => imagesApi.list({
       dataset_id: datasetId!,
       page: navCtx!.page - 1,
-      limit: 100,
+      limit: pageSize,
       sort: navCtx!.sort,
       order: navCtx!.order,
       captioned: navCtx?.captionedFilter ?? undefined,

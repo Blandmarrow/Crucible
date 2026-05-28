@@ -111,6 +111,7 @@ class BatchCropRequest(BaseModel):
 class BatchMoveSubfolderRequest(BaseModel):
     image_ids: list[str]
     subfolder: str
+    rename_on_move: bool = True
 
 
 class BatchMoveDatasetRequest(BaseModel):

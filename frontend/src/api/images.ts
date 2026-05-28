@@ -103,8 +103,8 @@ export const imagesApi = {
     client.post<{ job_id: string }>("/images/batch/resize", { image_ids, ...opts }).then((r) => r.data),
   batchCrop: (image_ids: string[], target_ar: number, strategy = "center") =>
     client.post<{ job_id: string }>("/images/batch/crop", { image_ids, target_ar, strategy }).then((r) => r.data),
-  batchMoveSubfolder: (image_ids: string[], subfolder: string) =>
-    client.post<BatchMoveSubfolderResult>("/images/batch/move-subfolder", { image_ids, subfolder }).then((r) => r.data),
+  batchMoveSubfolder: (image_ids: string[], subfolder: string, rename_on_move = true) =>
+    client.post<BatchMoveSubfolderResult>("/images/batch/move-subfolder", { image_ids, subfolder, rename_on_move }).then((r) => r.data),
   batchMoveDataset: (
     params: { image_ids?: string[]; source_dataset_id?: string; source_subfolder?: string },
     target_dataset_id: string,

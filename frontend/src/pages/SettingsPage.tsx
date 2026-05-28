@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
-import { CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY } from "../constants/storage";
+import { CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY, getGalleryPageSize } from "../constants/storage";
 import RadioGroup from "../components/common/RadioGroup";
 
 const DEFAULTS: Thresholds = {
@@ -71,6 +71,10 @@ export default function SettingsPage() {
   const [branchSnapshot, setBranchSnapshot] = useState<"ask" | "auto">(
     () => (localStorage.getItem(BRANCH_SNAPSHOT_KEY) === "auto" ? "auto" : "ask")
   );
+  const [pageSize, setPageSize] = useState<number>(getGalleryPageSize);
+  const [subfolderRename, setSubfolderRename] = useState<"on" | "off">(
+    () => (localStorage.getItem(SUBFOLDER_RENAME_KEY) === "off" ? "off" : "on")
+  );
 
   const { data: thresholds, isLoading } = useQuery({
     queryKey: ["settings", "thresholds"],
@@ -118,166 +122,218 @@ export default function SettingsPage() {
     (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
       form.versioning_mode !== thresholds.versioning_mode);
 
+  const [activeTab, setActiveTab] = useState<"gallery" | "ui" | "quality" | "versioning">("gallery");
+
   return (
     <div style={{ padding: "28px 32px", maxWidth: 640 }}>
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Settings</h1>
-      <p style={{ color: "var(--fg-mute)", fontSize: 13, marginBottom: 28 }}>
+      <p style={{ color: "var(--fg-mute)", fontSize: 13, marginBottom: 20 }}>
         Global configuration for this Crucible instance.
       </p>
 
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-h" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Quality Flag Thresholds</span>
-        </div>
-        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {isLoading ? (
-            <div style={{ color: "var(--fg-mute)", fontSize: 13 }}>Loading…</div>
-          ) : (
-            <>
-              {FIELDS.map((field) => (
-                <div key={field.key}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-                    <label
-                      htmlFor={field.key}
-                      style={{ fontWeight: 500, fontSize: 13, minWidth: 180 }}
-                    >
-                      {field.label}
-                    </label>
-                    <input
-                      id={field.key}
-                      className="input"
-                      type="number"
-                      step={field.step}
-                      min={field.min}
-                      max={field.max}
-                      value={form[field.key]}
-                      onChange={(e) =>
-                        setForm((prev) => ({ ...prev, [field.key]: parseFloat(e.target.value) }))
-                      }
-                      style={{ width: 100 }}
-                    />
-                    {thresholds && form[field.key] !== thresholds[field.key] && (
-                      <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace" }}>
-                        was {thresholds[field.key]}
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0, paddingLeft: 192 }}>
-                    {field.description}
-                  </p>
-                </div>
-              ))}
-
-              <p style={{
-                fontSize: 12, color: "var(--fg-dim)",
-                background: "var(--surface-2)", border: "1px solid var(--line)",
-                borderRadius: "var(--r)", padding: "8px 12px", margin: 0,
-              }}>
-                Changes apply to the next quality scoring run. Existing scored images are not re-flagged automatically.
-              </p>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className="btn primary"
-                  onClick={handleSave}
-                  disabled={mutation.isPending || !isChanged}
-                >
-                  {mutation.isPending ? "Saving…" : "Save"}
-                </button>
-                <button className="btn ghost" onClick={handleReset}>
-                  Reset to defaults
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+      <div className="tabs">
+        <button className={`tab${activeTab === "gallery" ? " active" : ""}`} onClick={() => setActiveTab("gallery")}>Gallery</button>
+        <button className={`tab${activeTab === "ui" ? " active" : ""}`} onClick={() => setActiveTab("ui")}>UI Behavior</button>
+        <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
+        <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
       </div>
 
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-h">
-          <span style={{ fontWeight: 600, fontSize: 13 }}>UI Behavior</span>
-        </div>
-        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div>
-            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Delete confirmation default button</div>
-            <RadioGroup
-              name="confirm_default"
-              options={[
-                { value: "cancel", label: "Cancel (safe default)", desc: "The Cancel button is focused — pressing Enter will dismiss without deleting." },
-                { value: "confirm", label: "Confirm delete", desc: "The confirm button is focused — pressing Enter will proceed with deletion." },
-              ]}
-              value={confirmDefault}
-              onChange={(v) => {
-                setConfirmDefault(v as "cancel" | "confirm");
-                localStorage.setItem(CONFIRM_DEFAULT_KEY, v);
-                toast.success("Preference saved");
-              }}
-            />
+      {activeTab === "gallery" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Images per page</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Number of images loaded per page in the gallery. Lower values reduce memory usage with large high-resolution datasets.
+              </p>
+              <select
+                className="select"
+                value={pageSize}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setPageSize(v);
+                  localStorage.setItem(GALLERY_PAGE_SIZE_KEY, String(v));
+                  toast.success("Gallery page size saved");
+                }}
+                style={{ width: 120 }}
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Subfolder rename on move</div>
+              <RadioGroup
+                name="subfolder_rename"
+                options={[
+                  { value: "on", label: "Rename to subfolder name (default)", desc: "Images are renamed to the subfolder slug when moved (e.g. moving to \"portraits\" renames files to portraits_001.jpg, portraits_002.jpg, …)." },
+                  { value: "off", label: "Keep original filenames", desc: "Files keep their current names when moved to a subfolder. Only the subfolder metadata is updated." },
+                ]}
+                value={subfolderRename}
+                onChange={(v) => {
+                  setSubfolderRename(v as "on" | "off");
+                  localStorage.setItem(SUBFOLDER_RENAME_KEY, v);
+                  toast.success("Preference saved");
+                }}
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="panel" style={{ marginBottom: 16 }}>
-        <div className="panel-h">
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Versioning</span>
+      {activeTab === "ui" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Delete confirmation default button</div>
+              <RadioGroup
+                name="confirm_default"
+                options={[
+                  { value: "cancel", label: "Cancel (safe default)", desc: "The Cancel button is focused — pressing Enter will dismiss without deleting." },
+                  { value: "confirm", label: "Confirm delete", desc: "The confirm button is focused — pressing Enter will proceed with deletion." },
+                ]}
+                value={confirmDefault}
+                onChange={(v) => {
+                  setConfirmDefault(v as "cancel" | "confirm");
+                  localStorage.setItem(CONFIRM_DEFAULT_KEY, v);
+                  toast.success("Preference saved");
+                }}
+              />
+            </div>
+          </div>
         </div>
-        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {isLoading ? (
-            <div style={{ color: "var(--fg-mute)", fontSize: 13 }}>Loading…</div>
-          ) : (
-            <>
-              <div>
-                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Version control mode</div>
-                <RadioGroup
-                  name="versioning_mode"
-                  options={[
-                    { value: "off", label: "Off", desc: "No version tracking. No disk space used." },
-                    { value: "manual", label: "Manual snapshots", desc: "Snapshots only when you create them. All files are backed up at snapshot time (full point-in-time backup)." },
-                    { value: "auto", label: "Automatic (copy-on-write)", desc: "Files are automatically backed up before any resize, upscale replace, or LUT replace. Lightweight snapshots; backups happen lazily on first overwrite." },
-                  ]}
-                  value={form.versioning_mode}
-                  onChange={(v) => setForm((prev) => ({ ...prev, versioning_mode: v as "off" | "manual" | "auto" }))}
-                />
-                {thresholds && thresholds.versioning_mode !== "off" && form.versioning_mode === "off" && (
-                  <p style={{ fontSize: 12, color: "var(--warn)", marginTop: 10, marginBottom: 0 }}>
-                    Switching to Off preserves existing snapshots and the object store, but no new backups will be taken.
-                  </p>
-                )}
-              </div>
+      )}
 
-              <div>
-                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Branch snapshot behavior</div>
-                <RadioGroup
-                  name="branch_snapshot"
-                  options={[
-                    { value: "ask", label: "Ask before branching (Recommended)", desc: "Show a prompt when creating a new branch or switching branches, letting you choose whether to save a snapshot." },
-                    { value: "auto", label: "Auto-create snapshots", desc: "Always create snapshots automatically when branching or switching, without asking." },
-                  ]}
-                  value={branchSnapshot}
-                  onChange={(v) => {
-                    setBranchSnapshot(v as "ask" | "auto");
-                    localStorage.setItem(BRANCH_SNAPSHOT_KEY, v);
-                    toast.success("Preference saved");
-                  }}
-                />
-              </div>
+      {activeTab === "quality" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {isLoading ? (
+              <div style={{ color: "var(--fg-mute)", fontSize: 13 }}>Loading…</div>
+            ) : (
+              <>
+                {FIELDS.map((field) => (
+                  <div key={field.key}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+                      <label
+                        htmlFor={field.key}
+                        style={{ fontWeight: 500, fontSize: 13, minWidth: 180 }}
+                      >
+                        {field.label}
+                      </label>
+                      <input
+                        id={field.key}
+                        className="input"
+                        type="number"
+                        step={field.step}
+                        min={field.min}
+                        max={field.max}
+                        value={form[field.key]}
+                        onChange={(e) =>
+                          setForm((prev) => ({ ...prev, [field.key]: parseFloat(e.target.value) }))
+                        }
+                        style={{ width: 100 }}
+                      />
+                      {thresholds && form[field.key] !== thresholds[field.key] && (
+                        <span style={{ fontSize: 11, color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace" }}>
+                          was {thresholds[field.key]}
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0, paddingLeft: 192 }}>
+                      {field.description}
+                    </p>
+                  </div>
+                ))}
 
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className="btn primary"
-                  onClick={handleSave}
-                  disabled={mutation.isPending || !isChanged}
-                >
-                  {mutation.isPending ? "Saving…" : "Save"}
-                </button>
-                <button className="btn ghost" onClick={handleReset}>
-                  Reset to defaults
-                </button>
-              </div>
-            </>
-          )}
+                <p style={{
+                  fontSize: 12, color: "var(--fg-dim)",
+                  background: "var(--surface-2)", border: "1px solid var(--line)",
+                  borderRadius: "var(--r)", padding: "8px 12px", margin: 0,
+                }}>
+                  Changes apply to the next quality scoring run. Existing scored images are not re-flagged automatically.
+                </p>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    onClick={handleSave}
+                    disabled={mutation.isPending || !isChanged}
+                  >
+                    {mutation.isPending ? "Saving…" : "Save"}
+                  </button>
+                  <button className="btn ghost" onClick={handleReset}>
+                    Reset to defaults
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {activeTab === "versioning" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {isLoading ? (
+              <div style={{ color: "var(--fg-mute)", fontSize: 13 }}>Loading…</div>
+            ) : (
+              <>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Version control mode</div>
+                  <RadioGroup
+                    name="versioning_mode"
+                    options={[
+                      { value: "off", label: "Off", desc: "No version tracking. No disk space used." },
+                      { value: "manual", label: "Manual snapshots", desc: "Snapshots only when you create them. All files are backed up at snapshot time (full point-in-time backup)." },
+                      { value: "auto", label: "Automatic (copy-on-write)", desc: "Files are automatically backed up before any resize, upscale replace, or LUT replace. Lightweight snapshots; backups happen lazily on first overwrite." },
+                    ]}
+                    value={form.versioning_mode}
+                    onChange={(v) => setForm((prev) => ({ ...prev, versioning_mode: v as "off" | "manual" | "auto" }))}
+                  />
+                  {thresholds && thresholds.versioning_mode !== "off" && form.versioning_mode === "off" && (
+                    <p style={{ fontSize: 12, color: "var(--warn)", marginTop: 10, marginBottom: 0 }}>
+                      Switching to Off preserves existing snapshots and the object store, but no new backups will be taken.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Branch snapshot behavior</div>
+                  <RadioGroup
+                    name="branch_snapshot"
+                    options={[
+                      { value: "ask", label: "Ask before branching (Recommended)", desc: "Show a prompt when creating a new branch or switching branches, letting you choose whether to save a snapshot." },
+                      { value: "auto", label: "Auto-create snapshots", desc: "Always create snapshots automatically when branching or switching, without asking." },
+                    ]}
+                    value={branchSnapshot}
+                    onChange={(v) => {
+                      setBranchSnapshot(v as "ask" | "auto");
+                      localStorage.setItem(BRANCH_SNAPSHOT_KEY, v);
+                      toast.success("Preference saved");
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    onClick={handleSave}
+                    disabled={mutation.isPending || !isChanged}
+                  >
+                    {mutation.isPending ? "Saving…" : "Save"}
+                  </button>
+                  <button className="btn ghost" onClick={handleReset}>
+                    Reset to defaults
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

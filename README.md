@@ -244,9 +244,17 @@ A three-panel filesystem explorer built into the app:
 - Import any folder of images directly into an existing dataset without leaving the browser
 
 ### Settings
-Route: `/settings` — accessible from the sidebar.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into four tabs.
 
-**Quality flag thresholds** — five configurable number inputs:
+**Gallery** — browser-local preferences, each taking effect immediately:
+- Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
+- Subfolder rename on move: *Rename to subfolder name* (default) or *Keep original filenames* — when disabled, moving images to a subfolder updates their subfolder metadata only, without renaming the files
+
+**UI Behavior** — browser-local preferences, each taking effect immediately:
+- Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
+- Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
+
+**Quality Thresholds** — five configurable number inputs (require Save; changes apply to the next scoring run only):
 
 | Setting | Controls |
 |---|---|
@@ -256,13 +264,7 @@ Route: `/settings` — accessible from the sidebar.
 | Watermark threshold | CLIP zero-shot score cutoff for `has_watermark` (default 0.6) |
 | Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
 
-Changes take effect on the next scoring run — existing scored images are not automatically re-flagged.
-
-**Versioning mode** — switch between Off, Manual, and Auto (see [Dataset Versioning](#dataset-versioning)).
-
-**UI Behavior** — two browser-local preferences, each taking effect immediately without a Save button:
-- Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
-- Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
+**Versioning** — version control mode (Off / Manual / Auto; see [Dataset Versioning](#dataset-versioning)) plus branch snapshot behavior. Requires Save for the version control mode.
 
 ### Booru Tag Lookup
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:

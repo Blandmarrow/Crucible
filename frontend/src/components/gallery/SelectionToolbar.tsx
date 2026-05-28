@@ -18,6 +18,7 @@ import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
+import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 
 interface Props {
   datasetId: string;
@@ -152,7 +153,11 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   });
 
   const moveSubfolderMutation = useMutation({
-    mutationFn: () => imagesApi.batchMoveSubfolder(ids, moveSubfolderTarget),
+    mutationFn: () => imagesApi.batchMoveSubfolder(
+      ids,
+      moveSubfolderTarget,
+      localStorage.getItem(SUBFOLDER_RENAME_KEY) !== "off",
+    ),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });

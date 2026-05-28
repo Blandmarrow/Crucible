@@ -13,6 +13,7 @@ import ImageCard from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
+import { getGalleryPageSize } from "../constants/storage";
 
 const SORT_OPTIONS = [
   { label: "Newest first", sort: "created_at", order: "desc" },
@@ -98,6 +99,8 @@ export default function GalleryPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
   const { selectAll, clear, count } = useSelectionStore();
+
+  const pageSize = useMemo(getGalleryPageSize, []);
 
   const saved = useMemo(() => (datasetId ? loadSavedState(datasetId) : null), [datasetId]);
   const [page, setPage] = useState(saved?.page ?? 1);
@@ -198,12 +201,12 @@ export default function GalleryPage() {
     : undefined;
 
   const { data: images = [], isLoading, refetch } = useQuery({
-    queryKey: ["images", datasetId, page, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
+    queryKey: ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
     queryFn: () =>
       imagesApi.list({
         dataset_id: datasetId!,
         page,
-        limit: 100,
+        limit: pageSize,
         sort: sortOpt.sort,
         order: sortOpt.order,
         captioned: captionedFilter,
@@ -911,11 +914,11 @@ export default function GalleryPage() {
         )}
 
         {/* Pagination */}
-        {(page > 1 || images.length === 100) && (
+        {(page > 1 || images.length === pageSize) && (
           <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 24 }}>
             {page > 1 && <button className="btn" onClick={() => setPage(p => p - 1)}>← Previous</button>}
             <span style={{ alignSelf: "center", fontSize: 12, color: "var(--fg-mute)" }}>Page {page}</span>
-            {images.length === 100 && <button className="btn" onClick={() => setPage(p => p + 1)}>Next →</button>}
+            {images.length === pageSize && <button className="btn" onClick={() => setPage(p => p + 1)}>Next →</button>}
           </div>
         )}
 

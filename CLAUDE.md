@@ -72,7 +72,7 @@ Images receive human-readable names derived from their original filename via `sl
 
 `Image.is_auto_named: bool` (default `False`) — set to `True` when a file is renamed by the captioning job or by a subfolder move. Used to distinguish auto-named files from manually named ones. `PATCH /images/{image_id}/rename` sets it back to `False`.
 
-**Subfolder-based naming**: when `rename_on_caption=True` or when images are moved between subfolders (`POST /images/batch/move-subfolder`) or between datasets (`POST /images/batch/move-dataset` / `POST /images/batch/copy-dataset`), filenames are derived from the target subfolder slug (e.g. images in `"animals"` become `animals.jpg`, `animals_001.jpg`, …; images in root become `image.jpg`, `image_001.jpg`, …). All moves and copies rename every image in the batch unconditionally.
+**Subfolder-based naming**: when `rename_on_caption=True` or when images are moved between subfolders (`POST /images/batch/move-subfolder`) or between datasets (`POST /images/batch/move-dataset` / `POST /images/batch/copy-dataset`), filenames are derived from the target subfolder slug (e.g. images in `"animals"` become `animals.jpg`, `animals_001.jpg`, …; images in root become `image.jpg`, `image_001.jpg`, …). Cross-dataset moves and copies always rename. For same-dataset subfolder moves, renaming is conditional: `BatchMoveSubfolderRequest.rename_on_move: bool = True` — when `False`, only the `subfolder` metadata column is updated and filenames are preserved (the user's preference is stored in `localStorage` under `SUBFOLDER_RENAME_KEY` and read by `SelectionToolbar` at mutation time).
 
 **Cross-dataset moves** (`POST /images/batch/move-dataset`): accepts either `image_ids` (explicit list) or `source_dataset_id + source_subfolder` (moves the whole subfolder). Files are renamed to the target subfolder slug, moved to `{target_dataset.folder_path}/images/`, thumbnails are copied then the originals removed. Calls `refresh_stats` on both source and target after commit.
 
@@ -297,7 +297,7 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 `frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
 
-`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). `BRANCH_SNAPSHOT_KEY`: the `localStorage` key for the branch/checkout snapshot behavior preference (`"ask"` or `"auto"`). Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage`. `VERSIONS_BRANCH_KEY`: the `sessionStorage` key prefix (`"versions-branch"`) for the user's last-browsed branch on `VersionsPage`; append `-${datasetId}` for the full key. Written by `VersionsPage.handleBranchSelect` and by `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount. Add new storage keys here rather than defining them inline in components.
+`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). `BRANCH_SNAPSHOT_KEY`: the `localStorage` key for the branch/checkout snapshot behavior preference (`"ask"` or `"auto"`). Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage`. `VERSIONS_BRANCH_KEY`: the `sessionStorage` key prefix (`"versions-branch"`) for the user's last-browsed branch on `VersionsPage`; append `-${datasetId}` for the full key. Written by `VersionsPage.handleBranchSelect` and by `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount. `GALLERY_PAGE_SIZE_KEY`: the `localStorage` key for images-per-page in the gallery (`25 | 50 | 100 | 200`); read by `GalleryPage`, `ImageDetailPage` (for prefetch limit and end-of-page detection), and `SettingsPage`. `SUBFOLDER_RENAME_KEY`: the `localStorage` key for the subfolder auto-rename preference (`"on" | "off"`); read by `SelectionToolbar` at mutation time and written by `SettingsPage`. `getGalleryPageSize(): number` — shared helper that reads `GALLERY_PAGE_SIZE_KEY`, guards against `NaN`, and returns the default `100` on parse failure. Use this everywhere the page size is read; never inline the `parseInt` + fallback pattern. Add new storage keys here rather than defining them inline in components.
 
 ### Layout
 
@@ -466,9 +466,19 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 
 **Frontend**: `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
-The Settings page also includes a **UI Behavior** panel (above Versioning) with two `RadioGroup` controls:
-- Delete-confirmation default button (`cancel` / `confirm`). Stored in `localStorage` under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
-- Branch snapshot behavior (`ask` / `auto`). Stored in `localStorage` under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting. Takes effect immediately — no Save button.
+The Settings page uses a **tab-based layout** with four tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds and versioning mode require an explicit Save.
+
+**Gallery tab** — two immediate-save preferences:
+- Images per page (`25 | 50 | 100 | 200`). Stored under `GALLERY_PAGE_SIZE_KEY`. Read by `GalleryPage` (gallery list limit) and `ImageDetailPage` (end-of-page detection + prefetch limit for cross-page arrow-key navigation). Parse and default via `getGalleryPageSize()`.
+- Subfolder rename on move (`on | off`). Stored under `SUBFOLDER_RENAME_KEY`. Read by `SelectionToolbar`'s `moveSubfolderMutation` at mutation time; passed as `rename_on_move` to `POST /images/batch/move-subfolder`.
+
+**UI Behavior tab** — two immediate-save preferences:
+- Delete-confirmation default button (`cancel` / `confirm`). Stored under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
+- Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
+
+**Quality Thresholds tab** — five editable number inputs (blur, noise, uniformity, watermark, duplicate thresholds). Requires Save; changes apply to the next scoring run only.
+
+**Versioning tab** — version control mode radio (`off | manual | auto`) plus branch snapshot behavior radio. Requires Save for the version control mode; branch snapshot behavior is immediate (localStorage).
 
 ### Styling
 

@@ -756,38 +756,50 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
     dataset_id = rows[0].dataset_id
     images_dir = Path(rows[0].file_path).parent
 
-    existing = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
-    db_names: set[str] = {r[0] for r in existing.all()}
+    if body.rename_on_move:
+        existing = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
+        db_names: set[str] = {r[0] for r in existing.all()}
 
-    target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
+        target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
-    # Build the full rename plan before touching anything.
-    renames: list[tuple[Path, Path, str, str, str]] = []  # (old, new, id, new_fn, new_fp)
-    for row in rows:
-        old_path = Path(row.file_path)
-        suf = old_path.suffix.lower()
-        db_names.discard(row.filename)
-        new_filename = unique_filename(images_dir, target_stem, suf, db_names)
-        new_path = images_dir / new_filename
-        db_names.add(new_filename)
-        renames.append((old_path, new_path, row.id, new_filename, str(new_path)))
+        # Build the full rename plan before touching anything.
+        renames: list[tuple[Path, Path, Path, Path, str, str, str]] = []  # (old, new, old_thumb, new_thumb, id, new_fn, new_fp)
+        for row in rows:
+            old_path = Path(row.file_path)
+            suf = old_path.suffix.lower()
+            db_names.discard(row.filename)
+            new_filename = unique_filename(images_dir, target_stem, suf, db_names)
+            new_path = images_dir / new_filename
+            old_thumb = Path(thumbnail_path_for(str(old_path)))
+            new_thumb = Path(thumbnail_path_for(str(new_path)))
+            db_names.add(new_filename)
+            renames.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename, str(new_path)))
 
-    # Apply all DB mutations in-memory (no commit yet).
-    for _old, _new, img_id, new_fn, new_fp in renames:
-        await db.execute(
-            sa_update(Image).where(Image.id == img_id).values(
-                subfolder=target,
-                filename=new_fn,
-                file_path=new_fp,
-                is_auto_named=True,
+        # Apply all DB mutations in-memory (no commit yet).
+        for _old, _new, _ot, new_thumb, img_id, new_fn, new_fp in renames:
+            await db.execute(
+                sa_update(Image).where(Image.id == img_id).values(
+                    subfolder=target,
+                    filename=new_fn,
+                    file_path=new_fp,
+                    thumbnail_path=str(new_thumb),
+                    is_auto_named=True,
+                )
             )
-        )
 
-    # Perform filesystem renames — if any raise, the exception propagates and
-    # db.commit() is never reached, so all DB mutations are rolled back.
-    for old_path, new_path, *_ in renames:
-        if new_path != old_path:
-            rename_with_sidecar(old_path, new_path)
+        # Perform filesystem renames — if any raise, the exception propagates and
+        # db.commit() is never reached, so all DB mutations are rolled back.
+        for old_path, new_path, old_thumb, new_thumb, *_ in renames:
+            if new_path != old_path:
+                rename_with_sidecar(old_path, new_path)
+                if old_thumb.exists():
+                    old_thumb.rename(new_thumb)
+    else:
+        # Just update the subfolder field; filenames stay unchanged.
+        for row in rows:
+            await db.execute(
+                sa_update(Image).where(Image.id == row.id).values(subfolder=target)
+            )
 
     await db.commit()
     return {"moved": len(rows), "subfolder": target}

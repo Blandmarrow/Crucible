@@ -17,6 +17,7 @@ export interface CaptionRunParams {
   min_aesthetic_score?: number;
   exclude_flags?: string[];
   wd14_threshold?: number;
+  label?: string;
 }
 
 export interface PipelineStep {
@@ -40,6 +41,7 @@ export interface CaptionPipelineParams {
   rename_on_caption?: boolean;
   min_aesthetic_score?: number;
   exclude_flags?: string[];
+  label?: string;
 }
 
 export const captioningApi = {

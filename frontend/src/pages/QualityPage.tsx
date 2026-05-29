@@ -27,6 +27,7 @@ export default function QualityPage() {
   const [runWatermark, setRunWatermark] = useState(false);
   const [runEmbeddings, setRunEmbeddings] = useState(false);
   const [runDino, setRunDino] = useState(false);
+  const [jobLabel, setJobLabel] = useState("");
   const [runDinoLayers, setRunDinoLayers] = useState(false);
   const [showStyleSection, setShowStyleSection] = useState(false);
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set());
@@ -94,6 +95,7 @@ export default function QualityPage() {
         run_embeddings: runEmbeddings,
         run_dino: runDino,
         run_dino_layers: runDino && runDinoLayers,
+        label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       if (data.job_id) { setActiveJobId(data.job_id); toast.success("Quality scoring started"); }
@@ -196,6 +198,15 @@ export default function QualityPage() {
               ))}
             </select>
           )}
+          <input
+            className="input"
+            type="text"
+            placeholder="Job label (optional)"
+            value={jobLabel}
+            onChange={(e) => setJobLabel(e.target.value)}
+            style={{ width: 180, fontSize: 12 }}
+            title="Optional name shown in the job queue"
+          />
           <button className="btn primary" onClick={() => scoreMutation.mutate()} disabled={isRunning}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>

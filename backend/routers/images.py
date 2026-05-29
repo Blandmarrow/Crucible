@@ -492,7 +492,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             "upscale_target_width": body.upscale_target_width,
             "upscale_target_height": body.upscale_target_height,
         }
-        job = BackgroundJob(job_type="crop_upscale", dataset_id=img.dataset_id, total_items=1, config=replace_cfg)
+        job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=replace_cfg)
         db.add(job)
         await db.commit()
 
@@ -568,7 +568,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             "upscale_target_width": body.upscale_target_width,
             "upscale_target_height": body.upscale_target_height,
         }
-        job = BackgroundJob(job_type="crop_upscale", dataset_id=img.dataset_id, total_items=1, config=job_cfg)
+        job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=job_cfg)
         db.add(job)
         await db.commit()
 
@@ -650,7 +650,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
 @router.post("/batch/resize")
 async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_resize", total_items=len(body.image_ids), config=body.model_dump())
+    job = BackgroundJob(job_type="batch_resize", label="Batch resize", total_items=len(body.image_ids), config=body.model_dump())
     db.add(job)
     await db.commit()
 
@@ -682,7 +682,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
 
 @router.post("/batch/crop")
 async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_crop", total_items=len(body.image_ids), config=body.model_dump())
+    job = BackgroundJob(job_type="batch_crop", label="Batch crop", total_items=len(body.image_ids), config=body.model_dump())
     db.add(job)
     await db.commit()
 

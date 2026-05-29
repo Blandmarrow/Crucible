@@ -14,6 +14,7 @@ export interface UpscaleRunRequest {
   target_width?: number | null;
   target_height?: number | null;
   subfolder?: string;
+  label?: string;
 }
 
 export const upscalingApi = {

@@ -28,6 +28,7 @@ class ScoreRequest(BaseModel):
     run_embeddings: bool = False
     run_dino: bool = False
     run_dino_layers: bool = False
+    label: str | None = None
 
 
 class DuplicateResolve(BaseModel):
@@ -56,8 +57,17 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
     if not images:
         return {"job_id": None, "message": "No images found"}
 
+    checks = [c for c, flag in [
+        ("technical", body.run_technical),
+        ("aesthetic", body.run_aesthetic),
+        ("watermark", body.run_watermark),
+        ("embeddings", body.run_embeddings),
+        ("DINOv2", body.run_dino),
+    ] if flag]
+    auto_label = f"Quality: {', '.join(checks) or 'none'} — {len(images)} image{'s' if len(images) != 1 else ''}"
     job = BackgroundJob(
         job_type="quality_score",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=len(images),
         config=body.model_dump(),

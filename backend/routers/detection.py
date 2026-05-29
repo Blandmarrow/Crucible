@@ -45,8 +45,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
     if not rows:
         return {"job_id": None, "message": "No images found"}
 
+    auto_label = f"Detect ({body.task}) — {body.model}"
     job = BackgroundJob(
         job_type="detection",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=len(rows),
         config=body.model_dump(),

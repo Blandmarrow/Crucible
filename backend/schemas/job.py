@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class JobOut(BaseModel):
     id: str
     job_type: str
+    label: str | None
     status: str
     dataset_id: str | None
     total_items: int
@@ -24,6 +25,7 @@ class JobProgress(BaseModel):
     type: str = "progress"
     job_id: str
     job_type: str
+    label: str | None = None
     status: str
     done: int
     total: int

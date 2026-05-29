@@ -150,6 +150,7 @@ async def duplicate_dataset_endpoint(
 
     job = BackgroundJob(
         job_type="duplicate",
+        label=f"Duplicate - {body.new_name}",
         dataset_id=dataset_id,
         total_items=total,
         config=body.model_dump(),
@@ -178,8 +179,10 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
     if not ds:
         raise HTTPException(404, "Dataset not found")
 
+    from pathlib import Path as _Path
     job = BackgroundJob(
         job_type="import",
+        label=f"Import - {_Path(body.folder_path).name}",
         dataset_id=dataset_id,
         total_items=0,
         config=body.model_dump(),

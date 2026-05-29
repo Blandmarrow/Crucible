@@ -10,6 +10,7 @@ interface ExportFilters {
   subfolders?: string[] | null;
   strip_metadata?: boolean;
   captions_only?: boolean;
+  label?: string;
 }
 
 export const exportApi = {

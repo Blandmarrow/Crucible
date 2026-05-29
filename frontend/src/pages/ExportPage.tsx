@@ -46,6 +46,7 @@ export default function ExportPage() {
 
   const [stripMetadata, setStripMetadata] = useState(false);
   const [captionsOnly, setCaptionsOnly] = useState(false);
+  const [jobLabel, setJobLabel] = useState("");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   useJobSSE(activeJobId);
@@ -100,7 +101,8 @@ export default function ExportPage() {
   const exportMutation = useMutation({
     mutationFn: () => {
       const filters = buildFilters();
-      const common = { dataset_id: datasetId!, output_dir: outputDir, output_format: outputImgFmt, ...filters };
+      const label = jobLabel.trim() || undefined;
+      const common = { dataset_id: datasetId!, output_dir: outputDir, output_format: outputImgFmt, label, ...filters };
       if (format === "kohya") return exportApi.kohya({ ...common, n_repeats: nRepeats, concept_token: conceptToken });
       if (format === "aitoolkit") return exportApi.aitoolkit({ ...common, concept_name: conceptToken });
       return exportApi.plain(common);
@@ -471,6 +473,17 @@ export default function ExportPage() {
               </div>
             </div>
           )}
+
+          {/* Job label */}
+          <input
+            className="input"
+            type="text"
+            placeholder="Job label (optional)"
+            value={jobLabel}
+            onChange={(e) => setJobLabel(e.target.value)}
+            style={{ width: "100%", fontSize: 12, marginBottom: 8 }}
+            title="Optional name shown in the job queue"
+          />
 
           {/* Build button */}
           <button

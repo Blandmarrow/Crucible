@@ -15,3 +15,4 @@ class UpscaleRunRequest(BaseModel):
     target_width: int | None = None
     target_height: int | None = None
     subfolder: str | None = None
+    label: str | None = None

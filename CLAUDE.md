@@ -43,6 +43,8 @@ HTTP request → FastAPI router → service layer (pure business logic, no HTTP)
 
 Long-running operations (captioning, quality scoring, import, export, batch ops) are queued: the router creates a `BackgroundJob` DB record, enqueues a coroutine in `workers/job_queue.py`, and immediately returns `{job_id}`. The worker runs the job, emits SSE progress events via `workers/progress.py`, and updates the job row when done. The frontend subscribes to `GET /api/v1/jobs/stream/{job_id}` (or `/stream/all/events` for the global progress bar).
 
+`BackgroundJob` has a nullable `label: str | None` column (max 200 chars). Every router that creates a job sets an auto-generated descriptive label (e.g. `"Florence-2 (large) — 50 images"`, `"Quality: technical, aesthetic — 100 images"`) and accepts an optional `label` field in the request body to override it (`body.label or auto_label`). A `_model_short_label(model: str) -> str` helper in `routers/captioning.py` converts raw model IDs to readable names for the auto-label.
+
 ### Frontend serving (production)
 
 `backend/main.py` serves the built React app after all API routers are registered. Two parts:
@@ -286,7 +288,7 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 ### SSE progress
 
-`ProgressBroadcaster` (singleton in `workers/progress.py`) maintains per-job `asyncio.Queue`s. Emitting a progress event pushes to the job-specific channel and the `"all"` channel. A 25-second heartbeat keeps proxies from closing idle connections. Per-job streams (`GET /jobs/stream/{job_id}`) close when status becomes `completed`, `failed`, or `cancelled`. The global stream (`GET /jobs/stream/all/events`) uses `stop_on_terminal=False` and stays open for the session lifetime. All progress events include `dataset_id` (nullable for jobs with no associated dataset).
+`ProgressBroadcaster` (singleton in `workers/progress.py`) maintains per-job `asyncio.Queue`s. Emitting a progress event pushes to the job-specific channel and the `"all"` channel. A 25-second heartbeat keeps proxies from closing idle connections. Per-job streams (`GET /jobs/stream/{job_id}`) close when status becomes `completed`, `failed`, or `cancelled`. The global stream (`GET /jobs/stream/all/events`) uses `stop_on_terminal=False` and stays open for the session lifetime. All progress events include `dataset_id` (nullable for jobs with no associated dataset) and `label` (the job's display name, nullable — always taken directly from `job.label` on the in-memory `BackgroundJob` object).
 
 ### Frontend state
 
@@ -294,6 +296,7 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 - **Zustand stores** — `datasetStore` (active dataset), `selectionStore` (Set of selected image IDs + `datasetByImageId: Map<string, string>` tracking which dataset each selected image belongs to), `jobStore` (Map of active job progress from SSE), `promptPresetsStore` (saved AI prompt presets, persisted to localStorage), `paneStore` (split-view pane layout — see Split view pane manager section), `uploadStore` (active upload progress — see below). `selectionStore.toggle(id, datasetId)` and `selectionStore.selectAll(ids, datasetId)` both require a `datasetId` argument — all callsites (ImageCard, GalleryPage, ImageDetailPage) must pass it.
 - **`useJobSSE(jobId)`** — opens `EventSource` for one job, writes progress to `jobStore`.
 - **`useAllJobsSSE()`** — opened at app root in `TopBar`, drives the global progress bar.
+- **Job label display**: `TopBar` running-job pill shows `runningJob.label || runningJob.message || runningJob.job_type`; pending queue chips show `j.label || j.job_type`. `CaptioningPage` live-progress panel shows the label above the done/total counter (`{jobProgress.label && <div>…</div>}`); its pending-queue list shows `qJob.label || fallbackLabel`. `JobProgress` in `frontend/src/types/index.ts` types `label` as `string | null | undefined` since SSE delivers JSON `null` when no label was set.
 - **Job completion → cache invalidation**: pages that trigger background jobs (`QualityPage`, `SelectionToolbar`, `ImageDetailPage`) watch their job ID in `jobStore` via `useEffect` and call `qc.invalidateQueries` when status becomes `"completed"`. Always follow this pattern when adding new job-triggering UI. Additionally, `TopBar` watches all jobs globally and invalidates `["images", dataset_id]` for image-modifying job types (`batch_upscale`, `batch_lut`, `crop_upscale`) on completion — this catches the case where the user navigates away before the job finishes and `ImageDetailPage` is no longer mounted.
 - **Per-image cache invalidation (captioning)**: Caption SSE events carry `image_id`; `CaptioningPage` invalidates `["images", datasetId]` on every `done` increment so the gallery updates in real-time.
 - **SelectionToolbar score modal**: the "Run Scoring" action accepts four boolean toggles — `run_technical`, `run_aesthetic`, `run_watermark` (CLIP zero-shot watermark detection), and `run_embeddings` (CLIP + DINOv2 embedding extraction for style similarity). `run_watermark` and `run_embeddings` default to `false` since they add significant VRAM/time overhead.
@@ -531,10 +534,11 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 ### Captioning post-processing
 
-`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts three post-processing flags and one WD14-specific field:
+`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts three post-processing flags, one WD14-specific field, and a job label:
 
 | Field | Default | Effect |
 |---|---|---|
+| `label` | `null` | Optional display name shown in the job queue. When omitted, the router auto-generates `"{model_short} — N images"`. |
 | `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. |
 | `save_backup` | `false` | Before calling `set_caption`, write the existing `.txt` sidecar to `.txt.bak`. |
 | `rename_on_caption` | `false` | After saving each caption, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root). Sets `is_auto_named=True`. Subfolder and original filename are fetched from the initial bulk query — no per-image DB round-trip. |

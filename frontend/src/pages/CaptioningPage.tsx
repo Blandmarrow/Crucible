@@ -194,6 +194,7 @@ export default function CaptioningPage() {
   const [stripRefusals, setStripRefusals] = useState(true);
   const [saveBackup, setSaveBackup] = useState(false);
   const [renameOnCaption, setRenameOnCaption] = useState(false);
+  const [jobLabel, setJobLabel] = useState("");
   const [submittedJobIds, setSubmittedJobIds] = useState<string[]>([]);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
@@ -337,6 +338,7 @@ export default function CaptioningPage() {
           rename_on_caption: renameOnCaption,
           min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
           exclude_flags: excludeFlags.size > 0 ? [...excludeFlags] : undefined,
+          label: jobLabel.trim() || undefined,
         });
       }
       return captioningApi.run({
@@ -354,6 +356,7 @@ export default function CaptioningPage() {
         min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
         exclude_flags: excludeFlags.size > 0 ? [...excludeFlags] : undefined,
         wd14_threshold: isWd14 ? wd14Threshold : undefined,
+        label: jobLabel.trim() || undefined,
       });
     },
     onSuccess: (data) => {
@@ -465,6 +468,15 @@ export default function CaptioningPage() {
           {queuedCount > 0 && (
             <span className="badge info" style={{ alignSelf: "center" }}>{queuedCount} queued</span>
           )}
+          <input
+            className="input"
+            type="text"
+            placeholder="Job label (optional)"
+            value={jobLabel}
+            onChange={(e) => setJobLabel(e.target.value)}
+            style={{ width: 200, fontSize: 12 }}
+            title="Optional name shown in the job queue"
+          />
           {isRunning && (
             <button className="btn danger" onClick={handleStop} disabled={cancelMutation.isPending}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -870,7 +882,7 @@ export default function CaptioningPage() {
             {otherPendingJobs.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
                 {otherPendingJobs.map((qJob) => {
-                  const label = qJob.job_type === "caption_pipeline" ? "Pipeline" : "Caption";
+                  const fallbackLabel = qJob.job_type === "caption_pipeline" ? "Pipeline" : "Caption";
                   return (
                     <div key={qJob.job_id} style={{
                       display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -885,7 +897,7 @@ export default function CaptioningPage() {
                           <circle cx="8" cy="8" r="6"/>
                           <path d="M8 5v3l2 2"/>
                         </svg>
-                        {label} — queued
+                        {qJob.label || fallbackLabel} — queued
                       </span>
                       <button
                         type="button"
@@ -925,6 +937,11 @@ export default function CaptioningPage() {
                 {stepIndex != null && stepTotal != null && (
                   <div style={{ marginBottom: 10, padding: "6px 10px", background: "var(--surface-2)", borderRadius: "var(--r)", fontSize: 12, color: "var(--fg-mute)" }}>
                     Pipeline: Step {stepIndex}/{stepTotal}
+                  </div>
+                )}
+                {jobProgress.label && (
+                  <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={jobProgress.label}>
+                    {jobProgress.label}
                   </div>
                 )}
                 <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>

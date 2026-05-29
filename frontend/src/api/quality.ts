@@ -11,6 +11,7 @@ export const qualityApi = {
     run_embeddings?: boolean;
     run_dino?: boolean;
     run_dino_layers?: boolean;
+    label?: string;
   }) =>
     client.post<{ job_id: string; total: number }>("/quality/score", params).then((r) => r.data),
 

@@ -23,7 +23,7 @@ Crucible gives you a single interface to go from raw image folders to a clean, c
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing
 - **Split view** — run any pages side-by-side in independently scrollable panes
 
-All long-running operations (import, captioning, scoring, export) run in a background job queue and stream real-time progress to the UI via SSE.
+All long-running operations (import, captioning, scoring, export) run in a background job queue and stream real-time progress to the UI via SSE. Each job displays a descriptive auto-generated name in the queue (e.g. model and image count for captioning jobs); an optional label field lets you override it before starting.
 
 ▶ [Watch the showcase on YouTube](https://www.youtube.com/watch?v=Ig4j5ijovCI)
 
@@ -89,7 +89,7 @@ Caption post-processing options:
 - **Rename on caption** — after each caption is saved, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root images); useful for building consistently named datasets
 - **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
 
-**Job queuing** — multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. A queue badge in the page header shows how many jobs are waiting.
+**Job queuing** — multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. A queue badge in the page header shows how many jobs are waiting. Each job shows a descriptive auto-generated name (model and image count) in the queue; enter a custom label in the optional field before starting if you need to distinguish runs more clearly.
 
 **Prompt Preset Manager** — save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.
 

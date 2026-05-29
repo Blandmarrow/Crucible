@@ -42,6 +42,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [runTechnical, setRunTechnical] = useState(true);
   const [runWatermark, setRunWatermark] = useState(false);
   const [runEmbeddings, setRunEmbeddings] = useState(false);
+  const [scoreJobLabel, setScoreJobLabel] = useState("");
   const [scoreJobId, setScoreJobId] = useState<string | null>(null);
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
   const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
@@ -54,6 +55,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectJobLabel, setDetectJobLabel] = useState("");
   const [detectJobId, setDetectJobId] = useState<string | null>(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showUpscale, setShowUpscale] = useState(false);
@@ -229,6 +231,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         run_technical: runTechnical,
         run_watermark: runWatermark,
         run_embeddings: runEmbeddings,
+        label: scoreJobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       setShowScore(false);
@@ -248,6 +251,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
         use_caption_as_prompt: detectUseCaptions,
         overwrite: detectOverwrite,
+        label: detectJobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       setShowDetect(false);
@@ -477,6 +481,15 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 Style embeddings (CLIP + DINOv2, for similarity)
               </label>
             </div>
+            <input
+              className="input w-full"
+              type="text"
+              placeholder="Job label (optional)"
+              value={scoreJobLabel}
+              onChange={(e) => setScoreJobLabel(e.target.value)}
+              style={{ fontSize: 12 }}
+              title="Optional name shown in the job queue"
+            />
             <div className="flex gap-2 justify-end">
               <button className="btn-ghost" onClick={() => setShowScore(false)}>Cancel</button>
               <button
@@ -561,6 +574,16 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
               Overwrite existing detections
             </label>
+
+            <input
+              className="input w-full"
+              type="text"
+              placeholder="Job label (optional)"
+              value={detectJobLabel}
+              onChange={(e) => setDetectJobLabel(e.target.value)}
+              style={{ fontSize: 12 }}
+              title="Optional name shown in the job queue"
+            />
 
             <div className="flex gap-2 justify-end">
               <button className="btn-ghost" onClick={() => setShowDetect(false)}>Cancel</button>

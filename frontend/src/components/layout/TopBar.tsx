@@ -156,7 +156,7 @@ export default function TopBar() {
         {runningJob && (
           <div className="progress-pill">
             <span className="pp-dot" />
-            <span className="pp-label">{runningJob.message || runningJob.job_type}</span>
+            <span className="pp-label">{runningJob.label || runningJob.message || runningJob.job_type}</span>
             <div className="pp-bar">
               {(runningJob.percent ?? 0) < 0
                 ? <div className="pp-fill-indeterminate" />
@@ -183,7 +183,7 @@ export default function TopBar() {
                   padding: "2px 6px",
                 }}
               >
-                <span>{j.job_type}</span>
+                <span>{j.label || j.job_type}</span>
                 <button
                   type="button"
                   onClick={() => {

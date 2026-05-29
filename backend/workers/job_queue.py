@@ -38,6 +38,7 @@ class JobQueue:
             "type": "progress",
             "job_id": job.id,
             "job_type": job.job_type,
+            "label": job.label,
             "dataset_id": job.dataset_id,
             "status": "pending",
             "message": "Queued",
@@ -62,6 +63,7 @@ class JobQueue:
                         "type": "progress",
                         "job_id": job.id,
                         "job_type": job.job_type,
+                        "label": job.label,
                         "dataset_id": job.dataset_id,
                         "status": "cancelled",
                         "message": "Cancelled before starting.",
@@ -76,12 +78,13 @@ class JobQueue:
                 "type": "progress",
                 "job_id": job.id,
                 "job_type": job.job_type,
+                "label": job.label,
                 "dataset_id": job.dataset_id,
                 "status": "running",
                 "done": 0,
                 "total": job.total_items,
                 "percent": 0.0,
-                "message": f"Starting {job.job_type}...",
+                "message": f"Starting {job.label or job.job_type}...",
             })
 
             try:
@@ -98,6 +101,7 @@ class JobQueue:
                     "type": "progress",
                     "job_id": job.id,
                     "job_type": job.job_type,
+                    "label": job.label,
                     "dataset_id": job.dataset_id,
                     "status": "completed",
                     "done": final_total,
@@ -112,7 +116,7 @@ class JobQueue:
                         job_row.status = "cancelled"
                         job_row.finished_at = datetime.utcnow()
                         await db.commit()
-                await broadcaster.emit(job.id, {"type": "progress", "job_id": job.id, "job_type": job.job_type, "dataset_id": job.dataset_id, "status": "cancelled"})
+                await broadcaster.emit(job.id, {"type": "progress", "job_id": job.id, "job_type": job.job_type, "label": job.label, "dataset_id": job.dataset_id, "status": "cancelled"})
             except Exception as e:
                 logger.exception("Job %s failed", job.id)
                 async with AsyncSessionLocal() as db:
@@ -126,6 +130,7 @@ class JobQueue:
                     "type": "progress",
                     "job_id": job.id,
                     "job_type": job.job_type,
+                    "label": job.label,
                     "dataset_id": job.dataset_id,
                     "status": "failed",
                     "message": str(e),

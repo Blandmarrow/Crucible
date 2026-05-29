@@ -41,8 +41,11 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
         image_ids = [r[0] for r in result.all()]
 
     total = len(image_ids)
+    from pathlib import Path as _Path
+    auto_label = f"LUT — {_Path(body.lut_path).name}"
     job = BackgroundJob(
         job_type="batch_lut",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=total,
         config=body.model_dump(),

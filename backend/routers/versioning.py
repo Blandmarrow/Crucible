@@ -85,7 +85,7 @@ async def create_branch(
             raise HTTPException(400, str(e))
 
     # Background job for large datasets
-    job = BackgroundJob(job_type="create_branch", dataset_id=dataset_id, total_items=image_count)
+    job = BackgroundJob(job_type="create_branch", label=f"Branch: {body.name}", dataset_id=dataset_id, total_items=image_count)
     db.add(job)
     await db.commit()
 
@@ -142,7 +142,7 @@ async def checkout_branch(
     if branch is None or branch.dataset_id != dataset_id:
         raise HTTPException(404, "Branch not found")
 
-    job = BackgroundJob(job_type="checkout_branch", dataset_id=dataset_id, total_items=1)
+    job = BackgroundJob(job_type="checkout_branch", label=f"Checkout: {branch.name}", dataset_id=dataset_id, total_items=1)
     db.add(job)
     await db.commit()
 
@@ -228,7 +228,10 @@ async def create_snapshot(
     # Manual mode always runs as background job; auto mode inline if small
     if mode == "manual" or image_count > _SNAPSHOT_INLINE_LIMIT:
         job = BackgroundJob(
-            job_type="create_snapshot", dataset_id=dataset_id, total_items=image_count
+            job_type="create_snapshot",
+            label=f"Snapshot: {body.name or 'auto'}",
+            dataset_id=dataset_id,
+            total_items=image_count,
         )
         db.add(job)
         await db.commit()
@@ -347,7 +350,10 @@ async def restore_version(
         raise HTTPException(400, "handle_extra_images must be 'keep' or 'remove'")
 
     job = BackgroundJob(
-        job_type="restore_snapshot", dataset_id=dataset_id, total_items=ver.image_count
+        job_type="restore_snapshot",
+        label=f"Restore: {ver.name or version_id[:8]}",
+        dataset_id=dataset_id,
+        total_items=ver.image_count,
     )
     db.add(job)
     await db.commit()

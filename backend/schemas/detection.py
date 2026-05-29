@@ -23,3 +23,4 @@ class DetectionJobRequest(BaseModel):
     custom_prompt: str = ""        # shared prompt for grounding; ignored when use_caption_as_prompt=True
     use_caption_as_prompt: bool = False   # use each image's stored caption_text as its own prompt
     overwrite: bool = True
+    label: str | None = None

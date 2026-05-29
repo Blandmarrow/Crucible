@@ -178,6 +178,7 @@ export interface TagStat {
 export interface Job {
   id: string;
   job_type: string;
+  label: string | null;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   dataset_id: string | null;
   total_items: number;
@@ -194,6 +195,7 @@ export interface JobProgress {
   type: string;
   job_id: string;
   job_type: string;
+  label?: string | null;
   dataset_id?: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   done: number;

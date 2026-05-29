@@ -50,6 +50,7 @@ class CaptionJobRequest(BaseModel):
     min_aesthetic_score: float | None = None
     exclude_flags: list[str] | None = None
     wd14_threshold: float = 0.35
+    label: str | None = None
 
     @field_validator("exclude_flags")
     @classmethod
@@ -59,6 +60,23 @@ class CaptionJobRequest(BaseModel):
             if invalid:
                 raise ValueError(f"Unknown flag keys: {invalid}")
         return v
+
+
+def _model_short_label(model: str) -> str:
+    if model.startswith("florence2"):
+        variant = model.removeprefix("florence2_")
+        return f"Florence-2 ({variant})"
+    if model == "paligemma2":
+        return "PaliGemma-2"
+    if model.startswith("ollama:"):
+        return f"Ollama ({model.removeprefix('ollama:')})"
+    if model.startswith("openai_compat:"):
+        parts = model.split(":", 2)
+        model_name = parts[2] if len(parts) > 2 and parts[2] else "default"
+        return f"OpenAI-compat ({model_name})"
+    if model.startswith("wd14:"):
+        return f"WD14 ({model.removeprefix('wd14:')})"
+    return model
 
 
 @router.get("/models")
@@ -111,8 +129,10 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     if not rows:
         return {"job_id": None, "message": "No images to caption"}
 
+    auto_label = f"{_model_short_label(body.model)} — {len(rows)} image{'s' if len(rows) != 1 else ''}"
     job = BackgroundJob(
         job_type="caption",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=len(rows),
         config=body.model_dump(),
@@ -358,6 +378,7 @@ class CaptionPipelineRequest(BaseModel):
     rename_on_caption: bool = False
     min_aesthetic_score: float | None = None
     exclude_flags: list[str] | None = None
+    label: str | None = None
 
     @field_validator("exclude_flags")
     @classmethod
@@ -397,10 +418,14 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
     if not rows:
         return {"job_id": None, "message": "No images to caption"}
 
+    n_img = len(rows)
+    n_steps = len(body.steps)
+    auto_label = f"Pipeline ({n_steps} steps) — {n_img} image{'s' if n_img != 1 else ''}"
     job = BackgroundJob(
         job_type="caption_pipeline",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
-        total_items=len(rows) * len(body.steps),
+        total_items=n_img * n_steps,
         config=body.model_dump(),
     )
     db.add(job)

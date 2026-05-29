@@ -19,6 +19,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onC
   const [lutPath, setLutPath] = useState("");
   const [intensity, setIntensity] = useState(100);
   const [replace, setReplace] = useState(false);
+  const [jobLabel, setJobLabel] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
 
   const jobProgress = useJobStore((s) => s.activeJobs.get(jobId ?? ""));
@@ -51,6 +52,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onC
         lut_path: lutPath,
         intensity: intensity / 100,
         replace,
+        label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       if (data.total === 0) {
@@ -150,7 +152,16 @@ export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onC
       )}
 
       {/* Actions */}
-      <div className="flex gap-2 justify-end">
+      <div className="flex gap-2 justify-end items-center">
+        <input
+          className="input"
+          type="text"
+          placeholder="Job label (optional)"
+          value={jobLabel}
+          onChange={(e) => setJobLabel(e.target.value)}
+          style={{ flex: 1, fontSize: 12 }}
+          title="Optional name shown in the job queue"
+        />
         {onCancel && (
           <button className="btn-ghost" onClick={onCancel} disabled={running}>
             Cancel

@@ -20,6 +20,7 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess,
   const [replace, setReplace] = useState(false);
   const [targetW, setTargetW] = useState("");
   const [targetH, setTargetH] = useState("");
+  const [jobLabel, setJobLabel] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
 
   const jobProgress = useJobStore((s) => s.activeJobs.get(jobId ?? ""));
@@ -53,6 +54,7 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess,
         replace,
         target_width: parseInt(targetW) > 0 ? parseInt(targetW) : null,
         target_height: parseInt(targetH) > 0 ? parseInt(targetH) : null,
+        label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       if (data.total === 0) {
@@ -160,7 +162,16 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess,
       )}
 
       {/* Actions */}
-      <div className="flex gap-2 justify-end">
+      <div className="flex gap-2 justify-end items-center">
+        <input
+          className="input"
+          type="text"
+          placeholder="Job label (optional)"
+          value={jobLabel}
+          onChange={(e) => setJobLabel(e.target.value)}
+          style={{ flex: 1, fontSize: 12 }}
+          title="Optional name shown in the job queue"
+        />
         {onCancel && (
           <button className="btn-ghost" onClick={onCancel} disabled={running}>
             Cancel

@@ -32,6 +32,7 @@ class KohyaExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    label: str | None = None
 
 
 class AIToolkitExportRequest(BaseModel):
@@ -50,6 +51,7 @@ class AIToolkitExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    label: str | None = None
 
 
 class PlainExportRequest(BaseModel):
@@ -66,6 +68,7 @@ class PlainExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    label: str | None = None
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -74,8 +77,11 @@ def _parse_flags(s: str) -> list[str]:
 
 @router.post("/kohya")
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
+    from pathlib import Path as _Path
+    auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=0,
         config=body.model_dump(),
@@ -119,8 +125,11 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
 
 @router.post("/aitoolkit")
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
+    from pathlib import Path as _Path
+    auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=0,
         config=body.model_dump(),
@@ -163,8 +172,11 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
 
 @router.post("/plain")
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
+    from pathlib import Path as _Path
+    auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
+        label=body.label or auto_label,
         dataset_id=body.dataset_id,
         total_items=0,
         config=body.model_dump(),

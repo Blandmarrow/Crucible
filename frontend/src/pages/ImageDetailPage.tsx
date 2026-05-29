@@ -20,10 +20,19 @@ import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
+import { type ProviderOut } from "../api/providers";
+import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { getGalleryPageSize } from "../constants/storage";
 import { encode } from "gpt-tokenizer";
+
+interface Wd14ModelInfo { id: string; name: string; }
+
+function resolveModelId(base: string, providerModel: string): string {
+  if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
+  return base;
+}
 
 const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
 function labelColor(label: string): string {
@@ -172,6 +181,9 @@ export default function ImageDetailPage() {
   const [aiTargetWidth, setAiTargetWidth] = useState<number | null>(null);
   const [aiTargetHeight, setAiTargetHeight] = useState<number | null>(null);
   const [aiJobId, setAiJobId] = useState<string | null>(null);
+  const [aiProviderModel, setAiProviderModel] = useState("");
+  const [aiWd14Threshold, setAiWd14Threshold] = useState(0.35);
+  const [aiOverwrite, setAiOverwrite] = useState(true);
 
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
@@ -344,6 +356,8 @@ export default function ImageDetailPage() {
 
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
+  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
+  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
 
@@ -624,11 +638,12 @@ export default function ImageDetailPage() {
       captioningApi.run({
         dataset_id: datasetId!,
         image_ids: [imageId!],
-        model: aiModel,
+        model: resolveModelId(aiModel, aiProviderModel),
         style: aiStyle,
-        overwrite: true,
+        overwrite: aiOverwrite,
         custom_prompt: aiCustomPrompt,
         ...(aiTargetWidth && aiTargetHeight ? { target_width: aiTargetWidth, target_height: aiTargetHeight } : {}),
+        ...(aiModel.startsWith("wd14:") ? { wd14_threshold: aiWd14Threshold } : {}),
       }),
     onSuccess: (data) => {
       if (data.job_id) {
@@ -1262,7 +1277,7 @@ export default function ImageDetailPage() {
                       className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                         aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                       }`}
-                      onClick={() => { setAiModel(m.id); setAiStyle("detailed"); }}
+                      onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                     >
                       <div className="flex-1 font-medium">{m.name}</div>
                       <span className="text-gray-500">{m.vram_mb / 1024}GB</span>
@@ -1278,17 +1293,115 @@ export default function ImageDetailPage() {
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                             aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                           }`}
-                          onClick={() => { setAiModel(m.id); setAiStyle("detailed"); }}
+                          onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                         >
                           <div className="flex-1 font-medium">{m.name}</div>
                         </div>
                       ))}
                     </>
                   )}
+                  {wd14Models.length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-500 pt-1">Tagger</p>
+                      {wd14Models.map(m => (
+                        <div
+                          key={m.id}
+                          className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
+                            aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                          }`}
+                          onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
+                        >
+                          <div className="flex-1 font-medium">{m.name}</div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {providers.filter(p => !p.is_remote).length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-500 pt-1">Local Providers</p>
+                      {providers.filter(p => !p.is_remote).map(p => {
+                        const baseId = `openai_compat:${p.id}`;
+                        const isSelected = aiModel.startsWith(baseId);
+                        return (
+                          <div key={p.id}>
+                            <div
+                              className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
+                                isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                              }`}
+                              onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
+                            >
+                              <div className="flex-1 font-medium">{p.name}</div>
+                              <span className="text-gray-500 truncate max-w-[100px]">{p.base_url}</span>
+                            </div>
+                            {isSelected && (
+                              <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                                <ModelPicker
+                                  value={aiProviderModel}
+                                  onChange={setAiProviderModel}
+                                  providerId={p.id}
+                                  baseUrl={p.base_url}
+                                  placeholder={`Model (default: ${p.default_model || "none"})`}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  {providers.filter(p => p.is_remote).length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
+                      {providers.filter(p => p.is_remote).map(p => {
+                        const baseId = `openai_compat:${p.id}`;
+                        const isSelected = aiModel.startsWith(baseId);
+                        return (
+                          <div key={p.id}>
+                            <div
+                              className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
+                                isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                              }`}
+                              onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
+                            >
+                              <div className="flex-1 font-medium">{p.name}</div>
+                              <span className="text-gray-500 truncate max-w-[100px]">{p.base_url}</span>
+                            </div>
+                            {isSelected && (
+                              <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                                <ModelPicker
+                                  value={aiProviderModel}
+                                  onChange={setAiProviderModel}
+                                  providerId={p.id}
+                                  baseUrl={p.base_url}
+                                  placeholder={`Model (default: ${p.default_model || "none"})`}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
                 </div>
 
+                {/* WD14 threshold / style picker / custom prompt */}
+                {aiModel && aiModel.startsWith("wd14:") && (
+                  <div>
+                    <label className="label">Tag Threshold</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={aiWd14Threshold}
+                        onChange={e => setAiWd14Threshold(Number(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="text-xs text-gray-400 w-8 text-right">{aiWd14Threshold.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Style picker */}
-                {aiModel && (
+                {aiModel && !aiModel.startsWith("wd14:") && aiStyles.length > 0 && (
                   <div>
                     <label className="label">Style</label>
                     <div className="flex flex-wrap gap-1.5">
@@ -1306,7 +1419,7 @@ export default function ImageDetailPage() {
                 )}
 
                 {/* Custom prompt */}
-                {aiModel && (
+                {aiModel && !aiModel.startsWith("wd14:") && (
                   <div>
                     <label className="label">Custom Prompt (optional)</label>
                     <textarea
@@ -1314,7 +1427,7 @@ export default function ImageDetailPage() {
                       value={aiCustomPrompt}
                       onChange={e => setAiCustomPrompt(e.target.value)}
                       placeholder={
-                        aiModel.startsWith("ollama:")
+                        aiModel.startsWith("ollama:") || aiModel.startsWith("openai_compat:")
                           ? "Leave blank for style preset…"
                           : "Override the default prompt for this style…"
                       }
@@ -1322,22 +1435,33 @@ export default function ImageDetailPage() {
                   </div>
                 )}
 
-                <PromptPresetManager
-                  currentModel={aiModel}
-                  currentStyle={aiStyle}
-                  currentPrompt={aiCustomPrompt}
-                  onLoad={(p) => {
-                    setAiModel(p.model);
-                    setAiStyle(p.style);
-                    setAiCustomPrompt(p.prompt);
-                  }}
-                />
+                {aiModel && !aiModel.startsWith("wd14:") && (
+                  <>
+                    <PromptPresetManager
+                      currentModel={aiModel}
+                      currentStyle={aiStyle}
+                      currentPrompt={aiCustomPrompt}
+                      onLoad={(p) => {
+                        setAiModel(p.model);
+                        setAiStyle(p.style);
+                        setAiCustomPrompt(p.prompt);
+                      }}
+                    />
 
-                <ResolutionPicker
-                  targetWidth={aiTargetWidth}
-                  targetHeight={aiTargetHeight}
-                  onChange={(w, h) => { setAiTargetWidth(w); setAiTargetHeight(h); }}
-                />
+                    <ResolutionPicker
+                      targetWidth={aiTargetWidth}
+                      targetHeight={aiTargetHeight}
+                      onChange={(w, h) => { setAiTargetWidth(w); setAiTargetHeight(h); }}
+                    />
+                  </>
+                )}
+
+                {aiModel && (
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input type="checkbox" checked={aiOverwrite} onChange={e => setAiOverwrite(e.target.checked)} />
+                    Overwrite existing caption
+                  </label>
+                )}
 
                 {/* Progress */}
                 {aiJobId && aiJobProgress && (

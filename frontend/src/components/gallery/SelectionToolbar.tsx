@@ -17,8 +17,17 @@ import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
+import { type ProviderOut } from "../../api/providers";
+import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
+
+interface Wd14ModelInfo { id: string; name: string; }
+
+function resolveModelId(base: string, providerModel: string): string {
+  if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
+  return base;
+}
 
 interface Props {
   datasetId: string;
@@ -36,6 +45,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [captionStyle, setCaptionStyle] = useState("detailed");
   const [captionOverwrite, setCaptionOverwrite] = useState(false);
   const [captionCustomPrompt, setCaptionCustomPrompt] = useState("");
+  const [captionProviderModel, setCaptionProviderModel] = useState("");
+  const [captionWd14Threshold, setCaptionWd14Threshold] = useState(0.35);
   const [captionTargetWidth, setCaptionTargetWidth] = useState<number | null>(null);
   const [captionTargetHeight, setCaptionTargetHeight] = useState<number | null>(null);
   const [runAesthetic, setRunAesthetic] = useState(true);
@@ -139,6 +150,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
+  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
+  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
   const type = modelType(captionModel);
   const availableStyles = type ? (STYLE_LABELS[type] ?? []) : [];
 
@@ -204,11 +217,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       captioningApi.run({
         dataset_id: datasetId,
         image_ids: ids,
-        model: captionModel,
+        model: resolveModelId(captionModel, captionProviderModel),
         style: captionStyle,
         overwrite: captionOverwrite,
         custom_prompt: captionCustomPrompt,
         ...(captionTargetWidth && captionTargetHeight ? { target_width: captionTargetWidth, target_height: captionTargetHeight } : {}),
+        ...(captionModel.startsWith("wd14:") ? { wd14_threshold: captionWd14Threshold } : {}),
       }),
     onSuccess: (data) => {
       setShowCaption(false);
@@ -351,7 +365,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
             <div className="space-y-2">
               <label className="label">Model</label>
-              {localModels.length === 0 && ollamaModels.length === 0 && (
+              {!modelsData && (
                 <p className="text-sm text-gray-500">Loading models…</p>
               )}
               {localModels.map(m => (
@@ -360,7 +374,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
                     captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                   }`}
-                  onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); }}
+                  onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                 >
                   <div className="flex-1">{m.name}</div>
                   <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
@@ -376,7 +390,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                       className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
                         captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                       }`}
-                      onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); }}
+                      onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                     >
                       <div className="flex-1">{m.name}</div>
                       {m.size_mb > 0 && <span className="text-xs text-gray-500">{(m.size_mb / 1024).toFixed(1)}GB</span>}
@@ -384,55 +398,156 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   ))}
                 </>
               )}
+              {wd14Models.length > 0 && (
+                <>
+                  <p className="text-xs text-gray-500 pt-1">Tagger</p>
+                  {wd14Models.map(m => (
+                    <div
+                      key={m.id}
+                      className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                        captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                      }`}
+                      onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
+                    >
+                      <div className="flex-1">{m.name}</div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {providers.filter(p => !p.is_remote).length > 0 && (
+                <>
+                  <p className="text-xs text-gray-500 pt-1">Local Providers</p>
+                  {providers.filter(p => !p.is_remote).map(p => {
+                    const baseId = `openai_compat:${p.id}`;
+                    const isSelected = captionModel.startsWith(baseId);
+                    return (
+                      <div key={p.id}>
+                        <div
+                          className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                            isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                          }`}
+                          onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
+                        >
+                          <div className="flex-1">{p.name}</div>
+                          <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                        </div>
+                        {isSelected && (
+                          <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                            <ModelPicker
+                              value={captionProviderModel}
+                              onChange={setCaptionProviderModel}
+                              providerId={p.id}
+                              baseUrl={p.base_url}
+                              placeholder={`Model (default: ${p.default_model || "none"})`}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {providers.filter(p => p.is_remote).length > 0 && (
+                <>
+                  <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
+                  {providers.filter(p => p.is_remote).map(p => {
+                    const baseId = `openai_compat:${p.id}`;
+                    const isSelected = captionModel.startsWith(baseId);
+                    return (
+                      <div key={p.id}>
+                        <div
+                          className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                            isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                          }`}
+                          onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
+                        >
+                          <div className="flex-1">{p.name}</div>
+                          <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                        </div>
+                        {isSelected && (
+                          <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                            <ModelPicker
+                              value={captionProviderModel}
+                              onChange={setCaptionProviderModel}
+                              providerId={p.id}
+                              baseUrl={p.base_url}
+                              placeholder={`Model (default: ${p.default_model || "none"})`}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
 
             {captionModel && (
               <>
-                <div>
-                  <label className="label">Style</label>
-                  <div className="flex flex-wrap gap-2">
-                    {availableStyles.map(s => (
-                      <button
-                        key={s}
-                        className={`btn btn-sm ${captionStyle === s ? "btn-primary" : "btn-secondary"}`}
-                        onClick={() => setCaptionStyle(s)}
-                      >
-                        {s}
-                      </button>
-                    ))}
+                {captionModel.startsWith("wd14:") ? (
+                  <div>
+                    <label className="label">Tag Threshold</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={captionWd14Threshold}
+                        onChange={e => setCaptionWd14Threshold(Number(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="text-xs text-gray-400 w-8 text-right">{captionWd14Threshold.toFixed(2)}</span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {availableStyles.length > 0 && (
+                      <div>
+                        <label className="label">Style</label>
+                        <div className="flex flex-wrap gap-2">
+                          {availableStyles.map(s => (
+                            <button
+                              key={s}
+                              className={`btn btn-sm ${captionStyle === s ? "btn-primary" : "btn-secondary"}`}
+                              onClick={() => setCaptionStyle(s)}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                <div>
-                  <label className="label">Custom Prompt (optional)</label>
-                  <textarea
-                    className="input h-16 resize-none"
-                    value={captionCustomPrompt}
-                    onChange={e => setCaptionCustomPrompt(e.target.value)}
-                    placeholder={
-                      captionModel.startsWith("ollama:")
-                        ? "Leave blank for style preset…"
-                        : "Override the default prompt for this style…"
-                    }
-                  />
-                </div>
+                    <div>
+                      <label className="label">Custom Prompt (optional)</label>
+                      <textarea
+                        className="input h-16 resize-none"
+                        value={captionCustomPrompt}
+                        onChange={e => setCaptionCustomPrompt(e.target.value)}
+                        placeholder={
+                          captionModel.startsWith("ollama:") || captionModel.startsWith("openai_compat:")
+                            ? "Leave blank for style preset…"
+                            : "Override the default prompt for this style…"
+                        }
+                      />
+                    </div>
 
-                <PromptPresetManager
-                  currentModel={captionModel}
-                  currentStyle={captionStyle}
-                  currentPrompt={captionCustomPrompt}
-                  onLoad={(p) => {
-                    setCaptionModel(p.model);
-                    setCaptionStyle(p.style);
-                    setCaptionCustomPrompt(p.prompt);
-                  }}
-                />
+                    <PromptPresetManager
+                      currentModel={captionModel}
+                      currentStyle={captionStyle}
+                      currentPrompt={captionCustomPrompt}
+                      onLoad={(p) => {
+                        setCaptionModel(p.model);
+                        setCaptionStyle(p.style);
+                        setCaptionCustomPrompt(p.prompt);
+                      }}
+                    />
 
-                <ResolutionPicker
-                  targetWidth={captionTargetWidth}
-                  targetHeight={captionTargetHeight}
-                  onChange={(w, h) => { setCaptionTargetWidth(w); setCaptionTargetHeight(h); }}
-                />
+                    <ResolutionPicker
+                      targetWidth={captionTargetWidth}
+                      targetHeight={captionTargetHeight}
+                      onChange={(w, h) => { setCaptionTargetWidth(w); setCaptionTargetHeight(h); }}
+                    />
+                  </>
+                )}
 
                 <label className="flex items-center gap-2 cursor-pointer text-sm">
                   <input type="checkbox" checked={captionOverwrite} onChange={e => setCaptionOverwrite(e.target.checked)} />

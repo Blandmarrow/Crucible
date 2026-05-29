@@ -15,6 +15,7 @@ frontend/node_modules/
 .claude/
 .DS_Store
 Thumbs.db
+.restart
 *.egg-info/
 .pytest_cache/
 alembic/__pycache__/

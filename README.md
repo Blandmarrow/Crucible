@@ -382,7 +382,7 @@ Or run directly in PowerShell:
 ./manage.sh dev      # backend hot-reload (:8000) + Vite dev server (:5173)
 ```
 
-To shut down, click the power icon in the top-right of the app and confirm, or press `Ctrl+C` in the terminal.
+To shut down, click the power icon in the top-right of the app and confirm, or press `Ctrl+C` in the terminal. A **Restart** button (circular arrow, immediately left of the power icon) restarts the server in place — the page reloads automatically once the new process is ready.
 
 ---
 

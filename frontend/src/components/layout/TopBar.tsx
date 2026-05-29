@@ -8,7 +8,7 @@ import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
-import { Columns2 } from "lucide-react";
+import { Columns2, RefreshCw } from "lucide-react";
 
 const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
@@ -79,6 +79,8 @@ export default function TopBar() {
   const uploadProgress = useUploadStore((s) => s.progress);
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const { enabled: paneEnabled, toggleEnabled: togglePane } = usePaneStore();
 
   // Page-level job watchers (e.g. in ImageDetailPage) stop when the component
@@ -103,6 +105,32 @@ export default function TopBar() {
     setShowConfirm(false);
     setShuttingDown(true);
     await fetch("/api/v1/shutdown", { method: "POST" }).catch(() => {});
+  }
+
+  async function handleRestart() {
+    setShowRestartConfirm(false);
+    setRestarting(true);
+    let oldStartTime: number | null = null;
+    try {
+      const res = await fetch("/api/v1/health", { cache: "no-store" });
+      if (res.ok) oldStartTime = (await res.json()).start_time ?? null;
+    } catch { /* ignore */ }
+    await fetch("/api/v1/restart", { method: "POST" }).catch(() => {});
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise<void>(r => setTimeout(r, 1000));
+      try {
+        const res = await fetch("/api/v1/health", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (oldStartTime === null || data.start_time !== oldStartTime) {
+            window.location.reload();
+            return;
+          }
+        }
+      } catch { /* not up yet */ }
+    }
+    setRestarting(false);
   }
 
   return (
@@ -177,7 +205,7 @@ export default function TopBar() {
         )}
         {!runningJob && !uploadProgress && pendingJobs.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>
-            {shuttingDown ? "Shutting down…" : "Ready"}
+            {shuttingDown ? "Shutting down…" : restarting ? "Restarting…" : "Ready"}
           </span>
         )}
 
@@ -200,12 +228,23 @@ export default function TopBar() {
         </button>
 
         <button
+          className="icon-btn"
+          title="Restart server"
+          disabled={shuttingDown || restarting}
+          onClick={() => setShowRestartConfirm(true)}
+          type="button"
+          style={{ opacity: (shuttingDown || restarting) ? 0.4 : 1 }}
+        >
+          <RefreshCw size={15} />
+        </button>
+
+        <button
           className="icon-btn danger"
           title="Shut down server"
-          disabled={shuttingDown}
+          disabled={shuttingDown || restarting}
           onClick={() => setShowConfirm(true)}
           type="button"
-          style={{ opacity: shuttingDown ? 0.4 : 1 }}
+          style={{ opacity: (shuttingDown || restarting) ? 0.4 : 1 }}
         >
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
             <path d="M8 2v6M4.5 4.5a5.5 5.5 0 107 0"/>
@@ -221,6 +260,15 @@ export default function TopBar() {
           danger
           onConfirm={handleShutdown}
           onCancel={() => setShowConfirm(false)}
+        />
+      )}
+      {showRestartConfirm && (
+        <ConfirmDialog
+          title="Restart server?"
+          message="The server will restart automatically. Any running jobs will be interrupted."
+          confirmLabel="Restart"
+          onConfirm={handleRestart}
+          onCancel={() => setShowRestartConfirm(false)}
         />
       )}
     </>

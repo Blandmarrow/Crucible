@@ -210,7 +210,21 @@ function Cmd-Start {
     Write-Host ""
 
     Set-Location "$ROOT"
-    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+    # Clean up any stale restart sentinel from a previous crash
+    if (Test-Path "$ROOT\.restart") { Remove-Item "$ROOT\.restart" -Force }
+
+    :restart_loop while ($true) {
+        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+        if (Test-Path "$ROOT\.restart") {
+            Remove-Item "$ROOT\.restart" -Force
+            Write-Host ""
+            Write-Host "Restarting server..." -ForegroundColor Yellow
+            Write-Host ""
+        } else {
+            break restart_loop
+        }
+    }
 }
 
 function Cmd-Update {
@@ -289,7 +303,20 @@ function Cmd-Dev {
     $backendJob = Start-Job -ScriptBlock {
         param($root)
         Set-Location $root
-        & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+
+        if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
+
+        :restart_loop while ($true) {
+            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+            if (Test-Path "$root\.restart") {
+                Remove-Item "$root\.restart" -Force
+                Write-Host ""
+                Write-Host "Restarting backend..." -ForegroundColor Yellow
+                Write-Host ""
+            } else {
+                break restart_loop
+            }
+        }
     } -ArgumentList $ROOT
 
     Push-Location "$ROOT\frontend"

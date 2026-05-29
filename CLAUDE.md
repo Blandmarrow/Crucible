@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `update` | `git pull` → update pip deps → `npm install` → rebuild frontend |
 | `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
-To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal.
+To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal. A circular-arrow **Restart** button sits immediately left of the power button — it restarts the server in place without requiring terminal access (see Server control endpoints below).
 
 ### Backend (always run from `backend/` with venv active)
 
@@ -51,6 +51,20 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 2. `@app.get("/{full_path:path}")` catch-all — for any unmatched path, serves the file directly if it exists in `frontend/dist/` (favicon, manifest, etc.), otherwise returns `index.html` so React Router handles client-side navigation.
 
 **Do not replace this with a bare `StaticFiles(html=True)` mount.** Starlette's `html=True` only falls back to `index.html` for directory-style paths (`/`); it returns 404 for deep URLs like `/datasets/abc123` on hard refresh. The catch-all route is required for SPA routing to work correctly.
+
+### Server control endpoints
+
+Three endpoints are registered directly in `backend/main.py` (not via a router), immediately before the frontend-serving block:
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST /api/v1/shutdown` | Spawns a daemon thread that sends `SIGTERM` to the current process, triggering uvicorn's graceful shutdown. |
+| `GET /api/v1/health` | Returns `{"status": "ok", "start_time": <float>}`. `start_time` is `time.time()` captured once at module load (`_START_TIME`). Used by the frontend to detect when a restarted server is a *new* process. |
+| `POST /api/v1/restart` | Creates the `.restart` sentinel file at the project root (`_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"`), then sends `SIGTERM`. The manage-script restart loop (see below) detects the sentinel after uvicorn exits and re-launches the server. |
+
+**Restart loop** — `Cmd-Start`/`cmd_start` in `manage.ps1`/`manage.sh` wrap the uvicorn call in a `while` loop. After uvicorn exits they check for `.restart`; if present they delete it and restart, otherwise they break. `Cmd-Dev`/`cmd_dev` have the same loop (bash uses a background subshell so the frontend Vite server can run concurrently). Stale `.restart` files left by a crash are deleted at the top of each start before the loop begins. The uvicorn call is written as `python -m uvicorn ... || true` in `manage.sh` so that `set -euo pipefail` does not abort the loop on a non-zero exit before the sentinel check runs.
+
+**Frontend restart flow** (`TopBar.tsx` `handleRestart`): (1) fetch `/api/v1/health` to record the current `start_time`; (2) POST `/api/v1/restart`; (3) poll `/api/v1/health` with `{ cache: "no-store" }` every second until the response carries a *different* `start_time` (confirming a new process, not the dying old one); (4) `window.location.reload()`. If no new process appears within 60 s, `setRestarting(false)` resets the UI so the user can retry. Both the restart and shutdown buttons are disabled while `restarting || shuttingDown`.
 
 ### Shared utilities
 

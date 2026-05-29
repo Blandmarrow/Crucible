@@ -188,7 +188,21 @@ cmd_start() {
     echo ""
 
     cd "$ROOT"
-    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+    # Clean up any stale restart sentinel from a previous crash
+    rm -f "$ROOT/.restart"
+
+    while true; do
+        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 || true
+        if [ -f "$ROOT/.restart" ]; then
+            rm -f "$ROOT/.restart"
+            echo ""
+            echo "Restarting server..."
+            echo ""
+        else
+            break
+        fi
+    done
 }
 
 cmd_update() {
@@ -248,7 +262,29 @@ cmd_dev() {
     echo "Open http://localhost:5173 in your browser."
     echo ""
 
-    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend &
+    rm -f "$ROOT/.restart"
+
+    # Run uvicorn in a background subshell with restart loop support.
+    # set +e prevents a non-zero uvicorn exit from aborting the inner loop.
+    # The inner trap ensures uvicorn is killed when the subshell is stopped.
+    (
+        set +e
+        _uvicorn_pid=""
+        trap 'kill "$_uvicorn_pid" 2>/dev/null' EXIT INT TERM
+        while true; do
+            python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend &
+            _uvicorn_pid=$!
+            wait "$_uvicorn_pid" || true
+            if [ -f "$ROOT/.restart" ]; then
+                rm -f "$ROOT/.restart"
+                echo ""
+                echo "Restarting backend..."
+                echo ""
+            else
+                break
+            fi
+        done
+    ) &
     BACKEND_PID=$!
     trap 'kill "$BACKEND_PID" 2>/dev/null' EXIT INT TERM
 

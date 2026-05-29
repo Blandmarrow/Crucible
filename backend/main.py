@@ -1,6 +1,7 @@
 import os
 import signal
 import threading
+import time
 import warnings
 import logging
 from contextlib import asynccontextmanager
@@ -82,6 +83,23 @@ app.include_router(versioning.router, prefix=PREFIX)
 @app.post("/api/v1/shutdown", status_code=204)
 async def shutdown():
     threading.Thread(target=lambda: os.kill(os.getpid(), signal.SIGTERM), daemon=True).start()
+
+
+_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
+_START_TIME = time.time()
+
+
+@app.get("/api/v1/health", status_code=200)
+async def health():
+    return {"status": "ok", "start_time": _START_TIME}
+
+
+@app.post("/api/v1/restart", status_code=204)
+async def restart():
+    def _do_restart():
+        _RESTART_SENTINEL.touch()
+        os.kill(os.getpid(), signal.SIGTERM)
+    threading.Thread(target=_do_restart, daemon=True).start()
 
 
 # Serve built React frontend — must come last so API routes take priority

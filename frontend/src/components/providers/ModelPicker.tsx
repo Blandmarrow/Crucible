@@ -35,6 +35,11 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
     setFetchError(false);
   }, [baseUrl]);
 
+  // Reset custom mode when value becomes a known model (e.g. parent switches provider)
+  useEffect(() => {
+    if (allModels.includes(value)) setShowCustom(false);
+  }, [value, allModels]);
+
   // Auto-fetch on mount when we have a provider ID
   useEffect(() => {
     if (!providerId) return;

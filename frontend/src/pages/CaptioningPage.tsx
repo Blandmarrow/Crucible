@@ -986,80 +986,161 @@ function PipelineStepCard({
   onChange: (updated: Partial<StepConfig>) => void;
   onRemove: () => void;
 }) {
+  const [expanded, setExpanded] = useState(true);
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
+
   const isStepWd14 = step.model.startsWith("wd14:");
   const isStepOAI = step.model.startsWith("openai_compat:");
   const stepModelType = modelType(step.model);
   const stepStyles = isStepWd14 ? [] : (stepModelType ? (STYLE_LABELS[stepModelType] ?? []) : []);
   const stepProvider = isStepOAI ? providers.find((p) => step.model === `openai_compat:${p.id}`) : undefined;
 
+  function handleSavePreset() {
+    if (!presetName.trim()) return;
+    savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt });
+    setPresetName("");
+    setSavingPreset(false);
+    toast.success("Preset saved");
+  }
+
   return (
     <div className="panel">
-      <div className="panel-h" style={{ background: "var(--surface-2)" }}>
+      <div
+        className="panel-h"
+        style={{ background: "var(--surface-2)", cursor: "pointer" }}
+        onClick={() => setExpanded((v) => !v)}
+      >
         <h3>Step {stepNumber}</h3>
         <div style={{ flex: 1 }} />
         {step.model && <span className="badge solid mono" style={{ fontSize: 10.5 }}>{step.model.split(":")[0]}</span>}
-        <button className="icon-btn" style={{ color: "var(--bad)" }} onClick={onRemove} title="Remove step">×</button>
+        <svg
+          width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6"
+          style={{ flexShrink: 0, opacity: 0.5, transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s" }}
+        >
+          <path d="M2 3.5l3 3 3-3"/>
+        </svg>
+        <button className="icon-btn" style={{ color: "var(--bad)" }} onClick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove step">×</button>
       </div>
-      <div style={{ padding: "4px 22px" }}>
-        <div className="form-row">
-          <div className="lbl-col">
-            <h4>Model</h4>
-          </div>
-          <StepModelPicker
-            selectedModel={step.model}
-            setSelectedModel={(v) => onChange({ model: v, style: "detailed", customPrompt: "" })}
-            providerModelInput={step.providerModelInput}
-            setProviderModelInput={(v) => onChange({ providerModelInput: v })}
-            localModels={localModels}
-            wd14Models={wd14Models}
-            providers={providers}
-            ollamaModels={ollamaModels}
-          />
-        </div>
-
-        {isStepWd14 && (
-          <div className="form-row">
-            <div className="lbl-col"><h4>Threshold</h4></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <input type="range" min={0} max={1} step={0.05} value={step.wd14Threshold} onChange={(e) => onChange({ wd14Threshold: parseFloat(e.target.value) })} style={{ flex: 1 }} />
-              <span className="mono" style={{ fontSize: 13, minWidth: 36 }}>{step.wd14Threshold.toFixed(2)}</span>
-            </div>
-          </div>
-        )}
-
-        {stepStyles.length > 0 && (
-          <div className="form-row">
-            <div className="lbl-col"><h4>Style</h4></div>
-            <div className="row-flex">
-              {stepStyles.map((s) => (
-                <button key={s} className={`btn sm${step.style === s ? " primary" : ""}`} onClick={() => onChange({ style: s })}>{s}</button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!isStepWd14 && (
+      {expanded && (
+        <div style={{ padding: "4px 22px" }}>
           <div className="form-row">
             <div className="lbl-col">
-              <h4>Prompt</h4>
-              <p>Use <span className="mono" style={{ fontSize: 11 }}>{"{previous_caption}"}</span> to reference the previous step's output.</p>
+              <h4>Model</h4>
             </div>
-            <textarea
-              className="input"
-              style={{ height: 80 }}
-              value={step.customPrompt}
-              onChange={(e) => onChange({ customPrompt: e.target.value })}
-              placeholder={`Describe this image. Tags from previous step: {previous_caption}`}
+            <StepModelPicker
+              selectedModel={step.model}
+              setSelectedModel={(v) => onChange({ model: v, style: "detailed", customPrompt: "" })}
+              providerModelInput={step.providerModelInput}
+              setProviderModelInput={(v) => onChange({ providerModelInput: v })}
+              localModels={localModels}
+              wd14Models={wd14Models}
+              providers={providers}
+              ollamaModels={ollamaModels}
             />
           </div>
-        )}
 
-        {stepProvider?.is_remote && (
-          <p style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 0 8px" }}>
-            Remote API — images will be sent to {stepProvider.base_url}
-          </p>
-        )}
-      </div>
+          {isStepWd14 && (
+            <div className="form-row">
+              <div className="lbl-col"><h4>Threshold</h4></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <input type="range" min={0} max={1} step={0.05} value={step.wd14Threshold} onChange={(e) => onChange({ wd14Threshold: parseFloat(e.target.value) })} style={{ flex: 1 }} />
+                <span className="mono" style={{ fontSize: 13, minWidth: 36 }}>{step.wd14Threshold.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+
+          {stepStyles.length > 0 && (
+            <div className="form-row">
+              <div className="lbl-col"><h4>Style</h4></div>
+              <div className="row-flex">
+                {stepStyles.map((s) => (
+                  <button key={s} className={`btn sm${step.style === s ? " primary" : ""}`} onClick={() => onChange({ style: s })}>{s}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isStepWd14 && (
+            <div className="form-row">
+              <div className="lbl-col">
+                <h4>Presets</h4>
+                <p>Saved prompt &amp; style configurations.</p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {presets.length === 0 ? (
+                  <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>No presets saved yet.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {presets.map((p) => (
+                      <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <button
+                          className="btn ghost sm"
+                          style={{ flex: 1, justifyContent: "flex-start", textAlign: "left" }}
+                          onClick={() => { onChange({ customPrompt: p.prompt, style: p.style }); toast.success(`Loaded "${p.name}"`); }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{p.name}</span>
+                          <span style={{ color: "var(--fg-dim)", fontSize: 10.5, marginLeft: 6 }}>{p.style}</span>
+                        </button>
+                        <button
+                          className="btn ghost sm"
+                          style={{ color: "var(--bad)", flexShrink: 0 }}
+                          onClick={() => removePreset(p.id)}
+                          title="Delete preset"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {savingPreset ? (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      className="input"
+                      placeholder="Preset name…"
+                      value={presetName}
+                      onChange={(e) => setPresetName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSavePreset(); if (e.key === "Escape") setSavingPreset(false); }}
+                      autoFocus
+                      style={{ flex: 1 }}
+                    />
+                    <button className="btn sm primary" disabled={!presetName.trim()} onClick={handleSavePreset}>OK</button>
+                    <button className="btn sm ghost" onClick={() => setSavingPreset(false)}>Cancel</button>
+                  </div>
+                ) : (
+                  <button className="btn ghost sm" onClick={() => { setPresetName(""); setSavingPreset(true); }} style={{ alignSelf: "flex-start" }}>
+                    + Save current as preset
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!isStepWd14 && (
+            <div className="form-row">
+              <div className="lbl-col">
+                <h4>Prompt</h4>
+                <p>Use <span className="mono" style={{ fontSize: 11 }}>{"{previous_caption}"}</span> to reference the previous step's output.</p>
+              </div>
+              <textarea
+                className="input"
+                style={{ height: 80 }}
+                value={step.customPrompt}
+                onChange={(e) => onChange({ customPrompt: e.target.value })}
+                placeholder={`Describe this image. Tags from previous step: {previous_caption}`}
+              />
+            </div>
+          )}
+
+          {stepProvider?.is_remote && (
+            <p style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 0 8px" }}>
+              Remote API — images will be sent to {stepProvider.base_url}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

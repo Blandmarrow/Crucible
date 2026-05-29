@@ -34,6 +34,14 @@ class JobQueue:
         **kwargs: Any,
     ) -> str:
         await self._queue.put((job, fn, kwargs))
+        await broadcaster.emit(job.id, {
+            "type": "progress",
+            "job_id": job.id,
+            "job_type": job.job_type,
+            "dataset_id": job.dataset_id,
+            "status": "pending",
+            "message": "Queued",
+        })
         return job.id
 
     @property

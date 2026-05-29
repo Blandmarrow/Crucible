@@ -83,9 +83,11 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         ids = [d[0] for d in image_data]
         paths = [d[1] for d in image_data]
 
+        loop = asyncio.get_event_loop()
+
         aesthetic_scores = []
         if body.run_aesthetic:
-            entry = await model_manager.load_aesthetic()
+            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
             aesthetic_scores = await score_images_batch(paths, entry.model, job_id=job_id)
 
         technical_results = []
@@ -99,7 +101,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
         watermark_results = []
         if body.run_watermark:
-            entry = await model_manager.load_aesthetic()
+            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
             watermark_results = await score_images_watermark(
                 paths, entry.model, job_id=job_id,
                 watermark_threshold=thresholds.watermark_threshold,
@@ -109,11 +111,11 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         dino_embeddings: list[bytes | None] = []
         dino_layer_embeddings: list[bytes | None] = []
         if body.run_embeddings:
-            entry = await model_manager.load_aesthetic()
+            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
             clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
         if body.run_dino:
             from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
-            dino_entry = await model_manager.load_dino()
+            dino_entry = await model_manager.load_dino(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
             dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
             if body.run_dino_layers:
                 dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)

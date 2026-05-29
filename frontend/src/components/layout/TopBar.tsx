@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useMatch } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
+import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
@@ -10,6 +11,7 @@ import { usePaneStore } from "../../stores/paneStore";
 import { Columns2 } from "lucide-react";
 
 const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale"]);
+const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -72,8 +74,8 @@ export default function TopBar() {
   useAllJobsSSE();
   const qc = useQueryClient();
   const jobs = useJobStore((s) => s.activeJobs);
-  const runningJobs = [...jobs.values()].filter((j) => j.status === "running");
-  const active = runningJobs[0];
+  const runningJob = [...jobs.values()].find((j) => j.status === "running");
+  const pendingJobs = [...jobs.values()].filter((j) => j.status === "pending");
   const uploadProgress = useUploadStore((s) => s.progress);
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
@@ -85,14 +87,14 @@ export default function TopBar() {
   const processedJobsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
-      if (
-        progress.status === "completed" &&
-        progress.dataset_id &&
-        IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type) &&
-        !processedJobsRef.current.has(jobId)
-      ) {
+      if (progress.status === "completed" && !processedJobsRef.current.has(jobId)) {
         processedJobsRef.current.add(jobId);
-        qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+        if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
+          qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+        }
+        if (DATASET_MODIFYING_JOB_TYPES.has(progress.job_type)) {
+          qc.invalidateQueries({ queryKey: ["datasets"] });
+        }
       }
     });
   }, [jobs, qc]);
@@ -123,21 +125,60 @@ export default function TopBar() {
             <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total}</span>
           </div>
         )}
-        {active && (
+        {runningJob && (
           <div className="progress-pill">
             <span className="pp-dot" />
-            <span className="pp-label">{active.message || active.job_type}</span>
-            <div className="pp-bar"><div className="pp-fill" style={{ width: `${active.percent ?? 0}%` }} /></div>
-            <span className="pp-num mono">{active.done ?? 0} / {active.total ?? 0}</span>
+            <span className="pp-label">{runningJob.message || runningJob.job_type}</span>
+            <div className="pp-bar">
+              {(runningJob.percent ?? 0) < 0
+                ? <div className="pp-fill-indeterminate" />
+                : <div className="pp-fill" style={{ width: `${runningJob.percent ?? 0}%` }} />
+              }
+            </div>
+            {(runningJob.percent ?? 0) >= 0 && (
+              <span className="pp-num mono">{runningJob.done ?? 0} / {runningJob.total ?? 0}</span>
+            )}
           </div>
         )}
-        {!active && !uploadProgress && (
+        {pendingJobs.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span className="badge dot" style={{ color: "var(--fg-dim)" }}>
+              {pendingJobs.length} queued
+            </span>
+            {pendingJobs.map((j) => (
+              <span
+                key={j.job_id}
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  fontSize: 11, color: "var(--fg-dim)",
+                  background: "var(--surface-2)", borderRadius: 4,
+                  padding: "2px 6px",
+                }}
+              >
+                <span>{j.job_type}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    useJobStore.getState().updateJob(j.job_id, { status: "cancelled" });
+                    jobsApi.cancel(j.job_id);
+                  }}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "var(--fg-dim)", padding: 0, lineHeight: 1,
+                    fontSize: 13,
+                  }}
+                  title="Cancel queued job"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {!runningJob && !uploadProgress && pendingJobs.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>
             {shuttingDown ? "Shutting down…" : "Ready"}
           </span>
-        )}
-        {runningJobs.length > 1 && (
-          <span className="badge solid mono">{runningJobs.length} jobs</span>
         )}
 
         {/* Split view toggle */}

@@ -147,12 +147,18 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         wd14_variant = None
         model_label = body.model
 
+        _loop = asyncio.get_event_loop()
+
         if is_florence:
             variant = "promptgen" if "promptgen" in body.model else "large"
-            florence_entry = await model_manager.load_florence2(variant)
+            florence_entry = await model_manager.load_florence2(
+                variant, job_id=job_id, loop=_loop, dataset_id=body.dataset_id
+            )
             model_label = f"Florence-2 ({variant})"
         elif is_paligemma:
-            paligemma_entry = await model_manager.load_paligemma2()
+            paligemma_entry = await model_manager.load_paligemma2(
+                job_id=job_id, loop=_loop, dataset_id=body.dataset_id
+            )
             model_label = "PaliGemma-2"
         elif is_ollama:
             ollama_model_name = body.model.removeprefix("ollama:")
@@ -170,7 +176,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 openai_model_name = openai_provider.default_model
             model_label = f"{openai_provider.name} ({openai_model_name})"
         elif is_wd14:
+            from backend.ml import wd14_tagger
             wd14_variant = body.model.removeprefix("wd14:")
+            await _loop.run_in_executor(
+                None, wd14_tagger.ensure_loaded, wd14_variant, job_id, _loop, body.dataset_id
+            )
             model_label = f"WD14 ({wd14_variant})"
 
         total = len(image_data)
@@ -430,12 +440,18 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             wd14_variant = None
             model_label = step.model
 
+            _step_loop = asyncio.get_event_loop()
+
             if is_florence:
                 variant = "promptgen" if "promptgen" in step.model else "large"
-                florence_entry = await model_manager.load_florence2(variant)
+                florence_entry = await model_manager.load_florence2(
+                    variant, job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
+                )
                 model_label = f"Florence-2 ({variant})"
             elif is_paligemma:
-                paligemma_entry = await model_manager.load_paligemma2()
+                paligemma_entry = await model_manager.load_paligemma2(
+                    job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
+                )
                 model_label = "PaliGemma-2"
             elif is_ollama:
                 ollama_model_name = step.model.removeprefix("ollama:")
@@ -454,7 +470,11 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     openai_model_name = openai_provider.default_model
                 model_label = f"{openai_provider.name} ({openai_model_name})"
             elif is_wd14:
+                from backend.ml import wd14_tagger
                 wd14_variant = step.model.removeprefix("wd14:")
+                await _step_loop.run_in_executor(
+                    None, wd14_tagger.ensure_loaded, wd14_variant, job_id, _step_loop, body.dataset_id
+                )
                 model_label = f"WD14 ({wd14_variant})"
 
             # Load current captions from DB for {previous_caption} substitution (only when needed)

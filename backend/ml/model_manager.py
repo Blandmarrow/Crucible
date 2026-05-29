@@ -63,7 +63,13 @@ class ModelManager:
             return entry
         raise KeyError(f"Model {model_id} not registered or loaded")
 
-    async def load_florence2(self, variant: str = "large") -> ModelEntry:
+    async def load_florence2(
+        self,
+        variant: str = "large",
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         model_id = f"florence2_{variant}"
         async with self._get_lock(model_id):
             if model_id in self._registry:
@@ -71,15 +77,25 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
 
-            loop = asyncio.get_event_loop()
-            entry = await loop.run_in_executor(None, self._load_florence2_sync, model_id, variant)
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_florence2_sync, model_id, variant, job_id, _loop, dataset_id
+            )
             with self._sync_lock:
                 self._registry[model_id] = entry
             return entry
 
-    def _load_florence2_sync(self, model_id: str, variant: str) -> ModelEntry:
+    def _load_florence2_sync(
+        self,
+        model_id: str,
+        variant: str,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         import torch
         from transformers import AutoModelForCausalLM, AutoProcessor
+        from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
 
         MODEL_MAP = {
             "large": "microsoft/Florence-2-large",
@@ -88,20 +104,44 @@ class ModelManager:
         model_name = MODEL_MAP.get(variant, MODEL_MAP["large"])
         logger.info("Loading %s...", model_name)
 
+        if job_id and loop:
+            needs_download = not is_hf_cached(model_name, "config.json")
+            msg = (
+                f"Downloading {model_name} (first run, may take several minutes)..."
+                if needs_download else f"Loading {model_name} into VRAM..."
+            )
+            emit_sync(job_id, loop, msg, -1.0, dataset_id)
+
         self._evict_lru(5500)
 
         vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+        load_kwargs: dict = {"torch_dtype": torch.bfloat16, "trust_remote_code": True}
+
         processor = None
         model = None
         try:
-            processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-            # PromptGen v2 has missing keys that trigger _initialize_missing_keys, which
-            # calls DaViT._initialize_weights — a method the custom vision encoder doesn't
-            # implement.  low_cpu_mem_usage=False disables fast-init and skips that path.
-            load_kwargs: dict = {"torch_dtype": torch.bfloat16, "trust_remote_code": True}
-            if variant == "promptgen":
-                load_kwargs["low_cpu_mem_usage"] = False
-            model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+            with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
+                processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                if variant == "promptgen":
+                    # PromptGen v2's DaViT vision encoder doesn't implement _initialize_weights.
+                    # Newer transformers always calls _initialize_missing_keys after loading,
+                    # which hits this missing method. Patch it out for the duration of the load.
+                    import transformers.modeling_utils as _mu
+                    _orig = _mu.PreTrainedModel._initialize_missing_keys
+                    def _safe_init_missing(self, *a, **kw):
+                        try:
+                            _orig(self, *a, **kw)
+                        except AttributeError:
+                            pass
+                    _mu.PreTrainedModel._initialize_missing_keys = _safe_init_missing
+                    try:
+                        model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+                    finally:
+                        _mu.PreTrainedModel._initialize_missing_keys = _orig
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+            if job_id and loop:
+                emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
             model = model.to("cuda")
             model.eval()
         except Exception:
@@ -118,7 +158,12 @@ class ModelManager:
         vram_used = max(5500, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
-    async def load_paligemma2(self) -> ModelEntry:
+    async def load_paligemma2(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         model_id = "paligemma2"
         async with self._get_lock(model_id):
             if model_id in self._registry:
@@ -126,19 +171,36 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
 
-            loop = asyncio.get_event_loop()
-            entry = await loop.run_in_executor(None, self._load_paligemma2_sync)
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_paligemma2_sync, job_id, _loop, dataset_id
+            )
             with self._sync_lock:
                 self._registry[model_id] = entry
             return entry
 
-    def _load_paligemma2_sync(self) -> ModelEntry:
+    def _load_paligemma2_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         import torch
         from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
         from backend.config import settings
+        from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
 
         model_name = "google/paligemma2-3b-pt-448"
         logger.info("Loading %s...", model_name)
+
+        if job_id and loop:
+            needs_download = not is_hf_cached(model_name, "config.json")
+            msg = (
+                f"Downloading {model_name} (first run, may take several minutes)..."
+                if needs_download else f"Loading {model_name} into VRAM..."
+            )
+            emit_sync(job_id, loop, msg, -1.0, dataset_id)
+
         self._evict_lru(6000)
 
         vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
@@ -148,8 +210,11 @@ class ModelManager:
         processor = None
         model = None
         try:
-            processor = AutoProcessor.from_pretrained(model_name, **tok_kwargs)
-            model = PaliGemmaForConditionalGeneration.from_pretrained(model_name, **kwargs)
+            with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
+                processor = AutoProcessor.from_pretrained(model_name, **tok_kwargs)
+                model = PaliGemmaForConditionalGeneration.from_pretrained(model_name, **kwargs)
+            if job_id and loop:
+                emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
             model.eval()
         except Exception:
             if model is not None:
@@ -165,26 +230,52 @@ class ModelManager:
         vram_used = max(6000, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
-    async def load_aesthetic(self) -> ModelEntry:
+    async def load_aesthetic(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         model_id = "aesthetic"
         async with self._get_lock(model_id):
             if model_id in self._registry:
                 entry = self._registry[model_id]
                 entry.last_used = time.time()
                 return entry
-            loop = asyncio.get_event_loop()
-            entry = await loop.run_in_executor(None, self._load_aesthetic_sync)
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_aesthetic_sync, job_id, _loop, dataset_id
+            )
             with self._sync_lock:
                 self._registry[model_id] = entry
             return entry
 
-    def _load_aesthetic_sync(self) -> ModelEntry:
+    def _load_aesthetic_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         import torch
         import open_clip
         from backend.config import settings
         from backend.ml.aesthetic_scorer import AestheticMLP, download_weights
 
         logger.info("Loading aesthetic predictor...")
+
+        weights_path = settings.models_cache_dir / "aesthetic_predictor_v2_5.pth"
+
+        if job_id and loop:
+            from backend.ml.download_progress import emit_sync, is_hf_cached
+            # open_clip CLIP backbone (~800 MB from OpenAI CDN) downloads separately;
+            # check aesthetic weights as proxy for overall first-run status.
+            weights_cached = weights_path.exists()
+            clip_cached = is_hf_cached("openai/clip-vit-large-patch14", "config.json")
+            if not weights_cached or not clip_cached:
+                emit_sync(job_id, loop, "Downloading aesthetic predictor model (first run)...", -1.0, dataset_id)
+            else:
+                emit_sync(job_id, loop, "Loading aesthetic predictor into VRAM...", -1.0, dataset_id)
+
         self._evict_lru(3500)
 
         vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
@@ -196,9 +287,15 @@ class ModelManager:
             )
             clip_model = clip_model.to("cuda").eval()
 
-            weights_path = settings.models_cache_dir / "aesthetic_predictor_v2_5.pth"
             if not weights_path.exists():
+                if job_id and loop:
+                    from backend.ml.download_progress import emit_sync
+                    emit_sync(job_id, loop, "Downloading aesthetic predictor weights...", -1.0, dataset_id)
                 download_weights(weights_path)
+
+            if job_id and loop:
+                from backend.ml.download_progress import emit_sync
+                emit_sync(job_id, loop, "Loading aesthetic predictor into VRAM...", -1.0, dataset_id)
 
             mlp = AestheticMLP(768)
             mlp.load_state_dict(torch.load(weights_path, map_location="cpu"))
@@ -218,33 +315,58 @@ class ModelManager:
         vram_used = max(3500, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
         return ModelEntry({"clip": clip_model, "mlp": mlp, "preprocess": preprocess}, None, vram_mb=vram_used)
 
-    async def load_dino(self) -> ModelEntry:
+    async def load_dino(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         model_id = "dino"
         async with self._get_lock(model_id):
             if model_id in self._registry:
                 entry = self._registry[model_id]
                 entry.last_used = time.time()
                 return entry
-            loop = asyncio.get_event_loop()
-            entry = await loop.run_in_executor(None, self._load_dino_sync)
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_dino_sync, job_id, _loop, dataset_id
+            )
             with self._sync_lock:
                 self._registry[model_id] = entry
             return entry
 
-    def _load_dino_sync(self) -> ModelEntry:
+    def _load_dino_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
         import torch
         from transformers import AutoModel, AutoImageProcessor
+        from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
 
         model_name = "facebook/dinov2-base"
         logger.info("Loading %s...", model_name)
+
+        if job_id and loop:
+            needs_download = not is_hf_cached(model_name, "config.json")
+            msg = (
+                f"Downloading {model_name} (first run, may take a few minutes)..."
+                if needs_download else f"Loading {model_name} into VRAM..."
+            )
+            emit_sync(job_id, loop, msg, -1.0, dataset_id)
+
         self._evict_lru(1200)
 
         vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
         processor = None
         model = None
         try:
-            processor = AutoImageProcessor.from_pretrained(model_name)
-            model = AutoModel.from_pretrained(model_name, torch_dtype=torch.float16)
+            with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
+                processor = AutoImageProcessor.from_pretrained(model_name)
+                model = AutoModel.from_pretrained(model_name, torch_dtype=torch.float16)
+            if job_id and loop:
+                emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
             model = model.to("cuda").eval()
         except Exception:
             if model is not None:

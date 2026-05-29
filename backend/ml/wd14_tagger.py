@@ -23,7 +23,7 @@ _VARIANTS = {
     "swinv2": {
         "id": "swinv2",
         "name": "WD SwinV2 v3 (fastest)",
-        "repo": "SmilingWolf/wd-v1-4-swinv2-tagger-v3",
+        "repo": "SmilingWolf/wd-swinv2-tagger-v3",
     },
 }
 
@@ -92,6 +92,34 @@ def _preprocess(image_path: str, size: int = 448) -> np.ndarray:
     arr = arr[:, :, ::-1]  # RGB -> BGR
     arr = np.expand_dims(arr, axis=0)  # (1, H, W, C)
     return arr
+
+
+def ensure_loaded(
+    variant_id: str,
+    job_id: str | None = None,
+    loop=None,
+    dataset_id: str | None = None,
+) -> None:
+    """Pre-load the WD14 model and emit download/load status if job context is provided."""
+    with _cache_lock:
+        if variant_id in _cache:
+            return  # already loaded
+
+    if job_id and loop:
+        from huggingface_hub import try_to_load_from_cache
+        from backend.ml.download_progress import emit_sync, progress_tqdm_patch
+        info = _VARIANTS.get(variant_id, {})
+        repo = info.get("repo", "")
+        is_cached = isinstance(try_to_load_from_cache(repo, "model.onnx"), str)
+        if is_cached:
+            emit_sync(job_id, loop, f"Loading WD14 {variant_id} model...", -1.0, dataset_id)
+            _load_model(variant_id)
+        else:
+            emit_sync(job_id, loop, f"Downloading WD14 {variant_id} (first run)...", -1.0, dataset_id)
+            with progress_tqdm_patch(job_id, loop, f"Downloading WD14 {variant_id}...", dataset_id):
+                _load_model(variant_id)
+    else:
+        _load_model(variant_id)
 
 
 def tag_image_sync(image_path: str, variant_id: str, threshold: float = 0.35) -> str:

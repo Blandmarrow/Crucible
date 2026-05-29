@@ -225,20 +225,29 @@ export default function CaptioningPage() {
   }) ?? null;
 
   // Fall back to any globally-observed caption job when we have no active submitted job.
-  // Uses submittedActiveJobId (not submittedJobIds.length) so the fallback re-engages
-  // after all submitted jobs complete — letting SelectionToolbar-started jobs appear here.
+  // Includes "pending" so the panel survives navigation (submittedJobIds resets on remount,
+  // but allActiveJobs persists in Zustand and already holds the pending SSE event).
   const globalCaptionJob = submittedActiveJobId === null
     ? Array.from(allActiveJobs.values()).find(
-        (j) => (j.job_type === "caption" || j.job_type === "caption_pipeline") && j.status === "running"
+        (j) => (j.job_type === "caption" || j.job_type === "caption_pipeline") &&
+               (j.status === "running" || j.status === "pending")
       )
     : undefined;
 
   const effectiveJobId = submittedActiveJobId ?? globalCaptionJob?.job_id ?? null;
 
-  // How many submitted jobs are sitting in the queue behind the current one
-  const pendingWithNoEvents = submittedJobIds.filter((id) => !allActiveJobs.has(id)).length;
-  const currentIsAlsoPending = !!effectiveJobId && !allActiveJobs.has(effectiveJobId);
-  const queuedCount = pendingWithNoEvents - (currentIsAlsoPending ? 1 : 0);
+  // Other pending caption jobs from the persistent store — survives navigation because
+  // allActiveJobs lives in Zustand (not component state) and backend emits pending SSE events.
+  const otherPendingJobs = Array.from(allActiveJobs.values()).filter((j) =>
+    (j.job_type === "caption" || j.job_type === "caption_pipeline") &&
+    j.status === "pending" &&
+    j.job_id !== effectiveJobId
+  );
+  const queuedCount = otherPendingJobs.length;
+  // Current job is "pending" if it has no store entry yet, or its store status is "pending"
+  const currentIsAlsoPending = !!effectiveJobId && (
+    !allActiveJobs.has(effectiveJobId) || allActiveJobs.get(effectiveJobId)?.status === "pending"
+  );
 
   useJobSSE(effectiveJobId);
   useJobSSE(detectJobId);
@@ -858,12 +867,43 @@ export default function CaptioningPage() {
         <div className="panel">
           <div className="panel-h"><h3>Live progress</h3></div>
           <div className="panel-b">
-            {queuedCount > 0 && (
-              <div style={{ marginBottom: 12, padding: "6px 10px", background: "color-mix(in srgb, var(--accent) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)", borderRadius: "var(--r)", fontSize: 12, color: "var(--accent)" }}>
-                {queuedCount} job{queuedCount !== 1 ? "s" : ""} queued
+            {otherPendingJobs.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                {otherPendingJobs.map((qJob) => {
+                  const label = qJob.job_type === "caption_pipeline" ? "Pipeline" : "Caption";
+                  return (
+                    <div key={qJob.job_id} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "5px 10px",
+                      background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                      border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+                      borderRadius: "var(--r)",
+                      fontSize: 12,
+                    }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--fg-mute)" }}>
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                          <circle cx="8" cy="8" r="6"/>
+                          <path d="M8 5v3l2 2"/>
+                        </svg>
+                        {label} — queued
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          useJobStore.getState().updateJob(qJob.job_id, { status: "cancelled" });
+                          jobsApi.cancel(qJob.job_id);
+                        }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-dim)", padding: 0, lineHeight: 1, fontSize: 14 }}
+                        title="Cancel queued job"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
-            {!jobProgress ? (
+            {(!jobProgress || jobProgress.status === "pending") ? (
               currentIsAlsoPending ? (
                 <div className="empty-state" style={{ padding: "40px 20px" }}>
                   <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" strokeWidth="1.2">

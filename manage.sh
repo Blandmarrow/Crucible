@@ -189,8 +189,9 @@ cmd_start() {
 
     cd "$ROOT"
 
-    # Clean up any stale restart sentinel from a previous crash
+    # Clean up any stale sentinels from a previous crash
     rm -f "$ROOT/.restart"
+    rm -f "$ROOT/.shutdown"
 
     while true; do
         python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 || true

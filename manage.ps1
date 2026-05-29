@@ -211,8 +211,9 @@ function Cmd-Start {
 
     Set-Location "$ROOT"
 
-    # Clean up any stale restart sentinel from a previous crash
+    # Clean up any stale sentinels from a previous crash
     if (Test-Path "$ROOT\.restart") { Remove-Item "$ROOT\.restart" -Force }
+    if (Test-Path "$ROOT\.shutdown") { Remove-Item "$ROOT\.shutdown" -Force }
 
     :restart_loop while ($true) {
         python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
@@ -224,6 +225,11 @@ function Cmd-Start {
         } else {
             break restart_loop
         }
+    }
+
+    if (Test-Path "$ROOT\.shutdown") {
+        Remove-Item "$ROOT\.shutdown" -Force
+        exit 0
     }
 }
 

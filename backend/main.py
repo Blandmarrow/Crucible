@@ -80,13 +80,15 @@ app.include_router(settings_router.router, prefix=PREFIX)
 app.include_router(providers.router, prefix=PREFIX)
 app.include_router(versioning.router, prefix=PREFIX)
 
+_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
+_SHUTDOWN_SENTINEL = Path(__file__).parent.parent / ".shutdown"
+_START_TIME = time.time()
+
+
 @app.post("/api/v1/shutdown", status_code=204)
 async def shutdown():
+    _SHUTDOWN_SENTINEL.touch()
     threading.Thread(target=lambda: os.kill(os.getpid(), signal.SIGTERM), daemon=True).start()
-
-
-_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
-_START_TIME = time.time()
 
 
 @app.get("/api/v1/health", status_code=200)
@@ -97,6 +99,7 @@ async def health():
 @app.post("/api/v1/restart", status_code=204)
 async def restart():
     def _do_restart():
+        _SHUTDOWN_SENTINEL.unlink(missing_ok=True)
         _RESTART_SENTINEL.touch()
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=_do_restart, daemon=True).start()

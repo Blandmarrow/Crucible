@@ -25,8 +25,8 @@ exit /b
 
 :start
 powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0manage.ps1" start
-pause
-exit /b
+if %ERRORLEVEL% neq 0 pause
+exit /b %ERRORLEVEL%
 
 :update
 powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0manage.ps1" update

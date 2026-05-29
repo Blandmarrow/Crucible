@@ -138,6 +138,19 @@ class ModelManager:
                         model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
                     finally:
                         _mu.PreTrainedModel._initialize_missing_keys = _orig
+                    # transformers >= 4.50: PreTrainedModel no longer inherits GenerationMixin.
+                    # The PromptGen v2 model code doesn't explicitly inherit it either, so
+                    # .generate() is missing on the language_model sub-component. Inject it.
+                    # Also ensure generation_config is not None, which GenerationMixin.generate()
+                    # dereferences unconditionally via _prepare_generation_config.
+                    from transformers import GenerationMixin, GenerationConfig
+                    lang_cls = type(model.language_model)
+                    if not issubclass(lang_cls, GenerationMixin):
+                        lang_cls.__bases__ = lang_cls.__bases__ + (GenerationMixin,)
+                    if getattr(model.language_model, "generation_config", None) is None:
+                        model.language_model.generation_config = GenerationConfig.from_model_config(
+                            model.language_model.config
+                        )
                 else:
                     model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
             if job_id and loop:

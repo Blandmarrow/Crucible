@@ -83,7 +83,14 @@ _install_deps() {
                 echo "  Found $($cmd --version 2>&1) - 3.10+ is required."
             fi
         done
-        echo "  Python 3.10+ not found - attempting to install..."
+        echo "  Python 3.10+ is required but not found."
+        echo "  Source: https://www.python.org/ (via package manager)"
+        printf "  Install now? [Y/n] "
+        read -r _reply || true
+        case "$_reply" in
+            [Nn]*) echo "  Install Python 3.10+ from: https://www.python.org/downloads/"; exit 1 ;;
+        esac
+        echo "  Installing Python 3.10+..."
         if [ "$os" = "Darwin" ]; then
             if command -v brew &>/dev/null; then
                 brew install python@3.12
@@ -129,7 +136,14 @@ _install_deps() {
         if command -v node &>/dev/null; then
             echo "  Found Node $(node --version) - 18+ is required."
         fi
-        echo "  Node.js 18+ not found - attempting to install..."
+        echo "  Node.js 18+ is required but not found."
+        echo "  Source: https://nodejs.org/ (via package manager)"
+        printf "  Install now? [Y/n] "
+        read -r _reply || true
+        case "$_reply" in
+            [Nn]*) echo "  Install Node.js 18+ from: https://nodejs.org/"; exit 1 ;;
+        esac
+        echo "  Installing Node.js 18+..."
         if [ "$os" = "Darwin" ]; then
             if command -v brew &>/dev/null; then
                 brew install node
@@ -205,6 +219,12 @@ _install_torch_if_needed() {
 
             if [ -n "$tag" ]; then
                 local index_url="https://download.pytorch.org/whl/$tag"
+                echo "  Source: $index_url (~2.5 GB)"
+                printf "  Install GPU-accelerated PyTorch (%s)? [Y/n] " "$tag"
+                read -r _reply || true
+                case "$_reply" in
+                    [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
+                esac
                 echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
                 if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
                     echo "  CUDA-enabled PyTorch ($tag) installed."
@@ -255,6 +275,12 @@ _install_torch_if_needed() {
         fi
 
         local index_url="https://download.pytorch.org/whl/$rocm_tag"
+        echo "  Source: $index_url (~2.5 GB)"
+        printf "  Install GPU-accelerated PyTorch (%s)? [Y/n] " "$rocm_tag"
+        read -r _reply || true
+        case "$_reply" in
+            [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
+        esac
         echo "  Installing PyTorch ($rocm_tag) from PyTorch wheel index..."
         if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
             echo "  ROCm-enabled PyTorch ($rocm_tag) installed."
@@ -305,8 +331,24 @@ cmd_setup() {
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
     _install_torch_if_needed
-    "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
-    echo "  Python dependencies installed."
+    if [ ! -f "$ROOT/backend/requirements.txt" ]; then
+        echo "ERROR: requirements.txt not found at $ROOT/backend/requirements.txt" >&2
+        exit 1
+    fi
+    if [ -t 0 ]; then
+        echo "  Source: https://pypi.org/"
+        echo "  Packages:"
+        grep -v '^[[:space:]]*#' "$ROOT/backend/requirements.txt" | grep -v '^[[:space:]]*$' | while IFS= read -r _pkg; do echo "    $_pkg"; done || true
+    fi
+    printf "  Install Python backend dependencies from requirements.txt? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping Python dependencies." ;;
+        *)
+            "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
+            echo "  Python dependencies installed."
+            ;;
+    esac
 
     echo "[5/5] Installing frontend dependencies and building..."
     cd "$ROOT/frontend"
@@ -406,8 +448,24 @@ cmd_update() {
     echo "[2/4] Updating Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     _install_torch_if_needed
-    "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
-    echo "  Done."
+    if [ ! -f "$ROOT/backend/requirements.txt" ]; then
+        echo "ERROR: requirements.txt not found at $ROOT/backend/requirements.txt" >&2
+        exit 1
+    fi
+    if [ -t 0 ]; then
+        echo "  Source: https://pypi.org/"
+        echo "  Packages:"
+        grep -v '^[[:space:]]*#' "$ROOT/backend/requirements.txt" | grep -v '^[[:space:]]*$' | while IFS= read -r _pkg; do echo "    $_pkg"; done || true
+    fi
+    printf "  Update Python backend dependencies from requirements.txt? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping Python dependencies." ;;
+        *)
+            "$ROOT/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
+            echo "  Done."
+            ;;
+    esac
 
     echo "[3/4] Updating frontend dependencies..."
     cd "$ROOT/frontend"

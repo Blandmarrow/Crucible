@@ -39,7 +39,7 @@ All long-running operations run in a background job queue and stream real-time p
 | Node.js | 18+ |
 | GPU (ML features) | NVIDIA CUDA · AMD ROCm 6.1+ (Linux only) · Apple Silicon |
 
-Python and Node.js are installed automatically by `setup` if missing. GPU inference requires ~6 GB VRAM minimum; the technical scorer and duplicate detector run on CPU only.
+Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM minimum; the technical scorer and duplicate detector run on CPU only.
 
 ---
 
@@ -61,7 +61,7 @@ git clone https://github.com/Blandmarrow/Crucible
 chmod +x manage.sh && ./manage.sh setup
 ```
 
-Setup auto-detects your GPU and installs the matching PyTorch wheel — no manual pre-install needed.
+Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
 **Optional: API keys** — copy `.env.example` to `.env` if you need PaliGemma-2 or Gelbooru:
 

@@ -36,6 +36,15 @@ function Install-Deps {
 
     if (-not $pythonOk) {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Python 3.10+ is required but not found." -ForegroundColor Yellow
+            Write-Host "  Source: https://www.python.org/ (via winget - Python 3.12)" -ForegroundColor DarkGray
+            if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+                $reply = Read-Host "  Install Python 3.12? [Y/n]"
+            }
+            if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+                Write-Host "  Install Python 3.10+ manually from: https://www.python.org/downloads/" -ForegroundColor Cyan
+                exit 1
+            }
             Write-Host "  Installing Python 3.12 via winget (user scope, no admin needed)..." -ForegroundColor Yellow
             winget install --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
             if ($LASTEXITCODE -eq 0) {
@@ -77,6 +86,15 @@ function Install-Deps {
 
     if (-not $nodeOk) {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Node.js 18+ is required but not found." -ForegroundColor Yellow
+            Write-Host "  Source: https://nodejs.org/ (via winget - Node.js LTS)" -ForegroundColor DarkGray
+            if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+                $reply = Read-Host "  Install Node.js LTS? [Y/n]"
+            }
+            if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+                Write-Host "  Install Node.js 18+ manually from: https://nodejs.org/" -ForegroundColor Cyan
+                exit 1
+            }
             Write-Host "  Installing Node.js LTS via winget (user scope, no admin needed)..." -ForegroundColor Yellow
             winget install --id OpenJS.NodeJS.LTS --scope user --silent --accept-package-agreements --accept-source-agreements
             if ($LASTEXITCODE -eq 0) {
@@ -148,6 +166,14 @@ function Install-TorchIfNeeded {
 
         if ($tag) {
             $indexUrl = "https://download.pytorch.org/whl/$tag"
+            Write-Host "  Source: $indexUrl (~2.5 GB)" -ForegroundColor DarkGray
+            if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+                $reply = Read-Host "  Install GPU-accelerated PyTorch ($tag)? [Y/n]"
+            }
+            if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+                Write-Host "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt." -ForegroundColor DarkGray
+                return
+            }
             Write-Host "  Installing PyTorch ($tag) from PyTorch wheel index..." -ForegroundColor Yellow
             & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.0" --index-url $indexUrl --quiet
             if ($LASTEXITCODE -eq 0) {
@@ -214,12 +240,24 @@ function Cmd-Setup {
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
     Install-TorchIfNeeded
-    & "$ROOT\venv\Scripts\pip.exe" install -r "$ROOT\backend\requirements.txt"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: pip install failed." -ForegroundColor Red
-        exit 1
+    if (-not [System.Console]::IsInputRedirected) {
+        Write-Host "  Source: https://pypi.org/" -ForegroundColor DarkGray
+        Write-Host "  Packages:" -ForegroundColor DarkGray
+        Get-Content "$ROOT\backend\requirements.txt" | Where-Object { $_ -notmatch "^\s*#" -and $_.Trim() -ne "" } | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
-    Write-Host "  Python dependencies installed." -ForegroundColor Green
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Install Python backend dependencies from requirements.txt? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping Python dependencies." -ForegroundColor DarkGray
+    } else {
+        & "$ROOT\venv\Scripts\pip.exe" install -r "$ROOT\backend\requirements.txt"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: pip install failed." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  Python dependencies installed." -ForegroundColor Green
+    }
 
     Write-Host "[5/5] Installing frontend dependencies and building..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
@@ -335,12 +373,24 @@ function Cmd-Update {
     Write-Host "[2/4] Updating Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     Install-TorchIfNeeded
-    & "$ROOT\venv\Scripts\pip.exe" install -r "$ROOT\backend\requirements.txt"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: pip install failed." -ForegroundColor Red
-        exit 1
+    if (-not [System.Console]::IsInputRedirected) {
+        Write-Host "  Source: https://pypi.org/" -ForegroundColor DarkGray
+        Write-Host "  Packages:" -ForegroundColor DarkGray
+        Get-Content "$ROOT\backend\requirements.txt" | Where-Object { $_ -notmatch "^\s*#" -and $_.Trim() -ne "" } | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
-    Write-Host "  Done." -ForegroundColor Green
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Update Python backend dependencies from requirements.txt? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping Python dependencies." -ForegroundColor DarkGray
+    } else {
+        & "$ROOT\venv\Scripts\pip.exe" install -r "$ROOT\backend\requirements.txt"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: pip install failed." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  Done." -ForegroundColor Green
+    }
 
     Write-Host "[3/4] Updating frontend dependencies..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"

@@ -1,0 +1,27 @@
+# Dataset Versioning
+
+Snapshot-based version control for datasets — similar in concept to git commits.
+
+## Three versioning modes
+
+Configured in Settings:
+
+| Mode | Behaviour |
+|---|---|
+| **Off** | Versioning disabled; all versioning endpoints return an error |
+| **Manual** | Every snapshot eagerly copies all image files to a content-addressable object store (full point-in-time backup) |
+| **Auto** | Snapshot records metadata only; files are copied lazily on first overwrite (copy-on-write) — storage only grows when you actually change an image |
+
+In both Manual and Auto modes, image files are automatically backed up before deletion so that a pre-deletion snapshot can always be restored.
+
+## Features
+
+- **Snapshots** — create named, time-stamped checkpoints of a dataset with an optional description
+- **Branches** — create named branches, each with its own independent snapshot history; switch branches and restore recent snapshots directly from the **sidebar accordion** (without navigating away), or use the full branch selector on the Versions page; delete any non-active branch (and all its snapshots) via the trash icon — the active branch must be switched away from before it can be deleted
+- **Restore** — rewind the entire dataset to any prior snapshot (runs as a background job with a live progress bar); optionally auto-snapshot the current state first; the "Current" indicator moves to the restored snapshot on completion
+- **Diff** — compare any two snapshots to see which images were added, removed, or modified (field-level changes)
+- **Branch snapshot prompts** — configurable in Settings: prompt before checkout or branch creation (*Ask* mode) or always create snapshots automatically (*Auto* mode)
+
+The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
+
+Access via the **Versions** sidebar item on any dataset page.

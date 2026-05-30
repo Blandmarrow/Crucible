@@ -298,8 +298,15 @@ Split the main content area into two independently operating panes:
 ## Prerequisites
 
 ### Required
-- **Python 3.10+**
-- **Node.js 18+**
+- **Python 3.10+** and **Node.js 18+** — both are installed automatically by `setup` if they are missing or the installed version is too old:
+
+  | Platform | Method |
+  |---|---|
+  | Windows | `winget install --scope user` — no admin prompt required |
+  | macOS | Homebrew (`brew install python@3.12` / `brew install node`) |
+  | Linux | Python via `apt` / `dnf` / `pacman`; Node.js via NodeSource LTS (apt/dnf) or `pacman`, with `nvm` as a fallback if the packaged version is older than 18 |
+
+  If auto-install is not possible (winget unavailable on older Windows, Homebrew not installed on macOS, or no supported package manager on Linux), setup prints the relevant download URL and exits cleanly.
 
 ### For ML inference (captioning and aesthetic/DINOv2 scoring)
 

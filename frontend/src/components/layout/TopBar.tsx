@@ -10,7 +10,7 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
 import { Columns2, RefreshCw } from "lucide-react";
 
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -93,6 +93,9 @@ export default function TopBar() {
         processedJobsRef.current.add(jobId);
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          if (progress.job_type === "quality_score") {
+            qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
+          }
         }
         if (DATASET_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["datasets"] });

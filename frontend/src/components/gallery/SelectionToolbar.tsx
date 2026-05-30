@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy } from "lucide-react";
 import toast from "react-hot-toast";
@@ -21,6 +21,8 @@ import { type ProviderOut } from "../../api/providers";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
+import StyleReferencePicker from "../quality/StyleReferencePicker";
+import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 
 interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
@@ -53,6 +55,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [runTechnical, setRunTechnical] = useState(true);
   const [runWatermark, setRunWatermark] = useState(false);
   const [runEmbeddings, setRunEmbeddings] = useState(false);
+  const [runDino, setRunDino] = useState(false);
+  const [runDinoLayers, setRunDinoLayers] = useState(false);
+  const [showStyleSection, setShowStyleSection] = useState(false);
+  const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set());
+  const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
+  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">("clip");
+  const [dinoLayer, setDinoLayer] = useState<number | "all" | null>("all");
   const [scoreJobLabel, setScoreJobLabel] = useState("");
   const [scoreJobId, setScoreJobId] = useState<string | null>(null);
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
@@ -109,6 +118,28 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.error("Detection failed");
     }
   }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
+
+  const embeddingTypeInitialized = useRef(false);
+  useEffect(() => {
+    if (!embeddingTypeInitialized.current) { embeddingTypeInitialized.current = true; return; }
+    if (embeddingType === "clip") setDinoLayer("all");
+  }, [embeddingType]);
+
+  useEffect(() => {
+    if (!showScore) {
+      setShowStyleSection(false);
+      setSelectedRefIds(new Set());
+      setExternalRefFiles([]);
+    }
+  }, [showScore]);
+
+  const toggleRef = (id: string) => {
+    setSelectedRefIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const ids = [...selectedIds];
 
@@ -245,6 +276,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         run_technical: runTechnical,
         run_watermark: runWatermark,
         run_embeddings: runEmbeddings,
+        run_dino: runDino,
+        run_dino_layers: runDino && runDinoLayers,
         label: scoreJobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
@@ -253,6 +286,42 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(`Scoring ${count} image${count !== 1 ? "s" : ""}…`);
     },
     onError: () => toast.error("Failed to start scoring"),
+  });
+
+  const similarityMutation = useMutation({
+    mutationFn: async () => {
+      let reference_embeddings: string[] = [];
+      if (externalRefFiles.length > 0) {
+        const result = await qualityApi.embedReferences(externalRefFiles);
+        reference_embeddings = result.embeddings;
+      }
+      const effectiveType = externalRefFiles.length > 0 ? "clip" : embeddingType;
+      let apiType: "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers" = effectiveType as typeof apiType;
+      if (effectiveType === "dino" && dinoLayer === "all") apiType = "dino_all_layers";
+      else if (effectiveType === "combined" && dinoLayer === "all") apiType = "combined_all_layers";
+      const effectiveDinoLayer = (["dino", "combined"].includes(effectiveType) && typeof dinoLayer === "number") ? dinoLayer : undefined;
+      return qualityApi.styleSimilarity({
+        dataset_id: datasetId,
+        image_ids: ids,
+        reference_image_ids: Array.from(selectedRefIds),
+        reference_embeddings,
+        embedding_type: apiType,
+        dino_layer: effectiveDinoLayer,
+      });
+    },
+    onSuccess: (data) => {
+      const skipped = data.skipped ?? 0;
+      const msg = skipped > 0
+        ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
+        : `Style similarity scored for ${data.updated} images`;
+      toast.success(msg);
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image"] });
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ?? (err instanceof Error ? err.message : "Style similarity scoring failed"));
+    },
   });
 
   const detectMutation = useMutation({
@@ -574,7 +643,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       {/* Score modal */}
       {showScore && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-4">
+          <div className="card p-5 w-full max-w-lg space-y-4" style={{ maxHeight: "90vh", overflowY: "auto" }}>
             <h4 className="font-medium flex items-center gap-2">
               <Star size={16} /> Score {count} Image{count !== 1 ? "s" : ""}
             </h4>
@@ -594,8 +663,18 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               </label>
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runEmbeddings} onChange={e => setRunEmbeddings(e.target.checked)} />
-                Style embeddings (CLIP + DINOv2, for similarity)
+                Style embeddings · CLIP
               </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="checkbox" checked={runDino} onChange={e => setRunDino(e.target.checked)} />
+                DINOv2 embeddings
+              </label>
+              {runDino && (
+                <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ paddingLeft: 20 }}>
+                  <input type="checkbox" checked={runDinoLayers} onChange={e => setRunDinoLayers(e.target.checked)} />
+                  DINOv2 per-layer embeds
+                </label>
+              )}
             </div>
             <input
               className="input w-full"
@@ -606,12 +685,88 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               style={{ fontSize: 12 }}
               title="Optional name shown in the job queue"
             />
+
+            {/* Style similarity section */}
+            <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+              <button
+                className="flex items-center gap-2 w-full text-sm font-medium"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg)", padding: 0, textAlign: "left" }}
+                onClick={() => setShowStyleSection((v) => !v)}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <path d={showStyleSection ? "M3 10l5-5 5 5" : "M3 6l5 5 5-5"}/>
+                </svg>
+                Style similarity
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--fg-dim)", fontWeight: 400 }}>Cosine similarity to reference embeddings</span>
+              </button>
+
+              {showStyleSection && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>
+                      CLIP for general images; DINOv2 for object-shape similarity; CLIP + DINOv2 blends both. All require embeddings computed first.
+                    </div>
+                    <div className="row-flex">
+                      <button className={`btn sm${embeddingType === "clip" ? " primary" : ""}`} onClick={() => setEmbeddingType("clip")}>CLIP</button>
+                      <button className={`btn sm${embeddingType === "dino" ? " primary" : ""}`} onClick={() => setEmbeddingType("dino")} disabled={externalRefFiles.length > 0}>DINOv2</button>
+                      <button className={`btn sm${embeddingType === "combined" ? " primary" : ""}`} onClick={() => setEmbeddingType("combined")} disabled={externalRefFiles.length > 0}>CLIP + DINOv2</button>
+                    </div>
+                  </div>
+
+                  {(embeddingType === "dino" || embeddingType === "combined") && externalRefFiles.length === 0 && (
+                    <div>
+                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>DINOv2 layer</div>
+                      <select
+                        className="select w-full"
+                        value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "all") setDinoLayer("all");
+                          else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
+                        }}
+                        style={{ fontSize: 12 }}
+                      >
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                          <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
+                        ))}
+                        <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>Reference images — pick from the dataset, or drag in local files (always embedded with CLIP).</div>
+                    <StyleReferencePicker
+                      datasetId={datasetId}
+                      selectedIds={selectedRefIds}
+                      onToggle={toggleRef}
+                      externalFiles={externalRefFiles}
+                      onExternalFilesChange={setExternalRefFiles}
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      className="btn primary"
+                      onClick={() => similarityMutation.mutate()}
+                      disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
+                      </svg>
+                      Score similarity{(selectedRefIds.size + externalRefFiles.length) > 0 ? ` · ${selectedRefIds.size + externalRefFiles.length} refs` : ""}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 justify-end">
               <button className="btn-ghost" onClick={() => setShowScore(false)}>Cancel</button>
               <button
                 className="btn-primary flex items-center gap-2"
                 onClick={() => scoreMutation.mutate()}
-                disabled={(!runAesthetic && !runTechnical && !runWatermark && !runEmbeddings) || scoreMutation.isPending}
+                disabled={(!runAesthetic && !runTechnical && !runWatermark && !runEmbeddings && !runDino) || scoreMutation.isPending}
               >
                 <Star size={14} /> Run Scoring
               </button>

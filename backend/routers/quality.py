@@ -38,6 +38,7 @@ class DuplicateResolve(BaseModel):
 
 class StyleSimilarityRequest(BaseModel):
     dataset_id: str
+    image_ids: list[str] | None = None  # scope scoring to these images only (None = whole dataset)
     reference_image_ids: list[str] = []
     reference_embeddings: list[str] = []  # base64-encoded float16 bytes (from embed-references)
     embedding_type: str = "clip"  # "clip" | "dino" | "combined"
@@ -226,8 +227,9 @@ async def compute_style_similarity(
 
     loop = asyncio.get_event_loop()
 
+    id_filter = (Image.id.in_(body.image_ids),) if body.image_ids else ()
     total_count_result = await db.execute(
-        select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id)
+        select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id, *id_filter)
     )
     total_images = total_count_result.scalar() or 0
 
@@ -245,7 +247,7 @@ async def compute_style_similarity(
         if not ref_embs:
             raise HTTPException(status_code=400, detail="No CLIP embeddings found for reference images. Run embedding extraction first, or upload local reference images.")
         cand_result = await db.execute(
-            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None))
+            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
         )
         cand_rows = [(r[0], r[1]) for r in cand_result.all()]
         if not cand_rows:
@@ -271,7 +273,7 @@ async def compute_style_similarity(
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No DINOv2 embeddings found for reference images. Run embedding extraction first.")
             cand_result = await db.execute(
-                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None))
+                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
             )
             cand_rows = [(r[0], r[1]) for r in cand_result.all()]
             if not cand_rows:
@@ -301,7 +303,7 @@ async def compute_style_similarity(
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
             cand_result = await db.execute(
-                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None))
+                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
             )
             cand_rows_raw = [(r[0], r[1]) for r in cand_result.all()]
             cand_rows = [(img_id, slice_layer_embedding(blob, layer)) for img_id, blob in cand_rows_raw]
@@ -357,6 +359,7 @@ async def compute_style_similarity(
                     Image.dataset_id == body.dataset_id,
                     Image.clip_embedding.isnot(None),
                     Image.dino_layer_embeddings.isnot(None),
+                    *id_filter,
                 )
             )
         else:
@@ -366,6 +369,7 @@ async def compute_style_similarity(
                     Image.dataset_id == body.dataset_id,
                     Image.clip_embedding.isnot(None),
                     Image.dino_embedding.isnot(None),
+                    *id_filter,
                 )
             )
         cand_rows_full = [(r[0], r[1], r[2]) for r in cand_result.all()]
@@ -425,7 +429,7 @@ async def compute_style_similarity(
         if not ref_blobs:
             raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
         cand_result = await db.execute(
-            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None))
+            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
         )
         cand_rows_blobs = [(r[0], r[1]) for r in cand_result.all()]
         if not cand_rows_blobs:

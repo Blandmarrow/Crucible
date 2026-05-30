@@ -37,6 +37,7 @@ export const qualityApi = {
 
   styleSimilarity: (params: {
     dataset_id: string;
+    image_ids?: string[];
     reference_image_ids: string[];
     reference_embeddings?: string[];
     embedding_type?: "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers";

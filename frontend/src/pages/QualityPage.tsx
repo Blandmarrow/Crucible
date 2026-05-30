@@ -8,6 +8,7 @@ import { imagesApi } from "../api/images";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
+import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 
 const SCORING_OPTIONS = [
   { key: "aesthetic", label: "Aesthetic score · LAION", desc: "CLIP-based aesthetic predictor (1–10). Trained on human ratings.", vram: "GPU · 2.1 GB" },
@@ -48,7 +49,7 @@ export default function QualityPage() {
   const embeddingTypeInitialized = useRef(false);
   useEffect(() => {
     if (!embeddingTypeInitialized.current) { embeddingTypeInitialized.current = true; return; }
-    if (embeddingType === "clip") setDinoLayer(null);
+    if (embeddingType === "clip") setDinoLayer("all");
   }, [embeddingType]);
 
   useEffect(() => {
@@ -120,10 +121,9 @@ export default function QualityPage() {
         reference_embeddings = result.embeddings;
       }
       const effectiveType = externalRefFiles.length > 0 ? "clip" : embeddingType;
-      const isAllLayers = dinoLayer === "all";
       let apiType: "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers" = effectiveType as typeof apiType;
-      if (effectiveType === "dino" && isAllLayers) apiType = "dino_all_layers";
-      else if (effectiveType === "combined" && isAllLayers) apiType = "combined_all_layers";
+      if (effectiveType === "dino" && dinoLayer === "all") apiType = "dino_all_layers";
+      else if (effectiveType === "combined" && dinoLayer === "all") apiType = "combined_all_layers";
       const effectiveDinoLayer = (["dino", "combined"].includes(effectiveType) && typeof dinoLayer === "number") ? dinoLayer : undefined;
       return qualityApi.styleSimilarity({
         dataset_id: datasetId!,
@@ -292,18 +292,9 @@ export default function QualityPage() {
                     else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
                   }}
                 >
-                  <option value={1}>Layer 1 — Low-level color &amp; gradients</option>
-                  <option value={2}>Layer 2 — Edges &amp; corners</option>
-                  <option value={3}>Layer 3 — Local texture orientations</option>
-                  <option value={4}>Layer 4 — Texture patterns &amp; simple shapes</option>
-                  <option value={5}>Layer 5 — Object part emergence</option>
-                  <option value={6}>Layer 6 — Region boundaries &amp; contours</option>
-                  <option value={7}>Layer 7 — Complex textures &amp; patterns</option>
-                  <option value={8}>Layer 8 — Higher-level object parts</option>
-                  <option value={9}>Layer 9 — Object &amp; shape representations</option>
-                  <option value={10}>Layer 10 — Semantic object features</option>
-                  <option value={11}>Layer 11 — Abstract semantic content</option>
-                  <option value={12}>Layer 12 — Global semantics (Final, default)</option>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
+                  ))}
                   <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
                 </select>
               </div>

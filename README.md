@@ -171,7 +171,7 @@ The scoring run can be scoped to a specific subfolder via a dropdown in the Qual
 Select any images in the gallery (or use **Space** while viewing an image in the detail view) to add them to the selection. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
-- **Batch score** — run technical, aesthetic, watermark, and/or embedding scoring on the selection
+- **Batch score** — run technical, aesthetic, watermark, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model (see [Image Processing](#image-processing))
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity (see [Image Processing](#image-processing))
 - **Batch detect** — run Florence-2 object detection or phrase grounding on the selection

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
 import { versioningApi } from "../../api/versioning";
 import { useGpuStats } from "../../hooks/useGpuStats";
+import { useCpuRamStats } from "../../hooks/useCpuRamStats";
 import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
 
 /* ── SVG icons matching the design spec ── */
@@ -74,12 +75,56 @@ const IcoSettings = () => (
     <path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/>
   </svg>
 );
+const IcoCpu = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <rect x="4" y="4" width="8" height="8" rx="1"/>
+    <path d="M6 4V2M8 4V2M10 4V2M6 14v-2M8 14v-2M10 14v-2M4 6H2M4 8H2M4 10H2M14 6h-2M14 8h-2M14 10h-2"/>
+  </svg>
+);
+const IcoRam = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <rect x="1.5" y="5" width="13" height="6" rx="1"/>
+    <path d="M4.5 5V3.5M7 5V3.5M9.5 5V3.5M12 5V3.5M4.5 11v1.5M7 11v1.5M9.5 11v1.5M12 11v1.5"/>
+  </svg>
+);
 const IcoGpu = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <rect x="2.5" y="3.5" width="11" height="9" rx="1"/>
     <path d="M5 6.5h6M5 9h4"/>
   </svg>
 );
+
+/* ── Hardware meter row ── */
+function MeterRow({ icon, label, value, pct }: {
+  icon: React.ReactNode;
+  label: string;
+  value: string | null;
+  pct: number | null;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      {icon}
+      <div style={{ flex: 1 }}>
+        {value != null ? (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+              <span style={{ color: "var(--fg-mute)" }}>{label}</span>
+              <span className="mono" style={{ color: "var(--fg-dim)" }}>{value}</span>
+            </div>
+            <div style={{ height: 3, background: "var(--surface-3)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+              <div style={{
+                height: "100%", background: "var(--accent)",
+                width: `${pct}%`, borderRadius: 2,
+              }} />
+            </div>
+          </>
+        ) : (
+          <span style={{ color: "var(--fg-soft)", fontSize: 11 }}>No {label} data</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ── Nav item ── */
 function NavItem({
@@ -148,6 +193,7 @@ export default function Sidebar() {
   const match = useMatch("/datasets/:datasetId/*");
   const datasetId = match?.params?.datasetId;
   const gpu = useGpuStats();
+  const cpuRam = useCpuRamStats();
 
   const { data: dataset } = useQuery({
     queryKey: ["dataset", datasetId],
@@ -233,34 +279,30 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* GPU meter footer */}
+      {/* Hardware stats footer */}
       <div style={{
         borderTop: "1px solid var(--line)", padding: "10px 12px",
-        display: "flex", alignItems: "center", gap: 10,
+        display: "flex", flexDirection: "column", gap: 8,
         color: "var(--fg-mute)", fontSize: 12, flexShrink: 0,
       }}>
-        <IcoGpu />
-        <div style={{ flex: 1 }}>
-          {gpu ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                <span style={{ color: "var(--fg-mute)" }}>{gpu.name || "GPU"}</span>
-                <span className="mono" style={{ color: "var(--fg-dim)" }}>
-                  {Math.round(gpu.used_mb / 1024 * 10) / 10} / {Math.round(gpu.total_mb / 1024 * 10) / 10} GB
-                </span>
-              </div>
-              <div style={{ height: 3, background: "var(--surface-3)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
-                <div style={{
-                  height: "100%", background: "var(--accent)",
-                  width: `${Math.min(100, (gpu.used_mb / gpu.total_mb) * 100)}%`,
-                  borderRadius: 2,
-                }} />
-              </div>
-            </>
-          ) : (
-            <span style={{ color: "var(--fg-soft)", fontSize: 11 }}>No GPU data</span>
-          )}
-        </div>
+        <MeterRow
+          icon={<IcoCpu />}
+          label="CPU"
+          value={cpuRam ? `${cpuRam.cpu_pct.toFixed(1)}%` : null}
+          pct={cpuRam ? Math.min(100, cpuRam.cpu_pct) : null}
+        />
+        <MeterRow
+          icon={<IcoRam />}
+          label="RAM"
+          value={cpuRam ? `${(cpuRam.ram_used_mb / 1024).toFixed(1)} / ${(cpuRam.ram_total_mb / 1024).toFixed(1)} GB` : null}
+          pct={cpuRam ? Math.min(100, (cpuRam.ram_used_mb / cpuRam.ram_total_mb) * 100) : null}
+        />
+        <MeterRow
+          icon={<IcoGpu />}
+          label={gpu?.name || "GPU"}
+          value={gpu ? `${(gpu.used_mb / 1024).toFixed(1)} / ${(gpu.total_mb / 1024).toFixed(1)} GB` : null}
+          pct={gpu ? Math.min(100, (gpu.used_mb / gpu.total_mb) * 100) : null}
+        />
       </div>
     </aside>
   );

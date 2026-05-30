@@ -1,4 +1,5 @@
 import asyncio
+import psutil
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -95,6 +96,22 @@ async def _mps_stats() -> dict | None:
         }
     except Exception:
         return None
+
+
+@router.get("/cpu-ram")
+async def cpu_ram_stats():
+    try:
+        loop = asyncio.get_running_loop()
+        cpu_pct, vm = await loop.run_in_executor(
+            None, lambda: (psutil.cpu_percent(interval=0.1), psutil.virtual_memory())
+        )
+        return {
+            "cpu_pct": round(cpu_pct, 1),
+            "ram_used_mb": vm.used // (1024 * 1024),
+            "ram_total_mb": vm.total // (1024 * 1024),
+        }
+    except Exception:
+        return {"cpu_pct": 0.0, "ram_used_mb": 0, "ram_total_mb": 0}
 
 
 @router.get("/gpu")

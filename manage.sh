@@ -9,24 +9,147 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Helpers
 # ---------------------------------------------------------------------------
 
-_check_deps() {
-    echo "[1/2] Checking Python..."
-    if command -v python3 &>/dev/null; then
-        PYTHON=python3
-    elif command -v python &>/dev/null; then
-        PYTHON=python
-    else
-        echo "ERROR: Python not found. Please install Python 3.10+ and add it to PATH." >&2
-        exit 1
-    fi
-    echo "  Found: $($PYTHON --version)"
+_python_version_ok() {
+    # Returns 0 if $1 is Python 3.10+
+    command -v "$1" &>/dev/null || return 1
+    local ver maj min
+    ver=$("$1" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+" | head -1 || true)
+    [ -n "$ver" ] || return 1
+    maj=$(echo "$ver" | cut -d. -f1)
+    min=$(echo "$ver" | cut -d. -f2)
+    [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 10 ]; }
+}
 
-    echo "[2/2] Checking Node.js..."
-    if ! command -v node &>/dev/null; then
-        echo "ERROR: Node.js not found. Please install Node.js 18+ and add it to PATH." >&2
+_node_version_ok() {
+    command -v node &>/dev/null || return 1
+    local maj
+    maj=$(node --version 2>&1 | grep -oE "^v[0-9]+" | grep -oE "[0-9]+" || true)
+    [ -n "$maj" ] && [ "$maj" -ge 18 ]
+}
+
+_install_node_nvm() {
+    local nvm_dir="$HOME/.nvm"
+    echo "  Installing nvm (Node Version Manager)..."
+    if [ ! -s "$nvm_dir/nvm.sh" ]; then
+        curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || true
+    fi
+    if [ ! -s "$nvm_dir/nvm.sh" ]; then
+        echo "ERROR: nvm install failed. Install Node.js 18+ from https://nodejs.org/" >&2
         exit 1
     fi
-    echo "  Found: Node $(node --version)"
+    export NVM_DIR="$nvm_dir"
+    # shellcheck source=/dev/null
+    source "$NVM_DIR/nvm.sh"
+    nvm install --lts
+    nvm use --lts
+}
+
+_install_node_linux() {
+    if command -v apt-get &>/dev/null; then
+        if command -v curl &>/dev/null; then
+            echo "  Fetching NodeSource LTS repository..."
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - || true
+        else
+            sudo apt-get update -qq || true
+        fi
+        sudo apt-get install -y nodejs || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y nodejs || true
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -Sy --noconfirm nodejs npm || true
+    fi
+    # Fall back to nvm if the package manager did not give us 18+
+    if ! _node_version_ok; then
+        _install_node_nvm
+    fi
+}
+
+_install_deps() {
+    local os
+    os="$(uname -s)"
+
+    # --- Python ---
+    echo "[1/2] Checking Python..."
+    PYTHON=""
+    if _python_version_ok python3; then
+        PYTHON=python3
+        echo "  Found: $($PYTHON --version)"
+    elif _python_version_ok python; then
+        PYTHON=python
+        echo "  Found: $($PYTHON --version)"
+    else
+        for cmd in python3 python; do
+            if command -v "$cmd" &>/dev/null; then
+                echo "  Found $($cmd --version 2>&1) - 3.10+ is required."
+            fi
+        done
+        echo "  Python 3.10+ not found - attempting to install..."
+        if [ "$os" = "Darwin" ]; then
+            if command -v brew &>/dev/null; then
+                brew install python@3.12
+                export PATH="$(brew --prefix)/bin:$PATH"
+            else
+                echo "ERROR: Homebrew not found. Install from https://brew.sh/ then re-run setup." >&2
+                exit 1
+            fi
+        elif [ "$os" = "Linux" ]; then
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update -qq
+                sudo apt-get install -y python3 python3-venv python3-pip
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y python3 python3-pip
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -Sy --noconfirm python python-pip
+            else
+                echo "ERROR: No supported package manager (apt, dnf, pacman) found." >&2
+                echo "  Install Python 3.10+ from https://www.python.org/downloads/" >&2
+                exit 1
+            fi
+        else
+            echo "ERROR: Unsupported OS." >&2
+            echo "  Install Python 3.10+ from https://www.python.org/downloads/" >&2
+            exit 1
+        fi
+        if _python_version_ok python3; then
+            PYTHON=python3
+        elif _python_version_ok python; then
+            PYTHON=python
+        else
+            echo "ERROR: Python 3.10+ install failed. Please install manually." >&2
+            exit 1
+        fi
+        echo "  Installed: $($PYTHON --version)"
+    fi
+
+    # --- Node.js ---
+    echo "[2/2] Checking Node.js..."
+    if _node_version_ok; then
+        echo "  Found: Node $(node --version)"
+    else
+        if command -v node &>/dev/null; then
+            echo "  Found Node $(node --version) - 18+ is required."
+        fi
+        echo "  Node.js 18+ not found - attempting to install..."
+        if [ "$os" = "Darwin" ]; then
+            if command -v brew &>/dev/null; then
+                brew install node
+            else
+                echo "ERROR: Homebrew not found. Install from https://brew.sh/ then re-run setup." >&2
+                exit 1
+            fi
+        elif [ "$os" = "Linux" ]; then
+            _install_node_linux
+        else
+            echo "ERROR: Unsupported OS." >&2
+            echo "  Install Node.js 18+ from https://nodejs.org/" >&2
+            exit 1
+        fi
+        if ! _node_version_ok; then
+            echo "ERROR: Node.js 18+ install failed. Install manually from https://nodejs.org/" >&2
+            exit 1
+        fi
+        echo "  Installed: Node $(node --version)"
+    fi
 }
 
 _activate() {
@@ -163,7 +286,7 @@ cmd_setup() {
     echo "=== Crucible - First-Time Setup ==="
     echo ""
 
-    _check_deps
+    _install_deps
 
     echo "[3/5] Creating Python virtual environment..."
     if [ -d "$ROOT/venv" ]; then

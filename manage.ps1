@@ -14,22 +14,91 @@ $ROOT = $PSScriptRoot
 # Helpers
 # ---------------------------------------------------------------------------
 
-function Check-Deps {
+function Install-Deps {
+    # --- Python ---
     Write-Host "[1/2] Checking Python..." -ForegroundColor Yellow
-    $pythonVersion = python --version 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Python not found. Please install Python 3.10+ and add it to PATH." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  Found: $pythonVersion" -ForegroundColor Green
+    $pythonOk = $false
 
-    Write-Host "[2/2] Checking Node.js..." -ForegroundColor Yellow
-    $nodeVersion = node --version 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Node.js not found. Please install Node.js 18+ and add it to PATH." -ForegroundColor Red
-        exit 1
+    foreach ($cmd in @("python", "python3", "py")) {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { continue }
+        $ver = & $cmd --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$ver" -match "Python (\d+)\.(\d+)") {
+            $maj = [int]$Matches[1]; $min = [int]$Matches[2]
+            if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 10)) {
+                Write-Host "  Found: $ver" -ForegroundColor Green
+                $pythonOk = $true
+                break
+            } else {
+                Write-Host "  Found $ver - 3.10+ is required." -ForegroundColor Yellow
+            }
+        }
     }
-    Write-Host "  Found: Node $nodeVersion" -ForegroundColor Green
+
+    if (-not $pythonOk) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Installing Python 3.12 via winget (user scope, no admin needed)..." -ForegroundColor Yellow
+            winget install --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) {
+                $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+                $ver = & python --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  Installed: $ver" -ForegroundColor Green
+                } else {
+                    Write-Host "  Python installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
+                    exit 1
+                }
+            } else {
+                Write-Host "ERROR: winget install failed. Install Python 3.10+ from:" -ForegroundColor Red
+                Write-Host "  https://www.python.org/downloads/" -ForegroundColor Cyan
+                exit 1
+            }
+        } else {
+            Write-Host "ERROR: Python 3.10+ not found and winget is unavailable." -ForegroundColor Red
+            Write-Host "  Install Python 3.10+ from: https://www.python.org/downloads/" -ForegroundColor Cyan
+            exit 1
+        }
+    }
+
+    # --- Node.js ---
+    Write-Host "[2/2] Checking Node.js..." -ForegroundColor Yellow
+    $nodeOk = $false
+
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        $nodeVer = node --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and "$nodeVer" -match "v(\d+)") {
+            if ([int]$Matches[1] -ge 18) {
+                Write-Host "  Found: Node $nodeVer" -ForegroundColor Green
+                $nodeOk = $true
+            } else {
+                Write-Host "  Found Node $nodeVer - 18+ is required." -ForegroundColor Yellow
+            }
+        }
+    }
+
+    if (-not $nodeOk) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Installing Node.js LTS via winget (user scope, no admin needed)..." -ForegroundColor Yellow
+            winget install --id OpenJS.NodeJS.LTS --scope user --silent --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) {
+                $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+                $nodeVer = & node --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  Installed: Node $nodeVer" -ForegroundColor Green
+                } else {
+                    Write-Host "  Node.js installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
+                    exit 1
+                }
+            } else {
+                Write-Host "ERROR: winget install failed. Install Node.js 18+ from:" -ForegroundColor Red
+                Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
+                exit 1
+            }
+        } else {
+            Write-Host "ERROR: Node.js 18+ not found and winget is unavailable." -ForegroundColor Red
+            Write-Host "  Install Node.js 18+ from: https://nodejs.org/" -ForegroundColor Cyan
+            exit 1
+        }
+    }
 }
 
 function Activate-Venv {
@@ -127,7 +196,7 @@ function Cmd-Setup {
     Write-Host "=== Crucible - First-Time Setup ===" -ForegroundColor Cyan
     Write-Host ""
 
-    Check-Deps
+    Install-Deps
 
     Write-Host "[3/5] Creating Python virtual environment..." -ForegroundColor Yellow
     if (Test-Path "$ROOT\venv") {

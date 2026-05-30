@@ -148,9 +148,9 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         from backend.services.caption_service import set_caption
         from backend.workers.progress import broadcaster
         try:
-            import torch as _torch
+            from backend.ml.device import memory_reserved_mb as _vram_mb
         except Exception:
-            _torch = None
+            _vram_mb = lambda: 0
 
         is_ollama = body.model.startswith("ollama:")
         is_florence = body.model.startswith("florence2")
@@ -309,8 +309,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                 logger.error("Rename failed for %s", file_path, exc_info=True)
 
                 # Refresh VRAM reading only every 10 images (GPU call is not free)
-                if i % 10 == 0 and _torch and _torch.cuda.is_available():
-                    cached_vram_mb = int(_torch.cuda.memory_reserved() / 1024 / 1024)
+                if i % 10 == 0:
+                    cached_vram_mb = _vram_mb()
 
                 elapsed = time.monotonic() - start_time
                 throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
@@ -439,9 +439,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         from backend.services.caption_service import set_caption
         from backend.workers.progress import broadcaster
         try:
-            import torch as _torch
+            from backend.ml.device import memory_reserved_mb as _vram_mb
         except Exception:
-            _torch = None
+            _vram_mb = lambda: 0
 
         total_images = len(image_data)
         num_steps = len(body.steps)
@@ -572,8 +572,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             await set_caption(session, img_id, caption, tags, step.style, step.model)
 
                     overall_done += 1
-                    if i % 10 == 0 and _torch and _torch.cuda.is_available():
-                        cached_vram_mb = int(_torch.cuda.memory_reserved() / 1024 / 1024)
+                    if i % 10 == 0:
+                        cached_vram_mb = _vram_mb()
 
                     elapsed = time.monotonic() - start_time
                     throughput = round(overall_done / elapsed, 2) if elapsed > 0 else 0

@@ -4,6 +4,8 @@ import logging
 import numpy as np
 import torch
 
+from backend.ml import device as _device
+
 logger = logging.getLogger(__name__)
 
 _LAYER_BLOB_SIZE = 12 * 768 * 2  # 12 layers × 768 dims × float16
@@ -29,7 +31,7 @@ def extract_dino_embedding_sync(image_path: str, model_entry) -> bytes:
     img = PILImage.open(image_path).convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
     img.close()
-    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    inputs = {k: v.to(_device.get_device()) for k, v in inputs.items()}
 
     with torch.no_grad():
         outputs = model(**inputs)
@@ -53,7 +55,7 @@ def extract_dino_layer_embeddings_sync(image_path: str, model_entry) -> bytes:
     img = PILImage.open(image_path).convert("RGB")
     inputs = processor(images=img, return_tensors="pt")
     img.close()
-    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    inputs = {k: v.to(_device.get_device()) for k, v in inputs.items()}
 
     with torch.no_grad():
         outputs = model(**inputs, output_hidden_states=True)

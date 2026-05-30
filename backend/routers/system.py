@@ -6,8 +6,8 @@ router = APIRouter(prefix="/system", tags=["system"])
 _NULL = {"name": None, "used_mb": 0, "total_mb": 0, "utilization_pct": None}
 
 
-@router.get("/gpu")
-async def gpu_stats():
+async def _nvidia_stats() -> dict | None:
+    """Query nvidia-smi for NVIDIA GPU stats. Returns None if unavailable."""
     try:
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi",
@@ -18,7 +18,7 @@ async def gpu_stats():
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
         if proc.returncode != 0:
-            return _NULL
+            return None
         line = stdout.decode().strip().splitlines()[0]
         name, used_str, total_str = [s.strip() for s in line.split(",")]
         used_mb = int(used_str)
@@ -26,4 +26,86 @@ async def gpu_stats():
         utilization_pct = round(used_mb / total_mb * 100, 1) if total_mb else None
         return {"name": name, "used_mb": used_mb, "total_mb": total_mb, "utilization_pct": utilization_pct}
     except Exception:
-        return _NULL
+        return None
+
+
+async def _rocm_stats() -> dict | None:
+    """
+    Query rocm-smi for AMD GPU stats (Linux only).
+    ROCm 6.x CSV format:
+      device,VRAM Total Memory (B),VRAM Total Used Memory (B)
+      card0,<total_bytes>,<used_bytes>
+    Returns None if rocm-smi is absent or parsing fails.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "rocm-smi",
+            "--showmeminfo", "vram",
+            "--csv",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        if proc.returncode != 0:
+            return None
+        lines = stdout.decode().strip().splitlines()
+        # Skip header line; parse first data row
+        for line in lines[1:]:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3:
+                total_bytes = int(parts[1])
+                used_bytes = int(parts[2])
+                total_mb = total_bytes // (1024 * 1024)
+                used_mb = used_bytes // (1024 * 1024)
+                utilization_pct = round(used_mb / total_mb * 100, 1) if total_mb else None
+                # Use device id as name; full GPU name requires a separate rocm-smi call
+                name = parts[0]
+                return {"name": name, "used_mb": used_mb, "total_mb": total_mb,
+                        "utilization_pct": utilization_pct}
+        return None
+    except Exception:
+        return None
+
+
+async def _mps_stats() -> dict | None:
+    """
+    Apple Silicon unified memory stats via torch.mps.
+    Unified memory has no fixed GPU partition, so total_mb is driver-allocated
+    (best approximation). utilization_pct is omitted.
+    """
+    try:
+        import torch
+        if not (
+            hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+            and torch.backends.mps.is_built()
+        ):
+            return None
+        used_mb = 0
+        total_mb = 0
+        if hasattr(torch.mps, "current_allocated_memory"):
+            used_mb = torch.mps.current_allocated_memory() // (1024 * 1024)
+        if hasattr(torch.mps, "driver_allocated_memory"):
+            total_mb = torch.mps.driver_allocated_memory() // (1024 * 1024)
+        return {
+            "name": "Apple Silicon (MPS)",
+            "used_mb": used_mb,
+            "total_mb": total_mb,
+            "utilization_pct": None,
+        }
+    except Exception:
+        return None
+
+
+@router.get("/gpu")
+async def gpu_stats():
+    result = await _nvidia_stats()
+    if result:
+        return result
+    result = await _rocm_stats()
+    if result:
+        return result
+    result = await _mps_stats()
+    if result:
+        return result
+    return _NULL

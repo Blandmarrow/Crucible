@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 from backend.utils import normalize_image_format, image_save_kwargs
+from backend.ml import device as _device
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def upscale_image_sync(
     from backend.ml.model_manager import model_manager
 
     model_id = f"upscale:{model_path}"
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _device.get_device()
 
     # Load or reuse cached model
     entry = _ensure_upscaler_loaded(model_id, model_path, device)
@@ -128,7 +129,7 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
     estimated_mb = 3000
     model_manager._evict_lru(estimated_mb)
 
-    vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+    vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
 
     from spandrel import ModelLoader
     if not _extra_arches_installed:
@@ -143,7 +144,7 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
     try:
         descriptor = ModelLoader().load_from_file(model_path)
         upscale_model = descriptor.model.eval()
-        if device == "cuda":
+        if device != "cpu":
             upscale_model = upscale_model.to(device)
         detected_scale = getattr(descriptor, "scale", None)
     except Exception:
@@ -153,11 +154,11 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
             except Exception:
                 pass
         del upscale_model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _device.empty_cache()
         raise
 
-    vram_used = max(estimated_mb, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
+    vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+    vram_used = max(estimated_mb, (vram_after - vram_before) // (1024 * 1024))
     entry = ModelEntry(upscale_model, detected_scale, vram_mb=vram_used)
 
     with model_manager._sync_lock:
@@ -167,8 +168,7 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
                 upscale_model.cpu()
             except Exception:
                 pass
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _device.empty_cache()
             return model_manager._registry[model_id]
         model_manager._registry[model_id] = entry
 

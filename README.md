@@ -302,7 +302,13 @@ Split the main content area into two independently operating panes:
 - **Node.js 18+**
 
 ### For ML inference (captioning and aesthetic/DINOv2 scoring)
-- **NVIDIA GPU with CUDA support**
+
+| Platform | Requirement |
+|---|---|
+| Windows | NVIDIA GPU with CUDA |
+| Linux | NVIDIA GPU with CUDA, or AMD GPU with ROCm 6.1+ |
+| macOS | Apple Silicon (M1 or later) |
+
 - Minimum ~6 GB VRAM for a single captioning model; 8–12 GB recommended for comfortable use
 - The technical scorer and duplicate detector run on CPU with no GPU requirement
 
@@ -346,7 +352,12 @@ chmod +x manage.sh
 ./manage.sh setup
 ```
 
-> **GPU inference**: setup automatically detects your NVIDIA GPU via `nvidia-smi` and installs the matching CUDA-enabled PyTorch wheel (`cu118` through `cu128`) — no manual pre-install needed. If no NVIDIA GPU is found, a CPU-only build is installed instead and ML features (captioning, aesthetic/DINOv2 scoring) will not be available. The technical scorer and duplicate detector run on CPU with no GPU requirement.
+> **GPU inference**: setup automatically detects your GPU and installs the right PyTorch wheel — no manual pre-install needed:
+> - **NVIDIA** — detected via `nvidia-smi`; installs the matching CUDA wheel (`cu118` through `cu128`)
+> - **AMD ROCm** (Linux only) — detected via `rocm-smi`; installs the matching ROCm wheel (`rocm6.1`/`rocm6.2`/`rocm6.3`); requires ROCm 6.1 or later
+> - **Apple Silicon** (macOS) — MPS support is included in standard PyTorch; no special wheel needed
+>
+> If no supported GPU is found, a CPU-only build is installed and ML features (captioning, aesthetic/DINOv2 scoring) will not be available. The technical scorer and duplicate detector always run on CPU.
 
 ### Optional: API keys
 

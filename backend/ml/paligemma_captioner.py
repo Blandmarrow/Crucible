@@ -3,6 +3,7 @@ import logging
 from PIL import Image
 
 from backend.ml.image_utils import preprocess_for_caption
+from backend.ml import device as _device
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ def infer_sync(
     processor = model_entry.processor
 
     img = preprocess_for_caption(image_path, target_w, target_h)
-    inputs = processor(text=prompt, images=img, return_tensors="pt").to("cuda", torch.bfloat16)
+    _pg_dtype = _device.safe_dtype_for_device(torch.bfloat16)
+    inputs = processor(text=prompt, images=img, return_tensors="pt").to(_device.get_device(), _pg_dtype)
     img.close()
 
     try:
@@ -41,8 +43,10 @@ def infer_sync(
         generated_ids = generated_ids[:, input_len:]
         result = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return result.strip()
-    except torch.cuda.OutOfMemoryError:
-        torch.cuda.empty_cache()
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as _e:
+        if not _device.is_oom_error(_e):
+            raise
+        _device.empty_cache()
         raise RuntimeError("GPU out of memory during PaliGemma-2 inference")
 
 
@@ -84,11 +88,7 @@ async def caption_batch(
         if job_id:
             elapsed = time.monotonic() - start_time
             throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
-            try:
-                import torch
-                vram_mb = int(torch.cuda.memory_reserved() / 1024 / 1024) if torch.cuda.is_available() else 0
-            except Exception:
-                vram_mb = 0
+            vram_mb = _device.memory_reserved_mb()
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "caption",
                 "status": "running", "done": i + 1, "total": total,

@@ -51,56 +51,107 @@ _migrate() {
 }
 
 _install_torch_if_needed() {
-    # If a CUDA-capable torch is already reachable there is nothing to do.
-    if "$ROOT/venv/bin/python" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-        echo "  CUDA-enabled PyTorch already available — skipping."
+    # Fast-path: skip if a GPU-capable torch is already present.
+    # Covers both CUDA (NVIDIA/ROCm) and MPS (Apple Silicon).
+    if "$ROOT/venv/bin/python" -c \
+        "import torch; assert torch.cuda.is_available() or (hasattr(torch.backends,'mps') and torch.backends.mps.is_available())" \
+        2>/dev/null; then
+        echo "  GPU-enabled PyTorch already available — skipping."
         return
     fi
 
+    # --- NVIDIA detection ---
     # nvidia-smi ships with every NVIDIA driver; no CUDA toolkit required.
-    if ! command -v nvidia-smi &>/dev/null; then
-        echo "  No NVIDIA GPU detected — PyTorch will be CPU-only."
-        echo "  ML features (captioning, scoring) require an NVIDIA GPU."
+    if command -v nvidia-smi &>/dev/null; then
+        local nv_out cuda_ver maj min tag=""
+        nv_out=$(nvidia-smi 2>/dev/null || true)
+        cuda_ver=$(echo "$nv_out" | grep -oE "CUDA Version: [0-9]+\.[0-9]+" \
+                   | grep -oE "[0-9]+\.[0-9]+" | head -1)
+
+        if [ -n "$cuda_ver" ]; then
+            maj=$(echo "$cuda_ver" | cut -d. -f1)
+            min=$(echo "$cuda_ver" | cut -d. -f2)
+            echo "  NVIDIA GPU detected — driver supports CUDA $maj.$min."
+
+            if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
+            elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
+            elif [ "$maj" -eq 12 ] && [ "$min" -ge 4 ]; then tag="cu124"
+            elif [ "$maj" -eq 12 ] && [ "$min" -ge 1 ]; then tag="cu121"
+            elif [ "$maj" -gt 11 ] || { [ "$maj" -eq 11 ] && [ "$min" -ge 8 ]; }; then tag="cu118"
+            fi
+
+            if [ -n "$tag" ]; then
+                local index_url="https://download.pytorch.org/whl/$tag"
+                echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
+                if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
+                    echo "  CUDA-enabled PyTorch ($tag) installed."
+                else
+                    echo "  WARNING: CUDA torch install failed — CPU-only fallback will be used."
+                fi
+                return
+            else
+                echo "  CUDA $maj.$min is older than the minimum supported version (11.8) — skipping NVIDIA wheel."
+            fi
+        fi
+    fi
+
+    # --- AMD ROCm detection (Linux only) ---
+    # rocm-smi is present when the ROCm userspace stack is installed.
+    if [ "$(uname -s)" = "Linux" ] && command -v rocm-smi &>/dev/null; then
+        # Detect ROCm version via three fallbacks in order.
+        local rocm_ver=""
+        if command -v rocminfo &>/dev/null; then
+            rocm_ver=$(rocminfo 2>/dev/null | grep -oE "ROCm[- ][0-9]+\.[0-9]+" \
+                       | grep -oE "[0-9]+\.[0-9]+" | head -1)
+        fi
+        if [ -z "$rocm_ver" ]; then
+            rocm_ver=$(ls -d /opt/rocm-* 2>/dev/null \
+                       | grep -oE "[0-9]+\.[0-9]+" | sort -V | tail -1)
+        fi
+        if [ -z "$rocm_ver" ] && [ -f /opt/rocm/VERSION ]; then
+            rocm_ver=$(cat /opt/rocm/VERSION 2>/dev/null | grep -oE "^[0-9]+\.[0-9]+")
+        fi
+
+        local rocm_tag=""
+        if [ -n "$rocm_ver" ]; then
+            local rmaj rmin
+            rmaj=$(echo "$rocm_ver" | cut -d. -f1)
+            rmin=$(echo "$rocm_ver" | cut -d. -f2)
+            echo "  AMD GPU detected — ROCm $rmaj.$rmin."
+
+            if   [ "$rmaj" -gt 6 ] || { [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 3 ]; }; then rocm_tag="rocm6.3"
+            elif [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 2 ]; then rocm_tag="rocm6.2"
+            elif [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 1 ]; then rocm_tag="rocm6.1"
+            else
+                echo "  ROCm $rmaj.$rmin is older than the minimum supported version (6.1) — CPU-only fallback will be used."
+                return
+            fi
+        else
+            echo "  AMD GPU detected (ROCm version unknown) — trying rocm6.2 wheel."
+            rocm_tag="rocm6.2"
+        fi
+
+        local index_url="https://download.pytorch.org/whl/$rocm_tag"
+        echo "  Installing PyTorch ($rocm_tag) from PyTorch wheel index..."
+        if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
+            echo "  ROCm-enabled PyTorch ($rocm_tag) installed."
+        else
+            echo "  WARNING: ROCm torch install failed — CPU-only fallback will be used."
+        fi
         return
     fi
 
-    local nv_out
-    nv_out=$(nvidia-smi 2>/dev/null || true)
-    local cuda_ver
-    cuda_ver=$(echo "$nv_out" | grep -oE "CUDA Version: [0-9]+\.[0-9]+" | grep -oE "[0-9]+\.[0-9]+" | head -1)
-
-    if [ -z "$cuda_ver" ]; then
-        echo "  Could not parse CUDA version from nvidia-smi — CPU-only PyTorch will be used."
+    # --- macOS (all architectures) ---
+    # Standard CPU PyTorch includes MPS support for Apple Silicon.
+    # No special wheel is needed; requirements.txt handles the install.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "  macOS detected — standard PyTorch (includes MPS for Apple Silicon) will be installed via requirements.txt."
         return
     fi
 
-    local maj min
-    maj=$(echo "$cuda_ver" | cut -d. -f1)
-    min=$(echo "$cuda_ver" | cut -d. -f2)
-    echo "  NVIDIA GPU detected — driver supports CUDA $maj.$min."
-
-    # Pick the highest PyTorch CUDA wheel the driver version supports.
-    local tag=""
-    if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
-    elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
-    elif [ "$maj" -eq 12 ] && [ "$min" -ge 4 ]; then tag="cu124"
-    elif [ "$maj" -eq 12 ] && [ "$min" -ge 1 ]; then tag="cu121"
-    elif [ "$maj" -gt 11 ] || { [ "$maj" -eq 11 ] && [ "$min" -ge 8 ]; }; then tag="cu118"
-    fi
-
-    if [ -z "$tag" ]; then
-        echo "  CUDA $maj.$min is older than the minimum supported version (11.8)."
-        echo "  Update your NVIDIA drivers for GPU support."
-        return
-    fi
-
-    local index_url="https://download.pytorch.org/whl/$tag"
-    echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
-    if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
-        echo "  CUDA-enabled PyTorch ($tag) installed."
-    else
-        echo "  WARNING: CUDA torch install failed — CPU-only fallback will be used."
-    fi
+    # --- CPU-only fallback ---
+    echo "  No supported GPU detected — PyTorch will be CPU-only."
+    echo "  ML features (captioning, scoring) run significantly faster with a supported GPU."
 }
 
 # ---------------------------------------------------------------------------

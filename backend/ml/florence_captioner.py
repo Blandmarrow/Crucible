@@ -3,6 +3,7 @@ import logging
 from PIL import Image
 
 from backend.ml.image_utils import preprocess_for_caption
+from backend.ml import device as _device
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +16,11 @@ STYLE_PROMPTS = {
 }
 
 
-def _move_inputs_to_cuda(model, inputs: dict) -> dict:
+def _move_inputs_to_device(model, inputs: dict) -> dict:
+    dev = _device.get_device()
     model_dtype = next(model.parameters()).dtype
     return {
-        k: (v.to("cuda", dtype=model_dtype) if v.is_floating_point() else v.to("cuda"))
+        k: (v.to(dev, dtype=model_dtype) if v.is_floating_point() else v.to(dev))
         if hasattr(v, "to") else v
         for k, v in inputs.items()
     }
@@ -39,7 +41,7 @@ def infer_sync(
     img_w, img_h = img.width, img.height
     inputs = processor(text=prompt, images=img, return_tensors="pt")
     img.close()
-    inputs = _move_inputs_to_cuda(model, inputs)
+    inputs = _move_inputs_to_device(model, inputs)
 
     try:
         with torch.no_grad():
@@ -59,8 +61,10 @@ def infer_sync(
         if isinstance(result, dict):
             result = str(result)
         return str(result).strip()
-    except torch.cuda.OutOfMemoryError:
-        torch.cuda.empty_cache()
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as _e:
+        if not _device.is_oom_error(_e):
+            raise
+        _device.empty_cache()
         raise RuntimeError("GPU out of memory during Florence-2 inference")
 
 
@@ -97,7 +101,7 @@ def infer_sync_detection(
     task_text = task + text_input
     inputs = processor(text=task_text, images=img, return_tensors="pt")
     img.close()
-    inputs = _move_inputs_to_cuda(model, inputs)
+    inputs = _move_inputs_to_device(model, inputs)
 
     try:
         with torch.no_grad():
@@ -122,8 +126,10 @@ def infer_sync_detection(
             for lbl, b in zip(labels, bboxes)
             if lbl
         ]
-    except torch.cuda.OutOfMemoryError:
-        torch.cuda.empty_cache()
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as _e:
+        if not _device.is_oom_error(_e):
+            raise
+        _device.empty_cache()
         raise RuntimeError("GPU out of memory during Florence-2 detection")
 
 
@@ -163,11 +169,7 @@ async def caption_batch(
         if job_id:
             elapsed = time.monotonic() - start_time
             throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
-            try:
-                import torch
-                vram_mb = int(torch.cuda.memory_reserved() / 1024 / 1024) if torch.cuda.is_available() else 0
-            except Exception:
-                vram_mb = 0
+            vram_mb = _device.memory_reserved_mb()
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "caption",
                 "status": "running", "done": i + 1, "total": total,

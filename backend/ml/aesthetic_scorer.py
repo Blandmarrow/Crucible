@@ -7,6 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from backend.ml import device as _device
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,10 +50,10 @@ def score_image_sync(image_path: str, model_entry: dict) -> float:
     preprocess = model_entry["preprocess"]
 
     img = Image.open(image_path).convert("RGB")
-    tensor = preprocess(img).unsqueeze(0).to("cuda")
+    tensor = preprocess(img).unsqueeze(0).to(_device.get_device())
     img.close()
 
-    with torch.no_grad(), torch.autocast("cuda"):
+    with torch.no_grad(), _device.autocast_ctx():
         features = clip_model.encode_image(tensor)
         features = features / features.norm(dim=-1, keepdim=True)
         score = mlp(features.float()).item()
@@ -71,7 +73,7 @@ def _watermark_threshold() -> float:
 def _precompute_watermark_text_features(model_entry: dict) -> torch.Tensor:
     import open_clip
     tokenizer = open_clip.get_tokenizer("ViT-L-14")
-    tokens = tokenizer(WATERMARK_PROMPTS).to("cuda")
+    tokens = tokenizer(WATERMARK_PROMPTS).to(_device.get_device())
     with torch.no_grad():
         text_feats = model_entry["clip"].encode_text(tokens)
         text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
@@ -83,9 +85,9 @@ def score_watermark_sync(image_path: str, model_entry: dict,
                           watermark_threshold: float = 0.6) -> dict:
     from PIL import Image as PILImage
     img = PILImage.open(image_path).convert("RGB")
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
-    with torch.no_grad(), torch.autocast("cuda"):
+    with torch.no_grad(), _device.autocast_ctx():
         img_feats = model_entry["clip"].encode_image(tensor)
         img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
         logits = (img_feats @ text_features.T) * 100.0
@@ -130,7 +132,7 @@ def extract_clip_embedding_sync(image_path: str, model_entry: dict) -> bytes:
     """Returns L2-normalized float16 numpy bytes, shape (768,) for ViT-L-14."""
     from PIL import Image as PILImage
     img = PILImage.open(image_path).convert("RGB")
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
     with torch.no_grad():
         feats = model_entry["clip"].encode_image(tensor)
@@ -143,7 +145,7 @@ def extract_clip_embedding_from_bytes_sync(image_bytes: bytes, model_entry: dict
     import io
     from PIL import Image as PILImage
     img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to("cuda")
+    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
     with torch.no_grad():
         feats = model_entry["clip"].encode_image(tensor)

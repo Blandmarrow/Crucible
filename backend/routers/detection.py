@@ -106,8 +106,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             elapsed = time.monotonic() - start_time
             throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
             try:
-                import torch
-                vram_mb = int(torch.cuda.memory_reserved() / 1024 / 1024) if i % 10 == 0 and torch.cuda.is_available() else 0
+                from backend.ml.device import memory_reserved_mb as _vram_mb
+                vram_mb = _vram_mb() if i % 10 == 0 else 0
             except Exception:
                 vram_mb = 0
 

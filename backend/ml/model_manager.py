@@ -4,6 +4,8 @@ import threading
 import time
 from typing import Any
 
+from backend.ml import device as _device
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,6 @@ class ModelManager:
         return sum(e.vram_mb for e in self._registry.values())
 
     def _evict_lru(self, needed_mb: int) -> None:
-        import torch
         with self._sync_lock:
             candidates = [
                 (mid, entry) for mid, entry in self._registry.items()
@@ -54,7 +55,7 @@ class ModelManager:
                 del entry.processor
                 del self._registry[mid]
                 self._locks.pop(mid, None)
-                torch.cuda.empty_cache()
+                _device.empty_cache()
 
     async def get(self, model_id: str) -> ModelEntry:
         if model_id in self._registry:
@@ -114,8 +115,9 @@ class ModelManager:
 
         self._evict_lru(5500)
 
-        vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
-        load_kwargs: dict = {"torch_dtype": torch.bfloat16, "trust_remote_code": True}
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        _fl_dtype = _device.safe_dtype_for_device(torch.bfloat16)
+        load_kwargs: dict = {"torch_dtype": _fl_dtype, "trust_remote_code": True}
 
         processor = None
         model = None
@@ -155,7 +157,7 @@ class ModelManager:
                     model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
             if job_id and loop:
                 emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
-            model = model.to("cuda")
+            model = model.to(_device.get_device())
             model.eval()
         except Exception:
             if model is not None:
@@ -164,11 +166,11 @@ class ModelManager:
                 except Exception:
                     pass
             del model, processor
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _device.empty_cache()
             raise
 
-        vram_used = max(5500, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(5500, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
     async def load_paligemma2(
@@ -216,9 +218,18 @@ class ModelManager:
 
         self._evict_lru(6000)
 
-        vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
         tok_kwargs = {"token": settings.hf_token} if settings.hf_token else {}
-        kwargs: dict = {"torch_dtype": torch.bfloat16, "device_map": "cuda", **tok_kwargs}
+        _pg_dtype = _device.safe_dtype_for_device(torch.bfloat16)
+        _active_device = _device.get_device()
+
+        # device_map="cuda" is a HuggingFace/accelerate shorthand that places all
+        # layers on CUDA device 0. It does not work on MPS or CPU — load without
+        # it on those backends and move the model manually after from_pretrained.
+        if _active_device == "cuda":
+            kwargs: dict = {"torch_dtype": _pg_dtype, "device_map": "cuda", **tok_kwargs}
+        else:
+            kwargs = {"torch_dtype": _pg_dtype, **tok_kwargs}
 
         processor = None
         model = None
@@ -226,6 +237,8 @@ class ModelManager:
             with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
                 processor = AutoProcessor.from_pretrained(model_name, **tok_kwargs)
                 model = PaliGemmaForConditionalGeneration.from_pretrained(model_name, **kwargs)
+            if _active_device != "cuda":
+                model = model.to(_active_device)
             if job_id and loop:
                 emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
             model.eval()
@@ -236,11 +249,11 @@ class ModelManager:
                 except Exception:
                     pass
             del model, processor
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _device.empty_cache()
             raise
 
-        vram_used = max(6000, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(6000, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
     async def load_aesthetic(
@@ -291,14 +304,14 @@ class ModelManager:
 
         self._evict_lru(3500)
 
-        vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
         clip_model = None
         mlp = None
         try:
             clip_model, _, preprocess = open_clip.create_model_and_transforms(
                 "ViT-L-14", pretrained="openai"
             )
-            clip_model = clip_model.to("cuda").eval()
+            clip_model = clip_model.to(_device.get_device()).eval()
 
             if not weights_path.exists():
                 if job_id and loop:
@@ -312,7 +325,7 @@ class ModelManager:
 
             mlp = AestheticMLP(768)
             mlp.load_state_dict(torch.load(weights_path, map_location="cpu"))
-            mlp = mlp.to("cuda").eval()
+            mlp = mlp.to(_device.get_device()).eval()
         except Exception:
             for m in (clip_model, mlp):
                 if m is not None:
@@ -321,11 +334,11 @@ class ModelManager:
                     except Exception:
                         pass
             del clip_model, mlp
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _device.empty_cache()
             raise
 
-        vram_used = max(3500, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(3500, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry({"clip": clip_model, "mlp": mlp, "preprocess": preprocess}, None, vram_mb=vram_used)
 
     async def load_dino(
@@ -371,16 +384,17 @@ class ModelManager:
 
         self._evict_lru(1200)
 
-        vram_before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        _dino_dtype = _device.safe_dtype_for_device(torch.float16)
         processor = None
         model = None
         try:
             with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
                 processor = AutoImageProcessor.from_pretrained(model_name)
-                model = AutoModel.from_pretrained(model_name, torch_dtype=torch.float16)
+                model = AutoModel.from_pretrained(model_name, torch_dtype=_dino_dtype)
             if job_id and loop:
                 emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
-            model = model.to("cuda").eval()
+            model = model.to(_device.get_device()).eval()
         except Exception:
             if model is not None:
                 try:
@@ -388,15 +402,14 @@ class ModelManager:
                 except Exception:
                     pass
             del model, processor
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _device.empty_cache()
             raise
 
-        vram_used = max(1200, int((torch.cuda.memory_allocated() - vram_before) / 1024 / 1024))
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(1200, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
     async def unload(self, model_id: str) -> None:
-        import torch
         async with self._get_lock(model_id):
             with self._sync_lock:
                 if model_id not in self._registry:
@@ -408,16 +421,14 @@ class ModelManager:
                 pass
             del entry.model
             del entry.processor
-            torch.cuda.empty_cache()
+            _device.empty_cache()
 
     async def evict_all(self) -> list[str]:
         """Unload every registered ML model from VRAM and return their IDs."""
-        import torch
         model_ids = list(self._registry.keys())
         for model_id in model_ids:
             await self.unload(model_id)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _device.empty_cache()
         return model_ids
 
     def list_models(self) -> list[dict]:

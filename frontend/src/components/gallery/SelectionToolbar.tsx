@@ -22,7 +22,7 @@ import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 
-interface Wd14ModelInfo { id: string; name: string; }
+interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -410,6 +410,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                       onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                     >
                       <div className="flex-1">{m.name}</div>
+                      {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
                     </div>
                   ))}
                 </>

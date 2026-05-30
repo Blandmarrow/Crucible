@@ -12,18 +12,21 @@ logger = logging.getLogger(__name__)
 _VARIANTS = {
     "eva02_large": {
         "id": "eva02_large",
-        "name": "WD Eva02 Large v3 (best quality, ~2 GB)",
+        "name": "WD Eva02 Large v3 (best quality)",
         "repo": "SmilingWolf/wd-eva02-large-tagger-v3",
+        "ram_mb": 2000,
     },
     "vit_large": {
         "id": "vit_large",
         "name": "WD ViT Large v3",
         "repo": "SmilingWolf/wd-vit-large-tagger-v3",
+        "ram_mb": 1440,
     },
     "swinv2": {
         "id": "swinv2",
         "name": "WD SwinV2 v3 (fastest)",
         "repo": "SmilingWolf/wd-swinv2-tagger-v3",
+        "ram_mb": 640,
     },
 }
 
@@ -33,7 +36,7 @@ _cache_lock = threading.Lock()
 
 
 def list_wd14_models() -> list[dict]:
-    return [{"id": f"wd14:{v['id']}", "name": v["name"]} for v in _VARIANTS.values()]
+    return [{"id": f"wd14:{v['id']}", "name": v["name"], "ram_mb": v["ram_mb"]} for v in _VARIANTS.values()]
 
 
 def _load_model(variant_id: str) -> tuple:

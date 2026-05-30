@@ -19,7 +19,7 @@ import { FLAG_OPTIONS } from "../constants/flags";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
-interface Wd14ModelInfo { id: string; name: string; }
+interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 interface StepConfig {
   id: string;
@@ -87,6 +87,7 @@ function StepModelPicker({
             <div className="mr-name">{m.name}</div>
             <div className="mr-desc">SmilingWolf · outputs booru-style tags · threshold-based</div>
           </div>
+          <span className="mr-vram">{(m.ram_mb / 1024).toFixed(1)} GB</span>
         </div>
       ))}
 

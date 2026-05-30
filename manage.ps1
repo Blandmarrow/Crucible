@@ -108,8 +108,11 @@ function Activate-Venv {
 function Install-TorchIfNeeded {
     # If a CUDA-capable torch is already reachable (e.g. via --system-site-packages
     # from a prior CUDA install) there is nothing to do.
-    $hasCuda = & "$ROOT\venv\Scripts\python.exe" -c `
-        "import torch; print(torch.cuda.is_available())" 2>$null
+    $hasCuda = $null
+    try {
+        $hasCuda = & "$ROOT\venv\Scripts\python.exe" -c `
+            "import torch; print(torch.cuda.is_available())" 2>$null
+    } catch { }
     if ($hasCuda -eq "True") {
         Write-Host "  CUDA-enabled PyTorch already available - skipping." -ForegroundColor Green
         return

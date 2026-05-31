@@ -64,6 +64,9 @@ def _caption_sync(
         ],
         max_tokens=max_tokens,
     )
+    if not resp.choices:
+        logger.warning("Provider returned no choices (choices=%r); returning empty caption", resp.choices)
+        return ""
     return (resp.choices[0].message.content or "").strip()
 
 

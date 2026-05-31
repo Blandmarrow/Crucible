@@ -9,11 +9,12 @@ interface Props {
   datasetId: string;
   imageIds?: string[];
   subfolder?: string;
+  qualityFlags?: string[];
   onSuccess?: () => void;
   onCancel?: () => void;
 }
 
-export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onCancel }: Props) {
+export default function LutForm({ datasetId, imageIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
 
   const [lutPath, setLutPath] = useState("");
@@ -49,6 +50,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, onSuccess, onC
         dataset_id: datasetId,
         image_ids: imageIds,
         subfolder,
+        quality_flags: qualityFlags,
         lut_path: lutPath,
         intensity: intensity / 100,
         replace,

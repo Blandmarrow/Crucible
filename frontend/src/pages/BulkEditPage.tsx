@@ -35,6 +35,7 @@ export default function BulkEditPage() {
   const qualityFlags = useMemo(() => scope === "flags" ? [...selectedFlags] : undefined, [scope, selectedFlags]);
   const subfolder = scope !== "selected" ? activeSubfolder : undefined;
   const formDisabled = scope === "flags" && selectedFlags.size === 0;
+  const targetsFlaggedImages = tab === "delete";
 
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -43,8 +44,8 @@ export default function BulkEditPage() {
   });
 
   const { data: countData, isFetching: countFetching } = useQuery({
-    queryKey: ["bulk-count", datasetId, imageIds ?? null, qualityFlags ?? null, subfolder ?? null],
-    queryFn: () => imagesApi.bulkCount(datasetId!, { imageIds, qualityFlags, subfolder }),
+    queryKey: ["bulk-count", datasetId, imageIds ?? null, qualityFlags ?? null, subfolder ?? null, targetsFlaggedImages],
+    queryFn: () => imagesApi.bulkCount(datasetId!, { imageIds, qualityFlags, subfolder, includeFlagged: targetsFlaggedImages }),
     enabled: !!datasetId && !formDisabled,
     staleTime: 10_000,
   });
@@ -97,7 +98,7 @@ export default function BulkEditPage() {
           </label>
           <label className="flex items-center gap-2 cursor-pointer text-sm">
             <input type="radio" name="scope" checked={scope === "flags"} onChange={() => setScope("flags")} />
-            Exclude images with quality flags
+            {targetsFlaggedImages ? "Only images with quality flags" : "Exclude images with quality flags"}
           </label>
           <label className={`flex items-center gap-2 cursor-pointer text-sm ${selectedCount === 0 ? "opacity-40" : ""}`}>
             <input
@@ -120,7 +121,7 @@ export default function BulkEditPage() {
       {/* Quality flag picker — only shown for "flags" scope */}
       {scope === "flags" && (
         <div className="panel" style={{ marginBottom: 16 }}>
-          <div className="panel-h">Exclude images flagged as (any)</div>
+          <div className="panel-h">{targetsFlaggedImages ? "Only images flagged as (any)" : "Exclude images flagged as (any)"}</div>
           <div className="panel-b">
             <div className="flex flex-wrap gap-1.5">
               {FLAG_OPTIONS.map(({ key, label }) => (
@@ -134,7 +135,7 @@ export default function BulkEditPage() {
               ))}
             </div>
             {selectedFlags.size === 0 && (
-              <p className="text-xs text-warn mt-2">Select at least one flag to enable exclusion.</p>
+              <p className="text-xs text-warn mt-2">{targetsFlaggedImages ? "Select at least one flag to target." : "Select at least one flag to enable exclusion."}</p>
             )}
           </div>
         </div>
@@ -187,6 +188,7 @@ export default function BulkEditPage() {
               datasetId={datasetId}
               imageIds={imageIds}
               subfolder={subfolder}
+              qualityFlags={qualityFlags}
             />
           </div>
         </div>
@@ -201,6 +203,7 @@ export default function BulkEditPage() {
               datasetId={datasetId}
               imageIds={imageIds}
               subfolder={subfolder}
+              qualityFlags={qualityFlags}
             />
           </div>
         </div>

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -14,7 +14,7 @@ from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import normalize_subfolder, slugify_filename, unique_filename, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, slugify_filename, unique_filename, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,10 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
         q = select(Image.id).where(Image.dataset_id == body.dataset_id)
         if body.subfolder is not None:
             q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
+        if body.quality_flags:
+            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
+            if valid_flags:
+                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
         result = await db.execute(q)
         image_ids = [r[0] for r in result.all()]
 

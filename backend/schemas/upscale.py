@@ -16,3 +16,4 @@ class UpscaleRunRequest(BaseModel):
     target_height: int | None = None
     subfolder: str | None = None
     label: str | None = None
+    quality_flags: list[str] | None = None

@@ -27,7 +27,9 @@ export interface BulkRenameParams extends BulkFilterParams {
 }
 
 export type BulkDeleteParams = BulkFilterParams;
-export type BulkCountParams = BulkFilterParams;
+export interface BulkCountParams extends BulkFilterParams {
+  includeFlagged?: boolean;
+}
 
 export interface ImageListParams {
   dataset_id: string;
@@ -140,5 +142,6 @@ export const imagesApi = {
       image_ids: params.imageIds ?? null,
       quality_flags: params.qualityFlags ?? null,
       subfolder: params.subfolder ?? null,
+      include_flagged: params.includeFlagged ?? false,
     }).then((r) => r.data),
 };

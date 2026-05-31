@@ -139,8 +139,8 @@ class BulkRenameRequest(BulkFilterBase):
 
 
 class BulkDeleteRequest(BulkFilterBase):
-    pass
+    include_flagged: bool = True
 
 
 class BulkCountRequest(BulkFilterBase):
-    pass
+    include_flagged: bool = False

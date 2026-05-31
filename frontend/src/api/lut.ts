@@ -14,6 +14,7 @@ export interface LutRunRequest {
   replace: boolean;
   subfolder?: string;
   label?: string;
+  quality_flags?: string[];
 }
 
 export const lutApi = {

@@ -9,11 +9,12 @@ interface Props {
   datasetId: string;
   imageIds?: string[];
   subfolder?: string;
+  qualityFlags?: string[];
   onSuccess?: () => void;
   onCancel?: () => void;
 }
 
-export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess, onCancel }: Props) {
+export default function UpscaleForm({ datasetId, imageIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
 
   const [modelPath, setModelPath] = useState("");
@@ -50,6 +51,7 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, onSuccess,
         dataset_id: datasetId,
         image_ids: imageIds,
         subfolder,
+        quality_flags: qualityFlags,
         model_path: modelPath,
         replace,
         target_width: parseInt(targetW) > 0 ? parseInt(targetW) : null,

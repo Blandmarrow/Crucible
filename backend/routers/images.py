@@ -59,7 +59,7 @@ def _safe_path(path_str: str, base_dir: Path) -> Path:
     return resolved
 
 
-def _apply_bulk_filters(query, image_ids, subfolder, quality_flags):
+def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
         query = query.where(Image.id.in_(image_ids))
     elif subfolder is not None:
@@ -67,7 +67,10 @@ def _apply_bulk_filters(query, image_ids, subfolder, quality_flags):
     if quality_flags:
         valid_flags = [f for f in quality_flags if f in ALLOWED_FLAG_KEYS]
         if valid_flags:
-            query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+            if include_flagged:
+                query = query.where(or_(*[Image.quality_flags[f].as_boolean().is_(True) for f in valid_flags]))
+            else:
+                query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
     return query
 
 
@@ -309,6 +312,7 @@ async def bulk_count(body: BulkCountRequest, db: AsyncSession = Depends(get_db))
     query = _apply_bulk_filters(
         select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id),
         body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
     )
     count = (await db.execute(query)).scalar_one()
     return {"count": count}
@@ -372,6 +376,7 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
             Image.dataset_id == body.dataset_id
         ),
         body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
     )
 
     result = await db.execute(query)

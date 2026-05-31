@@ -63,6 +63,88 @@ chmod +x manage.sh && ./manage.sh setup
 
 Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
+<details>
+<summary><strong>Manual installation (if you prefer not to use the setup script)</strong></summary>
+
+**1. Create the Python virtual environment**
+
+```powershell
+# Windows
+python -m venv venv
+```
+```bash
+# Linux / macOS
+python3 -m venv venv
+```
+
+> **Tip**: Add `--system-site-packages` if you already have a GPU-capable PyTorch installed in your system Python and want to reuse it instead of downloading it again.
+
+**2. Activate the virtual environment**
+
+```powershell
+# Windows
+venv\Scripts\Activate.ps1
+```
+```bash
+# Linux / macOS
+source venv/bin/activate
+```
+
+Keep the venv active for all remaining steps.
+
+**3. Install PyTorch**
+
+This must happen *before* `requirements.txt` so that packages like `open_clip_torch` link against the GPU build. Replace `<INDEX_URL>` with the URL matching your hardware from the tables below:
+
+```bash
+pip install "torch>=2.0" --index-url <INDEX_URL>
+```
+
+**NVIDIA GPU** — check your CUDA version with `nvidia-smi`:
+
+| CUDA version | `<INDEX_URL>` |
+|---|---|
+| ≥ 12.8 | `https://download.pytorch.org/whl/cu128` |
+| 12.6 | `https://download.pytorch.org/whl/cu126` |
+| 12.4 | `https://download.pytorch.org/whl/cu124` |
+| 12.1 | `https://download.pytorch.org/whl/cu121` |
+| 11.8 | `https://download.pytorch.org/whl/cu118` |
+
+**AMD GPU / ROCm** (Linux only) — check your ROCm version with `rocminfo`:
+
+| ROCm version | `<INDEX_URL>` |
+|---|---|
+| ≥ 6.3 | `https://download.pytorch.org/whl/rocm6.3` |
+| 6.2 | `https://download.pytorch.org/whl/rocm6.2` |
+| 6.1 | `https://download.pytorch.org/whl/rocm6.1` |
+
+**Apple Silicon** — no special wheel needed; standard PyTorch already includes MPS support. Skip this step.
+
+**CPU only** — skip this step; PyTorch will be installed as a CPU-only build in step 4.
+
+**4. Install Python dependencies**
+
+```powershell
+# Windows
+pip install -r backend\requirements.txt
+```
+```bash
+# Linux / macOS
+pip install -r backend/requirements.txt
+```
+
+**5. Build the frontend**
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+Database migrations run automatically the first time you start the app with `.\manage.ps1 start` / `./manage.sh start`.
+
+</details>
+
 **Optional: API keys** — copy `.env.example` to `.env` if you need PaliGemma-2 or Gelbooru:
 
 ```env

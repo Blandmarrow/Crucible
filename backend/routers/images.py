@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, copy_with_sidecar, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename
+from backend.utils import ALLOWED_FLAG_KEYS, copy_with_sidecar, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
@@ -203,6 +203,8 @@ async def upload_images(
 
     existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
     db_names: set[str] = {r[0] for r in existing_result.all()}
+    occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
+    planned_thumb_stems: set[str] = set()
 
     for upload in files:
         suffix = Path(upload.filename or "").suffix.lower()
@@ -210,8 +212,7 @@ async def upload_images(
             continue
         raw_stem = Path(upload.filename or "").stem
         slug = slugify_filename(raw_stem) or "image"
-        filename = unique_filename(dest_images, slug, suffix, db_names)
-        db_names.add(filename)
+        filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
         with open(dest, "wb") as f:
             shutil.copyfileobj(upload.file, f)
@@ -337,6 +338,7 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         return {"affected": 0}
 
     images_dir = Path(rows[0].file_path).parent
+    thumb_dir = images_dir.parent / "thumbnails"
 
     batch_ids = [r.id for r in rows]
     existing = await db.execute(
@@ -346,24 +348,32 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         )
     )
     db_names: set[str] = {r[0] for r in existing.all()}
+    occupied_thumb_stems: set[str] = {p.stem for p in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+    planned_thumb_stems: set[str] = set()
 
-    plan: list[tuple[Path, Path, str, str]] = []
+    plan: list[tuple[Path, Path, Path, Path, str, str]] = []  # (old, new, old_thumb, new_thumb, id, new_fn)
     for row in rows:
         old_path = Path(row.file_path)
-        new_filename = unique_filename(images_dir, stem, old_path.suffix.lower(), db_names)
+        new_filename = unique_filename_with_thumb(
+            images_dir, stem, old_path.suffix.lower(), db_names, occupied_thumb_stems, planned_thumb_stems
+        )
         new_path = images_dir / new_filename
-        db_names.add(new_filename)
-        plan.append((old_path, new_path, row.id, new_filename))
+        old_thumb = Path(thumbnail_path_for(str(old_path)))
+        new_thumb = Path(thumbnail_path_for(str(new_path)))
+        plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename))
 
     await db.execute(
         sa_update(Image),
-        [{"id": img_id, "filename": new_fn, "file_path": str(new_path), "is_auto_named": True}
-         for _, new_path, img_id, new_fn in plan],
+        [{"id": img_id, "filename": new_fn, "file_path": str(new_path),
+          "thumbnail_path": str(new_thumb), "is_auto_named": True}
+         for _, new_path, _, new_thumb, img_id, new_fn in plan],
     )
 
-    for old_path, new_path, *_ in plan:
+    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
         if new_path != old_path:
             rename_with_sidecar(old_path, new_path)
+            if old_thumb.exists():
+                old_thumb.replace(new_thumb)
 
     await db.commit()
     return {"affected": len(plan)}
@@ -548,7 +558,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
         )
     )
     db_names: set[str] = {r[0] for r in existing.all()}
-    new_filename = unique_filename(dest_images, crop_stem, src_path.suffix, db_names)
+    occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
+    new_filename = unique_filename_with_thumb(
+        dest_images, crop_stem, src_path.suffix, db_names, occupied_thumb_stems, set()
+    )
     dest_path = dest_images / new_filename
 
     # Crop + upscale path (async background job)
@@ -736,13 +749,29 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
         select(Image.filename).where(Image.dataset_id == img.dataset_id, Image.id != image_id)
     )
     db_names: set[str] = {r[0] for r in existing.all()}
-    new_filename = unique_filename(old_path.parent, slug, old_path.suffix.lower(), db_names)
+
+    # Build occupied thumbnail stems, excluding the image's own current stem so a
+    # rename that keeps the same stem (different extension is impossible here, but
+    # guards against stale thumbnails from a prior rename) doesn't block itself.
+    thumb_dir = old_path.parent.parent / "thumbnails"
+    occupied_thumb_stems: set[str] = {p.stem for p in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+    occupied_thumb_stems.discard(old_path.stem)
+    planned_thumb_stems: set[str] = set()
+
+    new_filename = unique_filename_with_thumb(
+        old_path.parent, slug, old_path.suffix.lower(), db_names, occupied_thumb_stems, planned_thumb_stems
+    )
     new_path = old_path.parent / new_filename
+    old_thumb = Path(thumbnail_path_for(str(old_path)))
+    new_thumb = Path(thumbnail_path_for(str(new_path)))
 
     img.filename = new_filename
     img.file_path = str(new_path)
+    img.thumbnail_path = str(new_thumb)
     img.is_auto_named = False
     rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
+    if old_thumb.exists() and old_thumb != new_thumb:
+        old_thumb.replace(new_thumb)
     await db.commit()
     return {"filename": new_filename}
 
@@ -767,30 +796,33 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
 
         target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
+        # All existing thumbnails are occupied — including those of images being moved,
+        # because allowing a new assignment to reuse a moving image's stem would let
+        # image A's new thumbnail overwrite image B's current thumbnail mid-execution.
+        thumb_dir = images_dir.parent / "thumbnails"
+        occupied_thumb_stems: set[str] = {p.stem for p in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+        planned_thumb_stems: set[str] = set()
+
         # Build the full rename plan before touching anything.
         renames: list[tuple[Path, Path, Path, Path, str, str, str]] = []  # (old, new, old_thumb, new_thumb, id, new_fn, new_fp)
         for row in rows:
             old_path = Path(row.file_path)
             suf = old_path.suffix.lower()
             db_names.discard(row.filename)
-            new_filename = unique_filename(images_dir, target_stem, suf, db_names)
+            new_filename = unique_filename_with_thumb(
+                images_dir, target_stem, suf, db_names, occupied_thumb_stems, planned_thumb_stems
+            )
             new_path = images_dir / new_filename
             old_thumb = Path(thumbnail_path_for(str(old_path)))
             new_thumb = Path(thumbnail_path_for(str(new_path)))
-            db_names.add(new_filename)
             renames.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename, str(new_path)))
 
         # Apply all DB mutations in-memory (no commit yet).
-        for _old, _new, _ot, new_thumb, img_id, new_fn, new_fp in renames:
-            await db.execute(
-                sa_update(Image).where(Image.id == img_id).values(
-                    subfolder=target,
-                    filename=new_fn,
-                    file_path=new_fp,
-                    thumbnail_path=str(new_thumb),
-                    is_auto_named=True,
-                )
-            )
+        for old_path, new_path, _ot, new_thumb, img_id, new_fn, new_fp in renames:
+            values: dict = dict(subfolder=target, filename=new_fn, file_path=new_fp, thumbnail_path=str(new_thumb))
+            if new_path != old_path:
+                values["is_auto_named"] = True
+            await db.execute(sa_update(Image).where(Image.id == img_id).values(**values))
 
         # Perform filesystem renames — if any raise, the exception propagates and
         # db.commit() is never reached, so all DB mutations are rolled back.
@@ -798,7 +830,7 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
             if new_path != old_path:
                 rename_with_sidecar(old_path, new_path)
                 if old_thumb.exists():
-                    old_thumb.rename(new_thumb)
+                    old_thumb.replace(new_thumb)
     else:
         # Just update the subfolder field; filenames stay unchanged.
         for row in rows:
@@ -844,24 +876,29 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         raise HTTPException(404, "Target dataset not found")
 
     target_images_dir = Path(target_dataset.folder_path) / "images"
+    target_thumb_dir = Path(target_dataset.folder_path) / "thumbnails"
     target_images_dir.mkdir(parents=True, exist_ok=True)
-    (Path(target_dataset.folder_path) / "thumbnails").mkdir(parents=True, exist_ok=True)
+    target_thumb_dir.mkdir(parents=True, exist_ok=True)
 
     existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
     db_names: set[str] = {r[0] for r in existing.all()}
 
     target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
+    occupied_thumb_stems: set[str] = {p.stem for p in target_thumb_dir.glob("*.webp")}
+    planned_thumb_stems: set[str] = set()
+
     # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn)
     plan: list[tuple[Path, Path, Path, Path, str, str]] = []
     for row in rows:
         old_path = Path(row.file_path)
         suf = old_path.suffix.lower()
-        new_fn = unique_filename(target_images_dir, target_stem, suf, db_names)
+        new_fn = unique_filename_with_thumb(
+            target_images_dir, target_stem, suf, db_names, occupied_thumb_stems, planned_thumb_stems
+        )
         new_path = target_images_dir / new_fn
         old_thumb = Path(thumbnail_path_for(str(old_path)))
         new_thumb = Path(thumbnail_path_for(str(new_path)))
-        db_names.add(new_fn)
         plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_fn))
 
     for old_path, new_path, old_thumb, new_thumb, img_id, new_fn in plan:
@@ -929,23 +966,28 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         raise HTTPException(404, "Target dataset not found")
 
     target_images_dir = Path(target_dataset.folder_path) / "images"
+    target_thumb_dir = Path(target_dataset.folder_path) / "thumbnails"
     target_images_dir.mkdir(parents=True, exist_ok=True)
-    (Path(target_dataset.folder_path) / "thumbnails").mkdir(parents=True, exist_ok=True)
+    target_thumb_dir.mkdir(parents=True, exist_ok=True)
 
     existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
     db_names: set[str] = {r[0] for r in existing.all()}
 
     target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
+    occupied_thumb_stems: set[str] = {p.stem for p in target_thumb_dir.glob("*.webp")}
+    planned_thumb_stems: set[str] = set()
+
     plan: list[tuple[Path, Path, Path, Path, Any]] = []
     for row in rows:
         old_path = Path(row.file_path)
         suf = old_path.suffix.lower()
-        new_fn = unique_filename(target_images_dir, target_stem, suf, db_names)
+        new_fn = unique_filename_with_thumb(
+            target_images_dir, target_stem, suf, db_names, occupied_thumb_stems, planned_thumb_stems
+        )
         new_path = target_images_dir / new_fn
         old_thumb = Path(thumbnail_path_for(str(old_path)))
         new_thumb = Path(thumbnail_path_for(str(new_path)))
-        db_names.add(new_fn)
         plan.append((old_path, new_path, old_thumb, new_thumb, row))
 
     for old_path, new_path, old_thumb, new_thumb, row in plan:

@@ -204,11 +204,17 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         cached_vram_mb = 0
 
         _rename_db_names: set[str] = set()
+        _occupied_thumb_stems: set[str] = set()
+        _planned_thumb_stems: set[str] = set()
         if body.rename_on_caption:
-            from backend.utils import rename_with_sidecar, slugify_filename, unique_filename
+            from backend.utils import rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
             async with AsyncSessionLocal() as _ns:
                 _r = await _ns.execute(select(Image.filename).where(Image.dataset_id == body.dataset_id))
                 _rename_db_names = {r[0] for r in _r.all()}
+            if image_data:
+                _thumb_dir = Path(image_data[0][1]).parent.parent / "thumbnails"
+                if _thumb_dir.exists():
+                    _occupied_thumb_stems = {p.stem for p in _thumb_dir.glob("*.webp")}
 
         async with AsyncSessionLocal() as session:
             for i, (img_id, file_path, existing_tags, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
@@ -291,18 +297,23 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                 old_path = Path(file_path)
                                 suf = old_path.suffix.lower()
                                 _rename_db_names.discard(img_filename)
-                                new_filename = unique_filename(old_path.parent, new_stem, suf, _rename_db_names)
+                                new_filename = unique_filename_with_thumb(
+                                    old_path.parent, new_stem, suf,
+                                    _rename_db_names, _occupied_thumb_stems, _planned_thumb_stems,
+                                )
                                 new_path = old_path.parent / new_filename
+                                old_thumb = Path(thumbnail_path_for(str(old_path)))
+                                new_thumb = Path(thumbnail_path_for(str(new_path)))
+                                db_values: dict = dict(filename=new_filename, file_path=str(new_path))
                                 if new_path != old_path:
                                     rename_with_sidecar(old_path, new_path)
+                                    if old_thumb.exists() and old_thumb != new_thumb:
+                                        old_thumb.replace(new_thumb)
+                                    db_values["is_auto_named"] = True
+                                    db_values["thumbnail_path"] = str(new_thumb)
                                 await session.execute(
-                                    sa_update(Image).where(Image.id == img_id).values(
-                                        filename=new_filename,
-                                        file_path=str(new_path),
-                                        is_auto_named=True,
-                                    )
+                                    sa_update(Image).where(Image.id == img_id).values(**db_values)
                                 )
-                                _rename_db_names.add(new_filename)
                                 await session.commit()
                             except Exception:
                                 logger.error("Rename failed for %s", file_path, exc_info=True)

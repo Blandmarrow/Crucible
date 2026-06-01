@@ -14,7 +14,7 @@ from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, slugify_filename, unique_filename, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,16 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
 
             last_image_id: str | None = None
 
+            # Pre-build occupied thumbnail stems for the non-replace path so that
+            # images with different extensions but the same derived stem don't share
+            # a thumbnail. planned_thumb_stems accumulates across iterations.
+            occupied_thumb_stems: set[str] = set()
+            planned_thumb_stems: set[str] = set()
+            if not replace and images:
+                dest_thumb_dir = Path(images[0].file_path).parent.parent / "thumbnails"
+                if dest_thumb_dir.exists():
+                    occupied_thumb_stems = {p.stem for p in dest_thumb_dir.glob("*.webp")}
+
             for i, img in enumerate(images):
                 job_row = await session.get(BackgroundJob, job_id)
                 if job_row and job_row.status == "cancelled":
@@ -98,7 +108,10 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                         )
                     )
                     db_names: set[str] = {r[0] for r in existing.all()}
-                    new_filename = unique_filename(dest_images, dest_stem, src_path.suffix, db_names)
+                    new_filename = unique_filename_with_thumb(
+                        dest_images, dest_stem, src_path.suffix, db_names,
+                        occupied_thumb_stems, planned_thumb_stems,
+                    )
                     dest_path_str = str(dest_images / new_filename)
 
                 if replace:

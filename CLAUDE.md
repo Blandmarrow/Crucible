@@ -77,6 +77,7 @@ Three endpoints are registered directly in `backend/main.py` (not via a router),
 - `normalize_subfolder(s: str) -> str` — strips leading/trailing slashes and `.` segments, rejects `..` with HTTP 400. Import this; never copy the logic inline or re-import it from a router.
 - `slugify_filename(name: str) -> str` — lowercases, removes non-word characters, collapses whitespace/underscores/hyphens to `_`, strips leading/trailing `_-`, truncates to 200 chars. Returns `"image"` if the result is empty.
 - `unique_filename(directory: Path, stem: str, suffix: str, db_names: set) -> str` — returns a filename not on disk and not in `db_names`. Tries `{stem}{suffix}` first, then `{stem}_001{suffix}`, `_002`, … Both checks are required: `db_names` covers in-flight batch collisions within the same request; the filesystem check covers files that exist but have no DB record.
+- `unique_filename_with_thumb(images_dir, stem, suffix, db_names, occupied_thumb_stems, planned_thumb_stems) -> str` — like `unique_filename` but also avoids thumbnail-stem collisions. Thumbnails are always `.webp` keyed by image stem, so two images with different extensions but the same stem would share a thumbnail path. Call this instead of `unique_filename` in every code path that creates or renames an image file and associates a thumbnail with it. Mutates `db_names` (adds the chosen filename) and `planned_thumb_stems` (adds the chosen stem) so subsequent calls within the same batch stay consistent. Build `occupied_thumb_stems` from `thumb_dir.glob("*.webp")` once before the loop; do **not** exclude the stems of images being renamed/moved from this set — doing so re-introduces the within-batch clobber bug where one image's new thumbnail path matches another's current path.
 - `rename_with_sidecar(old_path: Path, new_path: Path) -> None` — renames a file and its `.txt` sidecar (if present) in one call. Use this everywhere a file rename happens; never copy the two-step pattern inline.
 - `copy_with_sidecar(old_path: Path, new_path: Path) -> None` — copies a file and its `.txt` sidecar (if present) using `shutil.copy2`. Use this in any copy path; mirrors `rename_with_sidecar` but leaves the source intact.
 - `ALLOWED_FLAG_KEYS: frozenset` — the canonical set of valid quality flag names (`is_blurry`, `is_noisy`, `is_uniform`, `has_watermark`, `is_duplicate`). Import this wherever flag names must be validated or used in SQL filters; never redefine the set locally.
@@ -86,7 +87,7 @@ Three endpoints are registered directly in `backend/main.py` (not via a router),
 
 ### Image file naming
 
-Images receive human-readable names derived from their original filename via `slugify_filename`. Collision handling is done by `unique_filename` (counter suffix `_001`, `_002`, …). This applies at upload time, at import time, and when the captioning rename option is used.
+Images receive human-readable names derived from their original filename via `slugify_filename`. Collision handling is done by `unique_filename_with_thumb` (counter suffix `_001`, `_002`, …) in every path that creates or renames an image file with an associated thumbnail — upload, bulk-rename, rename-image, crop new-file, batch-move-subfolder, batch-move-dataset, batch-copy-dataset, rename-on-caption, upscale non-replace, and LUT non-replace. Use `unique_filename_with_thumb` for any new image-creation path; `unique_filename` alone is only appropriate where no thumbnail is involved (e.g. import before thumbnail generation).
 
 `Image.is_auto_named: bool` (default `False`) — set to `True` when a file is renamed by the captioning job or by a subfolder move. Used to distinguish auto-named files from manually named ones. `PATCH /images/{image_id}/rename` sets it back to `False`.
 
@@ -250,7 +251,7 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 - `upscale_image_sync(src, dest, model_path, replace, target_w, target_h)` — loads via `spandrel.ModelLoader().load_from_file()`, tiles if either dimension > 1024 px (512 px tiles, 64 px overlap, linear-ramp seam blending), optional LANCZOS resize post-upscale.
 - Model caching uses `model_manager._registry` under ID `upscale:{abs_path}`; `_ensure_upscaler_loaded` includes a double-check after re-acquiring `_sync_lock` to prevent the TOCTOU double-load race.
 
-**Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
+**Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename_with_thumb`), new `Image` record created, thumbnail generated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
 
 **History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked, leaving a single clean entry so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression.
 
@@ -283,7 +284,7 @@ Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-control
 
 **LUT axis-ordering invariant**: The `.cube` spec (and `.3dl`) stores data with **R varying fastest, B slowest**. After `reshape(N, N, N, 3)` numpy's axis order is `[B, G, R]`. Both `_parse_cube` and `_parse_3dl` therefore call `.transpose(2, 1, 0, 3)` to produce a `[R, G, B]`-indexed array, so that `lut[r, g, b]` is the natural lookup in `_apply_lut_array`. Do not remove this transpose — without it R and B are swapped in the lookup, producing visually wrong results.
 
-**Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename`), new `Image` record created, thumbnail regenerated. *Replace* — updates `file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
+**Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename_with_thumb`), new `Image` record created, thumbnail generated. *Replace* — updates `file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated.
 
 **Frontend surfaces**:
 - `ImageDetailPage` — "LUT" toolbar button (mutually exclusive with Crop and Upscale) toggles inline controls: LUT `<select>`, intensity slider, Replace checkbox, Run button. Non-replace completion calls `injectNavId` + `paneGo` to navigate to the new image (same pattern as upscaling).
@@ -638,7 +639,7 @@ Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filte
 | Endpoint | Extra fields | Returns |
 |---|---|---|
 | `POST /images/bulk-count` | `include_flagged: bool = False` | `{ count: int }` — count of matching images without making any changes |
-| `POST /images/bulk-rename` | `new_stem: str` | `{ affected: int }` — renames matching images to `{slug}_001.ext`, `_002`, … Uses `slugify_filename` + `unique_filename`; pre-plans all renames before touching the filesystem; DB updated via ORM bulk-by-PK executemany then `rename_with_sidecar` per file; sets `is_auto_named=True` |
+| `POST /images/bulk-rename` | `new_stem: str` | `{ affected: int }` — renames matching images to `{slug}_001.ext`, `_002`, … Uses `slugify_filename` + `unique_filename_with_thumb`; pre-plans all renames before touching the filesystem; DB updated via ORM bulk-by-PK executemany (includes `thumbnail_path`) then `rename_with_sidecar` + thumbnail `replace()` per file; sets `is_auto_named=True` |
 | `POST /images/bulk-delete` | `include_flagged: bool = True` | `{ deleted: int }` — permanently deletes matching images; calls `mark_image_deleted_in_versions` per image for versioning hooks; unlinks image, `.txt` sidecar, and thumbnail; calls `refresh_stats` |
 
 **Frontend surfaces**:

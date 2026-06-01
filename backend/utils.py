@@ -37,6 +37,37 @@ def unique_filename(directory: Path, stem: str, suffix: str, db_names: set) -> s
         counter += 1
 
 
+def unique_filename_with_thumb(
+    images_dir: Path,
+    stem: str,
+    suffix: str,
+    db_names: set[str],
+    occupied_thumb_stems: set[str],
+    planned_thumb_stems: set[str],
+) -> str:
+    """Like unique_filename but also avoids thumbnail-stem collisions.
+
+    Thumbnails are always .webp keyed by the image stem, so two images with
+    different extensions but the same stem share a thumbnail path. This helper
+    rejects any candidate whose stem is in occupied_thumb_stems (pre-built from
+    the thumbnail directory before the loop) or planned_thumb_stems (accumulated
+    within the current batch/loop).
+
+    Mutates db_names (adds the chosen filename) and planned_thumb_stems (adds
+    the chosen stem) so subsequent calls within the same batch stay consistent.
+    """
+    candidate = unique_filename(images_dir, stem, suffix, db_names)
+    while True:
+        cand_stem = Path(candidate).stem
+        if cand_stem not in occupied_thumb_stems and cand_stem not in planned_thumb_stems:
+            break
+        db_names.add(candidate)  # prevent unique_filename from returning this again
+        candidate = unique_filename(images_dir, stem, suffix, db_names)
+    db_names.add(candidate)
+    planned_thumb_stems.add(Path(candidate).stem)
+    return candidate
+
+
 def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     """Rename a file and its .txt sidecar (if it exists) atomically."""
     old_path.rename(new_path)

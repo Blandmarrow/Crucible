@@ -327,7 +327,15 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 
 ### Frontend constants
 
-`frontend/src/constants/captionStyles.ts` — `STYLE_LABELS: Record<string, string[]>` (style names per model type — Florence-2 and PaliGemma only; Ollama has no entry so the style picker is hidden for it) and `modelType(model: string): string | null` (maps a model ID to its type key). Shared by `CaptioningPage`, `ImageDetailPage`, and `SelectionToolbar`; do not redeclare locally.
+`frontend/src/constants/captionStyles.ts` — `STYLE_LABELS: Record<string, string[]>` (style names per model type) and `modelType(model: string): string | null` (maps a model ID to its type key). Shared by `CaptioningPage`, `ImageDetailPage`, and `SelectionToolbar`; do not redeclare locally. Current entries:
+
+| Key | Styles | Notes |
+|---|---|---|
+| `florence2` | `short`, `detailed`, `tags` | Base Florence-2 (`florence2_large`). `dense` is absent — `<DENSE_REGION_CAPTION>` returns a bounding-box dict, not caption text. |
+| `florence2_promptgen` | `short`, `detailed`, `promptgen` | PromptGen v2 (`florence2_promptgen`). `tags` is absent — `<GENERATE_TAGS>` is not supported by this fine-tune. |
+| `paligemma2` | `short`, `detailed`, `tags`, `booru` | |
+
+Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. `modelType()` checks `model === "florence2_promptgen"` explicitly before the general `startsWith("florence2")` fallback to avoid misclassification.
 
 `frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
 
@@ -559,15 +567,19 @@ Router: `backend/routers/system.py`, two endpoints both mounted at `/api/v1/syst
 
 ### Captioning post-processing
 
-`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts three post-processing flags, one WD14-specific field, and a job label:
+`CaptionJobRequest` (in `backend/routers/captioning.py`) accepts the following fields for post-processing, merging, and job display:
 
 | Field | Default | Effect |
 |---|---|---|
 | `label` | `null` | Optional display name shown in the job queue. When omitted, the router auto-generates `"{model_short} — N images"`. |
-| `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. |
+| `delimiter_mode` | `"overwrite"` | How to merge new caption with existing: `"overwrite"` replaces, `"append"` adds new text after (`existing + delimiter + new`), `"prepend"` adds new text before (`new + delimiter + existing`). Merge only runs when an existing caption is non-empty; images with no prior caption always receive just the new caption regardless of mode. |
+| `delimiter` | `", "` | Text inserted between the two strings when `delimiter_mode` is `"append"` or `"prepend"`. |
+| `strip_refusals` | `true` | Remove common AI refusal phrases from generated captions via `_REFUSAL_RE` compiled regex. The regex is narrowly scoped: `"This image appears to be X"` (Florence-2 PromptGen v2 standard output) is NOT stripped; only actual refusal phrasing like `"be depicting"` is matched. |
 | `save_backup` | `false` | Before calling `set_caption`, write the existing `.txt` sidecar to `.txt.bak`. |
 | `rename_on_caption` | `false` | After saving each caption, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root). Sets `is_auto_named=True`. Subfolder and original filename are fetched from the initial bulk query — no per-image DB round-trip. |
 | `wd14_threshold` | `0.35` | Minimum confidence (0–1) for a WD14 tag to be included in output. Only used when `model` starts with `wd14:`. |
+
+`PipelineStep` carries the same `delimiter_mode` and `delimiter` fields. `prev_captions` is fetched from the DB at the start of each pipeline step when `delimiter_mode != "overwrite"` so the merge has the current caption text. When `delimiter_mode == "overwrite"` and `body.overwrite` is `False`, only images with empty captions are queued; append/prepend modes always process all images (the merge requires the existing caption).
 
 **Captioning job execution**: `_run` in `routers/captioning.py` processes images one at a time (generate → save → emit SSE). Each event carries `image_id`, `throughput_ips`, and `vram_used_mb` (sampled every 10 images; Ollama always 0; WD14 and OpenAI-compat always 0). Failed images accumulate in `failed_image_ids`; a `caption_summary` SSE event is emitted after the loop if any failed. Cancellation is checked at each image boundary via a scalar `SELECT status` on the outer session (not a new `AsyncSessionLocal` per image).
 

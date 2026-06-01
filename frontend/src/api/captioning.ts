@@ -1,5 +1,14 @@
 import client from "./client";
 
+export type DelimiterMode = "overwrite" | "append" | "prepend";
+
+export const DELIMITER_PRESETS: { label: string; value: string }[] = [
+  { label: "Comma", value: "," },
+  { label: "Period", value: "." },
+  { label: "Space", value: " " },
+  { label: "Newline", value: "\n" },
+];
+
 export interface CaptionRunParams {
   dataset_id: string;
   image_ids?: string[];
@@ -18,6 +27,8 @@ export interface CaptionRunParams {
   exclude_flags?: string[];
   wd14_threshold?: number;
   label?: string;
+  delimiter_mode?: DelimiterMode;
+  delimiter?: string;
 }
 
 export interface PipelineStep {
@@ -30,6 +41,8 @@ export interface PipelineStep {
   wd14_threshold: number;
   target_width?: number | null;
   target_height?: number | null;
+  delimiter_mode?: DelimiterMode;
+  delimiter?: string;
 }
 
 export interface CaptionPipelineParams {
@@ -47,7 +60,6 @@ export interface CaptionPipelineParams {
 export const captioningApi = {
   models: () =>
     client.get<{ local_models: unknown[]; ollama_models: unknown[]; wd14_models: unknown[]; openai_compat_models: unknown[] }>("/captioning/models").then((r) => r.data),
-  styles: () => client.get("/captioning/styles").then((r) => r.data),
   run: (params: CaptionRunParams) =>
     client.post<{ job_id: string; total: number }>("/captioning/run", params).then((r) => r.data),
   pipeline: (params: CaptionPipelineParams) =>

@@ -9,7 +9,8 @@ import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
 import { captionsApi } from "../api/captions";
-import { captioningApi } from "../api/captioning";
+import { captioningApi, type DelimiterMode } from "../api/captioning";
+import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
 import { upscalingApi } from "../api/upscaling";
 import { lutApi } from "../api/lut";
@@ -183,7 +184,8 @@ export default function ImageDetailPage() {
   const [aiJobId, setAiJobId] = useState<string | null>(null);
   const [aiProviderModel, setAiProviderModel] = useState("");
   const [aiWd14Threshold, setAiWd14Threshold] = useState(0.35);
-  const [aiOverwrite, setAiOverwrite] = useState(true);
+  const [aiDelimiterMode, setAiDelimiterMode] = useState<DelimiterMode>("overwrite");
+  const [aiDelimiterParts, setAiDelimiterParts] = useState<string[]>([",", " "]);
 
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
@@ -640,10 +642,12 @@ export default function ImageDetailPage() {
         image_ids: [imageId!],
         model: resolveModelId(aiModel, aiProviderModel),
         style: aiStyle,
-        overwrite: aiOverwrite,
+        overwrite: true,
         custom_prompt: aiCustomPrompt,
         ...(aiTargetWidth && aiTargetHeight ? { target_width: aiTargetWidth, target_height: aiTargetHeight } : {}),
         ...(aiModel.startsWith("wd14:") ? { wd14_threshold: aiWd14Threshold } : {}),
+        delimiter_mode: aiDelimiterMode,
+        delimiter: aiDelimiterParts.join(""),
       }),
     onSuccess: (data) => {
       if (data.job_id) {
@@ -1457,10 +1461,11 @@ export default function ImageDetailPage() {
                 )}
 
                 {aiModel && (
-                  <label className="flex items-center gap-2 cursor-pointer text-xs">
-                    <input type="checkbox" checked={aiOverwrite} onChange={e => setAiOverwrite(e.target.checked)} />
-                    Overwrite existing caption
-                  </label>
+                  <DelimiterControls
+                    mode={aiDelimiterMode}
+                    delimiterParts={aiDelimiterParts}
+                    onChange={(m, parts) => { setAiDelimiterMode(m); setAiDelimiterParts(parts); }}
+                  />
                 )}
 
                 {/* Progress */}

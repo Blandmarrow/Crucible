@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { captioningApi, type PipelineStep } from "../api/captioning";
+import { captioningApi, type PipelineStep, type DelimiterMode } from "../api/captioning";
+import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
 import { jobsApi } from "../api/jobs";
 import { datasetsApi } from "../api/datasets";
@@ -28,6 +29,9 @@ interface StepConfig {
   customPrompt: string;
   wd14Threshold: number;
   providerModelInput: string;
+  delimiterMode: DelimiterMode;
+  delimiterParts: string[];
+  usePreviousCaption: boolean;
 }
 
 function makeStepId() { return Math.random().toString(36).slice(2); }
@@ -189,6 +193,8 @@ export default function CaptioningPage() {
   const [targetWidth, setTargetWidth] = useState<number | null>(null);
   const [targetHeight, setTargetHeight] = useState<number | null>(null);
   const [scope, setScope] = useState<Scope>("uncaptioned");
+  const [delimiterMode, setDelimiterMode] = useState<DelimiterMode>("overwrite");
+  const [delimiterParts, setDelimiterParts] = useState<string[]>([",", " "]);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
   const [minAestheticScore, setMinAestheticScore] = useState("");
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set());
@@ -306,6 +312,8 @@ export default function CaptioningPage() {
       wd14_threshold: wd14Threshold,
       target_width: targetWidth,
       target_height: targetHeight,
+      delimiter_mode: delimiterMode,
+      delimiter: delimiterParts.join(""),
     };
   }
 
@@ -313,14 +321,20 @@ export default function CaptioningPage() {
     const isStepWd14 = s.model.startsWith("wd14:");
     const isStepOAI = s.model.startsWith("openai_compat:");
     const stepModel = isStepOAI ? resolveModelId(s.model, s.providerModelInput) : s.model;
+    let custom_prompt = s.customPrompt;
+    if (s.usePreviousCaption && !custom_prompt.includes("{previous_caption}")) {
+      custom_prompt = custom_prompt ? `${custom_prompt}\n\n{previous_caption}` : "{previous_caption}";
+    }
     return {
       model: stepModel,
       style: isStepWd14 ? "tags" : s.style,
-      custom_prompt: s.customPrompt,
+      custom_prompt,
       overwrite: true,
       append_tags: false,
       strip_refusals: true,
       wd14_threshold: s.wd14Threshold,
+      delimiter_mode: s.delimiterMode,
+      delimiter: s.delimiterParts.join(""),
     };
   }
 
@@ -346,7 +360,7 @@ export default function CaptioningPage() {
         dataset_id: datasetId!,
         model: resolvedModel,
         style: isWd14 ? "tags" : style,
-        overwrite: scope === "all",
+        overwrite: scope !== "uncaptioned",
         custom_prompt: customPrompt,
         image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
         subfolder: scope !== "selected" ? activeSubfolder : undefined,
@@ -358,6 +372,8 @@ export default function CaptioningPage() {
         exclude_flags: excludeFlags.size > 0 ? [...excludeFlags] : undefined,
         wd14_threshold: isWd14 ? wd14Threshold : undefined,
         label: jobLabel.trim() || undefined,
+        delimiter_mode: delimiterMode,
+        delimiter: delimiterParts.join(""),
       });
     },
     onSuccess: (data) => {
@@ -710,6 +726,19 @@ export default function CaptioningPage() {
                 </div>
               </div>
 
+              {/* Delimiter */}
+              <div className="form-row">
+                <div className="lbl-col">
+                  <h4>Existing captions</h4>
+                  <p>How to handle images that already have a caption.</p>
+                </div>
+                <DelimiterControls
+                  mode={delimiterMode}
+                  delimiterParts={delimiterParts}
+                  onChange={(m, parts) => { setDelimiterMode(m); setDelimiterParts(parts); }}
+                />
+              </div>
+
               {/* Subfolder */}
               {subfolders.length > 0 && (
                 <div className="form-row">
@@ -870,6 +899,9 @@ export default function CaptioningPage() {
               customPrompt: "",
               wd14Threshold: 0.35,
               providerModelInput: "",
+              delimiterMode: "overwrite",
+              delimiterParts: [",", " "],
+              usePreviousCaption: false,
             }])}
           >
             + Add Pipeline Step
@@ -1182,15 +1214,37 @@ function PipelineStepCard({
                 <h4>Prompt</h4>
                 <p>Use <span className="mono" style={{ fontSize: 11 }}>{"{previous_caption}"}</span> to reference the previous step's output.</p>
               </div>
-              <textarea
-                className="input"
-                style={{ height: 80 }}
-                value={step.customPrompt}
-                onChange={(e) => onChange({ customPrompt: e.target.value })}
-                placeholder={`Describe this image. Tags from previous step: {previous_caption}`}
-              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={step.usePreviousCaption}
+                    onChange={(e) => onChange({ usePreviousCaption: e.target.checked })}
+                  />
+                  Include previous caption
+                </label>
+                <textarea
+                  className="input"
+                  style={{ height: 80 }}
+                  value={step.customPrompt}
+                  onChange={(e) => onChange({ customPrompt: e.target.value })}
+                  placeholder="Optional additional instructions…"
+                />
+              </div>
             </div>
           )}
+
+          <div className="form-row">
+            <div className="lbl-col">
+              <h4>Existing captions</h4>
+              <p>How to handle images that already have a caption.</p>
+            </div>
+            <DelimiterControls
+              mode={step.delimiterMode}
+              delimiterParts={step.delimiterParts}
+              onChange={(m, parts) => onChange({ delimiterMode: m, delimiterParts: parts })}
+            />
+          </div>
 
           {stepProvider?.is_remote && (
             <p style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 0 8px" }}>

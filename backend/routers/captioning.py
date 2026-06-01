@@ -3,6 +3,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
@@ -23,8 +24,8 @@ logger = logging.getLogger(__name__)
 _REFUSAL_RE = re.compile(
     r"(I(?:'m| am) (?:sorry|unable|not able)|I cannot|As an AI|I apologize|"
     r"I can't|I won't be able to|[Ss]he (?:is|appears to be) (?:a |an )?(?:fictional|animated|2D|cartoon)|"
-    r"This (?:image |photo )?(?:appears|seems) to (?:be|depict)|"
-    r"(?:The person|They) (?:appears|seems) to be)[^.!?]*[.!?]?",
+    r"This (?:image |photo )?(?:appears|seems) to (?:be depicting|depict)|"
+    r"(?:The person|They) (?:appears|seems) to be (?:a |an )?(?:fictional|animated|2D|cartoon|real|identifiable))[^.!?]*[.!?]?",
     re.IGNORECASE,
 )
 
@@ -51,6 +52,8 @@ class CaptionJobRequest(BaseModel):
     exclude_flags: list[str] | None = None
     wd14_threshold: float = 0.35
     label: str | None = None
+    delimiter_mode: Literal["overwrite", "append", "prepend"] = "overwrite"
+    delimiter: str = ", "
 
     @field_validator("exclude_flags")
     @classmethod
@@ -97,26 +100,17 @@ async def list_models(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/styles")
-async def list_styles():
-    return {
-        "florence2": ["short", "detailed", "tags", "dense", "promptgen"],
-        "paligemma2": ["short", "detailed", "tags", "booru"],
-        "ollama": ["short", "detailed", "tags", "booru"],
-    }
-
-
 @router.post("/run")
 async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get_db)):
     query = (
-        select(Image.id, Image.file_path, Image.tags_json, Image.filename, Image.subfolder)
+        select(Image.id, Image.file_path, Image.tags_json, Image.filename, Image.subfolder, Image.caption_text)
         .where(Image.dataset_id == body.dataset_id)
     )
     if body.image_ids:
         query = query.where(Image.id.in_(body.image_ids))
     elif body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
-    if not body.overwrite:
+    if not body.overwrite and body.delimiter_mode == "overwrite":
         query = query.where(Image.caption_text == "")
     if body.min_aesthetic_score is not None:
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
@@ -140,7 +134,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     db.add(job)
     await db.commit()
 
-    image_data = [(r.id, r.file_path, r.tags_json or [], r.filename, r.subfolder or "") for r in rows]
+    image_data = [(r.id, r.file_path, r.tags_json or [], r.filename, r.subfolder or "", r.caption_text or "") for r in rows]
 
     async def _run(job_id: str) -> None:
         import time
@@ -217,7 +211,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 _rename_db_names = {r[0] for r in _r.all()}
 
         async with AsyncSessionLocal() as session:
-            for i, (img_id, file_path, existing_tags, img_filename, img_subfolder) in enumerate(image_data):
+            for i, (img_id, file_path, existing_tags, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
                 # Check for user-initiated stop before each image (reuse outer session)
                 _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
                 if _status == "cancelled":
@@ -277,6 +271,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                             tags = []
                             if body.append_tags and existing_tags:
                                 caption = caption.rstrip() + ", " + ", ".join(existing_tags)
+
+                        if body.delimiter_mode == "append" and existing_caption:
+                            caption = existing_caption + body.delimiter + caption
+                        elif body.delimiter_mode == "prepend" and existing_caption:
+                            caption = caption + body.delimiter + existing_caption
 
                         if body.save_backup:
                             txt_path = Path(file_path).with_suffix(".txt")
@@ -367,6 +366,8 @@ class PipelineStep(BaseModel):
     wd14_threshold: float = 0.35
     target_width: int | None = None
     target_height: int | None = None
+    delimiter_mode: Literal["overwrite", "append", "prepend"] = "overwrite"
+    delimiter: str = ", "
 
 
 class CaptionPipelineRequest(BaseModel):
@@ -502,9 +503,13 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 )
                 model_label = f"WD14 ({wd14_variant})"
 
-            # Load current captions from DB for {previous_caption} substitution (only when needed)
+            # Load current captions from DB for {previous_caption} substitution and/or delimiter merge
             prev_captions: dict[str, str] = {}
-            if step_idx > 0 and "{previous_caption}" in step.custom_prompt:
+            needs_current = (
+                (step_idx > 0 and "{previous_caption}" in step.custom_prompt)
+                or step.delimiter_mode != "overwrite"
+            )
+            if needs_current:
                 async with AsyncSessionLocal() as _cs:
                     ids = [r[0] for r in image_data]
                     caption_result = await _cs.execute(
@@ -569,6 +574,11 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                                     existing_set = set(tags)
                                     tags = tags + [t for t in existing_tags if t not in existing_set]
                                     caption = ", ".join(tags)
+                            existing = prev_captions.get(img_id, "")
+                            if step.delimiter_mode == "append" and existing:
+                                caption = existing + step.delimiter + caption
+                            elif step.delimiter_mode == "prepend" and existing:
+                                caption = caption + step.delimiter + existing
                             await set_caption(session, img_id, caption, tags, step.style, step.model)
 
                     overall_done += 1

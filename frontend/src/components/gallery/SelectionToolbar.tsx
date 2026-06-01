@@ -9,7 +9,8 @@ import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
 import { datasetsApi } from "../../api/datasets";
-import { captioningApi } from "../../api/captioning";
+import { captioningApi, type DelimiterMode } from "../../api/captioning";
+import DelimiterControls from "../caption/DelimiterControls";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
@@ -45,7 +46,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showScore, setShowScore] = useState(false);
   const [captionModel, setCaptionModel] = useState("");
   const [captionStyle, setCaptionStyle] = useState("detailed");
-  const [captionOverwrite, setCaptionOverwrite] = useState(false);
+  const [captionDelimiterMode, setCaptionDelimiterMode] = useState<DelimiterMode>("overwrite");
+  const [captionDelimiterParts, setCaptionDelimiterParts] = useState<string[]>([",", " "]);
   const [captionCustomPrompt, setCaptionCustomPrompt] = useState("");
   const [captionProviderModel, setCaptionProviderModel] = useState("");
   const [captionWd14Threshold, setCaptionWd14Threshold] = useState(0.35);
@@ -250,10 +252,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         image_ids: ids,
         model: resolveModelId(captionModel, captionProviderModel),
         style: captionStyle,
-        overwrite: captionOverwrite,
+        overwrite: true,
         custom_prompt: captionCustomPrompt,
         ...(captionTargetWidth && captionTargetHeight ? { target_width: captionTargetWidth, target_height: captionTargetHeight } : {}),
         ...(captionModel.startsWith("wd14:") ? { wd14_threshold: captionWd14Threshold } : {}),
+        delimiter_mode: captionDelimiterMode,
+        delimiter: captionDelimiterParts.join(""),
       }),
     onSuccess: (data) => {
       setShowCaption(false);
@@ -619,10 +623,11 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   </>
                 )}
 
-                <label className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input type="checkbox" checked={captionOverwrite} onChange={e => setCaptionOverwrite(e.target.checked)} />
-                  Overwrite existing captions
-                </label>
+                <DelimiterControls
+                  mode={captionDelimiterMode}
+                  delimiterParts={captionDelimiterParts}
+                  onChange={(m, parts) => { setCaptionDelimiterMode(m); setCaptionDelimiterParts(parts); }}
+                />
               </>
             )}
 

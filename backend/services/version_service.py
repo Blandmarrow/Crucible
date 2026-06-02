@@ -275,6 +275,7 @@ async def create_snapshot(
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
             processing_history=img.processing_history,
+            sort_order=img.sort_order,
             is_present=True,
         ))
 
@@ -317,6 +318,7 @@ _DIFF_COLS = (
     VersionImageState.uniformity_score,
     VersionImageState.watermark_score,
     VersionImageState.style_similarity_score,
+    VersionImageState.sort_order,
     VersionImageState.processing_history,
 )
 
@@ -369,7 +371,8 @@ async def diff_versions(
 
         for field in ("caption_text", "tags_json", "quality_flags", "subfolder",
                       "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-                      "watermark_score", "style_similarity_score", "processing_history"):
+                      "watermark_score", "style_similarity_score", "processing_history",
+                      "sort_order"):
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
                 changes[field] = {"from": va, "to": vb}
@@ -536,6 +539,7 @@ async def restore_snapshot(
             img.dino_layer_scores = state.dino_layer_scores
             img.generation_metadata = state.generation_metadata
             img.processing_history = state.processing_history
+            img.sort_order = state.sort_order
             if state.width:
                 img.width = state.width
             if state.height:
@@ -551,6 +555,11 @@ async def restore_snapshot(
                     img.thumbnail_path = thumb
                 except Exception as exc:
                     logger.warning("Thumbnail regen failed for %s: %s", state.filename, exc)
+                # Force updated_at to change so the frontend's ?v= cache-bust param gets a new
+                # value. Without this, if all other restored metadata values match what's already
+                # in the DB, SQLAlchemy may skip the UPDATE entirely, leaving the browser serving
+                # the pre-restore thumbnail from cache.
+                img.updated_at = datetime.utcnow()
 
     # Handle extra images not in the snapshot
     if handle_extra_images == "remove":

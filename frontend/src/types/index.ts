@@ -120,6 +120,7 @@ export interface ImageListItem {
   tags_json: string[];
   captioned_by: string;
   is_auto_named: boolean;
+  sort_order: number | null;
   updated_at: string;
 }
 

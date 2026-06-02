@@ -34,6 +34,7 @@ class ImageOut(BaseModel):
     captioned_by: str
     captioned_at: datetime | None
     is_auto_named: bool = False
+    sort_order: int | None = None
     updated_at: datetime
     tags_json: list[str]
     detections: list[DetectionOut] = []
@@ -64,6 +65,7 @@ class ImageListItem(BaseModel):
     tags_json: list[str]
     captioned_by: str
     is_auto_named: bool = False
+    sort_order: int | None = None
     updated_at: datetime
 
     model_config = {"from_attributes": True}
@@ -136,6 +138,17 @@ class BulkFilterBase(BaseModel):
 
 class BulkRenameRequest(BulkFilterBase):
     new_stem: str
+    sort_by_sort_order: bool = False
+
+
+class ImageReorderUpdate(BaseModel):
+    id: str
+    sort_order: int
+
+
+class BatchReorderRequest(BaseModel):
+    dataset_id: str
+    updates: list[ImageReorderUpdate]
 
 
 class BulkDeleteRequest(BulkFilterBase):

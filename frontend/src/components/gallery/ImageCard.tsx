@@ -4,6 +4,8 @@ import { imagesApi } from "../../api/images";
 import { useSelectionStore } from "../../store/selectionStore";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 function scoreClass(score: number | null) {
   if (score === null) return "";
@@ -15,9 +17,11 @@ function scoreClass(score: number | null) {
 interface Props {
   image: ImageListItem;
   onShowGenMeta?: (image: ImageListItem) => void;
+  isDraggable?: boolean;
+  isActiveDrag?: boolean;
 }
 
-export default function ImageCard({ image, onShowGenMeta }: Props) {
+export default function ImageCard({ image, onShowGenMeta, isDraggable, isActiveDrag }: Props) {
   const datasetId = usePaneDatasetId();
   const { go } = usePaneNavigate();
   const { toggle, isSelected } = useSelectionStore();
@@ -37,7 +41,7 @@ export default function ImageCard({ image, onShowGenMeta }: Props) {
         borderRadius: "var(--r-lg)",
         overflow: "hidden",
         background: "var(--surface-1)",
-        cursor: "pointer",
+        cursor: isActiveDrag ? "grabbing" : isDraggable ? "grab" : "pointer",
         transition: "border-color .12s",
         position: "relative",
       }}
@@ -143,6 +147,25 @@ export default function ImageCard({ image, onShowGenMeta }: Props) {
           <div style={{ fontSize: 11, color: "var(--fg-soft)", paddingTop: 4, borderTop: "1px dashed var(--line)", marginTop: 4 }}>No caption</div>
         )}
       </div>
+    </div>
+  );
+}
+
+export function SortableImageCard({ image, onShowGenMeta }: Props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: image.id });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.45 : 1,
+        touchAction: "none",
+      }}
+    >
+      <ImageCard image={image} onShowGenMeta={onShowGenMeta} isDraggable isActiveDrag={isDragging} />
     </div>
   );
 }

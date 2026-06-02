@@ -54,6 +54,9 @@ class Image(Base):
     # Log of destructive replace operations: [{op, params..., at}]
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Manual sort order (NULL = no custom order set; NULLS LAST when sorting)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Caption / tags
     caption_text: Mapped[str] = mapped_column(Text, default="")
     caption_style: Mapped[str] = mapped_column(String(32), default="")
@@ -73,5 +76,6 @@ class Image(Base):
         Index("ix_images_dataset_blur", "dataset_id", "blur_score"),
         Index("ix_images_dataset_similarity", "dataset_id", "style_similarity_score"),
         Index("ix_images_dataset_subfolder", "dataset_id", "subfolder"),
+        Index("ix_images_dataset_sort_order", "dataset_id", "sort_order"),
         UniqueConstraint("dataset_id", "filename", name="uq_dataset_filename"),
     )

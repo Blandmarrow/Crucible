@@ -88,6 +88,7 @@ class VersionImageState(Base):
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     is_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

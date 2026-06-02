@@ -613,7 +613,7 @@ async def duplicate_dataset(
             Image.tags_json, Image.quality_flags, Image.aesthetic_score, Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
-            Image.generation_metadata, Image.processing_history,
+            Image.generation_metadata, Image.processing_history, Image.sort_order,
         )
         result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
         rows = result.all()
@@ -665,6 +665,7 @@ async def duplicate_dataset(
                     dino_layer_scores=row.dino_layer_scores,
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
+                    sort_order=row.sort_order,
                 ))
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
@@ -749,6 +750,7 @@ async def duplicate_dataset(
                     dino_layer_scores=state.dino_layer_scores,
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,
+                    sort_order=state.sort_order,
                 ))
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)

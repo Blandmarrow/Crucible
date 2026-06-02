@@ -133,6 +133,7 @@ async def _run_export_loop(
         query = query.where(Image.id.in_(image_ids))
     if subfolders is not None:
         query = query.where(Image.subfolder.in_(subfolders))
+    query = query.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
     result = await db.execute(query)
     images = result.all()
 

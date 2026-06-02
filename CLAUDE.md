@@ -377,6 +377,35 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 - **Detection label** — text input with icon prefix, debounced 350 ms; passes `detection_label` to `GET /images/`; uses a correlated `EXISTS` subquery against the `detections` table matching `label ILIKE '%...%'`; has a clear (×) button when set.
 - **Subfolder filter** — see Gallery subfolder sidebar section above; passes `subfolder` query param to `GET /images/`.
 
+### Manual image ordering
+
+`Image.sort_order: int | None` (nullable, default `NULL`) — stores the custom display position of an image within its `(dataset_id, subfolder)` scope. `NULL` means no custom order has been assigned; such images sort last (`NULLS LAST`) with `created_at ASC` as a tiebreak.
+
+**Activation**: the gallery sort dropdown includes a **"Custom order"** option (`sort=sort_order`). When it is selected for the first time and no image in the current page has `sort_order` set, the frontend silently initialises order from the current page's arrangement by calling `PATCH /images/batch/reorder` with `pageOffset + index` values so that page 2+ images receive sort_orders starting at `(page-1)*pageSize` rather than 0.
+
+**Drag-and-drop**: when "Custom order" is active, the gallery grid is wrapped in a `DndContext`/`SortableContext` from `@dnd-kit/core` + `@dnd-kit/sortable`. Each card is a `SortableImageCard` — the entire card surface is the drag handle (listeners spread on the outer wrapper). `PointerSensor` with `activationConstraint: { distance: 8 }` lets short clicks still navigate to the detail page. `handleDragEnd` calls `arrayMove` for an immediate optimistic `qc.setQueryData`, then fires `reorderMutation` (`PATCH /images/batch/reorder`) to persist.
+
+**Renumber Files button**: visible in the gallery toolbar only when "Custom order" is active. Opens a `ConfirmDialog`, then calls `POST /images/bulk-rename` with `sort_by_sort_order: true` — renames every image in the current subfolder to `{subfolder_slug}_001.ext`, `_002`, … in drag order. Useful before export to make filenames reflect training sequence.
+
+**`PATCH /images/batch/reorder`** (`backend/routers/images.py`): accepts `{ dataset_id, updates: [{id, sort_order}] }`. Validates all IDs belong to `dataset_id`, then bulk-updates `sort_order` via `sa_update`. Returns `{ updated: int }`.
+
+**Upload append**: new uploads are appended to the end of the custom order only when *every* existing image in that `(dataset_id, subfolder)` already has `sort_order` set (checked via `COUNT(id) == COUNT(sort_order)` + `MAX(sort_order)`). If any image lacks a `sort_order`, the subfolder is treated as unordered and new uploads receive `NULL`.
+
+**Cross-operation behaviour**:
+| Operation | `sort_order` effect |
+|---|---|
+| Upload to ordered subfolder | Appended at `MAX + 1` |
+| Upload to unordered subfolder | `NULL` |
+| Batch move subfolder (same dataset) | Preserved |
+| Batch move dataset | Preserved in relative sequence, appended after target's max `sort_order`. If target is empty: starts from 0. If target has mixed ordering (some null): cleared to `NULL`. |
+| Batch copy dataset | Preserved in relative sequence, appended after target's max `sort_order`. Same logic as move: empty target starts from 0, fully ordered target appends at max+1, mixed ordering clears to `NULL`. |
+| Dataset duplicate | Copied from source (both live-copy and snapshot-copy paths) |
+| Crop / upscale / LUT new-file | `NULL` (sorts last) |
+| Export | Always ordered `sort_order ASC NULLS LAST, created_at ASC` |
+| Snapshot create | Captured in `VersionImageState.sort_order` |
+| Snapshot restore / branch checkout | Restored to `Image.sort_order` |
+| Version diff | Compared; appears as a `sort_order` change entry when ordering changed between versions |
+
 ### Gallery navigation state
 
 `GalleryPage` persists two keys to `sessionStorage` (keyed by `datasetId`):
@@ -639,8 +668,9 @@ Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filte
 | Endpoint | Extra fields | Returns |
 |---|---|---|
 | `POST /images/bulk-count` | `include_flagged: bool = False` | `{ count: int }` — count of matching images without making any changes |
-| `POST /images/bulk-rename` | `new_stem: str` | `{ affected: int }` — renames matching images to `{slug}_001.ext`, `_002`, … Uses `slugify_filename` + `unique_filename_with_thumb`; pre-plans all renames before touching the filesystem; DB updated via ORM bulk-by-PK executemany (includes `thumbnail_path`) then `rename_with_sidecar` + thumbnail `replace()` per file; sets `is_auto_named=True` |
+| `POST /images/bulk-rename` | `new_stem: str`, `sort_by_sort_order: bool = False` | `{ affected: int }` — renames matching images to `{slug}_001.ext`, `_002`, … Uses `slugify_filename` + `unique_filename_with_thumb`; pre-plans all renames before touching the filesystem; DB updated via ORM bulk-by-PK executemany (includes `thumbnail_path`) then `rename_with_sidecar` + thumbnail `replace()` per file; sets `is_auto_named=True`. When `sort_by_sort_order=True`, images are ordered by `sort_order ASC NULLS LAST, created_at ASC` before numbering — used by the gallery's "Renumber Files" button. |
 | `POST /images/bulk-delete` | `include_flagged: bool = True` | `{ deleted: int }` — permanently deletes matching images; calls `mark_image_deleted_in_versions` per image for versioning hooks; unlinks image, `.txt` sidecar, and thumbnail; calls `refresh_stats` |
+| `PATCH /images/batch/reorder` | `{ dataset_id, updates: [{id, sort_order}] }` | `{ updated: int }` — bulk-sets `sort_order` on a list of images; validates all IDs belong to `dataset_id` before updating. Used by drag-and-drop reordering in the gallery. |
 
 **Frontend surfaces**:
 - `SelectionToolbar` — **Edit** button (pencil icon) opens a modal with `<BulkEditForm imageIds={selectedIds} />`. On success, invalidates `["images", datasetId]` and clears the selection.
@@ -656,7 +686,7 @@ Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filte
 
 `ExportPage.tsx` supports 3 format buttons: kohya, ai-toolkit, plain folder. All three are fully implemented. The left panel uses `.form-row` layout throughout.
 
-**Shared export loop**: `export_service.py` uses a shared `_run_export_loop(session, dataset_id, dest_dir, filters, progress_cb, format_fn)` helper that handles the DB query (column-explicit select, no blob fields), filter loop, progress emission, and result accumulation. Each of `export_kohya`, `export_aitoolkit`, and `export_plain` delegates to this helper and provides only a format-specific callback. Blob columns (`clip_embedding`, `dino_embedding`, `dino_layer_embeddings`) are excluded from the query — only `id`, `file_path`, `filename`, `caption_text`, `tags_json`, `aesthetic_score`, `quality_flags`, and `style_similarity_score` are loaded.
+**Shared export loop**: `export_service.py` uses a shared `_run_export_loop(session, dataset_id, dest_dir, filters, progress_cb, format_fn)` helper that handles the DB query (column-explicit select, no blob fields), filter loop, progress emission, and result accumulation. Each of `export_kohya`, `export_aitoolkit`, and `export_plain` delegates to this helper and provides only a format-specific callback. Blob columns (`clip_embedding`, `dino_embedding`, `dino_layer_embeddings`) are excluded from the query — only `id`, `file_path`, `filename`, `caption_text`, `tags_json`, `aesthetic_score`, `quality_flags`, and `style_similarity_score` are loaded. **Export order** is always `sort_order ASC NULLS LAST, created_at ASC` — datasets with a custom drag order export in that sequence; datasets without one export in stable chronological order. This determines the numbered filename sequence (`0001.jpg`, `0002.jpg`, …) in kohya/ai-toolkit formats.
 
 **Filters** (applied in `export_service.py::_is_excluded()`, shared by all three formats):
 
@@ -781,7 +811,7 @@ Files are stored **only once per unique content** (idempotent copy). No GC in v1
 |---|---|
 | `dataset_branches` | Named branches; `head_version_id` FK to latest snapshot on the branch |
 | `dataset_versions` | Snapshot records; `parent_id` self-ref for chain; auto-named `Snapshot YYYY-MM-DD HH:MM` if name omitted |
-| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) |
+| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) |
 
 `datasets.current_branch_id` — tracks the active branch (updated on checkout).
 

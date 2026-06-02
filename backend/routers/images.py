@@ -22,6 +22,7 @@ from backend.schemas.image import (
     BatchMoveDatasetRequest,
     BatchMoveSubfolderRequest,
     BatchResizeRequest,
+    BatchReorderRequest,
     BulkCountRequest,
     BulkDeleteRequest,
     BulkRenameRequest,
@@ -178,8 +179,11 @@ async def list_images(
         except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
-    sort_col = getattr(Image, sort, Image.created_at)
-    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+    if sort == "sort_order":
+        q = q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+    else:
+        sort_col = getattr(Image, sort, Image.created_at)
+        q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
     q = q.offset((page - 1) * limit).limit(limit)
 
     result = await db.execute(q)
@@ -200,11 +204,24 @@ async def upload_images(
     dest_images = Path(ds.folder_path) / "images"
     dest_thumbs = Path(ds.folder_path) / "thumbnails"
     added = []
+    norm_subfolder = normalize_subfolder(subfolder)
 
     existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
     db_names: set[str] = {r[0] for r in existing_result.all()}
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
     planned_thumb_stems: set[str] = set()
+
+    # Append new uploads at the end of the custom order only when EVERY existing image in this
+    # subfolder already has a sort_order assigned. A partial assignment (some NULLs) means the
+    # custom order was never fully initialized, so we leave new uploads unordered too.
+    order_stats_result = await db.execute(
+        select(func.count(Image.id), func.count(Image.sort_order), func.max(Image.sort_order)).where(
+            Image.dataset_id == dataset_id,
+            Image.subfolder == norm_subfolder,
+        )
+    )
+    total_count, ordered_count, max_order = order_stats_result.one()
+    next_sort_order: int | None = (max_order + 1) if (total_count > 0 and total_count == ordered_count) else None
 
     for upload in files:
         suffix = Path(upload.filename or "").suffix.lower()
@@ -226,12 +243,15 @@ async def upload_images(
             dataset_id=dataset_id,
             filename=filename,
             original_filename=upload.filename or filename,
-            subfolder=normalize_subfolder(subfolder),
+            subfolder=norm_subfolder,
             file_path=str(dest),
             thumbnail_path=thumb_path,
             generation_metadata=gen_meta,
+            sort_order=next_sort_order,
             **info,
         )
+        if next_sort_order is not None:
+            next_sort_order += 1
         db.add(img)
         added.append(filename)
 
@@ -328,10 +348,15 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     if not stem:
         raise HTTPException(400, "new_stem produces empty slug")
 
+    order_clause = (
+        (Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+        if body.sort_by_sort_order
+        else (Image.created_at,)
+    )
     query = _apply_bulk_filters(
         select(Image.id, Image.file_path, Image.filename).where(Image.dataset_id == body.dataset_id),
         body.image_ids, body.subfolder, body.quality_flags,
-    ).order_by(Image.created_at)
+    ).order_by(*order_clause)
 
     rows = (await db.execute(query)).all()
     if not rows:
@@ -348,20 +373,41 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         )
     )
     db_names: set[str] = {r[0] for r in existing.all()}
-    occupied_thumb_stems: set[str] = {p.stem for p in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+    # Exclude batch files from both the thumbnail and disk-existence checks during planning.
+    # Without these exclusions, a second renumber sees image_001.webp (thumbnail) and
+    # image_001.jpg (on disk) as already occupied and skips past them, making new images
+    # start at image_008 instead of restarting from 001.
+    batch_thumb_stems: set[str] = {Path(thumbnail_path_for(r.file_path)).stem for r in rows}
+    occupied_thumb_stems: set[str] = (
+        {p.stem for p in thumb_dir.glob("*.webp") if p.stem not in batch_thumb_stems}
+        if thumb_dir.exists() else set()
+    )
+    # Image files currently on disk that belong to this batch — they will be renamed away,
+    # so the counter should not treat them as occupied during planning.
+    batch_current_filenames: set[str] = {Path(r.file_path).name for r in rows}
     planned_thumb_stems: set[str] = set()
 
     plan: list[tuple[Path, Path, Path, Path, str, str]] = []  # (old, new, old_thumb, new_thumb, id, new_fn)
     for row in rows:
         old_path = Path(row.file_path)
         new_filename = unique_filename_with_thumb(
-            images_dir, stem, old_path.suffix.lower(), db_names, occupied_thumb_stems, planned_thumb_stems
+            images_dir, stem, old_path.suffix.lower(), db_names, occupied_thumb_stems, planned_thumb_stems,
+            disk_exclude=batch_current_filenames,
         )
         new_path = images_dir / new_filename
         old_thumb = Path(thumbnail_path_for(str(old_path)))
         new_thumb = Path(thumbnail_path_for(str(new_path)))
         plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename))
 
+    # Two-phase DB update: first move all batch filenames to guaranteed-unique temp names,
+    # then set the final names. A single executemany updating filename to a permutation of
+    # the current values would hit transient UNIQUE(dataset_id, filename) violations because
+    # SQLite checks the constraint immediately per row (not deferred).
+    await db.execute(
+        sa_update(Image),
+        [{"id": img_id, "filename": f"__renaming__{img_id}{Path(old_path).suffix.lower()}"}
+         for old_path, _, _, _, img_id, _ in plan],
+    )
     await db.execute(
         sa_update(Image),
         [{"id": img_id, "filename": new_fn, "file_path": str(new_path),
@@ -369,14 +415,55 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
          for _, new_path, _, new_thumb, img_id, new_fn in plan],
     )
 
+    # Two-phase rename to avoid clobbering batch files whose current name is another
+    # batch file's target name (e.g. after drag-reordering: image_003 → image_001
+    # while image_001 → image_003 in the same batch).
+    # Phase 1: rename everything whose target is still occupied to a unique temp name;
+    #          rename the rest directly.
+    # Phase 2: move temp files to their final names.
+    batch_old_paths: set[str] = {str(e[0]) for e in plan}
+    deferred: list[tuple[Path, Path, Path, Path]] = []
+
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:
-        if new_path != old_path:
+        if new_path == old_path:
+            continue
+        if str(new_path) in batch_old_paths:
+            tmp_path = old_path.with_name("__renaming__" + old_path.name)
+            tmp_thumb = old_thumb.parent / ("__renaming__" + old_thumb.name)
+            rename_with_sidecar(old_path, tmp_path)
+            if old_thumb.exists():
+                old_thumb.replace(tmp_thumb)
+            deferred.append((tmp_path, new_path, tmp_thumb, new_thumb))
+        else:
             rename_with_sidecar(old_path, new_path)
             if old_thumb.exists():
                 old_thumb.replace(new_thumb)
 
+    for tmp_path, new_path, tmp_thumb, new_thumb in deferred:
+        rename_with_sidecar(tmp_path, new_path)
+        if tmp_thumb.exists():
+            tmp_thumb.replace(new_thumb)
+
     await db.commit()
     return {"affected": len(plan)}
+
+
+@router.patch("/batch/reorder")
+async def batch_reorder(body: BatchReorderRequest, db: AsyncSession = Depends(get_db)):
+    if not body.updates:
+        return {"updated": 0}
+    ids = [u.id for u in body.updates]
+    count_result = await db.execute(
+        select(func.count()).where(Image.id.in_(ids), Image.dataset_id == body.dataset_id)
+    )
+    if count_result.scalar() != len(ids):
+        raise HTTPException(400, "Some image IDs do not belong to the specified dataset")
+    await db.execute(
+        sa_update(Image),
+        [{"id": u.id, "sort_order": u.sort_order} for u in body.updates],
+    )
+    await db.commit()
+    return {"updated": len(body.updates)}
 
 
 @router.post("/bulk-delete")
@@ -846,17 +933,18 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
 async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = Depends(get_db)):
     target = normalize_subfolder(body.subfolder)
 
+    _move_cols = (Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
+                  Image.sort_order, Image.created_at)
     if body.image_ids:
         result = await db.execute(
-            select(Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path)
-            .where(Image.id.in_(body.image_ids))
+            select(*_move_cols).where(Image.id.in_(body.image_ids))
         )
         rows = result.all()
         source_dataset_id = rows[0].dataset_id if rows else None
     elif body.source_dataset_id is not None and body.source_subfolder is not None:
         source_subfolder = normalize_subfolder(body.source_subfolder)
         result = await db.execute(
-            select(Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path)
+            select(*_move_cols)
             .where(Image.dataset_id == body.source_dataset_id)
             .where(Image.subfolder == source_subfolder)
         )
@@ -883,14 +971,34 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
     db_names: set[str] = {r[0] for r in existing.all()}
 
+    # Determine target sort_order assignment: preserve moved images' relative sequence.
+    # Query target order state before the move rows arrive.
+    target_order_result = await db.execute(
+        select(func.count(Image.id), func.count(Image.sort_order), func.max(Image.sort_order))
+        .where(Image.dataset_id == body.target_dataset_id)
+    )
+    target_total, target_ordered, target_max = target_order_result.one()
+    if target_total == 0:
+        # Empty target: start a fresh custom order for the arriving images.
+        next_sort_order: int | None = 0
+    elif target_total == target_ordered:
+        # Target is fully ordered: append moved images after the last position.
+        next_sort_order = (target_max or 0) + 1
+    else:
+        # Target has mixed ordering; don't introduce more partial order.
+        next_sort_order = None
+
+    # Sort moved images by their source relative order so they arrive in the same sequence.
+    rows = sorted(rows, key=lambda r: (r.sort_order is None, r.sort_order or 0, r.created_at))
+
     target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
     occupied_thumb_stems: set[str] = {p.stem for p in target_thumb_dir.glob("*.webp")}
     planned_thumb_stems: set[str] = set()
 
-    # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn)
-    plan: list[tuple[Path, Path, Path, Path, str, str]] = []
-    for row in rows:
+    # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn, assigned_sort_order)
+    plan: list[tuple[Path, Path, Path, Path, str, str, int | None]] = []
+    for idx, row in enumerate(rows):
         old_path = Path(row.file_path)
         suf = old_path.suffix.lower()
         new_fn = unique_filename_with_thumb(
@@ -899,9 +1007,10 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         new_path = target_images_dir / new_fn
         old_thumb = Path(thumbnail_path_for(str(old_path)))
         new_thumb = Path(thumbnail_path_for(str(new_path)))
-        plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_fn))
+        assigned_order = (next_sort_order + idx) if next_sort_order is not None else None
+        plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_fn, assigned_order))
 
-    for old_path, new_path, old_thumb, new_thumb, img_id, new_fn in plan:
+    for old_path, new_path, old_thumb, new_thumb, img_id, new_fn, assigned_order in plan:
         await db.execute(
             sa_update(Image).where(Image.id == img_id).values(
                 dataset_id=body.target_dataset_id,
@@ -910,6 +1019,7 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 file_path=str(new_path),
                 thumbnail_path=str(new_thumb),
                 is_auto_named=True,
+                sort_order=assigned_order,
             )
         )
 
@@ -936,7 +1046,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.tags_json, Image.quality_flags, Image.aesthetic_score, Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
         Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
-        Image.generation_metadata,
+        Image.generation_metadata, Image.sort_order, Image.created_at,
     )
 
     if body.image_ids:
@@ -973,13 +1083,30 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     existing = await db.execute(select(Image.filename).where(Image.dataset_id == body.target_dataset_id))
     db_names: set[str] = {r[0] for r in existing.all()}
 
+    # Sort copied images by their source relative order so filenames are assigned in sequence.
+    rows = sorted(rows, key=lambda r: (r.sort_order is None, r.sort_order or 0, r.created_at))
+
+    # Determine target sort_order assignment: append after target's existing order rather than
+    # copying raw source values, which would interleave copies with target's existing images.
+    target_order_result = await db.execute(
+        select(func.count(Image.id), func.count(Image.sort_order), func.max(Image.sort_order))
+        .where(Image.dataset_id == body.target_dataset_id)
+    )
+    target_total, target_ordered, target_max = target_order_result.one()
+    if target_total == 0:
+        next_sort_order: int | None = 0
+    elif target_total == target_ordered:
+        next_sort_order = (target_max or 0) + 1
+    else:
+        next_sort_order = None
+
     target_stem = slugify_filename(target.replace("/", "_")) if target else "image"
 
     occupied_thumb_stems: set[str] = {p.stem for p in target_thumb_dir.glob("*.webp")}
     planned_thumb_stems: set[str] = set()
 
-    plan: list[tuple[Path, Path, Path, Path, Any]] = []
-    for row in rows:
+    plan: list[tuple[Path, Path, Path, Path, Any, int | None]] = []
+    for idx, row in enumerate(rows):
         old_path = Path(row.file_path)
         suf = old_path.suffix.lower()
         new_fn = unique_filename_with_thumb(
@@ -988,9 +1115,10 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         new_path = target_images_dir / new_fn
         old_thumb = Path(thumbnail_path_for(str(old_path)))
         new_thumb = Path(thumbnail_path_for(str(new_path)))
-        plan.append((old_path, new_path, old_thumb, new_thumb, row))
+        assigned_order = (next_sort_order + idx) if next_sort_order is not None else None
+        plan.append((old_path, new_path, old_thumb, new_thumb, row, assigned_order))
 
-    for old_path, new_path, old_thumb, new_thumb, row in plan:
+    for old_path, new_path, old_thumb, new_thumb, row, assigned_order in plan:
         db.add(Image(
             id=str(uuid4()),
             dataset_id=body.target_dataset_id,
@@ -1021,6 +1149,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             style_similarity_score=row.style_similarity_score,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
+            sort_order=assigned_order,
         ))
 
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:

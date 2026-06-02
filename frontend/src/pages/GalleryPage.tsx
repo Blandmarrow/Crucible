@@ -3,13 +3,15 @@ import { ArrowRightFromLine, Copy } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { imagesApi } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
 import { datasetsApi } from "../api/datasets";
-import ImageCard from "../components/gallery/ImageCard";
+import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
@@ -23,6 +25,7 @@ const SORT_OPTIONS = [
   { label: "Name A-Z", sort: "filename", order: "asc" },
   { label: "Style similarity ↓", sort: "style_similarity_score", order: "desc" },
   { label: "Colorfulness ↓", sort: "color_score", order: "desc" },
+  { label: "Custom order", sort: "sort_order", order: "asc" },
 ];
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate";
@@ -138,10 +141,15 @@ export default function GalleryPage() {
   const [newChildName, setNewChildName] = useState("");
 
   const sortOpt = SORT_OPTIONS[sortIdx];
+  const isCustomOrder = sortOpt.sort === "sort_order";
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
   const liveState = useRef({ page, sortIdx, captionedFilter, activeSubfolder });
   liveState.current = { page, sortIdx, captionedFilter, activeSubfolder };
+  const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
+  const prevSortIdxRef = useRef(sortIdx);
+  const imagesRef = useRef<ImageListItem[]>([]);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -200,8 +208,13 @@ export default function GalleryPage() {
       })))
     : undefined;
 
+  const imagesQueryKey = useMemo(
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel]
+  );
+
   const { data: images = [], isLoading, refetch } = useQuery({
-    queryKey: ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
+    queryKey: imagesQueryKey,
     queryFn: () =>
       imagesApi.list({
         dataset_id: datasetId!,
@@ -220,6 +233,8 @@ export default function GalleryPage() {
     placeholderData: keepPreviousData,
   });
 
+  imagesRef.current = images;
+
   useEffect(() => {
     if (!isLoading && images.length > 0 && !hasRestoredScroll.current && scrollRef.current && saved?.scrollTop) {
       hasRestoredScroll.current = true;
@@ -235,6 +250,61 @@ export default function GalleryPage() {
       );
     }
   }, [images, datasetId, page, sortOpt, captionedFilter]);
+
+  const reorderMutation = useMutation({
+    mutationFn: (updates: { id: string; sort_order: number }[]) =>
+      imagesApi.reorderImages(datasetId!, updates),
+    onError: () => toast.error("Failed to save order"),
+  });
+
+  const renumberMutation = useMutation({
+    mutationFn: () => {
+      const stem = activeSubfolder ? (activeSubfolder.split("/").pop() || "image") : "image";
+      return imagesApi.bulkRename(datasetId!, {
+        newStem: stem,
+        subfolder: activeSubfolder,
+        sortBySortOrder: true,
+      });
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      toast.success(`Renamed ${data.affected} file${data.affected !== 1 ? "s" : ""}`);
+      setShowRenumberConfirm(false);
+    },
+    onError: () => toast.error("Rename failed"),
+  });
+
+  // When switching TO custom order for the first time, initialize sort_order from current page order.
+  useEffect(() => {
+    const wasCustom = SORT_OPTIONS[prevSortIdxRef.current]?.sort === "sort_order";
+    prevSortIdxRef.current = sortIdx;
+    const nowCustom = SORT_OPTIONS[sortIdx]?.sort === "sort_order";
+    if (!wasCustom && nowCustom && datasetId) {
+      const current = imagesRef.current;
+      if (current.length === 0) return;
+      const anyHasSortOrder = current.some(img => img.sort_order != null);
+      if (!anyHasSortOrder) {
+        const pageOffset = (page - 1) * pageSize;
+        imagesApi.reorderImages(datasetId, current.map((img, idx) => ({ id: img.id, sort_order: pageOffset + idx })))
+          .then(() => qc.invalidateQueries({ queryKey: ["images", datasetId] }))
+          .then(() => toast.success("Custom order initialized"))
+          .catch(() => toast.error("Failed to initialize order"));
+      }
+    }
+  }, [sortIdx, datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !datasetId) return;
+    const cached = qc.getQueryData<ImageListItem[]>(imagesQueryKey) ?? [];
+    const oldIndex = cached.findIndex(img => img.id === active.id);
+    const newIndex = cached.findIndex(img => img.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrder = arrayMove(cached, oldIndex, newIndex);
+    qc.setQueryData(imagesQueryKey, newOrder);
+    const pageOffset = (page - 1) * pageSize;
+    reorderMutation.mutate(newOrder.map((img, idx) => ({ id: img.id, sort_order: pageOffset + idx })));
+  }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation]);
 
   const handleUpload = useCallback(async (files: FileList, sf?: string) => {
     if (!datasetId) return;
@@ -701,6 +771,20 @@ export default function GalleryPage() {
           {count === images.length && images.length > 0 ? "Deselect all" : "Select all"}
         </button>
 
+        {isCustomOrder && (
+          <button
+            className="btn ghost sm"
+            onClick={() => setShowRenumberConfirm(true)}
+            title="Rename files sequentially in current custom order"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M3 4h2M3 8h4M3 12h6M9 2v4l2-2M13 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM13 10v4"/>
+            </svg>
+            Renumber
+          </button>
+        )}
+
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {subfolders.length > 0 && (
             <select
@@ -902,15 +986,34 @@ export default function GalleryPage() {
             </label>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-            {images.map((img) => (
-              <ImageCard
-                key={img.id}
-                image={img}
-                onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
-              />
-            ))}
-          </div>
+          (() => {
+            const grid = (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+                {images.map((img) =>
+                  isCustomOrder ? (
+                    <SortableImageCard
+                      key={img.id}
+                      image={img}
+                      onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                    />
+                  ) : (
+                    <ImageCard
+                      key={img.id}
+                      image={img}
+                      onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                    />
+                  )
+                )}
+              </div>
+            );
+            return isCustomOrder ? (
+              <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
+                <SortableContext items={images.map(i => i.id)} strategy={rectSortingStrategy}>
+                  {grid}
+                </SortableContext>
+              </DndContext>
+            ) : grid;
+          })()
         )}
 
         {/* Pagination */}
@@ -961,6 +1064,16 @@ export default function GalleryPage() {
             <GenerationMetadata metadata={genMetaImage.generation_metadata} />
           </div>
         </div>
+      )}
+
+      {showRenumberConfirm && (
+        <ConfirmDialog
+          title="Renumber Files"
+          message={`Rename images to sequential names (${activeSubfolder ? (activeSubfolder.split("/").pop() || "image") : "image"}_001, _002, …) in current custom order?`}
+          confirmLabel={renumberMutation.isPending ? "Renaming…" : "Renumber"}
+          onConfirm={() => renumberMutation.mutate()}
+          onCancel={() => setShowRenumberConfirm(false)}
+        />
       )}
 
       {pendingDeleteSubfolder && (

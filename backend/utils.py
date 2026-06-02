@@ -24,15 +24,25 @@ def slugify_filename(name: str) -> str:
     return s[:200] or "image"
 
 
-def unique_filename(directory: Path, stem: str, suffix: str, db_names: set) -> str:
-    """Return a filename that is neither on disk nor in db_names. Tries stem+suffix, then stem_001, _002, ..."""
+def unique_filename(directory: Path, stem: str, suffix: str, db_names: set, disk_exclude: set[str] | None = None) -> str:
+    """Return a filename that is neither on disk nor in db_names. Tries stem+suffix, then stem_001, _002, ...
+
+    disk_exclude: filenames that exist on disk but should be treated as absent (e.g. files being renamed away
+    in the same batch operation). Without this, a bulk-rename planning pass would see its own current files
+    as occupied and skip past them, causing the counter to jump instead of restarting from 001.
+    """
+    def _on_disk(fn: str) -> bool:
+        if disk_exclude and fn in disk_exclude:
+            return False
+        return (directory / fn).exists()
+
     candidate = f"{stem}{suffix}"
-    if candidate not in db_names and not (directory / candidate).exists():
+    if candidate not in db_names and not _on_disk(candidate):
         return candidate
     counter = 1
     while True:
         candidate = f"{stem}_{counter:03d}{suffix}"
-        if candidate not in db_names and not (directory / candidate).exists():
+        if candidate not in db_names and not _on_disk(candidate):
             return candidate
         counter += 1
 
@@ -44,6 +54,7 @@ def unique_filename_with_thumb(
     db_names: set[str],
     occupied_thumb_stems: set[str],
     planned_thumb_stems: set[str],
+    disk_exclude: set[str] | None = None,
 ) -> str:
     """Like unique_filename but also avoids thumbnail-stem collisions.
 
@@ -56,13 +67,13 @@ def unique_filename_with_thumb(
     Mutates db_names (adds the chosen filename) and planned_thumb_stems (adds
     the chosen stem) so subsequent calls within the same batch stay consistent.
     """
-    candidate = unique_filename(images_dir, stem, suffix, db_names)
+    candidate = unique_filename(images_dir, stem, suffix, db_names, disk_exclude)
     while True:
         cand_stem = Path(candidate).stem
         if cand_stem not in occupied_thumb_stems and cand_stem not in planned_thumb_stems:
             break
         db_names.add(candidate)  # prevent unique_filename from returning this again
-        candidate = unique_filename(images_dir, stem, suffix, db_names)
+        candidate = unique_filename(images_dir, stem, suffix, db_names, disk_exclude)
     db_names.add(candidate)
     planned_thumb_stems.add(Path(candidate).stem)
     return candidate

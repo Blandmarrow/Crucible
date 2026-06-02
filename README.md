@@ -22,6 +22,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
 - **Process** images with ML upscaling and LUT color grading → [details](docs/features.md#image-processing)
 - **Detect** objects and ground phrases using Florence-2 bounding-box detection → [details](docs/features.md#object-detection)
+- **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/features.md#file-browser)

@@ -24,6 +24,12 @@ export interface BulkFilterParams {
 
 export interface BulkRenameParams extends BulkFilterParams {
   newStem: string;
+  sortBySortOrder?: boolean;
+}
+
+export interface ReorderUpdate {
+  id: string;
+  sort_order: number;
 }
 
 export type BulkDeleteParams = BulkFilterParams;
@@ -128,6 +134,12 @@ export const imagesApi = {
       image_ids: params.imageIds ?? null,
       quality_flags: params.qualityFlags ?? null,
       subfolder: params.subfolder ?? null,
+      sort_by_sort_order: params.sortBySortOrder ?? false,
+    }).then((r) => r.data),
+  reorderImages: (datasetId: string, updates: ReorderUpdate[]) =>
+    client.patch<{ updated: number }>("/images/batch/reorder", {
+      dataset_id: datasetId,
+      updates,
     }).then((r) => r.data),
   bulkDelete: (datasetId: string, params: BulkDeleteParams) =>
     client.post<{ deleted: number }>("/images/bulk-delete", {

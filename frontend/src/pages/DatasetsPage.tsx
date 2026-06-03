@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { DECLARED_CATEGORIES_KEY } from "../constants/storage";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
@@ -130,6 +131,18 @@ export default function DatasetsPage() {
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
 
+  // ── Empty categories (localStorage-backed so they survive page reloads) ──
+  const [emptyCategories, setEmptyCategories] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(DECLARED_CATEGORIES_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  });
+
+  // ── New Category modal ────────────────────────────────────────────────────
+  const [showCreateCategory, setShowCreateCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+
   // ── Create modal ─────────────────────────────────────────────────────────
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -164,6 +177,9 @@ export default function DatasetsPage() {
   // ── Drag/drop ────────────────────────────────────────────────────────────
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dataset-to-category drag state
+  const [draggingDatasetId, setDraggingDatasetId] = useState<string | null>(null);
+  const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: datasets = [], isLoading } = useQuery({
@@ -218,8 +234,8 @@ export default function DatasetsPage() {
   }, [datasets, search, sortBy]);
 
   const existingCategories = useMemo(
-    () => Array.from(new Set(datasets.map((d) => d.category).filter(Boolean))).sort() as string[],
-    [datasets]
+    () => [...new Set([...datasets.map((d) => d.category).filter(Boolean), ...emptyCategories])].sort() as string[],
+    [datasets, emptyCategories]
   );
 
   const totalImages = datasets.reduce((s, d) => s + d.image_count, 0);
@@ -254,6 +270,10 @@ export default function DatasetsPage() {
       toast.error("Duplicate failed");
     }
   }, [duplicateJobProgress?.status, duplicateJobId, qc]);
+
+  useEffect(() => {
+    localStorage.setItem(DECLARED_CATEGORIES_KEY, JSON.stringify(emptyCategories));
+  }, [emptyCategories]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMutation = useMutation({
@@ -316,7 +336,8 @@ export default function DatasetsPage() {
       const affected = datasets.filter((d) => d.category === oldName);
       await Promise.all(affected.map((d) => datasetsApi.update(d.id, { category: newName })));
     },
-    onSuccess: () => {
+    onSuccess: (_data, { oldName, newName: renamedTo }) => {
+      setEmptyCategories((prev) => prev.map((c) => (c === oldName ? renamedTo : c)));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setRenamingCategory(null);
       toast.success("Category renamed");
@@ -333,7 +354,8 @@ export default function DatasetsPage() {
       const affected = datasets.filter((d) => d.category === catName);
       await Promise.all(affected.map((d) => datasetsApi.update(d.id, { category: "" })));
     },
-    onSuccess: () => {
+    onSuccess: (_data, catName) => {
+      setEmptyCategories((prev) => prev.filter((c) => c !== catName));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setDeletingCategory(null);
       toast.success("Category removed");
@@ -342,6 +364,13 @@ export default function DatasetsPage() {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       toast.error("Failed to remove category");
     },
+  });
+
+  const moveCategoryMutation = useMutation({
+    mutationFn: ({ datasetId, category }: { datasetId: string; category: string }) =>
+      datasetsApi.update(datasetId, { category }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["datasets"] }),
+    onError: () => toast.error("Failed to move dataset"),
   });
 
   // ── Drag/drop ─────────────────────────────────────────────────────────────
@@ -399,6 +428,19 @@ export default function DatasetsPage() {
     };
   }, [handleCardDrop]);
 
+  // ── New category handler ──────────────────────────────────────────────────
+  function handleCreateCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (emptyCategories.includes(name) || datasets.some((d) => d.category === name)) {
+      toast("Category already exists");
+      return;
+    }
+    setEmptyCategories((prev) => [...prev, name]);
+    setShowCreateCategory(false);
+    setNewCategoryName("");
+  }
+
   // ── Card renderer ─────────────────────────────────────────────────────────
   const renderCard = (ds: Dataset, i: number) => {
     const pct = ds.image_count ? Math.round((ds.captioned_count / ds.image_count) * 100) : 0;
@@ -406,16 +448,24 @@ export default function DatasetsPage() {
       <div
         key={ds.id}
         data-dataset-id={ds.id}
+        draggable={hasAnyCategory}
         style={{
           background: "var(--surface-1)",
           border: `1px solid ${dragOverId === ds.id ? "var(--accent)" : "var(--line)"}`,
           borderRadius: "var(--r-lg)", overflow: "hidden",
-          cursor: "pointer", display: "flex", flexDirection: "column",
-          position: "relative", transition: "border-color .15s",
+          cursor: hasAnyCategory ? "grab" : "pointer", display: "flex", flexDirection: "column",
+          position: "relative", transition: "border-color .15s, opacity .15s",
+          opacity: draggingDatasetId === ds.id ? 0.45 : 1,
         }}
         onClick={() => go(`/datasets/${ds.id}/gallery`, { page: "gallery", datasetId: ds.id })}
         onMouseEnter={(e) => { if (dragOverId !== ds.id) (e.currentTarget as HTMLElement).style.borderColor = "var(--line-2)"; }}
         onMouseLeave={(e) => { if (dragOverId !== ds.id) (e.currentTarget as HTMLElement).style.borderColor = "var(--line)"; }}
+        onDragStart={(e) => {
+          setDraggingDatasetId(ds.id);
+          e.dataTransfer.setData("dataset-id", ds.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={() => { setDraggingDatasetId(null); setDropTargetCategory(null); }}
         className="ds-card-wrapper"
       >
         {/* Drag-over overlay */}
@@ -567,9 +617,31 @@ export default function DatasetsPage() {
     const collapsed = collapsedCategories.has(cat);
     const isUncategorized = cat === "(Uncategorized)";
     const isRenaming = renamingCategory === cat;
+    const isDropTarget = dropTargetCategory === cat;
 
     return (
-      <div key={cat} style={{ marginBottom: 22 }}>
+      <div
+        key={cat}
+        style={{ marginBottom: 22, borderRadius: 8, outline: isDropTarget ? "2px solid var(--accent)" : "2px solid transparent", transition: "outline-color .1s" }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("dataset-id")) return;
+          e.preventDefault();
+          if (dropTargetCategory !== cat) setDropTargetCategory(cat);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTargetCategory(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const datasetId = e.dataTransfer.getData("dataset-id");
+          if (!datasetId) return;
+          const targetCat = isUncategorized ? "" : cat;
+          const src = datasets.find((d) => d.id === datasetId);
+          if (src && src.category !== targetCat) moveCategoryMutation.mutate({ datasetId, category: targetCat });
+          setDropTargetCategory(null);
+          setDraggingDatasetId(null);
+        }}
+      >
         {/* Section header */}
         <div
           className="ds-cat-header"
@@ -680,17 +752,35 @@ export default function DatasetsPage() {
           )}
         </div>
 
-        {!collapsed && renderGrid(items)}
+        {!collapsed && (items.length > 0 ? renderGrid(items) : (
+          <div style={{
+            height: 68, border: `2px dashed ${isDropTarget ? "var(--accent)" : "var(--line)"}`,
+            borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+            color: isDropTarget ? "var(--accent)" : "var(--fg-mute)", fontSize: 13,
+            transition: "border-color .1s, color .1s",
+          }}>
+            {isDropTarget ? "Release to move here" : "Empty — drag datasets here"}
+          </div>
+        ))}
       </div>
     );
   };
 
   // ── Grouped layout ────────────────────────────────────────────────────────
-  const hasAnyCategory = filteredAndSorted.some((d) => d.category);
-  const categoryNames = hasAnyCategory
-    ? ([...new Set(filteredAndSorted.map((d) => d.category).filter(Boolean))].sort() as string[])
-    : [];
-  const uncategorized = hasAnyCategory ? filteredAndSorted.filter((d) => !d.category) : [];
+  const { hasAnyCategory, categoryNames, uncategorized } = useMemo(() => {
+    const activeEmpties = search ? [] : emptyCategories;
+    const anyCategory = filteredAndSorted.some((d) => d.category) || activeEmpties.length > 0;
+    return {
+      hasAnyCategory: anyCategory,
+      categoryNames: anyCategory
+        ? ([...new Set([
+            ...filteredAndSorted.map((d) => d.category).filter(Boolean),
+            ...activeEmpties,
+          ])].sort() as string[])
+        : [],
+      uncategorized: anyCategory ? filteredAndSorted.filter((d) => !d.category) : [],
+    };
+  }, [filteredAndSorted, emptyCategories, search]);
 
   // ── Rename modal: changed detection ───────────────────────────────────────
   const renameChanged = renameTarget
@@ -738,6 +828,12 @@ export default function DatasetsPage() {
               <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
             </svg>
             Import folder
+          </button>
+          <button className="btn" onClick={() => setShowCreateCategory(true)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M2 4h12M2 8h8M2 12h5"/><path d="M13 10v4M11 12h4"/>
+            </svg>
+            New category
           </button>
           <button className="btn primary" onClick={() => setShowCreate(true)}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -1011,6 +1107,44 @@ export default function DatasetsPage() {
           onConfirm={() => deleteCategoryMutation.mutate(deletingCategory)}
           onCancel={() => setDeletingCategory(null)}
         />
+      )}
+
+      {/* ── New Category modal ─────────────────────────────────────────────── */}
+      {showCreateCategory && (
+        <div
+          className="dialog-bg"
+          onClick={() => { setShowCreateCategory(false); setNewCategoryName(""); }}
+        >
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>New Category</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+              <label className="label">Category name</label>
+              <input
+                className="input"
+                autoFocus
+                placeholder="e.g. Portraits"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateCategory();
+                  if (e.key === "Escape") { setShowCreateCategory(false); setNewCategoryName(""); }
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={() => { setShowCreateCategory(false); setNewCategoryName(""); }}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={!newCategoryName.trim()}
+                onClick={handleCreateCategory}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

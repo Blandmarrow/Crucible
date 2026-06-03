@@ -32,3 +32,10 @@ Quality flags are set automatically when metrics cross thresholds (all configura
 All five thresholds are configurable in Settings — changes take effect on the next scoring run.
 
 The scoring run can be scoped to a specific subfolder via a dropdown in the Quality page header (shown only when subfolders exist), so you can score one subset at a time without touching the rest of the dataset.
+
+## Duplicate resolution
+
+After a scoring run that includes duplicate detection, the Quality page groups detected duplicates into thumbnail grids. Each group offers:
+
+- **Keep best** — retains the image with the highest aesthetic score and deletes the rest
+- **Keep first** — retains the earliest-uploaded image and deletes the rest

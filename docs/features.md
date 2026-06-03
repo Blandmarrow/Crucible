@@ -5,13 +5,14 @@
 - Create multiple named datasets, each pointing to a folder of images
 - Edit datasets — rename (folder is moved on disk and all image paths are updated automatically), update the description, or assign a **category**
 - **Sort** the dataset list by: Newest / Oldest / Recently updated / Name A→Z / Name Z→A / Most images / Fewest images / Largest / Smallest / Most captioned %
-- **Category groups** — assign datasets to named categories; the page switches from a flat grid to collapsible folder sections. Rename or delete a category (batch-updates all datasets in it) by hovering the section header
+- **Category groups** — assign datasets to named categories; the page switches from a flat grid to collapsible folder sections. Rename or delete a category (batch-updates all datasets in it) by hovering the section header. A **New category** button creates an empty named category that persists across sessions — useful for pre-planning a layout before datasets are assigned. **Drag-and-drop** any dataset card onto a category section header to reassign it; drop onto "(Uncategorized)" to remove its category. Empty categories are hidden while the search box is active.
 - **Duplicate** a dataset — deep-copies all images, captions, subfolders, and metadata into a new dataset as a background job; optionally duplicate from a specific version snapshot instead of the current on-disk state
 - Gallery view with search (filename or caption text), pagination, and sort
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset; a live progress bar shows how many files have been processed, and the counter persists in the top bar if you navigate away mid-upload
 - Organize images into subfolders (logical groupings — images stay flat on disk); move or copy images or entire subfolders to a different dataset in one operation
-- Per-image detail view with metadata, caption editor, and crop/rotate tools
+- **Import** — when importing a folder, the **Preserve structure** option recursively walks subdirectories and maps each level to a logical subfolder matching the relative path; when off, all images land in the specified target subfolder
+- Per-image detail view with metadata, caption editor, and crop/rotate tools; **keyboard shortcuts**: ← / → navigate between images, **Space** toggles selection, **Delete** opens the delete confirmation. A **Select** button in the toolbar (checkbox icon) also toggles whether the current image is in the active selection. The caption editor shows a live **token counter** (word count · GPT-2 BPE token count) that turns amber at ≥ 70 tokens and red at ≥ 77 — the CLIP truncation limit.
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 
 ## Object Detection
@@ -30,6 +31,8 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - SVG overlay on the image with per-label colour coding
 - Click any label chip to toggle its boxes on/off
 - Eye icon in the toolbar hides/shows all boxes at once
+
+The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results.
 
 Available from the **Detect** button in the SelectionToolbar, and from the Object Detection section on the Captioning page when a Florence-2 model is selected.
 
@@ -61,9 +64,12 @@ Available from: the **LUT** button in the ImageDetailPage toolbar (mutually excl
 
 ## Batch Operations
 
-Select any images in the gallery (or use **Space** while viewing an image in the detail view) to add them to the selection. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
+Select any images in the gallery (checkbox click), **shift+click** a checkbox to extend the selection as a contiguous range (re-shift-clicking replaces the previous range without affecting independently-selected images outside it), or use **Space** while viewing an image in the detail view. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
+
+Bulk score, upscale, LUT, detect, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
+- **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
 - **Batch score** — run technical, aesthetic, watermark, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
@@ -74,13 +80,24 @@ Select any images in the gallery (or use **Space** while viewing an image in the
 - **Bulk rename** — rename matching images to a sequential base name pattern (`{slug}_001.ext`, `_002`, …)
 - **Bulk delete** — remove selected images from the dataset and disk
 
+## Manual Image Ordering
+
+The gallery sort dropdown includes a **Custom order** option. Selecting it activates drag-and-drop reordering:
+
+- Drag any image card to reposition it; the new order persists across sessions
+- **First activation** silently initialises order from the current page arrangement so existing sequences are preserved
+- **Renumber Files** button (visible in the gallery toolbar when Custom order is active) — renames all images in the current subfolder to `{slug}_001.ext`, `_002`, … in drag order; useful before export so filenames match the training sequence
+- Export always follows custom order (`sort_order ASC`) with `created_at` as tiebreak — numbered filenames in Kohya and AI Toolkit formats reflect the drag sequence
+- Custom order is preserved across same-dataset subfolder moves; images appended via cross-dataset moves/copies are added after the existing sequence. Crop, upscale, and LUT new-file outputs receive no order and sort last.
+
 ## Statistics Dashboard
 
 - 14+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, watermark, megapixels, file size, aspect ratio, caption length, caption token distribution, style similarity, quality flags
   - **Caption token distribution** uses GPT-2 BPE tokenisation and highlights captions that exceed CLIP's 77-token truncation limit
 - Editable histogram bucket edges — rebucketing runs entirely client-side against raw score arrays
 - Top-500 tag frequency chart and tag co-occurrence matrix
-- Click any histogram bar or quality flag card to open a filtered thumbnail grid
+- The **Summary** section includes a score guide table (metric, value range, flag threshold, detection method) and score coverage bars showing what percentage of images have been scored for each metric
+- Click any histogram bar or quality flag card to open a filtered thumbnail grid; clicking a thumbnail in that grid opens a full-resolution **lightbox** with prev/next navigation, a "View Details →" link to the image detail page, and a two-step delete button; a per-thumbnail × button on hover also provides inline delete
 - A gear icon in the page header opens a settings drawer to toggle individual histogram panels on/off; visibility state is persisted per-browser
 - All histograms and charts can be scoped to a specific subfolder via a dropdown in the page header
 - **Export Stats CSV** — downloads a key-value CSV of all dataset statistics: summary fields, file-size percentiles, quality flag counts, score coverage, mean scores, and every histogram distribution; button is disabled while score data is still loading
@@ -91,18 +108,28 @@ Select any images in the gallery (or use **Space** while viewing an image in the
 A three-panel filesystem explorer built into the app:
 
 - Left panel: drive roots + quick-access shortcut to the datasets folder
-- Centre panel: breadcrumb navigation, sortable file list (name / size / date), images-only toggle, context menu (rename / delete / import into dataset)
+- Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Images only** toggle to hide non-image files, context menu (rename / delete / import into dataset)
 - Right panel: image preview + dimensions/format/size metadata + generation metadata (A1111 / ComfyUI)
 - Create folders, rename files and directories, delete items (syncs DB records automatically)
 - Import any folder of images directly into an existing dataset without leaving the browser
 
 ## Settings
 
-Route: `/settings` — accessible from the sidebar. Settings are grouped into five tabs.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into six tabs.
 
 **Gallery** — browser-local preferences, each taking effect immediately:
 - Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
 - Subfolder rename on move: *Rename to subfolder name* (default) or *Keep original filenames* — when disabled, moving images to a subfolder updates their subfolder metadata only, without renaming the files
+- **Gallery defaults** — applied on first visit to a dataset (session state takes precedence on subsequent visits): default sort order, default caption filter (All / Captioned only / Uncaptioned only), default quality flag filter
+
+**Captioning** — browser-local preferences, each taking effect immediately (applied once when the Captioning page loads model data):
+- Default model
+- Default caption style
+- Default scope (Uncaptioned only / All images)
+- Default delimiter mode (Overwrite / Append / Prepend)
+- Strip refusals (default on)
+- Rename on caption (default off)
+- Save backup (default off)
 
 **UI Behavior** — browser-local preferences, each taking effect immediately:
 - Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)

@@ -60,6 +60,10 @@ export interface ImageListParams {
   score_filters?: string;
   subfolder?: string;
   detection_label?: string;
+  caption_words_min?: number;
+  caption_words_max?: number;
+  caption_tokens_min?: number;
+  caption_tokens_max?: number;
 }
 
 export const imagesApi = {

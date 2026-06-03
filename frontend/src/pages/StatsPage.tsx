@@ -27,6 +27,10 @@ const FS_EDGES_MB  = [0.1, 0.5, 1.0, 2.0, 5.0];
 const FS_LABELS    = ["<0.1 MB", "0.1–0.5", "0.5–1", "1–2", "2–5", "5+"];
 const AR_EDGES     = [0.5, 0.67, 0.85, 1.15, 1.4, 1.6, 1.95];
 const AR_LABELS    = ["9:16+", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9+"];
+const WC_EDGES     = [1, 6, 11, 21, 51];
+const WC_LABELS    = ["No caption", "1–5 words", "6–10 words", "11–20 words", "21–50 words", "50+ words"];
+const TC_EDGES     = [1, 20, 40, 60, 77];
+const TC_LABELS    = ["No caption", "1–19", "20–39", "40–59", "60–76", "77+"];
 
 const SCORE_GUIDE = [
   { metric: "Aesthetic",  range: "1–10", threshold: "≥ 5.0 keep · ≥ 6.5 curated · < 4.0 reject", note: "CLIP aesthetic predictor", cls: "warn" },
@@ -220,7 +224,26 @@ const mkFs: FB = (min, max) => ({
   order: "asc",
 });
 
-const mkNone: FB = () => undefined;
+const mkCapWC: FB = (min, max) => ({ caption_words_min: min, caption_words_max: max });
+const mkCapTC: FB = (min, max) => ({ caption_tokens_min: min, caption_tokens_max: max });
+
+function capLenEntries(dist: Record<string, number>): ChartEntry[] {
+  return WC_LABELS.filter(lbl => lbl in dist).map(name => {
+    const i = WC_LABELS.indexOf(name);
+    if (i === 0) return { name, count: dist[name], filter: { captioned: false } };
+    return { name, count: dist[name],
+      filter: mkCapWC(WC_EDGES[i - 1], i < WC_EDGES.length ? WC_EDGES[i] : undefined) };
+  });
+}
+
+function capTokenEntries(dist: Record<string, number>): ChartEntry[] {
+  return TC_LABELS.filter(lbl => lbl in dist).map(name => {
+    const i = TC_LABELS.indexOf(name);
+    if (i === 0) return { name, count: dist[name], filter: { captioned: false } };
+    return { name, count: dist[name],
+      filter: mkCapTC(TC_EDGES[i - 1], i < TC_EDGES.length ? TC_EDGES[i] : undefined) };
+  });
+}
 
 const DEFAULT_EDGES: Record<string, string> = {
   aesthetic:  "4, 6",
@@ -1035,8 +1058,8 @@ export default function StatsPage() {
   const formatData: ChartEntry[] = Object.entries(stats.format_distribution).map(([name, count]) => ({
     name, count, filter: { format_filter: name },
   }));
-  const capLenData: ChartEntry[] = Object.entries(stats.caption_length_distribution).map(([name, count]) => ({ name, count }));
-  const capTokenData: ChartEntry[] = Object.entries(stats.caption_token_distribution).map(([name, count]) => ({ name, count }));
+  const capLenData   = capLenEntries(stats.caption_length_distribution);
+  const capTokenData = capTokenEntries(stats.caption_token_distribution);
   const topTags = tagStats.slice(0, 20);
   const maxTagCount = Math.max(...topTags.map((t) => t.count), 1);
 
@@ -1326,10 +1349,10 @@ export default function StatsPage() {
         {(show("captions", "caption_wc") || show("captions", "caption_tc")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("captions", "caption_wc") && show("captions", "caption_tc") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("captions", "caption_wc") && capLenData.length > 0 && (
-              <HistPanel title="Caption word count" entries={capLenData} onBarClick={() => {}} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkNone} />
+              <HistPanel title="Caption word count" entries={capLenData} onBarClick={open("Caption word count")} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkCapWC} />
             )}
             {show("captions", "caption_tc") && capTokenData.length > 0 && (
-              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={() => {}} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkNone} />
+              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={open("Caption token count")} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkCapTC} />
             )}
           </div>
         )}

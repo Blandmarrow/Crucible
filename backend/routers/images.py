@@ -1,12 +1,13 @@
 import asyncio
 import json
 import shutil
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, delete, func, or_, select, update as sa_update
+from sqlalchemy import and_, case, delete, func, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
@@ -45,6 +46,11 @@ from backend.services.image_service import (
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/images", tags=["images"])
+
+@lru_cache(maxsize=None)
+def _get_enc():
+    import tiktoken
+    return tiktoken.get_encoding("gpt2")
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
@@ -100,6 +106,10 @@ async def list_images(
     score_filters: str | None = Query(None),
     subfolder: str | None = Query(None),
     detection_label: str | None = Query(None),
+    caption_words_min: int | None = Query(None),
+    caption_words_max: int | None = Query(None),
+    caption_tokens_min: int | None = Query(None),
+    caption_tokens_max: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
@@ -179,13 +189,59 @@ async def list_images(
         except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
+    if caption_words_min is not None or caption_words_max is not None:
+        wc_expr = case(
+            (
+                (Image.caption_text.is_(None)) | (func.trim(Image.caption_text) == ""),
+                0,
+            ),
+            else_=(
+                func.length(func.trim(Image.caption_text))
+                - func.length(func.replace(func.trim(Image.caption_text), " ", ""))
+                + 1
+            ),
+        )
+        if caption_words_min is not None:
+            q = q.where(wc_expr >= caption_words_min)
+        if caption_words_max is not None:
+            q = q.where(wc_expr < caption_words_max)
+
     if sort == "sort_order":
         q = q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
     else:
         sort_col = getattr(Image, sort, Image.created_at)
         q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
-    q = q.offset((page - 1) * limit).limit(limit)
 
+    if caption_tokens_min is not None or caption_tokens_max is not None:
+        # "No caption" bucket (tokens < 1 == empty caption): use fast SQL filter.
+        if caption_tokens_min is None and caption_tokens_max is not None and caption_tokens_max <= 1:
+            q = q.where(func.trim(Image.caption_text) == "")
+        else:
+            # BPE encoding can't run in SQL; fetch a capped result set and
+            # filter in a thread executor so the event loop isn't blocked.
+            _TOKEN_FETCH_CAP = 5000
+            capped_result = await db.execute(q.limit(_TOKEN_FETCH_CAP))
+            all_rows = list(capped_result.scalars().all())
+            id_texts = [(img.id, img.caption_text) for img in all_rows]
+
+            def _filter_by_tokens() -> list[str]:
+                enc = _get_enc()
+                matching: list[str] = []
+                for row_id, caption_text in id_texts:
+                    trimmed = (caption_text or "").strip()
+                    tc = len(enc.encode_ordinary(trimmed)) if trimmed else 0
+                    if (caption_tokens_min is None or tc >= caption_tokens_min) and \
+                       (caption_tokens_max is None or tc < caption_tokens_max):
+                        matching.append(row_id)
+                return matching[(page - 1) * limit : page * limit]
+
+            page_ids = await asyncio.get_running_loop().run_in_executor(None, _filter_by_tokens)
+            if not page_ids:
+                return []
+            id_set = set(page_ids)
+            return [img for img in all_rows if img.id in id_set]
+
+    q = q.offset((page - 1) * limit).limit(limit)
     result = await db.execute(q)
     return result.scalars().all()
 

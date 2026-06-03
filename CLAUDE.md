@@ -526,6 +526,8 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 | `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range |
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |
 | `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` |
+| `caption_words_min` / `caption_words_max` | `int` | Word count range — SQL approximation via `length(trim(text)) - length(replace(trim(text), ' ', '')) + 1`; `min` is inclusive, `max` is exclusive |
+| `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range; computed in Python (tiktoken) after SQL filters; capped at 5 000 rows pre-filter; `caption_tokens_max=1` with no min uses fast SQL `trim(caption_text) = ''` |
 
 **ImageLightbox**: Clicking a thumbnail in `BucketPanel` opens a full-resolution lightbox with prev/next navigation, metadata footer, a "View Details →" link to `/datasets/:datasetId/image/:imageId`, and a two-step **Delete** button. Deleting an image removes it from the panel's TanStack Query cache via `queryClient.setQueryData` (no refetch) and invalidates `dataset-stats`, `tag-stats`, and `tag-cooccurrence` queries. A per-thumbnail ×-on-hover delete button with an inline confirm overlay provides the same action from the grid.
 

@@ -7,17 +7,35 @@ export function useJobSSE(jobId: string | null) {
 
   useEffect(() => {
     if (!jobId) return;
-    const es = new EventSource(`/api/v1/jobs/stream/${jobId}`);
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data) as JobProgress;
-        if (data.type !== "heartbeat") {
-          updateJob(jobId, data);
-        }
-      } catch {}
+    const id = jobId;
+
+    let es: EventSource | null = null;
+    let closed = false;
+
+    function connect() {
+      if (closed) return;
+      es = new EventSource(`/api/v1/jobs/stream/${id}`);
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as JobProgress;
+          if (data.type !== "heartbeat") {
+            updateJob(id, data);
+          }
+        } catch {}
+      };
+      // On transient error, close and reconnect after a short delay so progress
+      // bars don't stall permanently from a momentary network hiccup.
+      es.onerror = () => {
+        es?.close();
+        if (!closed) setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+    return () => {
+      closed = true;
+      es?.close();
     };
-    es.onerror = () => es.close();
-    return () => es.close();
   }, [jobId, updateJob]);
 }
 
@@ -34,7 +52,7 @@ export function useAllJobsSSE() {
         }
       } catch {}
     };
-    es.onerror = () => {};
+    es.onerror = (e) => console.warn("Global job SSE error", e);
     return () => es.close();
   }, [updateJob]);
 }

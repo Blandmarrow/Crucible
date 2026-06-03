@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/export", tags=["export"])
 class KohyaExportRequest(BaseModel):
     dataset_id: str
     output_dir: str
-    n_repeats: int = 10
+    n_repeats: int = Field(default=10, ge=1, le=1000)
     concept_token: str = "concept"
     image_ids: list[str] | None = None
     output_format: str = "original"

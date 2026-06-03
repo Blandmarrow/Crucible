@@ -471,6 +471,13 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
          for _, new_path, _, new_thumb, img_id, new_fn in plan],
     )
 
+    # Commit DB before touching the filesystem so the DB is always the authoritative
+    # record of where files should live. If a filesystem rename fails partway through,
+    # the DB already reflects the intended final state; only the not-yet-renamed files
+    # are temporarily inaccessible (vs. the previous order where a mid-batch FS failure
+    # left the DB rolled back to old paths while some files had already moved).
+    await db.commit()
+
     # Two-phase rename to avoid clobbering batch files whose current name is another
     # batch file's target name (e.g. after drag-reordering: image_003 → image_001
     # while image_001 → image_003 in the same batch).
@@ -500,7 +507,6 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         if tmp_thumb.exists():
             tmp_thumb.replace(new_thumb)
 
-    await db.commit()
     return {"affected": len(plan)}
 
 
@@ -1079,13 +1085,17 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             )
         )
 
+    # Commit DB before filesystem operations so the DB always reflects the intended
+    # final state. If a rename fails mid-batch the images that were already moved
+    # remain accessible; only not-yet-moved files are temporarily at the wrong path.
+    await db.commit()
+
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:
         rename_with_sidecar(old_path, new_path)
         if old_thumb.exists():
             shutil.copy2(old_thumb, new_thumb)
             old_thumb.unlink()
 
-    await db.commit()
     await refresh_stats(db, source_dataset_id)
     await refresh_stats(db, body.target_dataset_id)
     return {"moved": len(rows), "target_dataset_id": body.target_dataset_id}

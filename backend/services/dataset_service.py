@@ -169,7 +169,7 @@ async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
     ds = await db.get(Dataset, dataset_id)
     if ds:
         current = [p for p in (ds.declared_subfolders or [])
-                   if p != path and not p.startswith(prefix)]
+                   if p != path and not p.startswith(path + "/")]
         ds.declared_subfolders = current
 
     await db.commit()

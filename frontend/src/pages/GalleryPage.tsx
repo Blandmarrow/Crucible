@@ -264,7 +264,7 @@ export default function GalleryPage() {
       hasRestoredScroll.current = true;
       scrollRef.current.scrollTop = saved.scrollTop;
     }
-  }, [isLoading, images.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isLoading, images.length, saved]);
 
   useEffect(() => {
     if (images.length > 0 && datasetId) {

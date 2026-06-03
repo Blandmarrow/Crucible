@@ -1,6 +1,9 @@
 import asyncio
+import logging
 import re
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 _REGEX_TIMEOUT = 30.0  # seconds; protects event loop from catastrophic backtracking
 
@@ -121,33 +124,29 @@ async def bulk_edit_captions(
     for img in images:
         old_text = img.caption_text or ""
 
-        try:
-            if operation == "prepend":
-                new_text = (text + " " + old_text).strip() if old_text else text
-            elif operation == "append":
-                new_text = (old_text + " " + text).strip() if old_text else text
-            elif operation == "remove":
-                if not old_text:
-                    skipped += 1
-                    continue
-                new_text = old_text.replace(text, "")
-                new_text = " ".join(new_text.split())
-                if new_text == old_text:
-                    skipped += 1
-                    continue
-            elif operation == "find_replace":
-                if not old_text:
-                    skipped += 1
-                    continue
-                new_text = old_text.replace(text, replacement)
-                new_text = " ".join(new_text.split())
-                if new_text == old_text:
-                    skipped += 1
-                    continue
-            else:
+        if operation == "prepend":
+            new_text = (text + " " + old_text).strip() if old_text else text
+        elif operation == "append":
+            new_text = (old_text + " " + text).strip() if old_text else text
+        elif operation == "remove":
+            if not old_text:
                 skipped += 1
                 continue
-        except re.error:
+            new_text = old_text.replace(text, "")
+            new_text = " ".join(new_text.split())
+            if new_text == old_text:
+                skipped += 1
+                continue
+        elif operation == "find_replace":
+            if not old_text:
+                skipped += 1
+                continue
+            new_text = old_text.replace(text, replacement)
+            new_text = " ".join(new_text.split())
+            if new_text == old_text:
+                skipped += 1
+                continue
+        else:
             skipped += 1
             continue
 
@@ -244,4 +243,8 @@ async def _sync_tags(db: AsyncSession, img: Image, tags: list[str], source: str)
 def _write_txt_sidecar(image_path: str, text: str) -> None:
     from pathlib import Path
     txt_path = Path(image_path).with_suffix(".txt")
-    txt_path.write_text(text, encoding="utf-8")
+    try:
+        txt_path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        logger.error("Failed to write caption sidecar %s: %s", txt_path, exc)
+        raise

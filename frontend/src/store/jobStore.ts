@@ -11,6 +11,10 @@ interface JobStore {
   getJob: (id: string) => JobProgress | undefined;
 }
 
+// Tracks cleanup timer IDs outside of Zustand state so we can cancel before
+// rescheduling if the same job gets a second terminal event (e.g. SSE reconnect).
+const _cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useJobStore = create<JobStore>((set, get) => ({
   activeJobs: new Map(),
   updateJob: (id, progress) =>
@@ -20,11 +24,15 @@ export const useJobStore = create<JobStore>((set, get) => ({
       const updated = { ...existing, ...progress };
       next.set(id, updated);
 
-      // Schedule cleanup for terminal jobs so the Map doesn't grow unbounded
+      // Schedule cleanup for terminal jobs so the Map doesn't grow unbounded.
+      // Cancel any previous timer first so only one cleanup fires per job.
       if (progress.status && TERMINAL_STATUSES.has(progress.status)) {
-        setTimeout(() => {
+        const prev = _cleanupTimers.get(id);
+        if (prev !== undefined) clearTimeout(prev);
+        _cleanupTimers.set(id, setTimeout(() => {
+          _cleanupTimers.delete(id);
           get().removeJob(id);
-        }, TTL_MS);
+        }, TTL_MS));
       }
 
       return { activeJobs: next };

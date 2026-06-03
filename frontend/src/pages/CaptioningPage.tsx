@@ -32,6 +32,9 @@ interface StepConfig {
   delimiterMode: DelimiterMode;
   delimiterParts: string[];
   usePreviousCaption: boolean;
+  stripRefusals: boolean;
+  targetWidth: number | null;
+  targetHeight: number | null;
 }
 
 function makeStepId() { return Math.random().toString(36).slice(2); }
@@ -331,8 +334,10 @@ export default function CaptioningPage() {
       custom_prompt,
       overwrite: true,
       append_tags: false,
-      strip_refusals: true,
+      strip_refusals: s.stripRefusals,
       wd14_threshold: s.wd14Threshold,
+      target_width: s.targetWidth,
+      target_height: s.targetHeight,
       delimiter_mode: s.delimiterMode,
       delimiter: s.delimiterParts.join(""),
     };
@@ -902,6 +907,9 @@ export default function CaptioningPage() {
               delimiterMode: "overwrite",
               delimiterParts: [",", " "],
               usePreviousCaption: false,
+              stripRefusals: true,
+              targetWidth: null,
+              targetHeight: null,
             }])}
           >
             + Add Pipeline Step
@@ -1234,6 +1242,20 @@ function PipelineStepCard({
             </div>
           )}
 
+          {!isStepWd14 && (
+            <div className="form-row">
+              <div className="lbl-col">
+                <h4>Target resolution</h4>
+                <p>Center-crop &amp; resize before inference.</p>
+              </div>
+              <ResolutionPicker
+                targetWidth={step.targetWidth}
+                targetHeight={step.targetHeight}
+                onChange={(w, h) => onChange({ targetWidth: w, targetHeight: h })}
+              />
+            </div>
+          )}
+
           <div className="form-row">
             <div className="lbl-col">
               <h4>Existing captions</h4>
@@ -1244,6 +1266,20 @@ function PipelineStepCard({
               delimiterParts={step.delimiterParts}
               onChange={(m, parts) => onChange({ delimiterMode: m, delimiterParts: parts })}
             />
+          </div>
+
+          <div className="form-row">
+            <div className="lbl-col">
+              <h4>Post-processing</h4>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={step.stripRefusals}
+                onChange={(e) => onChange({ stripRefusals: e.target.checked })}
+              />
+              Strip refusal phrases
+            </label>
           </div>
 
           {stepProvider?.is_remote && (

@@ -17,6 +17,15 @@ import ModelPicker from "../components/providers/ModelPicker";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { FLAG_OPTIONS } from "../constants/flags";
+import {
+  CAPTION_DEFAULT_MODEL_KEY,
+  CAPTION_DEFAULT_STYLE_KEY,
+  CAPTION_DEFAULT_SCOPE_KEY,
+  CAPTION_DEFAULT_DELIMITER_KEY,
+  CAPTION_DEFAULT_STRIP_REFS_KEY,
+  CAPTION_DEFAULT_RENAME_KEY,
+  CAPTION_DEFAULT_SAVE_BACKUP_KEY,
+} from "../constants/storage";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
@@ -190,20 +199,32 @@ export default function CaptioningPage() {
 
   const [selectedModel, setSelectedModel] = useState("");
   const [providerModelInput, setProviderModelInput] = useState("");
-  const [style, setStyle] = useState("detailed");
+  const [style, setStyle] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? "detailed"
+  );
   const [customPrompt, setCustomPrompt] = useState("");
   const [wd14Threshold, setWd14Threshold] = useState(0.35);
   const [targetWidth, setTargetWidth] = useState<number | null>(null);
   const [targetHeight, setTargetHeight] = useState<number | null>(null);
-  const [scope, setScope] = useState<Scope>("uncaptioned");
-  const [delimiterMode, setDelimiterMode] = useState<DelimiterMode>("overwrite");
+  const [scope, setScope] = useState<Scope>(
+    () => (localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) as Scope) ?? "uncaptioned"
+  );
+  const [delimiterMode, setDelimiterMode] = useState<DelimiterMode>(
+    () => (localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) as DelimiterMode) ?? "overwrite"
+  );
   const [delimiterParts, setDelimiterParts] = useState<string[]>([",", " "]);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
   const [minAestheticScore, setMinAestheticScore] = useState("");
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set());
-  const [stripRefusals, setStripRefusals] = useState(true);
-  const [saveBackup, setSaveBackup] = useState(false);
-  const [renameOnCaption, setRenameOnCaption] = useState(false);
+  const [stripRefusals, setStripRefusals] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false"
+  );
+  const [saveBackup, setSaveBackup] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
+  );
+  const [renameOnCaption, setRenameOnCaption] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true"
+  );
   const [jobLabel, setJobLabel] = useState("");
   const [submittedJobIds, setSubmittedJobIds] = useState<string[]>([]);
   const [savingPreset, setSavingPreset] = useState(false);
@@ -288,6 +309,27 @@ export default function CaptioningPage() {
   const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
   const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
+
+  // Apply stored default model once after models/providers load, if no model is selected yet.
+  // Also correct the style if it's incompatible with the default model.
+  useEffect(() => {
+    if (!modelsData || selectedModel !== "") return;
+    const stored = localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY);
+    if (!stored) return;
+    const allIds = [
+      ...localModels.map((m) => m.id),
+      ...ollamaModels.map((m) => m.id),
+      ...wd14Models.map((m) => m.id),
+      ...providers.map((p) => `openai_compat:${p.id}`),
+    ];
+    if (!allIds.includes(stored)) return;
+    setSelectedModel(stored);
+    const mt = modelType(stored);
+    const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
+    if (supported.length > 0 && !supported.includes(style)) {
+      setStyle(supported[0]);
+    }
+  }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isWd14 = selectedModel.startsWith("wd14:");
   const isOpenAICompat = selectedModel.startsWith("openai_compat:");

@@ -15,18 +15,8 @@ import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
-import { getGalleryPageSize } from "../constants/storage";
-
-const SORT_OPTIONS = [
-  { label: "Newest first", sort: "created_at", order: "desc" },
-  { label: "Oldest first", sort: "created_at", order: "asc" },
-  { label: "Aesthetic ↓", sort: "aesthetic_score", order: "desc" },
-  { label: "Aesthetic ↑", sort: "aesthetic_score", order: "asc" },
-  { label: "Name A-Z", sort: "filename", order: "asc" },
-  { label: "Style similarity ↓", sort: "style_similarity_score", order: "desc" },
-  { label: "Colorfulness ↓", sort: "color_score", order: "desc" },
-  { label: "Custom order", sort: "sort_order", order: "asc" },
-];
+import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter } from "../constants/storage";
+import { SORT_OPTIONS } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate";
 
@@ -93,7 +83,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = sessionStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; scrollTop: number; activeSubfolder?: string | null };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; scrollTop: number; activeSubfolder?: string | null };
   } catch {}
   return null;
 }
@@ -107,11 +97,13 @@ export default function GalleryPage() {
 
   const saved = useMemo(() => (datasetId ? loadSavedState(datasetId) : null), [datasetId]);
   const [page, setPage] = useState(saved?.page ?? 1);
-  const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? 0);
+  const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? getGalleryDefaultSort());
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
-    saved?.captionedFilter == null ? undefined : saved.captionedFilter
+    saved?.captionedFilter == null ? getGalleryDefaultCaptionFilter() : saved.captionedFilter
   );
-  const [qualityFilter, setQualityFilter] = useState<QualityFilter>("");
+  const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
+    (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
+  );
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [detectionLabelInput, setDetectionLabelInput] = useState("");
@@ -144,8 +136,8 @@ export default function GalleryPage() {
   const isCustomOrder = sortOpt.sort === "sort_order";
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
-  const liveState = useRef({ page, sortIdx, captionedFilter, activeSubfolder });
-  liveState.current = { page, sortIdx, captionedFilter, activeSubfolder };
+  const liveState = useRef({ page, sortIdx, captionedFilter, qualityFilter, activeSubfolder });
+  liveState.current = { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -174,11 +166,11 @@ export default function GalleryPage() {
   useEffect(() => {
     return () => {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, activeSubfolder } = liveState.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder } = liveState.current;
       if (datasetId) {
         sessionStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, scrollTop, activeSubfolder: activeSubfolder ?? null })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
         );
       }
     };

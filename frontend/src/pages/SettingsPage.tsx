@@ -3,10 +3,39 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
-import { CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY, getGalleryPageSize } from "../constants/storage";
+import { captioningApi } from "../api/captioning";
+import {
+  CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY,
+  GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
+  CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
+  CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
+  CAPTION_DEFAULT_SAVE_BACKUP_KEY,
+  getGalleryPageSize, getGalleryDefaultSort,
+} from "../constants/storage";
+import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
+
+type ModelOption = { id: string; label: string; group: string };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildModelOptions(modelsData: any, providers: ProviderOut[]): ModelOption[] {
+  const opts: ModelOption[] = [];
+  for (const m of (modelsData?.local_models ?? []) as { id: string; name: string }[]) {
+    opts.push({ id: m.id, label: m.name, group: "Local models" });
+  }
+  for (const m of (modelsData?.wd14_models ?? []) as { id: string; name: string }[]) {
+    opts.push({ id: m.id, label: m.name, group: "Tagger" });
+  }
+  for (const m of (modelsData?.ollama_models ?? []) as { id: string; name: string; size_mb?: number }[]) {
+    opts.push({ id: m.id, label: m.name, group: "Ollama" });
+  }
+  for (const p of providers) {
+    opts.push({ id: `openai_compat:${p.id}`, label: p.name, group: p.is_remote ? "Cloud providers" : "Local providers" });
+  }
+  return opts;
+}
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -79,6 +108,38 @@ export default function SettingsPage() {
     () => (localStorage.getItem(SUBFOLDER_RENAME_KEY) === "off" ? "off" : "on")
   );
 
+  // Gallery defaults
+  const [galleryDefaultSort, setGalleryDefaultSort] = useState(getGalleryDefaultSort);
+  const [galleryDefaultCaption, setGalleryDefaultCaption] = useState(
+    () => localStorage.getItem(GALLERY_DEFAULT_CAPTION_KEY) ?? "all"
+  );
+  const [galleryDefaultQuality, setGalleryDefaultQuality] = useState(
+    () => localStorage.getItem(GALLERY_DEFAULT_QUALITY_KEY) ?? ""
+  );
+
+  // Captioning defaults
+  const [captionDefaultModel, setCaptionDefaultModel] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY) ?? ""
+  );
+  const [captionDefaultStyle, setCaptionDefaultStyle] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? "detailed"
+  );
+  const [captionDefaultScope, setCaptionDefaultScope] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) ?? "uncaptioned"
+  );
+  const [captionDefaultDelimiter, setCaptionDefaultDelimiter] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) ?? "overwrite"
+  );
+  const [captionDefaultStripRefs, setCaptionDefaultStripRefs] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false"
+  );
+  const [captionDefaultRename, setCaptionDefaultRename] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true"
+  );
+  const [captionDefaultSaveBackup, setCaptionDefaultSaveBackup] = useState(
+    () => localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
+  );
+
   const { data: thresholds, isLoading } = useQuery({
     queryKey: ["settings", "thresholds"],
     queryFn: settingsApi.getThresholds,
@@ -125,14 +186,25 @@ export default function SettingsPage() {
     (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
       form.versioning_mode !== thresholds.versioning_mode);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "ui" | "quality" | "versioning" | "providers">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers">("gallery");
+
+  // Captioning models (loaded lazily when tab is first opened)
+  const { data: captioningModels } = useQuery({
+    queryKey: ["captioning-models"],
+    queryFn: captioningApi.models,
+    staleTime: Infinity,
+    enabled: activeTab === "captioning",
+  });
 
   // Providers state
+
   const { data: providers = [], refetch: refetchProviders } = useQuery({
     queryKey: ["providers"],
     queryFn: providersApi.list,
     staleTime: 30_000,
   });
+  const modelOpts = buildModelOptions(captioningModels, providers);
+
   const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
@@ -192,6 +264,7 @@ export default function SettingsPage() {
 
       <div className="tabs">
         <button className={`tab${activeTab === "gallery" ? " active" : ""}`} onClick={() => setActiveTab("gallery")}>Gallery</button>
+        <button className={`tab${activeTab === "captioning" ? " active" : ""}`} onClick={() => setActiveTab("captioning")}>Captioning</button>
         <button className={`tab${activeTab === "ui" ? " active" : ""}`} onClick={() => setActiveTab("ui")}>UI Behavior</button>
         <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
@@ -240,8 +313,199 @@ export default function SettingsPage() {
                 }}
               />
             </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Gallery defaults</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 12px" }}>
+                Applied when opening a dataset gallery for the first time. Session state (from navigating back) still takes precedence.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <label style={{ fontSize: 12.5, minWidth: 140 }}>Default sort</label>
+                  <select
+                    className="select"
+                    value={galleryDefaultSort}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setGalleryDefaultSort(v);
+                      localStorage.setItem(GALLERY_DEFAULT_SORT_KEY, String(v));
+                      toast.success("Preference saved");
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    {SORT_OPTIONS.map((opt, i) => (
+                      <option key={i} value={i}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <label style={{ fontSize: 12.5, minWidth: 140 }}>Default caption filter</label>
+                  <select
+                    className="select"
+                    value={galleryDefaultCaption}
+                    onChange={(e) => {
+                      setGalleryDefaultCaption(e.target.value);
+                      localStorage.setItem(GALLERY_DEFAULT_CAPTION_KEY, e.target.value);
+                      toast.success("Preference saved");
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="all">All images</option>
+                    <option value="captioned">Captioned only</option>
+                    <option value="uncaptioned">Uncaptioned only</option>
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <label style={{ fontSize: 12.5, minWidth: 140 }}>Default quality filter</label>
+                  <select
+                    className="select"
+                    value={galleryDefaultQuality}
+                    onChange={(e) => {
+                      setGalleryDefaultQuality(e.target.value);
+                      localStorage.setItem(GALLERY_DEFAULT_QUALITY_KEY, e.target.value);
+                      toast.success("Preference saved");
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">None</option>
+                    <option value="is_blurry">Blurry</option>
+                    <option value="is_noisy">Noisy</option>
+                    <option value="is_uniform">Near-uniform</option>
+                    <option value="has_watermark">Watermarked</option>
+                    <option value="is_duplicate">Duplicate</option>
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+      )}
+
+      {activeTab === "captioning" && (
+          <div className="panel">
+            <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Default model</div>
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                  Pre-selected when opening the Captioning page. Falls back to no selection if the model is not available.
+                </p>
+                <select
+                  className="select"
+                  value={captionDefaultModel}
+                  onChange={(e) => {
+                    setCaptionDefaultModel(e.target.value);
+                    localStorage.setItem(CAPTION_DEFAULT_MODEL_KEY, e.target.value);
+                    toast.success("Preference saved");
+                  }}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">No default — select manually</option>
+                  {["Local models", "Tagger", "Ollama", "Local providers", "Cloud providers"].map((group) => {
+                    const items = modelOpts.filter((o) => o.group === group);
+                    if (items.length === 0) return null;
+                    return (
+                      <optgroup key={group} label={group}>
+                        {items.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                      </optgroup>
+                    );
+                  })}
+                  {captioningModels === undefined && captionDefaultModel && (
+                    <option value={captionDefaultModel}>{captionDefaultModel} (loading…)</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Default caption style</div>
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                  Applied when opening the Captioning page. If the default model does not support this style, the first compatible style for that model will be used instead.
+                </p>
+                <select
+                  className="select"
+                  value={captionDefaultStyle}
+                  onChange={(e) => {
+                    setCaptionDefaultStyle(e.target.value);
+                    localStorage.setItem(CAPTION_DEFAULT_STYLE_KEY, e.target.value);
+                    toast.success("Preference saved");
+                  }}
+                  style={{ width: 200 }}
+                >
+                  <option value="detailed">Detailed</option>
+                  <option value="short">Short</option>
+                  <option value="tags">Tags</option>
+                  <option value="promptgen">PromptGen</option>
+                  <option value="booru">Booru</option>
+                </select>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Default scope</div>
+                <RadioGroup
+                  name="caption_default_scope"
+                  options={[
+                    { value: "uncaptioned", label: "Uncaptioned images only (default)", desc: "Only process images that don't have a caption yet." },
+                    { value: "all", label: "All images", desc: "Process every image, overwriting or merging with existing captions depending on the delimiter mode." },
+                  ]}
+                  value={captionDefaultScope}
+                  onChange={(v) => {
+                    setCaptionDefaultScope(v);
+                    localStorage.setItem(CAPTION_DEFAULT_SCOPE_KEY, v);
+                    toast.success("Preference saved");
+                  }}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Default delimiter mode</div>
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                  How new captions are merged with existing ones when scope is set to "All images".
+                </p>
+                <select
+                  className="select"
+                  value={captionDefaultDelimiter}
+                  onChange={(e) => {
+                    setCaptionDefaultDelimiter(e.target.value);
+                    localStorage.setItem(CAPTION_DEFAULT_DELIMITER_KEY, e.target.value);
+                    toast.success("Preference saved");
+                  }}
+                  style={{ width: 200 }}
+                >
+                  <option value="overwrite">Overwrite</option>
+                  <option value="append">Append</option>
+                  <option value="prepend">Prepend</option>
+                </select>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Default options</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {[
+                    { state: captionDefaultStripRefs, setter: setCaptionDefaultStripRefs, key: CAPTION_DEFAULT_STRIP_REFS_KEY, label: "Strip refusals", desc: "Remove common AI refusal phrases from generated captions." },
+                    { state: captionDefaultRename, setter: setCaptionDefaultRename, key: CAPTION_DEFAULT_RENAME_KEY, label: "Rename on caption", desc: "After captioning, rename each image file to the subfolder slug (e.g. portraits_001.jpg)." },
+                    { state: captionDefaultSaveBackup, setter: setCaptionDefaultSaveBackup, key: CAPTION_DEFAULT_SAVE_BACKUP_KEY, label: "Save backup", desc: "Back up each image's existing .txt sidecar to .txt.bak before overwriting." },
+                  ].map(({ state, setter, key, label, desc }) => (
+                    <label key={key} style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        className="checkbox"
+                        checked={state}
+                        onChange={(e) => {
+                          setter(e.target.checked);
+                          localStorage.setItem(key, String(e.target.checked));
+                          toast.success("Preference saved");
+                        }}
+                        style={{ marginTop: 2, flexShrink: 0 }}
+                      />
+                      <div>
+                        <div style={{ fontSize: 13 }}>{label}</div>
+                        <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
       )}
 
       {activeTab === "ui" && (

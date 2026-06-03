@@ -5,6 +5,7 @@ interface SelectionStore {
   datasetByImageId: Map<string, string>;
   toggle: (id: string, datasetId: string) => void;
   selectAll: (ids: string[], datasetId: string) => void;
+  replaceRange: (toAdd: string[], toRemove: string[], datasetId: string) => void;
   clear: () => void;
   isSelected: (id: string) => boolean;
   count: number;
@@ -35,6 +36,14 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
         if (!next.has(id)) nextMap.delete(id);
       }
       for (const id of ids) nextMap.set(id, datasetId);
+      return { selectedIds: next, datasetByImageId: nextMap, count: next.size };
+    }),
+  replaceRange: (toAdd, toRemove, datasetId) =>
+    set((s) => {
+      const next = new Set(s.selectedIds);
+      const nextMap = new Map(s.datasetByImageId);
+      for (const id of toRemove) { next.delete(id); nextMap.delete(id); }
+      for (const id of toAdd) { next.add(id); nextMap.set(id, datasetId); }
       return { selectedIds: next, datasetByImageId: nextMap, count: next.size };
     }),
   clear: () => set({ selectedIds: new Set(), datasetByImageId: new Map(), count: 0 }),

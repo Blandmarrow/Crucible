@@ -17,11 +17,12 @@ function scoreClass(score: number | null) {
 interface Props {
   image: ImageListItem;
   onShowGenMeta?: (image: ImageListItem) => void;
+  onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void;
   isDraggable?: boolean;
   isActiveDrag?: boolean;
 }
 
-export default function ImageCard({ image, onShowGenMeta, isDraggable, isActiveDrag }: Props) {
+export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable, isActiveDrag }: Props) {
   const datasetId = usePaneDatasetId();
   const { go } = usePaneNavigate();
   const { toggle, isSelected } = useSelectionStore();
@@ -45,7 +46,11 @@ export default function ImageCard({ image, onShowGenMeta, isDraggable, isActiveD
         transition: "border-color .12s",
         position: "relative",
       }}
-      onClick={() => go(`/datasets/${datasetId}/image/${image.id}`, { page: "image-detail", datasetId, imageId: image.id })}
+      onClick={(e) => {
+        if (e.shiftKey && onSelect) { onSelect(image.id, true, false); }
+        else { go(`/datasets/${datasetId}/image/${image.id}`, { page: "image-detail", datasetId, imageId: image.id }); }
+      }}
+      onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
       onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--line-2)"; }}
       onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--line)"; }}
     >
@@ -61,7 +66,7 @@ export default function ImageCard({ image, onShowGenMeta, isDraggable, isActiveD
         {/* Checkbox */}
         <div
           style={{ position: "absolute", top: 8, left: 8, zIndex: 3 }}
-          onClick={(e) => { e.stopPropagation(); toggle(image.id, datasetId ?? ""); }}
+          onClick={(e) => { e.stopPropagation(); onSelect ? onSelect(image.id, e.shiftKey, true) : toggle(image.id, datasetId ?? ""); }}
         >
           <div style={{
             width: 18, height: 18,
@@ -151,7 +156,7 @@ export default function ImageCard({ image, onShowGenMeta, isDraggable, isActiveD
   );
 }
 
-export function SortableImageCard({ image, onShowGenMeta }: Props) {
+export function SortableImageCard({ image, onShowGenMeta, onSelect }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: image.id });
   return (
     <div
@@ -165,7 +170,7 @@ export function SortableImageCard({ image, onShowGenMeta }: Props) {
         touchAction: "none",
       }}
     >
-      <ImageCard image={image} onShowGenMeta={onShowGenMeta} isDraggable isActiveDrag={isDragging} />
+      <ImageCard image={image} onShowGenMeta={onShowGenMeta} onSelect={onSelect} isDraggable isActiveDrag={isDragging} />
     </div>
   );
 }

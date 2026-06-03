@@ -101,7 +101,7 @@ function loadSavedState(datasetId: string) {
 export default function GalleryPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
-  const { selectAll, clear, count } = useSelectionStore();
+  const { selectAll, clear, count, toggle, replaceRange } = useSelectionStore();
 
   const pageSize = useMemo(getGalleryPageSize, []);
 
@@ -149,6 +149,8 @@ export default function GalleryPage() {
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
+  const lastSelectedId = useRef<string | null>(null);
+  const lastRangeEndId = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   useEffect(() => {
@@ -234,6 +236,36 @@ export default function GalleryPage() {
   });
 
   imagesRef.current = images;
+
+  const handleSelect = useCallback((id: string, shiftKey: boolean, isCheckbox: boolean) => {
+    if (shiftKey && isCheckbox && lastSelectedId.current !== null) {
+      const ids = images.map(i => i.id);
+      const a = ids.indexOf(lastSelectedId.current);
+      const b = ids.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        const newRange = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+        let toRemove: string[] = [];
+        if (lastRangeEndId.current !== null) {
+          const prevB = ids.indexOf(lastRangeEndId.current);
+          if (prevB !== -1) {
+            const oldRange = ids.slice(Math.min(a, prevB), Math.max(a, prevB) + 1);
+            const newRangeSet = new Set(newRange);
+            toRemove = oldRange.filter(rid => !newRangeSet.has(rid));
+          }
+        }
+        replaceRange(newRange, toRemove, datasetId ?? "");
+        lastRangeEndId.current = id;
+        return; // anchor stays unchanged
+      }
+    }
+    toggle(id, datasetId ?? "");
+    // Update anchor only for non-shift clicks, or shift+checkbox when range couldn't apply.
+    // Shift+card-body (!isCheckbox) is a plain toggle that must not move the anchor.
+    if (!shiftKey || isCheckbox) {
+      lastSelectedId.current = id;
+      lastRangeEndId.current = null;
+    }
+  }, [images, datasetId, toggle, replaceRange]);
 
   useEffect(() => {
     if (!isLoading && images.length > 0 && !hasRestoredScroll.current && scrollRef.current && saved?.scrollTop) {
@@ -995,12 +1027,14 @@ export default function GalleryPage() {
                       key={img.id}
                       image={img}
                       onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                      onSelect={handleSelect}
                     />
                   ) : (
                     <ImageCard
                       key={img.id}
                       image={img}
                       onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                      onSelect={handleSelect}
                     />
                   )
                 )}

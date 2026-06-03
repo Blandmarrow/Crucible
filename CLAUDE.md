@@ -310,7 +310,7 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 ### Frontend state
 
 - **TanStack Query** — all server state (datasets, images, captions, jobs). Query keys follow `["resource", id]` pattern.
-- **Zustand stores** — `datasetStore` (active dataset), `selectionStore` (Set of selected image IDs + `datasetByImageId: Map<string, string>` tracking which dataset each selected image belongs to), `jobStore` (Map of active job progress from SSE), `promptPresetsStore` (saved AI prompt presets, persisted to localStorage), `paneStore` (split-view pane layout — see Split view pane manager section), `uploadStore` (active upload progress — see below). `selectionStore.toggle(id, datasetId)` and `selectionStore.selectAll(ids, datasetId)` both require a `datasetId` argument — all callsites (ImageCard, GalleryPage, ImageDetailPage) must pass it.
+- **Zustand stores** — `datasetStore` (active dataset), `selectionStore` (Set of selected image IDs + `datasetByImageId: Map<string, string>` tracking which dataset each selected image belongs to), `jobStore` (Map of active job progress from SSE), `promptPresetsStore` (saved AI prompt presets, persisted to localStorage), `paneStore` (split-view pane layout — see Split view pane manager section), `uploadStore` (active upload progress — see below). `selectionStore.toggle(id, datasetId)` and `selectionStore.selectAll(ids, datasetId)` both require a `datasetId` argument — all callsites (ImageCard, GalleryPage, ImageDetailPage) must pass it. `selectionStore.replaceRange(toAdd, toRemove, datasetId)` atomically removes `toRemove` IDs and adds `toAdd` IDs in one state update; used by GalleryPage shift-click range selection to replace the previous range with the new one without touching independently-selected images.
 - **`useJobSSE(jobId)`** — opens `EventSource` for one job, writes progress to `jobStore`.
 - **`useAllJobsSSE()`** — opened at app root in `TopBar`, drives the global progress bar.
 - **Job label display**: `TopBar` running-job pill shows `runningJob.label || runningJob.message || runningJob.job_type`; pending queue chips show `j.label || j.job_type`. `CaptioningPage` live-progress panel shows the label above the done/total counter (`{jobProgress.label && <div>…</div>}`); its pending-queue list shows `qJob.label || fallbackLabel`. `JobProgress` in `frontend/src/types/index.ts` types `label` as `string | null | undefined` since SSE delivers JSON `null` when no label was set.
@@ -353,6 +353,23 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 ### Gallery generation metadata
 
 `generation_metadata` is included in both `ImageOut` and `ImageListItem` backend schemas, so it comes back with the gallery list response. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when `image.generation_metadata` is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default.
+
+### Gallery image selection
+
+`ImageCard` accepts an optional `onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void` prop. When provided it routes both checkbox clicks and shift-clicks on the card body through this callback instead of calling `toggle` directly. `GalleryPage` always provides `handleSelect` as `onSelect`; contexts that render `ImageCard` without it (e.g. `BucketPanel`) fall back to the raw `toggle`.
+
+**`handleSelect` in GalleryPage** — two `useRef`s drive range tracking:
+
+- `lastSelectedId` — the selection anchor; set on every plain (non-shift) toggle, and on shift+checkbox when no valid range could be computed (stale anchor). Never moved by a shift-only interaction.
+- `lastRangeEndId` — the endpoint of the last contiguous range; set each time a checkbox shift-click successfully applies a range, reset to `null` on any plain toggle.
+
+| Interaction | Effect |
+|---|---|
+| Click checkbox | Toggle image; anchor = clicked image |
+| Shift+click checkbox | Range from anchor → clicked; images that fell out of the previous range are deselected via `replaceRange`; anchor unchanged |
+| Shift+click card body | Toggle image only; anchor and range-end unchanged |
+
+The `onMouseDown` handler on the card's outer `<div>` calls `e.preventDefault()` when `Shift` is held to suppress browser text-selection. This does not interfere with dnd-kit's `PointerSensor` (which listens to `pointerdown`, not `mousedown`).
 
 ### Gallery subfolder sidebar
 

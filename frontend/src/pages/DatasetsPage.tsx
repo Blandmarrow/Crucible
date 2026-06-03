@@ -379,6 +379,8 @@ export default function DatasetsPage() {
     try {
       await imagesApi.upload(datasetId, Array.from(files));
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       toast.success(`Uploaded ${files.length} image(s)`);
     } catch {
       toast.error("Upload failed");

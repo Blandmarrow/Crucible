@@ -510,6 +510,10 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       qc.removeQueries({ queryKey: ["image", imageId] });
       if (imageId) removeNavId(datasetId, imageId);
       setShowDeleteConfirm(false);
@@ -531,6 +535,10 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["caption", imageId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       setCaptionDirty(false);
       toast.success("Saved");
     },

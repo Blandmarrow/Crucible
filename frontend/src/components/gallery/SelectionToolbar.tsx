@@ -194,6 +194,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       clear();
       setShowDeleteConfirm(false);
       toast.success(`Deleted ${ids.length} images`);
@@ -225,6 +229,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["score-values", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", data.target_dataset_id] });
       setShowMoveDataset(false);
       clear();
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
@@ -239,6 +251,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["score-values", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", data.target_dataset_id] });
       setShowCopyDataset(false);
       toast.success(`Copied ${data.copied} image${data.copied !== 1 ? "s" : ""} to dataset`);
     },

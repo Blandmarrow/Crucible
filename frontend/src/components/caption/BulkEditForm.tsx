@@ -51,6 +51,10 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       setResult(data);
       onSuccess?.(data.affected, data.skipped);
       if (data.affected === 0) {

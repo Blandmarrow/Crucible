@@ -9,6 +9,9 @@ import { captionsApi } from "../api/captions";
 import { imagesApi, type ImageListParams } from "../api/images";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
+import { useJobStore } from "../store/jobStore";
+
+const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score"]);
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const BLUR_EDGES   = [20, 40, 80, 150, 300];
@@ -611,6 +614,7 @@ function BucketPanel({
     queryClient.setQueryData<ImageListItem[]>(queryKey, next);
     queryClient.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    queryClient.invalidateQueries({ queryKey: ["score-values", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["datasets"] });
     setConfirmDeleteId(null);
@@ -999,6 +1003,15 @@ export default function StatsPage() {
     setActiveSubfolder(undefined);
   }, [datasetId]);
 
+  const hasActiveJob = useJobStore(s =>
+    [...s.activeJobs.values()].some(
+      j => j.status === "running" &&
+           LIVE_STATS_JOB_TYPES.has(j.job_type) &&
+           j.dataset_id === datasetId
+    )
+  );
+  const statsRefetchInterval = hasActiveJob ? 5_000 : false;
+
   const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
     queryKey: ["subfolders", datasetId],
     queryFn: () => datasetsApi.subfolders(datasetId!),
@@ -1009,24 +1022,28 @@ export default function StatsPage() {
     queryKey: ["dataset-stats", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.stats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
+    refetchInterval: statsRefetchInterval,
   });
 
   const { data: tagStats = [] } = useQuery({
     queryKey: ["tag-stats", datasetId, activeSubfolder],
     queryFn: () => captionsApi.tagStats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
+    refetchInterval: statsRefetchInterval,
   });
 
   const { data: cooccurrence } = useQuery({
     queryKey: ["tag-cooccurrence", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.tagCooccurrence(datasetId!, 15, activeSubfolder),
     enabled: !!datasetId,
+    refetchInterval: statsRefetchInterval,
   });
 
   const { data: sv, isLoading: svLoading } = useQuery<ScoreValues>({
     queryKey: ["score-values", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.scoreValues(datasetId!, activeSubfolder),
     enabled: !!datasetId,
+    refetchInterval: statsRefetchInterval,
   });
 
   const { data: thresholds } = useQuery<Thresholds>({

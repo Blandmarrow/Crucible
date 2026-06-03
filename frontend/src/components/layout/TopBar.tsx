@@ -10,7 +10,8 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
 import { Columns2, RefreshCw } from "lucide-react";
 
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score"]);
+const CAPTION_JOB_TYPES = new Set(["caption", "caption_pipeline"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -87,18 +88,47 @@ export default function TopBar() {
   // unmounts, so jobs that finish after navigation never invalidate the gallery.
   // TopBar is always mounted, making it the right place for this side effect.
   const processedJobsRef = useRef<Set<string>>(new Set());
+  const captionDoneRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
       if (progress.status === "completed" && !processedJobsRef.current.has(jobId)) {
         processedJobsRef.current.add(jobId);
+        captionDoneRef.current.delete(jobId);
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
+          qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
+          qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
+          qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
           if (progress.job_type === "quality_score") {
             qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
           }
         }
         if (DATASET_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["datasets"] });
+          if (progress.job_type === "import" && progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
+          }
+        }
+      }
+      // Per-image live updates while a caption job is running (#39)
+      if (
+        progress.status === "running" &&
+        CAPTION_JOB_TYPES.has(progress.job_type) &&
+        progress.dataset_id
+      ) {
+        const prevDone = captionDoneRef.current.get(jobId) ?? -1;
+        const currentDone = progress.done ?? 0;
+        if (currentDone > prevDone) {
+          captionDoneRef.current.set(jobId, currentDone);
+          qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          if (progress.image_id) {
+            qc.invalidateQueries({ queryKey: ["caption", progress.image_id] });
+          }
         }
       }
     });

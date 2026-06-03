@@ -355,6 +355,10 @@ export default function VersionsPage() {
             qc.invalidateQueries({ queryKey: ["images", datasetId] });
             qc.invalidateQueries({ queryKey: ["image"] });
             qc.invalidateQueries({ queryKey: ["caption"] });
+            qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+            qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+            qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+            qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
           }}
         />
       )}

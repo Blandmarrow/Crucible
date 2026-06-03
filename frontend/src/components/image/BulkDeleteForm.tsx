@@ -23,6 +23,10 @@ export default function BulkDeleteForm({ datasetId, imageIds, qualityFlags, subf
       imagesApi.bulkDelete(datasetId, { imageIds, qualityFlags, subfolder }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       clearSelection();
       setResult(data);
       if (data.deleted === 0) {

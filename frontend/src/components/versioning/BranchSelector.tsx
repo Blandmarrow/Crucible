@@ -88,6 +88,10 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["image"] });
       qc.invalidateQueries({ queryKey: ["caption"] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       toast.success("Switched branch");
       if (pendingBranchId) onSelect(pendingBranchId);
       setPendingBranchId(null);

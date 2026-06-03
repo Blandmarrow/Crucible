@@ -230,6 +230,13 @@ export default function DatasetsPage() {
     if (!importJobId || !importJobProgress) return;
     if (importJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      if (importJobProgress.dataset_id) {
+        qc.invalidateQueries({ queryKey: ["images", importJobProgress.dataset_id] });
+        qc.invalidateQueries({ queryKey: ["dataset-stats", importJobProgress.dataset_id] });
+        qc.invalidateQueries({ queryKey: ["tag-stats", importJobProgress.dataset_id] });
+        qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
+        qc.invalidateQueries({ queryKey: ["tag-cooccurrence", importJobProgress.dataset_id] });
+      }
       setImportJobId(null);
     } else if (importJobProgress.status === "failed") {
       setImportJobId(null);

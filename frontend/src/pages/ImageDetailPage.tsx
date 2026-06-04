@@ -486,11 +486,15 @@ export default function ImageDetailPage() {
   }, [captionData]);
 
   useEffect(() => {
+    setCaptionDirty(false);
+  }, [imageId]);
+
+  useEffect(() => {
     const el = captionRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
-  }, [captionText]);
+  }, [captionText, imageId, image?.id]);
 
   const renameMutation = useMutation({
     mutationFn: () => imagesApi.renameImage(imageId!, renameStem),

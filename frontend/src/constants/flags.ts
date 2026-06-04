@@ -4,6 +4,7 @@ export const FLAG_OPTIONS = [
   { key: "is_uniform",    label: "Near-uniform" },
   { key: "has_watermark", label: "Watermarked" },
   { key: "is_duplicate",  label: "Duplicate" },
+  { key: "is_nsfw",      label: "NSFW" },
 ] as const;
 
 export type FlagKey = (typeof FLAG_OPTIONS)[number]["key"];

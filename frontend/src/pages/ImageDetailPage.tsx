@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -173,6 +173,9 @@ export default function ImageDetailPage() {
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectOverwrite, setDetectOverwrite] = useState(true);
   const [detectJobId, setDetectJobId] = useState<string | null>(null);
+  const [detectMinProb, setDetectMinProb] = useState(0.5);
+  const [samPoints, setSamPoints] = useState<{x: number; y: number; label: number}[]>([]);
+  const [samPointMode, setSamPointMode] = useState(false);
 
   // AI captioning state
   const [showAi, setShowAi] = useState(false);
@@ -379,10 +382,12 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       setDetectJobId(null);
       setShowDetectModal(false);
+      setSamPointMode(false);
+      setSamPoints([]);
       toast.success("Detection complete");
     } else if (detectJobProgress.status === "failed") {
       setDetectJobId(null);
-      toast.error("Detection failed");
+      toast.error(detectJobProgress.message || "Detection failed");
     }
   }, [detectJobProgress?.status, detectJobId, imageId, qc]);
 
@@ -633,6 +638,13 @@ export default function ImageDetailPage() {
         task: detectTask,
         custom_prompt: detectPrompt,
         overwrite: detectOverwrite,
+        min_prob: detectMinProb,
+        point_prompts: detectModel === "sam2" && detectTask === "points" && samPoints.length > 0
+          ? samPoints.map((p) => [p.x, p.y])
+          : undefined,
+        point_labels: detectModel === "sam2" && detectTask === "points" && samPoints.length > 0
+          ? samPoints.map((p) => p.label)
+          : undefined,
       }),
     onSuccess: (data) => {
       if (data.job_id) {
@@ -688,6 +700,7 @@ export default function ImageDetailPage() {
   const isBlurry = image.quality_flags?.is_blurry as boolean | undefined;
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
+  const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const aiRunning = !!aiJobId && aiJobProgress?.status === "running";
   const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
@@ -745,6 +758,26 @@ export default function ImageDetailPage() {
             >
               {overlayVisible ? <Eye size={14} /> : <EyeOff size={14} />}
               Boxes
+            </button>
+          )}
+          {!cropMode && detectModel === "sam2" && detectTask === "points" && (
+            <button
+              className={`btn-sm flex items-center gap-1.5 ${samPointMode ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setSamPointMode((v) => !v)}
+              title={samPointMode ? "Deactivate point prompt mode (click=foreground, right-click=background)" : "Activate point prompt mode"}
+            >
+              <Crosshair size={14} />
+              {samPointMode ? `Points (${samPoints.length})` : "SAM Points"}
+            </button>
+          )}
+          {!cropMode && detectModel === "sam2" && detectTask === "points" && samPoints.length > 0 && (
+            <button
+              className="btn-sm btn-ghost"
+              onClick={() => setSamPoints([])}
+              title="Clear all SAM points"
+              style={{ fontSize: 11 }}
+            >
+              Clear
             </button>
           )}
           <button
@@ -998,7 +1031,7 @@ export default function ImageDetailPage() {
                   alt={image.filename}
                   style={{ display: "block", maxWidth: "100%", maxHeight: "calc(100vh - 120px)", objectFit: "contain" }}
                 />
-                {overlayVisible && (image.detections?.length ?? 0) > 0 && image.width && image.height && (
+                {(overlayVisible && (image.detections?.length ?? 0) > 0 || samPoints.length > 0) && image.width && image.height && (
                   <svg
                     viewBox={`0 0 ${image.width} ${image.height}`}
                     preserveAspectRatio="xMidYMid meet"
@@ -1008,25 +1041,72 @@ export default function ImageDetailPage() {
                       const maxDim = Math.max(image.width!, image.height!);
                       const strokeW = maxDim * 0.004;
                       const fontSize = maxDim * 0.018;
-                      return image.detections.filter(det => !hiddenLabels.has(det.label)).map((det) => {
-                        const [x1, y1, x2, y2] = det.bbox;
-                        const rx = x1 * image.width!;
-                        const ry = y1 * image.height!;
-                        const rw = (x2 - x1) * image.width!;
-                        const rh = (y2 - y1) * image.height!;
-                        const color = labelColor(det.label);
-                        return (
-                          <g key={det.id}>
-                            <rect x={rx} y={ry} width={rw} height={rh} fill="none" stroke={color} strokeWidth={strokeW} />
-                            <rect x={rx} y={ry - fontSize * 1.4} width={rw} height={fontSize * 1.4} fill={color} opacity={0.85} />
-                            <text x={rx + 4} y={ry - fontSize * 0.3} fill="black" fontSize={fontSize} fontWeight="600" fontFamily="system-ui,sans-serif">
-                              {det.label}
-                            </text>
-                          </g>
-                        );
-                      });
+                      const ptR = maxDim * 0.012;
+                      const visible = image.detections.filter(det => !hiddenLabels.has(det.label));
+                      return (
+                        <>
+                          {visible.map((det) => {
+                            const [x1, y1, x2, y2] = det.bbox;
+                            const rx = x1 * image.width!;
+                            const ry = y1 * image.height!;
+                            const rw = (x2 - x1) * image.width!;
+                            const rh = (y2 - y1) * image.height!;
+                            const color = labelColor(det.label);
+                            return (
+                              <g key={det.id}>
+                                {det.mask && (() => {
+                                  try {
+                                    const parsed: {polygons: number[][][]} = JSON.parse(det.mask);
+                                    return parsed.polygons.map((poly, pi) => {
+                                      const pts = poly.map(([px, py]) =>
+                                        `${px * image.width!},${py * image.height!}`
+                                      ).join(" ");
+                                      return <polygon key={pi} points={pts} fill={color} fillOpacity={0.3} stroke="none" />;
+                                    });
+                                  } catch { return null; }
+                                })()}
+                                <rect x={rx} y={ry} width={rw} height={rh} fill="none" stroke={color} strokeWidth={strokeW} />
+                                <rect x={rx} y={ry - fontSize * 1.4} width={rw} height={fontSize * 1.4} fill={color} opacity={0.85} />
+                                <text x={rx + 4} y={ry - fontSize * 0.3} fill="black" fontSize={fontSize} fontWeight="600" fontFamily="system-ui,sans-serif">
+                                  {det.label}
+                                </text>
+                              </g>
+                            );
+                          })}
+                          {samPoints.map((pt, idx) => (
+                            <g key={`sampt-${idx}`}>
+                              <circle
+                                cx={pt.x * image.width!}
+                                cy={pt.y * image.height!}
+                                r={ptR}
+                                fill={pt.label === 1 ? "#4ade80" : "#f87171"}
+                                stroke="white"
+                                strokeWidth={strokeW * 0.6}
+                              />
+                            </g>
+                          ))}
+                        </>
+                      );
                     })()}
                   </svg>
+                )}
+                {samPointMode && image.width && image.height && (
+                  <div
+                    style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 10 }}
+                    onClick={(e) => {
+                      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                      const x = (e.clientX - rect.left) / rect.width;
+                      const y = (e.clientY - rect.top) / rect.height;
+                      setSamPoints((prev) => [...prev, { x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000, label: 1 }]);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                      const x = (e.clientX - rect.left) / rect.width;
+                      const y = (e.clientY - rect.top) / rect.height;
+                      setSamPoints((prev) => [...prev, { x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000, label: 0 }]);
+                    }}
+                  />
                 )}
               </div>
             </div>
@@ -1111,6 +1191,14 @@ export default function ImageDetailPage() {
                 </span>
               </>
             )}
+            {image.nsfw_score !== null && image.nsfw_score !== undefined && (
+              <>
+                <span className="text-gray-500">NSFW</span>
+                <span className={isNsfw ? "text-red-400" : "text-gray-300"}>
+                  {(image.nsfw_score * 100).toFixed(0)}%{isNsfw ? " ⚠" : ""}
+                </span>
+              </>
+            )}
             {image.color_score !== null && image.color_score !== undefined && (
               <>
                 <span className="text-gray-500">Colorfulness</span>
@@ -1140,8 +1228,9 @@ export default function ImageDetailPage() {
           ) : null}
 
           {/* Quality flags */}
-          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true) && (
+          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true || isNsfw === true) && (
             <div className="flex gap-2 flex-wrap mt-2">
+              {isNsfw === true && <span className="badge-red flex items-center gap-1"><EyeOff size={10} />NSFW</span>}
               {isBlurry === true && <span className="badge-yellow flex items-center gap-1"><AlertTriangle size={10} />Blurry</span>}
               {isDuplicate === true && <span className="badge-yellow flex items-center gap-1"><Copy size={10} />Duplicate</span>}
               {isUniform === true && <span className="badge-orange flex items-center gap-1"><AlertTriangle size={10} />Near-uniform</span>}
@@ -1169,7 +1258,14 @@ export default function ImageDetailPage() {
                 {(image.detections?.length ?? 0) > 0 ? (
                   <>
                     <p style={{ fontSize: 10, color: "var(--fg-mute)", marginBottom: 6 }}>
-                      {image.detections[0].model} · {image.detections[0].task === "<OD>" ? "Object Detection" : "Grounded Caption"}
+                      {image.detections[0].model} · {
+                        image.detections[0].task === "<OD>" ? "Object Detection" :
+                        image.detections[0].task === "<CAPTION_TO_PHRASE_GROUNDING>" ? "Grounded Caption" :
+                        image.detections[0].task === "nudenet" ? "Body-part detection" :
+                        image.detections[0].task === "text_prompt" ? "Text prompt" :
+                        image.detections[0].task === "points" ? "Point prompts" :
+                        image.detections[0].task
+                      }
                     </p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                       {Object.entries(
@@ -1528,48 +1624,117 @@ export default function ImageDetailPage() {
 
             <div>
               <label className="label">Model</label>
-              <select className="select w-full" value={detectModel} onChange={(e) => setDetectModel(e.target.value)}>
+              <select className="select w-full" value={detectModel} onChange={(e) => {
+                const m = e.target.value;
+                setDetectModel(m);
+                if (m === "nudenet") setDetectTask("nudenet");
+                else if (m === "sam2") setDetectTask("text_prompt");
+                else setDetectTask("<OD>");
+                setDetectPrompt("");
+              }}>
                 <option value="florence2_large">Florence-2 Large</option>
                 <option value="florence2_promptgen">Florence-2 PromptGen</option>
+                <option value="nudenet">NudeNet (body-part detection)</option>
+                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
               </select>
             </div>
 
-            <div>
-              <label className="label">Task</label>
-              <select
-                className="select w-full"
-                value={detectTask}
-                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); }}
-              >
-                <option value="<OD>">Object Detection (auto-detect everything)</option>
-                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
-              </select>
-            </div>
-
-            {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
-              <div className="space-y-2">
-                {captionText && (
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={detectPrompt === captionText}
-                      onChange={(e) => setDetectPrompt(e.target.checked ? captionText : "")}
-                    />
-                    Use this image's caption
-                  </label>
-                )}
-                <label className="label">Caption to ground</label>
+            {detectModel === "nudenet" && (
+              <div className="space-y-1">
+                <label className="label">Min confidence: {detectMinProb.toFixed(2)}</label>
                 <input
-                  className="input"
-                  placeholder="e.g. a cat sitting on a dog"
-                  value={detectPrompt}
-                  onChange={(e) => setDetectPrompt(e.target.value)}
-                  autoFocus={!captionText}
+                  type="range"
+                  min="0.1" max="1" step="0.05"
+                  value={detectMinProb}
+                  onChange={(e) => setDetectMinProb(parseFloat(e.target.value))}
+                  style={{ width: "100%" }}
                 />
-                <p className="text-xs text-gray-500">
-                  Florence-2 will draw boxes around the phrases from this caption.
-                </p>
+                <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
               </div>
+            )}
+
+            {detectModel === "sam2" && (
+              <div className="space-y-2">
+                <label className="label">Mode</label>
+                <div className="flex gap-3">
+                  {[
+                    { value: "text_prompt", label: "Text prompt" },
+                    { value: "points", label: "Point prompts" },
+                  ].map((opt) => (
+                    <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer text-sm">
+                      <input
+                        type="radio"
+                        name="sam2-task"
+                        value={opt.value}
+                        checked={detectTask === opt.value}
+                        onChange={() => { setDetectTask(opt.value); setDetectPrompt(""); }}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+                {detectTask === "text_prompt" && (
+                  <div className="space-y-1">
+                    <label className="label">Text prompt</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. a person's face"
+                      value={detectPrompt}
+                      onChange={(e) => setDetectPrompt(e.target.value)}
+                      autoFocus
+                    />
+                    <p className="text-xs text-gray-500">Grounding DINO will locate matching regions; SAM2 will produce precise masks.</p>
+                  </div>
+                )}
+                {detectTask === "points" && (
+                  <p className="text-xs text-gray-500">
+                    Close this dialog, use the <strong>SAM Points</strong> toolbar button to place foreground points (left-click) and background points (right-click), then open this dialog again to run.
+                    {samPoints.length > 0 && <span className="text-green-400"> {samPoints.length} point(s) placed.</span>}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {detectModel !== "nudenet" && detectModel !== "sam2" && (
+              <>
+                <div>
+                  <label className="label">Task</label>
+                  <select
+                    className="select w-full"
+                    value={detectTask}
+                    onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); }}
+                  >
+                    <option value="<OD>">Object Detection (auto-detect everything)</option>
+                    <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+                  </select>
+                </div>
+
+                {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+                  <div className="space-y-2">
+                    {captionText && (
+                      <label className="flex items-center gap-2 cursor-pointer text-sm">
+                        <input
+                          type="checkbox"
+                          checked={detectPrompt === captionText}
+                          onChange={(e) => setDetectPrompt(e.target.checked ? captionText : "")}
+                        />
+                        Use this image's caption
+                      </label>
+                    )}
+                    <label className="label">Caption to ground</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. a cat sitting on a dog"
+                      value={detectPrompt}
+                      onChange={(e) => setDetectPrompt(e.target.value)}
+                      autoFocus={!captionText}
+                    />
+                    <p className="text-xs text-gray-500">
+                      Florence-2 will draw boxes around the phrases from this caption.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
             {detectJobId && detectJobProgress && (
@@ -1594,7 +1759,9 @@ export default function ImageDetailPage() {
                 disabled={
                   detectMutation.isPending ||
                   !!detectJobId ||
-                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectPrompt.trim())
+                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectPrompt.trim()) ||
+                  (detectModel === "sam2" && detectTask === "text_prompt" && !detectPrompt.trim()) ||
+                  (detectModel === "sam2" && detectTask === "points" && samPoints.length === 0)
                 }
 
               >

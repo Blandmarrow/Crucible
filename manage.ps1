@@ -21,28 +21,29 @@ function Install-Deps {
 
     foreach ($cmd in @("python", "python3", "py")) {
         if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { continue }
-        $ver = & $cmd --version 2>&1
+        try { $ver = & $cmd --version 2>&1 } catch { continue }
         if ($LASTEXITCODE -eq 0 -and "$ver" -match "Python (\d+)\.(\d+)") {
             $maj = [int]$Matches[1]; $min = [int]$Matches[2]
-            if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 10)) {
+            if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 12)) {
                 Write-Host "  Found: $ver" -ForegroundColor Green
+                $script:PythonExe = $cmd
                 $pythonOk = $true
                 break
             } else {
-                Write-Host "  Found $ver - 3.10+ is required." -ForegroundColor Yellow
+                Write-Host "  Found $ver - 3.12+ is required." -ForegroundColor Yellow
             }
         }
     }
 
     if (-not $pythonOk) {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
-            Write-Host "  Python 3.10+ is required but not found." -ForegroundColor Yellow
+            Write-Host "  Python 3.12+ is required but not found." -ForegroundColor Yellow
             Write-Host "  Source: https://www.python.org/ (via winget - Python 3.12)" -ForegroundColor DarkGray
             if ([System.Console]::IsInputRedirected) { $reply = "" } else {
                 $reply = Read-Host "  Install Python 3.12? [Y/n]"
             }
             if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
-                Write-Host "  Install Python 3.10+ manually from: https://www.python.org/downloads/" -ForegroundColor Cyan
+                Write-Host "  Install Python 3.12+ manually from: https://www.python.org/downloads/" -ForegroundColor Cyan
                 exit 1
             }
             Write-Host "  Installing Python 3.12 via winget (user scope, no admin needed)..." -ForegroundColor Yellow
@@ -51,19 +52,20 @@ function Install-Deps {
                 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
                 $ver = & python --version 2>&1
                 if ($LASTEXITCODE -eq 0) {
+                    $script:PythonExe = "python"
                     Write-Host "  Installed: $ver" -ForegroundColor Green
                 } else {
                     Write-Host "  Python installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
                     exit 1
                 }
             } else {
-                Write-Host "ERROR: winget install failed. Install Python 3.10+ from:" -ForegroundColor Red
+                Write-Host "ERROR: winget install failed. Install Python 3.12+ from:" -ForegroundColor Red
                 Write-Host "  https://www.python.org/downloads/" -ForegroundColor Cyan
                 exit 1
             }
         } else {
-            Write-Host "ERROR: Python 3.10+ not found and winget is unavailable." -ForegroundColor Red
-            Write-Host "  Install Python 3.10+ from: https://www.python.org/downloads/" -ForegroundColor Cyan
+            Write-Host "ERROR: Python 3.12+ not found and winget is unavailable." -ForegroundColor Red
+            Write-Host "  Install Python 3.12+ from: https://www.python.org/downloads/" -ForegroundColor Cyan
             exit 1
         }
     }
@@ -150,16 +152,11 @@ function Install-TorchIfNeeded {
         Write-Host "  NVIDIA GPU detected - driver supports CUDA $maj.$min." -ForegroundColor Green
 
         # Pick the highest PyTorch CUDA wheel that the driver version supports.
+        # PyTorch 2.7+ requires CUDA 12.6+ (driver 560.94+ on Windows).
         if ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) {
             $tag = "cu128"
         } elseif ($maj -eq 12 -and $min -ge 6) {
             $tag = "cu126"
-        } elseif ($maj -eq 12 -and $min -ge 4) {
-            $tag = "cu124"
-        } elseif ($maj -eq 12 -and $min -ge 1) {
-            $tag = "cu121"
-        } elseif ($maj -gt 11 -or ($maj -eq 11 -and $min -ge 8)) {
-            $tag = "cu118"
         } else {
             $tag = $null
         }
@@ -175,15 +172,16 @@ function Install-TorchIfNeeded {
                 return
             }
             Write-Host "  Installing PyTorch ($tag) from PyTorch wheel index..." -ForegroundColor Yellow
-            & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.0" --index-url $indexUrl --quiet
+            & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.7" --index-url $indexUrl --quiet
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "  CUDA-enabled PyTorch ($tag) installed." -ForegroundColor Green
             } else {
                 Write-Host "  WARNING: CUDA torch install failed - CPU-only fallback will be used." -ForegroundColor Yellow
             }
         } else {
-            Write-Host "  CUDA $maj.$min is older than the minimum supported version (11.8)." -ForegroundColor Yellow
-            Write-Host "  Update your NVIDIA drivers for GPU support." -ForegroundColor DarkGray
+            Write-Host "  CUDA $maj.$min is older than 12.6 - GPU-accelerated PyTorch is not available." -ForegroundColor Yellow
+            Write-Host "  CPU-only PyTorch will be installed via requirements.txt." -ForegroundColor DarkGray
+            Write-Host "  To enable GPU support, update your NVIDIA driver (560.94+) and re-run setup." -ForegroundColor DarkGray
         }
     } else {
         Write-Host "  Could not parse CUDA version from nvidia-smi - CPU-only PyTorch will be used." -ForegroundColor DarkGray
@@ -227,15 +225,15 @@ function Cmd-Setup {
 
     Install-Deps
 
-    Write-Host "[3/5] Creating Python virtual environment..." -ForegroundColor Yellow
+    Write-Host "[3/6] Creating Python virtual environment..." -ForegroundColor Yellow
     if (Test-Path "$ROOT\venv") {
         Write-Host "  venv already exists, skipping creation." -ForegroundColor DarkGray
     } else {
-        python -m venv --system-site-packages "$ROOT\venv"
+        & $script:PythonExe -m venv --system-site-packages "$ROOT\venv"
         Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green
     }
 
-    Write-Host "[4/5] Installing Python dependencies..." -ForegroundColor Yellow
+    Write-Host "[4/6] Installing Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
@@ -259,7 +257,23 @@ function Cmd-Setup {
         Write-Host "  Python dependencies installed." -ForegroundColor Green
     }
 
-    Write-Host "[5/5] Installing frontend dependencies and building..." -ForegroundColor Yellow
+    Write-Host "[5/6] Installing SAM2 (Segment Anything Model 2)..." -ForegroundColor Yellow
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Download and install SAM2 from GitHub (~50 MB)? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping SAM2. Segmentation features will not be available." -ForegroundColor DarkGray
+    } else {
+        & "$ROOT\venv\Scripts\pip.exe" install "git+https://github.com/facebookresearch/sam2.git" pycocotools --quiet
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  SAM2 installed." -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: SAM2 install failed. Segmentation features will be unavailable." -ForegroundColor Yellow
+            Write-Host "  To retry: .\venv\Scripts\pip.exe install git+https://github.com/facebookresearch/sam2.git pycocotools" -ForegroundColor DarkGray
+        }
+    }
+
+    Write-Host "[6/6] Installing frontend dependencies and building..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -370,7 +384,23 @@ function Cmd-Update {
 
     Activate-Venv
 
-    Write-Host "[2/4] Updating Python dependencies..." -ForegroundColor Yellow
+    # Verify the venv Python meets the 3.12+ requirement before continuing.
+    $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+    if ($venvPyVer -match "Python (\d+)\.(\d+)") {
+        $pvMaj = [int]$Matches[1]; $pvMin = [int]$Matches[2]
+        if (-not ($pvMaj -gt 3 -or ($pvMaj -eq 3 -and $pvMin -ge 12))) {
+            Write-Host ""
+            Write-Host "ERROR: Python 3.12+ is now required, but your venv uses $venvPyVer." -ForegroundColor Red
+            Write-Host "  To upgrade:" -ForegroundColor Yellow
+            Write-Host "  1. Install Python 3.12+ from https://www.python.org/downloads/" -ForegroundColor Cyan
+            Write-Host "  2. Delete the venv/ directory: Remove-Item -Recurse -Force venv\" -ForegroundColor Cyan
+            Write-Host "  3. Re-run: .\manage.ps1 setup" -ForegroundColor Cyan
+            Write-Host ""
+            exit 1
+        }
+    }
+
+    Write-Host "[2/5] Updating Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     Install-TorchIfNeeded
     if (-not [System.Console]::IsInputRedirected) {
@@ -392,7 +422,22 @@ function Cmd-Update {
         Write-Host "  Done." -ForegroundColor Green
     }
 
-    Write-Host "[3/4] Updating frontend dependencies..." -ForegroundColor Yellow
+    Write-Host "[3/5] Installing/updating SAM2..." -ForegroundColor Yellow
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Install or update SAM2 from GitHub? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping SAM2." -ForegroundColor DarkGray
+    } else {
+        & "$ROOT\venv\Scripts\pip.exe" install "git+https://github.com/facebookresearch/sam2.git" pycocotools --quiet
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  SAM2 up to date." -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: SAM2 install failed." -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "[4/5] Updating frontend dependencies..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -403,7 +448,7 @@ function Cmd-Update {
     Pop-Location
     Write-Host "  Done." -ForegroundColor Green
 
-    Write-Host "[4/4] Building frontend..." -ForegroundColor Yellow
+    Write-Host "[5/5] Building frontend..." -ForegroundColor Yellow
     Build-Frontend
 
     Write-Host ""

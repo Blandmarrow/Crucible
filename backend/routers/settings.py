@@ -18,6 +18,8 @@ class ThresholdsOut(BaseModel):
     uniformity_threshold: float
     duplicate_threshold: float
     watermark_threshold: float
+    nsfw_threshold: float
+    gdino_threshold: float
     versioning_mode: str = "off"
 
     model_config = {"from_attributes": True}
@@ -29,6 +31,8 @@ class ThresholdsUpdate(BaseModel):
     uniformity_threshold: float | None = Field(default=None, gt=0)
     duplicate_threshold: float | None = Field(default=None, ge=1)
     watermark_threshold: float | None = Field(default=None, gt=0, le=1.0)
+    nsfw_threshold: float | None = Field(default=None, gt=0, le=1.0)
+    gdino_threshold: float | None = Field(default=None, gt=0, le=1.0)
     versioning_mode: str | None = Field(default=None)
 
     @field_validator("versioning_mode")

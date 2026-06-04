@@ -43,6 +43,8 @@ const DEFAULTS: Thresholds = {
   uniformity_threshold: 12,
   duplicate_threshold: 8,
   watermark_threshold: 0.6,
+  nsfw_threshold: 0.5,
+  gdino_threshold: 0.35,
   versioning_mode: "off",
 };
 
@@ -88,6 +90,22 @@ const FIELDS: ThresholdField[] = [
     key: "watermark_threshold",
     label: "Watermark threshold",
     description: "CLIP zero-shot probability (0–1) — images at or above this score are flagged as watermarked. Lower = stricter.",
+    step: "0.01",
+    min: "0.01",
+    max: "1",
+  },
+  {
+    key: "nsfw_threshold",
+    label: "NSFW threshold",
+    description: "Marqo classifier probability (0–1) — images at or above this score are flagged as NSFW. Lower = stricter.",
+    step: "0.01",
+    min: "0.01",
+    max: "1",
+  },
+  {
+    key: "gdino_threshold",
+    label: "DINO box confidence",
+    description: "Grounding DINO minimum confidence (0–1) for a detected box to be passed to SAM2. Lower = more detections (noisier); higher = fewer but more precise boxes.",
     step: "0.01",
     min: "0.01",
     max: "1",

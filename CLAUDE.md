@@ -138,6 +138,8 @@ Model IDs and their captioner/scorer modules:
 | `upscale:{abs_path}` | `ml/upscaler.py` (spandrel; keyed by absolute model file path to support multiple loaded upscalers) |
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `dino` | `ml/dino_scorer.py` (`facebook/dinov2-base` via HuggingFace `transformers`; ~1.2 GB VRAM; used for DINOv2 embedding extraction) |
+| `nsfw` | `ml/nsfw_scorer.py` (`Marqo/nsfw-image-detection-384` ViT classifier; sets `nsfw_score` + `is_nsfw` flag) |
+| `sam2` | `ml/sam2_predictor.py` (`facebook/sam2.1-hiera-large` via `sam2` package; ~900 MB VRAM; detection only, not captioning; Grounding DINO loaded lazily on first `text_prompt` call from `IDEA-Research/grounding-dino-tiny`) |
 
 **JoyCaption inference details** (`ml/joycaption_captioner.py`): Uses `LlavaForConditionalGeneration` with a system + user chat template via `processor.apply_chat_template`. After the processor call, `inputs["pixel_values"]` is explicitly cast to bfloat16 via `safe_dtype_for_device` — required by LLaVA's architecture. Generation uses `do_sample=True, temperature=0.6, top_p=0.9, max_new_tokens=512`. The four tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are members of `_TAG_STYLES` in `routers/captioning.py` — the router splits their output on commas and stores individual tags, the same as WD14/booru output. Custom prompts override the style prompt entirely.
 
@@ -155,7 +157,7 @@ Quality scorers and what they add to `Image`:
 
 ### Object detection
 
-Bounding-box detection runs as a background job, same pattern as quality scoring.
+Detection runs as a background job, same pattern as quality scoring. Three model families are supported.
 
 **Router**: `backend/routers/detection.py`, prefix `/detection`.
 
@@ -170,24 +172,33 @@ Bounding-box detection runs as a background job, same pattern as quality scoring
 |---|---|---|
 | `dataset_id` | required | Target dataset |
 | `image_ids` | `null` | If set, only these images; otherwise the whole dataset |
-| `model` | required | `"florence2_large"` or `"florence2_promptgen"` |
-| `task` | required | `"<OD>"` or `"<CAPTION_TO_PHRASE_GROUNDING>"` |
-| `custom_prompt` | `""` | Phrase to ground (only used for `<CAPTION_TO_PHRASE_GROUNDING>`) |
+| `model` | required | `"florence2_large"`, `"florence2_promptgen"`, `"nudenet"`, or `"sam2"` |
+| `task` | required | `"<OD>"`, `"<CAPTION_TO_PHRASE_GROUNDING>"`, `"nudenet"`, `"text_prompt"`, or `"points"` |
+| `custom_prompt` | `""` | Phrase to ground (`<CAPTION_TO_PHRASE_GROUNDING>` / SAM2 `text_prompt`) |
 | `use_caption_as_prompt` | `false` | When `true`, each image's `caption_text` is used as the per-image prompt; images without a caption are skipped |
 | `overwrite` | `true` | Delete existing detections for each image before inserting new ones |
+| `min_prob` | `0.5` | NudeNet confidence threshold (ignored for other models) |
+| `point_prompts` | `null` | Normalized `[x, y]` coordinates for SAM2 `points` mode |
+| `point_labels` | `null` | Foreground (1) / background (0) labels matching `point_prompts` |
 
-**Tasks**:
-- `<OD>` — fixed-vocabulary object detection; no prompt; detects only categories the model was trained on.
-- `<CAPTION_TO_PHRASE_GROUNDING>` — phrase grounding; draws boxes around noun phrases that appear in the supplied text. More useful for dataset curation because you control what gets detected.
+**Tasks by model**:
+- Florence-2: `<OD>` (fixed-vocabulary, no prompt) and `<CAPTION_TO_PHRASE_GROUNDING>` (phrase grounding with text or per-image caption).
+- NudeNet: `"nudenet"` only — CPU ONNX, body-part bounding boxes. Not tracked by `model_manager`.
+- SAM2: `"text_prompt"` (Grounding DINO → SAM2 masks from text) or `"points"` (point-prompted SAM2 masks). Auto mode was removed — it produced unlabelled "region" outputs with no semantic value.
 
-**ML inference**: `backend/ml/florence_captioner.py::infer_sync_detection` / `detect_image`. Returns normalized bboxes `[x1, y1, x2, y2]` in 0–1 range. `_move_inputs_to_cuda(model, inputs)` is a shared helper used by both `infer_sync` (captioning) and `infer_sync_detection`.
+**`_ALLOWED_MODELS`** (router): `{"florence2_large", "florence2_promptgen", "nudenet", "sam2"}`. **`_ALLOWED_TASKS`**: `{"<OD>", "<CAPTION_TO_PHRASE_GROUNDING>", "nudenet", "text_prompt", "points"}`.
 
-**Storage**: `backend/models/detection.py::Detection` table. Indexed on `image_id` and `label`. `ImageOut.detections: list[DetectionOut]` is populated only in `GET /images/{image_id}` (the detail endpoint) — not in `list_images`.
+**ML inference**:
+- Florence-2: `backend/ml/florence_captioner.py::infer_sync_detection` / `detect_image`. Returns normalized bboxes `[x1, y1, x2, y2]` in 0–1 range.
+- NudeNet: `backend/ml/nudenet_scorer.py::detect_sync`. Module-level cache with `threading.Lock`. Returns `[{label, bbox, score}]`.
+- SAM2: `backend/ml/sam2_predictor.py`. `_load_sam2_sync` loads `SAM2ImagePredictor` from `facebook/sam2.1-hiera-large` via `sam2` package. `_ensure_gdino()` lazy-loads `IDEA-Research/grounding-dino-tiny` (Grounding DINO) on first `text_prompt` call, module-level cached with `threading.Lock` double-check. `_predict_text`: GDINO → pixel boxes → SAM2 with `multimask_output=True` (3 candidates); best mask selected by `argmax(iou_scores)`. `_predict_points`: point-prompted SAM2. Bboxes derived from mask min/max. Masks stored as Douglas-Peucker simplified polygon JSON in `Detection.mask`.
+
+**Storage**: `backend/models/detection.py::Detection` table. Indexed on `image_id` and `label`. `Detection.mask: Text | None` stores polygon JSON: `{"polygons": [[[x,y],...], ...]}` in normalized 0–1 coordinates. `ImageOut.detections: list[DetectionOut]` is populated only in `GET /images/{image_id}` (the detail endpoint) — not in `list_images`.
 
 **Frontend surfaces**:
-- `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, overwrite toggle).
+- `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, min_prob slider for NudeNet, overwrite toggle).
 - `CaptioningPage` — "Object Detection" section when a Florence-2 model is selected; uses the same model as captioning.
-- `ImageDetailPage` — DETECTIONS panel (collapsible, label chips with counts + SVG overlay with per-label color coding). Label chips toggle `hiddenLabels: Set<string>` to filter the overlay; state resets on navigation. Eye icon shows/hides all boxes.
+- `ImageDetailPage` — DETECTIONS panel (collapsible, label chips with counts + SVG overlay with per-label color coding). For SAM2 results, polygon mask fills are rendered in addition to bounding boxes. Label chips toggle `hiddenLabels: Set<string>` to filter both boxes and mask fills. Eye icon shows/hides all detections. SAM2 point-prompt mode: toolbar button "SAM Points" activates `samPointMode`; left-click = foreground point, right-click = background point; points rendered as colored circles on the SVG overlay and submitted via `point_prompts`/`point_labels` in the detection request.
 
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
@@ -197,8 +208,11 @@ Flag thresholds:
 | `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `uniformity_threshold` in `threshold_settings` DB table |
 | `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `watermark_threshold` in `threshold_settings` DB table |
 | `is_duplicate` | `phash` (perceptual hash Hamming distance) | < 8 | `duplicate_threshold` in `threshold_settings` DB table |
+| `is_nsfw` | `nsfw_score` (Marqo classifier, 0–1) | ≥ 0.5 | `nsfw_threshold` in `threshold_settings` DB table |
 
-All five thresholds are user-configurable via Settings (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Changes take effect on the next scoring run; existing images are not re-flagged. Constants in `technical_scorer.py` serve only as parameter defaults — the quality router always passes DB-fetched values via `backend/services/threshold_service.py::get_thresholds()`.
+`gdino_threshold` (default 0.35) in `threshold_settings` controls the Grounding DINO box confidence cutoff passed to SAM2 `text_prompt` detection — read via `get_thresholds()` at the start of each SAM2 detection job. `text_threshold` scales with it (`gdino_threshold - 0.10`, floored at 0.01).
+
+All thresholds are user-configurable via Settings (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Quality flag thresholds take effect on the next scoring run; `gdino_threshold` takes effect on the next SAM2 detection run. Constants in `technical_scorer.py` serve only as parameter defaults — the quality router always passes DB-fetched values via `backend/services/threshold_service.py::get_thresholds()`.
 
 **Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
 

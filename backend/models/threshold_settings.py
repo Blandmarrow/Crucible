@@ -13,4 +13,6 @@ class ThresholdSettings(Base):
     uniformity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="12.0")
     duplicate_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="8.0")
     watermark_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.6")
+    nsfw_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
+    gdino_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.35")
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'off'")

@@ -494,6 +494,102 @@ class ModelManager:
         vram_used = max(1200, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
+    async def load_nsfw(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = "nsfw"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_nsfw_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
+    def _load_nsfw_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        from transformers import AutoImageProcessor, AutoModelForImageClassification
+        from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
+
+        model_name = "Marqo/nsfw-image-detection-384"
+        logger.info("Loading %s...", model_name)
+
+        if job_id and loop:
+            needs_download = not is_hf_cached(model_name, "config.json")
+            msg = (
+                f"Downloading {model_name} (first run)..."
+                if needs_download else f"Loading {model_name} into VRAM..."
+            )
+            emit_sync(job_id, loop, msg, -1.0, dataset_id)
+
+        self._evict_lru(1000)
+
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        processor = None
+        model = None
+        try:
+            with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
+                processor = AutoImageProcessor.from_pretrained(model_name)
+                model = AutoModelForImageClassification.from_pretrained(model_name)
+            if job_id and loop:
+                emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
+            model = model.to(_device.get_device()).eval()
+        except Exception:
+            if model is not None:
+                try:
+                    model.cpu()
+                except Exception:
+                    pass
+            del model, processor
+            _device.empty_cache()
+            raise
+
+        # Resolve which output index corresponds to the "nsfw" class.
+        # The model config maps label indices to class names (e.g. {0: "normal", 1: "nsfw"}).
+        id2label: dict = getattr(model.config, "id2label", {})
+        nsfw_idx = next(
+            (int(k) for k, v in id2label.items() if v.lower() == "nsfw"),
+            1,  # default: assume class 1 is nsfw if config is absent
+        )
+
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(1000, (vram_after - vram_before) // (1024 * 1024))
+        return ModelEntry({"model": model, "processor": processor, "nsfw_idx": nsfw_idx}, None, vram_mb=vram_used)
+
+    async def load_sam2(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = "sam2"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            from backend.ml.sam2_predictor import _load_sam2_sync
+            self._evict_lru(1800)
+            entry = await _loop.run_in_executor(
+                None, _load_sam2_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
     async def unload(self, model_id: str) -> None:
         async with self._get_lock(model_id):
             with self._sync_lock:
@@ -526,6 +622,8 @@ class ModelManager:
             {"id": "joycaption_beta", "name": "JoyCaption Beta One", "vram_mb": 17000},
             {"id": "aesthetic", "name": "LAION Aesthetic Predictor", "vram_mb": 3500},
             {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
+            {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000},
+            {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800},
         ]
         return [{**m, "loaded": m["id"] in loaded} for m in all_models]
 

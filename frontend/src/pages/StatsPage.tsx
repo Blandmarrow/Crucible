@@ -55,6 +55,8 @@ const FLAG_DEFS = [
     icon: <><path d="M3 6h10M3 9h7"/></> },
   { key: "duplicate",   flag: "is_duplicate",  label: "Duplicate",    cls: "info",
     icon: <><rect x="2.5" y="2.5" width="9" height="9" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1"/></> },
+  { key: "nsfw",        flag: "is_nsfw",       label: "NSFW",         cls: "bad",
+    icon: <><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></> },
 ];
 
 function flagHint(key: string, t: Thresholds): string {
@@ -64,6 +66,7 @@ function flagHint(key: string, t: Thresholds): string {
     case "uniform":     return `Grayscale std dev < ${t.uniformity_threshold}`;
     case "watermarked": return `Watermark score ≥ ${t.watermark_threshold}`;
     case "duplicate":   return `Perceptual hash distance < ${t.duplicate_threshold}`;
+    case "nsfw":        return `NSFW score ≥ ${t.nsfw_threshold}`;
     default:            return "";
   }
 }

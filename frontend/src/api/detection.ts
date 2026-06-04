@@ -13,6 +13,9 @@ export const detectionApi = {
     use_caption_as_prompt?: boolean;
     overwrite?: boolean;
     label?: string;
+    min_prob?: number;
+    point_prompts?: number[][];
+    point_labels?: number[];
   }) =>
     client
       .post<{ job_id: string | null; total: number }>("/detection/run", params)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, JSON, String
+from sqlalchemy import DateTime, Float, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -18,4 +18,5 @@ class Detection(Base):
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     task: Mapped[str] = mapped_column(String(64), nullable=False)
+    mask: Mapped[str | None] = mapped_column(Text, nullable=True)
     detected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

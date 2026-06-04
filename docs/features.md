@@ -17,24 +17,43 @@
 
 ## Object Detection
 
-Run Florence-2 bounding-box detection on any selection of images as a background job.
+Run detection on any selection of images as a background job. Three models are available:
 
-Two detection tasks:
+### Florence-2 (bounding boxes)
 
 | Task | Description |
 |---|---|
 | **Object Detection** (`<OD>`) | Fixed-vocabulary detection — finds categories the model was trained on, no prompt needed |
 | **Phrase Grounding** (`<CAPTION_TO_PHRASE_GROUNDING>`) | Draws boxes around noun phrases in a text prompt; use "Use caption as prompt" to automatically ground each image's own caption |
 
+Available from the **Detect** button in SelectionToolbar, and from the Object Detection section on the Captioning page when a Florence-2 model is selected.
+
+### NudeNet (body-part detection)
+
+ONNX-based body-part detector producing labelled bounding boxes (exposed skin regions, clothing, etc). CPU-only, no GPU required. A **Min confidence** slider controls the detection threshold (default 0.5).
+
+### Grounded SAM 2.1 (segmentation masks)
+
+Two-stage pipeline: **Grounding DINO** localises objects from a text description → **SAM2** produces a precise pixel-level segmentation mask for each detected region.
+
+| Mode | Description |
+|---|---|
+| **Text prompt** | Describe what to segment (e.g. `person . car`); noun phrases separated by ` . ` for multiple targets |
+| **Point prompts** | Use the **SAM Points** toolbar button on the image detail page to place foreground points (left-click) and background points (right-click), then run |
+
+Mask outputs are rendered as semi-transparent polygon fills on the SVG overlay in addition to bounding boxes.
+
+The **DINO box confidence** threshold (Settings → Quality Thresholds, default 0.35) controls how confident Grounding DINO must be before passing a detected region to SAM2 — lower values return more detections, higher values return fewer but more precise ones.
+
+---
+
 Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - Label chips with per-label counts
-- SVG overlay on the image with per-label colour coding
-- Click any label chip to toggle its boxes on/off
-- Eye icon in the toolbar hides/shows all boxes at once
+- SVG overlay on the image with per-label colour coding (filled polygon masks for SAM2, bounding boxes for all models)
+- Click any label chip to toggle its boxes/masks on/off
+- Eye icon in the toolbar hides/shows all detections at once
 
 The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results.
-
-Available from the **Detect** button in the SelectionToolbar, and from the Object Detection section on the Captioning page when a Florence-2 model is selected.
 
 ## Image Processing
 
@@ -70,10 +89,10 @@ Bulk score, upscale, LUT, detect, and rename operations all support a **quality 
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
-- **Batch score** — run technical, aesthetic, watermark, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
+- **Batch score** — run technical, aesthetic, watermark, NSFW, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
-- **Batch detect** — run Florence-2 object detection or phrase grounding on the selection
+- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 segmentation on the selection
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
@@ -135,7 +154,7 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into si
 - Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
 - Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
 
-**Quality Thresholds** — five configurable number inputs (require Save; changes apply to the next scoring run only):
+**Quality Thresholds** — configurable number inputs (require Save; changes apply to the next scoring or detection run only):
 
 | Setting | Controls |
 |---|---|
@@ -144,6 +163,8 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into si
 | Uniformity threshold | Grayscale std dev cutoff for `is_uniform` (default 12) |
 | Watermark threshold | CLIP zero-shot score cutoff for `has_watermark` (default 0.6) |
 | Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
+| NSFW threshold | Marqo classifier score cutoff for `is_nsfw` (default 0.5) |
+| DINO box confidence | Grounding DINO minimum confidence before passing a box to SAM2 (default 0.35) |
 
 **Versioning** — version control mode (Off / Manual / Auto; see [Dataset Versioning](versioning.md)) plus branch snapshot behavior. Requires Save for the version control mode.
 

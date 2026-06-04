@@ -31,6 +31,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const isBlurry = image.quality_flags?.is_blurry as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
+  const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 
@@ -85,8 +86,13 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
         </div>
 
         {/* Quality flags */}
-        {(isDuplicate || isBlurry || hasWatermark || isUniform) && (
+        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw) && (
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
+            {isNsfw && (
+              <span title="NSFW" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></svg>
+              </span>
+            )}
             {isDuplicate && (
               <span title="Duplicate" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--info)" }}>
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="2.5" y="2.5" width="9" height="9" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1"/></svg>

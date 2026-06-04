@@ -117,7 +117,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success("Detection complete");
     } else if (detectJobProgress.status === "failed") {
       setDetectJobId(null);
-      toast.error("Detection failed");
+      toast.error(detectJobProgress.message || "Detection failed");
     }
   }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
 

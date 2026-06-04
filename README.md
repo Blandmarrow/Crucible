@@ -3,7 +3,7 @@
 A local web-based application for building, curating, and exporting Stable Diffusion training datasets. Manage your image collections with AI-powered captioning, multi-metric quality scoring, and flexible export to the most common training formats.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Node](https://img.shields.io/badge/node-18%2B-green)
 
 ![alt text](docs/images/image-3.png)
@@ -17,12 +17,12 @@ A local web-based application for building, curating, and exporting Stable Diffu
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 - **Import** images from local folders into named datasets with subfolder organization → [details](docs/features.md#datasets--gallery)
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
-- **Score** every image across aesthetic, technical, watermark, and style similarity metrics → [details](docs/scoring.md)
+- **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
 - **Process** images with ML upscaling and LUT color grading → [details](docs/features.md#image-processing)
-- **Detect** objects and ground phrases using Florence-2 bounding-box detection → [details](docs/features.md#object-detection)
+- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, or Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts → [details](docs/features.md#object-detection)
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
@@ -37,9 +37,9 @@ All long-running operations run in a background job queue and stream real-time p
 
 | Requirement | Version / Notes |
 |---|---|
-| Python | 3.10+ |
+| Python | 3.12+ |
 | Node.js | 18+ |
-| GPU (ML features) | NVIDIA CUDA · AMD ROCm 6.1+ (Linux only) · Apple Silicon |
+| GPU (ML features) | NVIDIA CUDA 12.6+ · AMD ROCm 6.3+ (Linux only) · Apple Silicon |
 
 Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM for most models; JoyCaption requires ~17 GB. The technical scorer and duplicate detector run on CPU only.
 
@@ -99,26 +99,23 @@ Keep the venv active for all remaining steps.
 This must happen *before* `requirements.txt` so that packages like `open_clip_torch` link against the GPU build. Replace `<INDEX_URL>` with the URL matching your hardware from the tables below:
 
 ```bash
-pip install "torch>=2.0" --index-url <INDEX_URL>
+pip install "torch>=2.7" --index-url <INDEX_URL>
 ```
 
-**NVIDIA GPU** — check your CUDA version with `nvidia-smi`:
+**NVIDIA GPU** — check your CUDA version with `nvidia-smi`. CUDA 12.6 or newer is required:
 
 | CUDA version | `<INDEX_URL>` |
 |---|---|
 | ≥ 12.8 | `https://download.pytorch.org/whl/cu128` |
 | 12.6 | `https://download.pytorch.org/whl/cu126` |
-| 12.4 | `https://download.pytorch.org/whl/cu124` |
-| 12.1 | `https://download.pytorch.org/whl/cu121` |
-| 11.8 | `https://download.pytorch.org/whl/cu118` |
 
-**AMD GPU / ROCm** (Linux only) — check your ROCm version with `rocminfo`:
+> If your driver reports CUDA 12.4 or older, update your NVIDIA driver to version 560.94 or newer before proceeding.
+
+**AMD GPU / ROCm** (Linux only) — ROCm 6.3 or newer is required:
 
 | ROCm version | `<INDEX_URL>` |
 |---|---|
 | ≥ 6.3 | `https://download.pytorch.org/whl/rocm6.3` |
-| 6.2 | `https://download.pytorch.org/whl/rocm6.2` |
-| 6.1 | `https://download.pytorch.org/whl/rocm6.1` |
 
 **Apple Silicon** — no special wheel needed; standard PyTorch already includes MPS support. Skip this step.
 

@@ -10,14 +10,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 
 _python_version_ok() {
-    # Returns 0 if $1 is Python 3.10+
+    # Returns 0 if $1 is Python 3.12+
     command -v "$1" &>/dev/null || return 1
     local ver maj min
     ver=$("$1" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+" | head -1 || true)
     [ -n "$ver" ] || return 1
     maj=$(echo "$ver" | cut -d. -f1)
     min=$(echo "$ver" | cut -d. -f2)
-    [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 10 ]; }
+    [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 12 ]; }
 }
 
 _node_version_ok() {
@@ -80,17 +80,17 @@ _install_deps() {
     else
         for cmd in python3 python; do
             if command -v "$cmd" &>/dev/null; then
-                echo "  Found $($cmd --version 2>&1) - 3.10+ is required."
+                echo "  Found $($cmd --version 2>&1) - 3.12+ is required."
             fi
         done
-        echo "  Python 3.10+ is required but not found."
+        echo "  Python 3.12+ is required but not found."
         echo "  Source: https://www.python.org/ (via package manager)"
         printf "  Install now? [Y/n] "
         read -r _reply || true
         case "$_reply" in
-            [Nn]*) echo "  Install Python 3.10+ from: https://www.python.org/downloads/"; exit 1 ;;
+            [Nn]*) echo "  Install Python 3.12+ from: https://www.python.org/downloads/"; exit 1 ;;
         esac
-        echo "  Installing Python 3.10+..."
+        echo "  Installing Python 3.12+..."
         if [ "$os" = "Darwin" ]; then
             if command -v brew &>/dev/null; then
                 brew install python@3.12
@@ -109,12 +109,12 @@ _install_deps() {
                 sudo pacman -Sy --noconfirm python python-pip
             else
                 echo "ERROR: No supported package manager (apt, dnf, pacman) found." >&2
-                echo "  Install Python 3.10+ from https://www.python.org/downloads/" >&2
+                echo "  Install Python 3.12+ from https://www.python.org/downloads/" >&2
                 exit 1
             fi
         else
             echo "ERROR: Unsupported OS." >&2
-            echo "  Install Python 3.10+ from https://www.python.org/downloads/" >&2
+            echo "  Install Python 3.12+ from https://www.python.org/downloads/" >&2
             exit 1
         fi
         if _python_version_ok python3; then
@@ -122,7 +122,7 @@ _install_deps() {
         elif _python_version_ok python; then
             PYTHON=python
         else
-            echo "ERROR: Python 3.10+ install failed. Please install manually." >&2
+            echo "ERROR: Python 3.12+ install failed. Please install manually." >&2
             exit 1
         fi
         echo "  Installed: $($PYTHON --version)"
@@ -210,11 +210,9 @@ _install_torch_if_needed() {
             min=$(echo "$cuda_ver" | cut -d. -f2)
             echo "  NVIDIA GPU detected — driver supports CUDA $maj.$min."
 
+            # PyTorch 2.7+ requires CUDA 12.6+ (driver 560.94+ on Linux).
             if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
             elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
-            elif [ "$maj" -eq 12 ] && [ "$min" -ge 4 ]; then tag="cu124"
-            elif [ "$maj" -eq 12 ] && [ "$min" -ge 1 ]; then tag="cu121"
-            elif [ "$maj" -gt 11 ] || { [ "$maj" -eq 11 ] && [ "$min" -ge 8 ]; }; then tag="cu118"
             fi
 
             if [ -n "$tag" ]; then
@@ -226,14 +224,16 @@ _install_torch_if_needed() {
                     [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
                 esac
                 echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
-                if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
+                if "$ROOT/venv/bin/pip" install "torch>=2.7" --index-url "$index_url" --quiet; then
                     echo "  CUDA-enabled PyTorch ($tag) installed."
                 else
                     echo "  WARNING: CUDA torch install failed — CPU-only fallback will be used."
                 fi
                 return
             else
-                echo "  CUDA $maj.$min is older than the minimum supported version (11.8) — skipping NVIDIA wheel."
+                echo "  CUDA $maj.$min is older than 12.6 — GPU-accelerated PyTorch is not available."
+                echo "  CPU-only PyTorch will be installed via requirements.txt."
+                echo "  To enable GPU support, update your NVIDIA driver (560.94+) and re-run setup."
             fi
         fi
     fi
@@ -262,16 +262,17 @@ _install_torch_if_needed() {
             rmin=$(echo "$rocm_ver" | cut -d. -f2)
             echo "  AMD GPU detected — ROCm $rmaj.$rmin."
 
-            if   [ "$rmaj" -gt 6 ] || { [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 3 ]; }; then rocm_tag="rocm6.3"
-            elif [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 2 ]; then rocm_tag="rocm6.2"
-            elif [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 1 ]; then rocm_tag="rocm6.1"
+            # PyTorch 2.7+ requires ROCm 6.3+.
+            if [ "$rmaj" -gt 6 ] || { [ "$rmaj" -eq 6 ] && [ "$rmin" -ge 3 ]; }; then
+                rocm_tag="rocm6.3"
             else
-                echo "  ROCm $rmaj.$rmin is older than the minimum supported version (6.1) — CPU-only fallback will be used."
-                return
+                echo "  ERROR: ROCm $rmaj.$rmin is too old for PyTorch 2.7 (requires ROCm 6.3+)." >&2
+                echo "  Please update your ROCm stack, then delete venv/ and re-run setup." >&2
+                exit 1
             fi
         else
-            echo "  AMD GPU detected (ROCm version unknown) — trying rocm6.2 wheel."
-            rocm_tag="rocm6.2"
+            echo "  AMD GPU detected (ROCm version unknown) — trying rocm6.3 wheel."
+            rocm_tag="rocm6.3"
         fi
 
         local index_url="https://download.pytorch.org/whl/$rocm_tag"
@@ -282,7 +283,7 @@ _install_torch_if_needed() {
             [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
         esac
         echo "  Installing PyTorch ($rocm_tag) from PyTorch wheel index..."
-        if "$ROOT/venv/bin/pip" install "torch>=2.0" --index-url "$index_url" --quiet; then
+        if "$ROOT/venv/bin/pip" install "torch>=2.7" --index-url "$index_url" --quiet; then
             echo "  ROCm-enabled PyTorch ($rocm_tag) installed."
         else
             echo "  WARNING: ROCm torch install failed — CPU-only fallback will be used."
@@ -314,7 +315,7 @@ cmd_setup() {
 
     _install_deps
 
-    echo "[3/5] Creating Python virtual environment..."
+    echo "[3/6] Creating Python virtual environment..."
     if [ -d "$ROOT/venv" ]; then
         echo "  venv already exists, skipping creation."
     else
@@ -326,7 +327,7 @@ cmd_setup() {
         echo ""
     fi
 
-    echo "[4/5] Installing Python dependencies..."
+    echo "[4/6] Installing Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
@@ -350,7 +351,22 @@ cmd_setup() {
             ;;
     esac
 
-    echo "[5/5] Installing frontend dependencies and building..."
+    echo "[5/6] Installing SAM2 (Segment Anything Model 2)..."
+    printf "  Download and install SAM2 from GitHub (~50 MB)? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping SAM2. Segmentation features will not be available." ;;
+        *)
+            if "$ROOT/venv/bin/pip" install "git+https://github.com/facebookresearch/sam2.git" pycocotools --quiet; then
+                echo "  SAM2 installed."
+            else
+                echo "  WARNING: SAM2 install failed. Segmentation features will be unavailable."
+                echo "  To retry: ./venv/bin/pip install git+https://github.com/facebookresearch/sam2.git pycocotools"
+            fi
+            ;;
+    esac
+
+    echo "[6/6] Installing frontend dependencies and building..."
     cd "$ROOT/frontend"
     npm install
     npm run build
@@ -445,7 +461,26 @@ cmd_update() {
 
     _activate
 
-    echo "[2/4] Updating Python dependencies..."
+    # Verify the venv Python meets the 3.12+ requirement before continuing.
+    local venv_py_ver
+    venv_py_ver=$("$ROOT/venv/bin/python" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+" | head -1 || true)
+    if [ -n "$venv_py_ver" ]; then
+        local pv_maj pv_min
+        pv_maj=$(echo "$venv_py_ver" | cut -d. -f1)
+        pv_min=$(echo "$venv_py_ver" | cut -d. -f2)
+        if ! { [ "$pv_maj" -gt 3 ] || { [ "$pv_maj" -eq 3 ] && [ "$pv_min" -ge 12 ]; }; }; then
+            echo ""
+            echo "ERROR: Python 3.12+ is now required, but your venv uses Python $venv_py_ver." >&2
+            echo "  To upgrade:" >&2
+            echo "  1. Install Python 3.12+ (https://www.python.org/downloads/)" >&2
+            echo "  2. Delete the venv/ directory: rm -rf venv/" >&2
+            echo "  3. Re-run: ./manage.sh setup" >&2
+            echo ""
+            exit 1
+        fi
+    fi
+
+    echo "[2/5] Updating Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     _install_torch_if_needed
     if [ ! -f "$ROOT/backend/requirements.txt" ]; then
@@ -467,13 +502,27 @@ cmd_update() {
             ;;
     esac
 
-    echo "[3/4] Updating frontend dependencies..."
+    echo "[3/5] Installing/updating SAM2..."
+    printf "  Install or update SAM2 from GitHub? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping SAM2." ;;
+        *)
+            if "$ROOT/venv/bin/pip" install "git+https://github.com/facebookresearch/sam2.git" pycocotools --quiet; then
+                echo "  SAM2 up to date."
+            else
+                echo "  WARNING: SAM2 install failed."
+            fi
+            ;;
+    esac
+
+    echo "[4/5] Updating frontend dependencies..."
     cd "$ROOT/frontend"
     npm install
     cd "$ROOT"
     echo "  Done."
 
-    echo "[4/4] Building frontend..."
+    echo "[5/5] Building frontend..."
     _build_frontend
 
     echo ""

@@ -22,6 +22,7 @@ class ImageOut(BaseModel):
     noise_score: float | None
     uniformity_score: float | None = None
     watermark_score: float | None = None
+    nsfw_score: float | None = None
     color_score: float | None = None
     saturation_score: float | None = None
     style_similarity_score: float | None = None

@@ -147,6 +147,7 @@ export interface Detection {
   score: number | null;
   model: string;
   task: string;
+  mask?: string | null;
   detected_at: string;
 }
 
@@ -154,6 +155,7 @@ export interface ImageDetail extends ImageListItem {
   original_filename: string;
   phash: string | null;
   noise_score: number | null;
+  nsfw_score: number | null;
   caption_style: string;
   captioned_at: string | null;
   created_at: string;

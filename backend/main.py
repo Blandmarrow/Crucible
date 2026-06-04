@@ -10,6 +10,8 @@ from pathlib import Path
 # Triton is unavailable on Windows; disable TorchDynamo so torch.compile is never
 # attempted during inference (single-image inference gains nothing from it anyway).
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+# HuggingFace symlink warning: expected on Windows without Developer Mode — cache still works fine
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # torchao: no Triton on Windows — expected, no runtime effect
 warnings.filterwarnings("ignore", message=".*Detected no triton.*")

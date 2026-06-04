@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate"})
+ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw"})
 
 
 def normalize_subfolder(s: str) -> str:

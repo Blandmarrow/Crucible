@@ -28,6 +28,7 @@ class ScoreRequest(BaseModel):
     run_embeddings: bool = False
     run_dino: bool = False
     run_dino_layers: bool = False
+    run_nsfw: bool = False
     label: str | None = None
 
 
@@ -64,6 +65,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         ("watermark", body.run_watermark),
         ("embeddings", body.run_embeddings),
         ("DINOv2", body.run_dino),
+        ("NSFW", body.run_nsfw),
     ] if flag]
     auto_label = f"Quality: {', '.join(checks) or 'none'} — {len(images)} image{'s' if len(images) != 1 else ''}"
     job = BackgroundJob(
@@ -131,6 +133,14 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             if body.run_dino_layers:
                 dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
 
+        nsfw_results: list[dict] = []
+        if body.run_nsfw:
+            from backend.ml.nsfw_scorer import score_images_nsfw_batch
+            nsfw_entry = await model_manager.load_nsfw(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+            nsfw_results = await score_images_nsfw_batch(
+                paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
+            )
+
         async with AsyncSessionLocal() as session:
             for i, img_id in enumerate(ids):
                 img = await session.get(Image, img_id)
@@ -162,6 +172,12 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     img.dino_embedding = dino_embeddings[i]
                 if dino_layer_embeddings:
                     img.dino_layer_embeddings = dino_layer_embeddings[i]
+                if nsfw_results:
+                    n = nsfw_results[i]
+                    img.nsfw_score = n.get("nsfw_score")
+                    flags = img.quality_flags or {}
+                    flags["is_nsfw"] = n.get("is_nsfw", False)
+                    img.quality_flags = flags
             await session.commit()
 
         # Detect duplicates after scoring

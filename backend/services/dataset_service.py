@@ -337,6 +337,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
             _flag_sum("is_uniform").label("uniform"),
             _flag_sum("has_watermark").label("watermarked"),
             _flag_sum("is_duplicate").label("duplicate"),
+            _flag_sum("is_nsfw").label("nsfw"),
         ).where(*_base_where)
     )).one()
     flag_counts = {
@@ -345,6 +346,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "uniform": flag_row.uniform,
         "watermarked": flag_row.watermarked,
         "duplicate": flag_row.duplicate,
+        "nsfw": flag_row.nsfw,
     }
 
     # Bucket edge/label definitions

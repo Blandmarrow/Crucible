@@ -10,6 +10,8 @@ DEFAULTS = dict(
     uniformity_threshold=12.0,
     duplicate_threshold=8.0,
     watermark_threshold=0.6,
+    nsfw_threshold=0.5,
+    gdino_threshold=0.35,
     versioning_mode="off",
 )
 

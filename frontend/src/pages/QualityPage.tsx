@@ -17,6 +17,7 @@ const SCORING_OPTIONS = [
   { key: "embeddings", label: "Style embeddings · CLIP", desc: "Required for the style-similarity workflow below.", vram: "GPU · 2.1 GB" },
   { key: "dino", label: "DINOv2 embeddings", desc: "Object-aware embedding. Can be used alone or alongside CLIP for style similarity.", vram: "GPU · 1.2 GB" },
   { key: "dino_layers", label: "DINOv2 per-layer embeds", desc: "Stores all 12 transformer layer CLS tokens. Enables per-layer style similarity.", vram: "GPU · 1.2 GB" },
+  { key: "nsfw", label: "NSFW detection · Marqo", desc: "ViT classifier (Marqo/nsfw-image-detection-384) — sets the is_nsfw quality flag.", vram: "GPU · 1.0 GB" },
 ];
 
 export default function QualityPage() {
@@ -28,6 +29,7 @@ export default function QualityPage() {
   const [runWatermark, setRunWatermark] = useState(false);
   const [runEmbeddings, setRunEmbeddings] = useState(false);
   const [runDino, setRunDino] = useState(false);
+  const [runNsfw, setRunNsfw] = useState(false);
   const [jobLabel, setJobLabel] = useState("");
   const [runDinoLayers, setRunDinoLayers] = useState(false);
   const [showStyleSection, setShowStyleSection] = useState(false);
@@ -96,6 +98,7 @@ export default function QualityPage() {
         run_embeddings: runEmbeddings,
         run_dino: runDino,
         run_dino_layers: runDino && runDinoLayers,
+        run_nsfw: runNsfw,
         label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
@@ -165,6 +168,7 @@ export default function QualityPage() {
     embeddings: [runEmbeddings, setRunEmbeddings],
     dino: [runDino, setRunDino],
     dino_layers: [runDinoLayers, setRunDinoLayers],
+    nsfw: [runNsfw, setRunNsfw],
   };
 
   return (

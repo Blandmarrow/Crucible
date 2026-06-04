@@ -34,6 +34,7 @@ class Image(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Quality scores
+    nsfw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_score: Mapped[float | None] = mapped_column(Float, nullable=True)

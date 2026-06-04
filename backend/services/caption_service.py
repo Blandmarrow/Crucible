@@ -39,7 +39,7 @@ async def set_caption(
     if not img:
         return None
 
-    tags = [t.strip() for t in tags if t.strip()]
+    tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))
     img.caption_text = caption_text
     img.tags_json = tags
     img.caption_style = caption_style

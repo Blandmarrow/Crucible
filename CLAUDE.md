@@ -130,6 +130,8 @@ Model IDs and their captioner/scorer modules:
 |---|---|
 | `florence2*` | `ml/florence_captioner.py` |
 | `paligemma2` | `ml/paligemma_captioner.py` (needs `HF_TOKEN` in `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448) |
+| `joycaption_alpha` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-alpha-two-hf-llava`; Llama 3.1 8B + SigLIP via `LlavaForConditionalGeneration`; ~17 GB VRAM; 12 styles; custom prompt supported) |
+| `joycaption_beta` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-beta-one-hf-llava`; Llama 3.1 8B + SigLIP2; otherwise identical to alpha) |
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
 | `openai_compat:{id}:{model}` | `ml/openai_compat_captioner.py` (OpenAI-compatible vision API; `id` is the `OpenAIProvider` DB row UUID, `model` is the model name string) |
 | `wd14:{variant}` | `ml/wd14_tagger.py` (ONNX inference via `onnxruntime`; downloads from SmilingWolf HuggingFace repos; not tracked by `model_manager` — uses its own module-level cache with `threading.Lock` and double-check locking; variants: `eva02_large` (~2.0 GB RAM), `vit_large` (~1.4 GB RAM), `swinv2` (~0.6 GB RAM); `list_wd14_models()` returns `{id, name, ram_mb}` — `ram_mb` is included in the `/captioning/models` response and displayed in the UI alongside each model) |
@@ -137,7 +139,11 @@ Model IDs and their captioner/scorer modules:
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `dino` | `ml/dino_scorer.py` (`facebook/dinov2-base` via HuggingFace `transformers`; ~1.2 GB VRAM; used for DINOv2 embedding extraction) |
 
-**Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All three captioners (Florence-2, PaliGemma-2, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
+**JoyCaption inference details** (`ml/joycaption_captioner.py`): Uses `LlavaForConditionalGeneration` with a system + user chat template via `processor.apply_chat_template`. After the processor call, `inputs["pixel_values"]` is explicitly cast to bfloat16 via `safe_dtype_for_device` — required by LLaVA's architecture. Generation uses `do_sample=True, temperature=0.6, top_p=0.9, max_new_tokens=512`. The four tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are members of `_TAG_STYLES` in `routers/captioning.py` — the router splits their output on commas and stores individual tags, the same as WD14/booru output. Custom prompts override the style prompt entirely.
+
+**`_TAG_STYLES`** (`backend/routers/captioning.py`): module-level `frozenset` containing all comma-separated-output styles: `{"tags", "booru", "danbooru", "e621", "rule34", "booru_like"}`. Both `_run()` and `_run_pipeline_job()` use this set to decide whether to split caption output into individual tags. Do not duplicate this set locally — import or reference it from the module.
+
+**Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All captioners (Florence-2, PaliGemma-2, JoyCaption, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 
 Quality scorers and what they add to `Image`:
 | Module | Columns written | Notes |
@@ -336,8 +342,9 @@ Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, creat
 | `florence2` | `short`, `detailed`, `tags` | Base Florence-2 (`florence2_large`). `dense` is absent — `<DENSE_REGION_CAPTION>` returns a bounding-box dict, not caption text. |
 | `florence2_promptgen` | `short`, `detailed`, `promptgen` | PromptGen v2 (`florence2_promptgen`). `tags` is absent — `<GENERATE_TAGS>` is not supported by this fine-tune. |
 | `paligemma2` | `short`, `detailed`, `tags`, `booru` | |
+| `joycaption` | `descriptive`, `casual`, `straightforward`, `sd_prompt`, `midjourney`, `danbooru`, `e621`, `rule34`, `booru_like`, `art_critic`, `product`, `social_media` | Shared by both `joycaption_alpha` and `joycaption_beta`. |
 
-Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. `modelType()` checks `model === "florence2_promptgen"` explicitly before the general `startsWith("florence2")` fallback to avoid misclassification.
+Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. `modelType()` checks `model === "florence2_promptgen"` explicitly before the general `startsWith("florence2")` fallback to avoid misclassification. JoyCaption uses `model.startsWith("joycaption")` after the florence2 checks.
 
 `frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
 

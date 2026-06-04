@@ -16,7 +16,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 - **Import** images from local folders into named datasets with subfolder organization → [details](docs/features.md#datasets--gallery)
-- **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
+- **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 - **Score** every image across aesthetic, technical, watermark, and style similarity metrics → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
@@ -41,7 +41,7 @@ All long-running operations run in a background job queue and stream real-time p
 | Node.js | 18+ |
 | GPU (ML features) | NVIDIA CUDA · AMD ROCm 6.1+ (Linux only) · Apple Silicon |
 
-Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM minimum; the technical scorer and duplicate detector run on CPU only.
+Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM for most models; JoyCaption requires ~17 GB. The technical scorer and duplicate detector run on CPU only.
 
 ---
 

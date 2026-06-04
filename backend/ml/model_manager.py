@@ -256,6 +256,91 @@ class ModelManager:
         vram_used = max(6000, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry(model, processor, vram_mb=vram_used)
 
+    async def load_joycaption(
+        self,
+        variant: str = "alpha",
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = f"joycaption_{variant}"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_joycaption_sync, model_id, variant, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
+    def _load_joycaption_sync(
+        self,
+        model_id: str,
+        variant: str,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        import torch
+        from transformers import AutoProcessor, LlavaForConditionalGeneration
+        from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
+
+        MODEL_MAP = {
+            "alpha": "fancyfeast/llama-joycaption-alpha-two-hf-llava",
+            "beta": "fancyfeast/llama-joycaption-beta-one-hf-llava",
+        }
+        model_name = MODEL_MAP.get(variant, MODEL_MAP["alpha"])
+        logger.info("Loading %s...", model_name)
+
+        if job_id and loop:
+            needs_download = not is_hf_cached(model_name, "config.json")
+            msg = (
+                f"Downloading {model_name} (first run, may take several minutes)..."
+                if needs_download else f"Loading {model_name} into VRAM..."
+            )
+            emit_sync(job_id, loop, msg, -1.0, dataset_id)
+
+        self._evict_lru(17000)
+
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        _jc_dtype = _device.safe_dtype_for_device(torch.bfloat16)
+        _active_device = _device.get_device()
+
+        if _active_device == "cuda":
+            kwargs: dict = {"torch_dtype": _jc_dtype, "device_map": "cuda"}
+        else:
+            kwargs = {"torch_dtype": _jc_dtype}
+
+        processor = None
+        model = None
+        try:
+            with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
+                processor = AutoProcessor.from_pretrained(model_name)
+                model = LlavaForConditionalGeneration.from_pretrained(model_name, **kwargs)
+            if _active_device != "cuda":
+                model = model.to(_active_device)
+            if job_id and loop:
+                emit_sync(job_id, loop, f"Loading {model_name} into VRAM...", -1.0, dataset_id)
+            model.eval()
+        except Exception:
+            if model is not None:
+                try:
+                    model.cpu()
+                except Exception:
+                    pass
+            del model, processor
+            _device.empty_cache()
+            raise
+
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(17000, (vram_after - vram_before) // (1024 * 1024))
+        return ModelEntry(model, processor, vram_mb=vram_used)
+
     async def load_aesthetic(
         self,
         job_id: str | None = None,
@@ -437,6 +522,8 @@ class ModelManager:
             {"id": "florence2_large", "name": "Florence-2-large", "vram_mb": 5500},
             {"id": "florence2_promptgen", "name": "Florence-2 PromptGen v2", "vram_mb": 5500},
             {"id": "paligemma2", "name": "PaliGemma-2 3B", "vram_mb": 6000},
+            {"id": "joycaption_alpha", "name": "JoyCaption Alpha Two", "vram_mb": 17000},
+            {"id": "joycaption_beta", "name": "JoyCaption Beta One", "vram_mb": 17000},
             {"id": "aesthetic", "name": "LAION Aesthetic Predictor", "vram_mb": 3500},
             {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
         ]

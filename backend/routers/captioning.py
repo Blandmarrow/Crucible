@@ -38,7 +38,7 @@ class CaptionJobRequest(BaseModel):
     dataset_id: str
     image_ids: list[str] | None = None
     subfolder: str | None = None
-    model: str  # "florence2_large" | "florence2_promptgen" | "paligemma2" | "ollama:model_name" | "openai_compat:{id}:{model}" | "wd14:{variant}"
+    model: str  # "florence2_large" | "florence2_promptgen" | "paligemma2" | "joycaption_alpha" | "joycaption_beta" | "ollama:model_name" | "openai_compat:{id}:{model}" | "wd14:{variant}"
     style: str = "detailed"
     overwrite: bool = False
     custom_prompt: str = ""
@@ -65,12 +65,18 @@ class CaptionJobRequest(BaseModel):
         return v
 
 
+_TAG_STYLES = frozenset({"tags", "booru", "danbooru", "e621", "rule34", "booru_like"})
+
+
 def _model_short_label(model: str) -> str:
     if model.startswith("florence2"):
         variant = model.removeprefix("florence2_")
         return f"Florence-2 ({variant})"
     if model == "paligemma2":
         return "PaliGemma-2"
+    if model.startswith("joycaption_"):
+        variant = model.removeprefix("joycaption_")
+        return f"JoyCaption ({variant})"
     if model.startswith("ollama:"):
         return f"Ollama ({model.removeprefix('ollama:')})"
     if model.startswith("openai_compat:"):
@@ -149,12 +155,14 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         is_ollama = body.model.startswith("ollama:")
         is_florence = body.model.startswith("florence2")
         is_paligemma = body.model == "paligemma2"
+        is_joycaption = body.model.startswith("joycaption_")
         is_openai_compat = body.model.startswith("openai_compat:")
         is_wd14 = body.model.startswith("wd14:")
 
         # Load model upfront
         florence_entry = None
         paligemma_entry = None
+        joycaption_entry = None
         ollama_model_name = None
         openai_provider = None
         openai_model_name = None
@@ -174,6 +182,12 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 job_id=job_id, loop=_loop, dataset_id=body.dataset_id
             )
             model_label = "PaliGemma-2"
+        elif is_joycaption:
+            jc_variant = body.model.removeprefix("joycaption_")
+            joycaption_entry = await model_manager.load_joycaption(
+                variant=jc_variant, job_id=job_id, loop=_loop, dataset_id=body.dataset_id
+            )
+            model_label = f"JoyCaption ({jc_variant})"
         elif is_ollama:
             ollama_model_name = body.model.removeprefix("ollama:")
             model_label = f"Ollama ({ollama_model_name})"
@@ -234,6 +248,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         from backend.ml.paligemma_captioner import caption_image as _pi
                         caption = await _pi(file_path, paligemma_entry, body.style,
                                             body.target_width, body.target_height)
+                    elif is_joycaption:
+                        from backend.ml.joycaption_captioner import caption_image as _ji
+                        caption = await _ji(file_path, joycaption_entry, body.style,
+                                            custom_prompt=body.custom_prompt,
+                                            target_w=body.target_width, target_h=body.target_height)
                     elif is_ollama:
                         caption = await ollama_captioner.caption_image(
                             file_path, ollama_model_name, body.style, body.custom_prompt,
@@ -267,7 +286,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     if body.strip_refusals:
                         caption = _strip_refusals(caption)
                     if caption:
-                        if body.style in ("tags", "booru"):
+                        if body.style in _TAG_STYLES:
                             tags = [t.strip() for t in caption.split(",") if t.strip()]
                             if body.append_tags and existing_tags:
                                 existing_set = set(tags)
@@ -466,11 +485,13 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             is_ollama = step.model.startswith("ollama:")
             is_florence = step.model.startswith("florence2")
             is_paligemma = step.model == "paligemma2"
+            is_joycaption = step.model.startswith("joycaption_")
             is_openai_compat = step.model.startswith("openai_compat:")
             is_wd14 = step.model.startswith("wd14:")
 
             florence_entry = None
             paligemma_entry = None
+            joycaption_entry = None
             ollama_model_name = None
             openai_provider = None
             openai_model_name = None
@@ -490,6 +511,12 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
                 )
                 model_label = "PaliGemma-2"
+            elif is_joycaption:
+                jc_variant = step.model.removeprefix("joycaption_")
+                joycaption_entry = await model_manager.load_joycaption(
+                    variant=jc_variant, job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
+                )
+                model_label = f"JoyCaption ({jc_variant})"
             elif is_ollama:
                 ollama_model_name = step.model.removeprefix("ollama:")
                 model_label = f"Ollama ({ollama_model_name})"
@@ -547,6 +574,11 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         elif is_paligemma:
                             from backend.ml.paligemma_captioner import caption_image as _pi
                             caption = await _pi(file_path, paligemma_entry, step.style, step.target_width, step.target_height)
+                        elif is_joycaption:
+                            from backend.ml.joycaption_captioner import caption_image as _ji
+                            caption = await _ji(file_path, joycaption_entry, step.style,
+                                                custom_prompt=resolved_prompt,
+                                                target_w=step.target_width, target_h=step.target_height)
                         elif is_ollama:
                             caption = await ollama_captioner.caption_image(
                                 file_path, ollama_model_name, step.style, resolved_prompt, step.target_width, step.target_height
@@ -579,7 +611,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             caption = _strip_refusals(caption)
                         if caption:
                             tags: list[str] = []
-                            if step.style in ("tags", "booru") or is_wd14:
+                            if step.style in _TAG_STYLES or is_wd14:
                                 tags = [t.strip() for t in caption.split(",") if t.strip()]
                                 if step.append_tags and existing_tags:
                                     existing_set = set(tags)
@@ -616,7 +648,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     })
 
             # Evict local ML models between steps to free VRAM
-            if is_florence or is_paligemma:
+            if is_florence or is_paligemma or is_joycaption:
                 await model_manager.evict_all()
 
         if failed_image_ids:

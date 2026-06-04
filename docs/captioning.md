@@ -8,8 +8,29 @@ Batch-caption any selection of images using one of several backends:
 | **Florence-2** | ~5.5 GB | Styles: short, detailed, tags |
 | **Florence-2 PromptGen v2** | ~5.5 GB | Styles: short, detailed, promptgen |
 | **PaliGemma-2 3B** | ~6 GB | Requires HuggingFace token; styles: short, detailed, tags, booru |
+| **JoyCaption Alpha Two** | ~17 GB | Llama 3.1 8B + SigLIP; 12 styles (see below); supports custom prompts |
+| **JoyCaption Beta One** | ~17 GB | Llama 3.1 8B + SigLIP2; 12 styles (see below); supports custom prompts |
 | **WD14 Tagger** | CPU only | Booru-style tag output (Eva02 Large, ViT Large, or SwinV2); downloads from SmilingWolf on HuggingFace; adjustable confidence threshold |
 | **OpenAI-compatible** | — | Any provider with a `/v1/chat/completions` vision endpoint — Gemini, Groq, OpenAI, LM Studio, llama.cpp, etc.; configured in Settings → LLM Providers |
+
+### JoyCaption styles
+
+| Style | Output |
+|---|---|
+| `descriptive` | Detailed prose description |
+| `casual` | Casual-tone description |
+| `straightforward` | Factual, no-speculation caption |
+| `sd_prompt` | Stable Diffusion prompt |
+| `midjourney` | MidJourney prompt |
+| `danbooru` | Danbooru-style tag list (comma-separated) |
+| `e621` | e621-style tag list (comma-separated) |
+| `rule34` | Rule34-style tag list (comma-separated) |
+| `booru_like` | Generic booru tag list (comma-separated) |
+| `art_critic` | Art-critic analysis (composition, style, symbolism) |
+| `product` | Product listing caption |
+| `social_media` | Social media post caption |
+
+Tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are treated the same as WD14/booru output — the comma-separated list is split into individual tags and stored in the tags table. A custom prompt overrides the style prompt entirely.
 
 ## Post-processing options
 

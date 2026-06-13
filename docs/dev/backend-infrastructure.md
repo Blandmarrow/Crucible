@@ -1,0 +1,56 @@
+# Backend infrastructure: server lifecycle, database & environment setup
+
+This file covers production frontend serving, server shutdown/restart control, database conventions (subfolders, indexes, deferred columns), the SSE progress broadcaster, and environment/dependency setup (`manage.ps1`/`manage.sh`).
+
+### Frontend serving (production)
+
+`backend/main.py` serves the built React app after all API routers are registered. Two parts:
+
+1. `app.mount("/assets", StaticFiles(directory=frontend_dist/"assets"))` — serves JS/CSS/fonts at their exact paths with correct content-type headers.
+2. `@app.get("/{full_path:path}")` catch-all — for any unmatched path, serves the file directly if it exists in `frontend/dist/` (favicon, manifest, etc.), otherwise returns `index.html` so React Router handles client-side navigation.
+
+**Do not replace this with a bare `StaticFiles(html=True)` mount.** Starlette's `html=True` only falls back to `index.html` for directory-style paths (`/`); it returns 404 for deep URLs like `/datasets/abc123` on hard refresh. The catch-all route is required for SPA routing to work correctly.
+
+### Server control endpoints
+
+Three endpoints are registered directly in `backend/main.py` (not via a router), immediately before the frontend-serving block:
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST /api/v1/shutdown` | Touches `.shutdown` sentinel, then spawns a daemon thread that sends `SIGTERM` to the current process, triggering uvicorn's graceful shutdown. The sentinel lets the manage script distinguish a clean shutdown from a crash. |
+| `GET /api/v1/health` | Returns `{"status": "ok", "start_time": <float>}`. `start_time` is `time.time()` captured once at module load (`_START_TIME`). Used by the frontend to detect when a restarted server is a *new* process. |
+| `POST /api/v1/restart` | Removes `.shutdown` (if present), creates `.restart` sentinel file (`_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"`), then sends `SIGTERM`. The manage-script restart loop detects the sentinel after uvicorn exits and re-launches the server. |
+
+**Restart loop** — `Cmd-Start`/`cmd_start` in `manage.ps1`/`manage.sh` wrap the uvicorn call in a `while` loop. After uvicorn exits they check for `.restart`; if present they delete it and restart, otherwise they break. `Cmd-Dev`/`cmd_dev` have the same loop (bash uses a background subshell so the frontend Vite server can run concurrently). Stale `.restart` and `.shutdown` files left by a crash are deleted at the top of each start before the loop begins. The uvicorn call is written as `python -m uvicorn ... || true` in `manage.sh` so that `set -euo pipefail` does not abort the loop on a non-zero exit before the sentinel check runs.
+
+**Terminal auto-close on shutdown** — after the restart loop exits (no `.restart` sentinel), `Cmd-Start` in `manage.ps1` checks for `.shutdown`. If found, it deletes the file and calls `exit 0`. `Crucible.bat` only runs `pause` when the PowerShell exit code is non-zero, so a clean shutdown closes the terminal window automatically while a crash keeps it open so the user can read the error output.
+
+**Frontend restart flow** (`TopBar.tsx` `handleRestart`): (1) fetch `/api/v1/health` to record the current `start_time`; (2) POST `/api/v1/restart`; (3) poll `/api/v1/health` with `{ cache: "no-store" }` every second until the response carries a *different* `start_time` (confirming a new process, not the dying old one); (4) `window.location.reload()`. If no new process appears within 60 s, `setRestarting(false)` resets the UI so the user can retry. Both the restart and shutdown buttons are disabled while `restarting || shuttingDown`.
+
+### Database
+
+SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`. Alembic migrations in `backend/alembic/versions/`. The Alembic `env.py` strips `+aiosqlite` from the URL when running synchronous migrations.
+
+**Subfolders** (`Image.subfolder`, `Dataset.declared_subfolders`): images are physically flat in `{dataset.folder_path}/images/`; `subfolder` is pure string metadata (empty string = root/ungrouped; nested paths use `/`). `Dataset.declared_subfolders` (JSON column, default `[]`) stores explicitly-created subfolder paths so empty subfolders survive a `list_subfolders()` call — that function GROUP BYs images, so any path not in `declared_subfolders` with zero images would disappear. `declare_subfolder()` adds a path; `delete_subfolder()` bulk-moves images to root and removes the declared entry. `normalize_subfolder()` in `backend/utils.py` sanitizes path strings before storage. API: `GET/POST/DELETE /datasets/{id}/subfolders`.
+
+Three performance indexes: `ix_images_dataset_created_at` on `(dataset_id, created_at)` (gallery sort), `ix_images_file_path` on `file_path` (filesystem lookups), `ix_images_dataset_caption` on `(dataset_id, caption_text)` (caption filter + listing).
+
+**Deferred blob columns**: `clip_embedding`, `dino_embedding`, and `dino_layer_embeddings` are declared with `deferred=True` on their `mapped_column`. SQLAlchemy omits them from `SELECT *` queries — they are only fetched when explicitly accessed or when `undefer()` is passed as a load option. The `GET /images/{image_id}` endpoint undefers `dino_layer_embeddings` so the `has_dino_layer_embeddings` property on `ImageOut` works. Quality/similarity routers use column-explicit selects (`select(Image.id, Image.clip_embedding, ...)`) and are unaffected. Never access these columns from a full-row ORM load without adding `undefer()`.
+
+### SSE progress
+
+`ProgressBroadcaster` (singleton in `workers/progress.py`) maintains per-job `asyncio.Queue`s. Emitting a progress event pushes to the job-specific channel and the `"all"` channel. A 25-second heartbeat keeps proxies from closing idle connections. Per-job streams (`GET /jobs/stream/{job_id}`) close when status becomes `completed`, `failed`, or `cancelled`. The global stream (`GET /jobs/stream/all/events`) uses `stop_on_terminal=False` and stays open for the session lifetime. All progress events include `dataset_id` (nullable for jobs with no associated dataset) and `label` (the job's display name, nullable — always taken directly from `job.label` on the in-memory `BackgroundJob` object).
+
+**Venv ML packages**: `torch`, `transformers`, `open_clip_torch`, `accelerate`, `safetensors`, and `timm` are listed as real dependencies in `backend/requirements.txt`. The venv is created with `--system-site-packages`, so if any of these are already present in the system Python they are reused (no reinstall). `huggingface-hub` is pinned to `>=0.30,<1.0` to stay compatible with system-installed ML packages.
+
+**Prerequisite auto-install**: `Cmd-Setup` / `cmd_setup` call `Install-Deps` (PowerShell) / `_install_deps` (bash) as their first step, replacing the old `Check-Deps` / `_check_deps` functions that only checked and errored. Both check Python 3.10+ and Node.js 18+ by version number (not just existence) and prompt (`[Y/n]`, default Yes) before auto-installing if missing or outdated; declining either exits with code 1. PowerShell uses `winget install --scope user` (no elevation needed) and refreshes `$env:PATH` from the registry immediately after; bash uses `brew` on macOS and `apt`/`dnf`/`pacman` on Linux for Python, and NodeSource LTS + `nvm` fallback for Node.js on Linux. `pip install -r requirements.txt` is also prompted before running in both `Cmd-Setup`/`Cmd-Update` and `cmd_setup`/`cmd_update`; declining skips the install and setup continues without error (the app will not function without dependencies). In non-interactive mode (redirected stdin), all prompts default to Yes silently and the package listing is suppressed. The `$hasCuda` check in `Install-TorchIfNeeded` is wrapped in `try/catch` (catch is empty — swallows any exception): on a fresh venv before `requirements.txt` is installed, `import torch` fails and Python writes a traceback to stderr; PS5.1 converts that stderr output to a `NativeCommandError` and `$ErrorActionPreference = "Stop"` turns it into a terminating error — without the try/catch this aborts setup. Do not remove the try/catch.
+
+**PyTorch GPU auto-detection**: `manage.ps1 setup` / `manage.sh setup` (and `update`) run `Install-TorchIfNeeded` / `_install_torch_if_needed` **before** `pip install -r requirements.txt`. On Linux/macOS the helper checks three GPU backends in order:
+
+1. **NVIDIA** — skips if `torch.cuda.is_available()` is already True; otherwise checks for `nvidia-smi`, parses the `CUDA Version: X.Y` line, shows the wheel index URL, and prompts (`[Y/n]`) before downloading `torch>=2.0` (~2.5 GB) from the matching PyTorch wheel index (`cu128`, `cu126`, `cu124`, `cu121`, or `cu118`). Declining skips the GPU wheel; CPU-only torch installs later via `requirements.txt`.
+2. **AMD ROCm** (Linux only) — detected via `rocm-smi`; ROCm version determined via `rocminfo`, `/opt/rocm-*` dirname, or `/opt/rocm/VERSION` in that order; maps to wheel tag `rocm6.1`, `rocm6.2`, or `rocm6.3`. ROCm < 6.1 falls back to CPU. Prompts before downloading, same as NVIDIA. `manage.ps1` is unchanged (ROCm has no Windows support).
+3. **Apple Silicon MPS** (macOS) — no wheel change needed; standard CPU PyTorch already includes MPS support, so setup just prints a message and returns.
+
+If none of the above are detected, CPU-only torch is installed as a fallback.
+
+**`manage.ps1` encoding constraint**: PowerShell 5.1 reads `.ps1` files using Windows-1252 by default (no BOM = legacy encoding). Non-ASCII characters in string literals are misread — the UTF-8 byte sequence for an em dash (`E2 80 94`) decodes as `a`, Euro sign, `"` in Windows-1252, and that stray `"` silently terminates the string, corrupting the parser state for the rest of the file. **Never use non-ASCII characters (em dashes, curly quotes, ellipses, etc.) anywhere in `manage.ps1`.** Use plain ASCII equivalents: ` - ` instead of ` — `, `...` instead of `…`, etc. This constraint does not apply to `manage.sh` (bash reads UTF-8 natively) or to any `.md`/`.py`/`.ts` files.

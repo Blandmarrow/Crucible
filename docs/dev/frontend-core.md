@@ -1,0 +1,105 @@
+# Frontend core: state, constants, layout, panes & styling
+
+This file covers shared frontend conventions: TanStack Query/Zustand state and cache-invalidation patterns, shared constants modules, Sidebar layout, the split-view pane manager, and the Tailwind/CSS design system.
+
+### Frontend state
+
+- **TanStack Query** — all server state (datasets, images, captions, jobs). Query keys follow `["resource", id]` pattern.
+- **Zustand stores** — `datasetStore` (active dataset), `selectionStore` (Set of selected image IDs + `datasetByImageId: Map<string, string>` tracking which dataset each selected image belongs to), `jobStore` (Map of active job progress from SSE), `promptPresetsStore` (saved AI prompt presets, persisted to localStorage), `paneStore` (split-view pane layout — see Split view pane manager section), `uploadStore` (active upload progress — see below). `selectionStore.toggle(id, datasetId)` and `selectionStore.selectAll(ids, datasetId)` both require a `datasetId` argument — all callsites (ImageCard, GalleryPage, ImageDetailPage) must pass it. `selectionStore.replaceRange(toAdd, toRemove, datasetId)` atomically removes `toRemove` IDs and adds `toAdd` IDs in one state update; used by GalleryPage shift-click range selection to replace the previous range with the new one without touching independently-selected images.
+- **`useJobSSE(jobId)`** — opens `EventSource` for one job, writes progress to `jobStore`. Reconnects automatically after a 3-second delay on error so progress bars don't stall from transient network hiccups; reconnection stops when the component unmounts.
+- **`useAllJobsSSE()`** — opened at app root in `TopBar`, drives the global progress bar.
+- **Job label display**: `TopBar` running-job pill shows `runningJob.label || runningJob.message || runningJob.job_type`; pending queue chips show `j.label || j.job_type`. `CaptioningPage` live-progress panel shows the label above the done/total counter (`{jobProgress.label && <div>…</div>}`); its pending-queue list shows `qJob.label || fallbackLabel`. `JobProgress` in `frontend/src/types/index.ts` types `label` as `string | null | undefined` since SSE delivers JSON `null` when no label was set.
+- **Job completion → cache invalidation**: pages that trigger background jobs (`QualityPage`, `SelectionToolbar`, `ImageDetailPage`) watch their job ID in `jobStore` via `useEffect` and call `qc.invalidateQueries` when status becomes `"completed"`. Always follow this pattern when adding new job-triggering UI. Additionally, `TopBar` watches all jobs globally — this catches the case where the user navigates away before the job finishes and the page-local watcher is no longer mounted. On completion, `TopBar` invalidates: `["images", dataset_id]` + all four stats queries (`["dataset-stats"]`, `["tag-stats"]`, `["score-values"]`, `["tag-cooccurrence"]`) for these image-modifying job types: `batch_upscale`, `batch_lut`, `crop_upscale`, `quality_score`, `caption`, `caption_pipeline`. `quality_score` completions additionally invalidate `["duplicates", dataset_id]`. `import` completions additionally invalidate `["datasets"]` + images and all four stats for the specific dataset. All synchronous mutation `onSuccess` handlers (delete, save caption, bulk edit, bulk delete, move/copy to dataset) also invalidate the four stats queries directly.
+- **Per-image cache invalidation (captioning)**: Caption SSE events carry `image_id`. While a caption job is running, `TopBar` invalidates `["images", dataset_id]` and `["caption", image_id]` on every `done` increment — this keeps the gallery and `ImageDetailPage` caption panel updated in real-time even when the user has navigated away from `CaptioningPage`. `CaptioningPage` does the same when it is mounted (harmless duplicate). The four stats queries are not invalidated per-image during captioning; instead `StatsPage` polls them every 5 s while a relevant job is active (see below).
+- **SelectionToolbar score modal**: the "Run Scoring" action accepts six boolean toggles — `run_technical`, `run_aesthetic`, `run_watermark` (CLIP zero-shot watermark detection), `run_embeddings` (CLIP embeddings), `run_dino` (DINOv2 embeddings), and `run_dino_layers` (DINOv2 per-layer — only shown/sent when `run_dino` is also checked). `run_watermark`, `run_embeddings`, `run_dino`, and `run_dino_layers` default to `false` since they add significant VRAM/time overhead. The modal also contains a collapsible **Style similarity** section (same controls as `QualityPage` — embedding model buttons, DINOv2 layer picker, `StyleReferencePicker`, Score similarity button) that calls `POST /quality/style-similarity` with `image_ids: ids` so similarity is scoped to the selected images only. Modal state that is session-specific (`showStyleSection`, `selectedRefIds`, `externalRefFiles`) is reset via `useEffect` when `showScore` becomes `false`; scoring preference toggles (`runAesthetic`, `runTechnical`, etc.) persist across open/close cycles.
+- **SelectionToolbar caption modal**: the "Caption" action supports all four model types from the `["captioning-models"]` query (same payload as `CaptioningPage`): `local_models`, `ollama_models`, `wd14_models`, and `openai_compat_models`. A module-level `resolveModelId(base, providerModel)` helper assembles the full `openai_compat:{provider_id}:{model_name}` ID at mutation time. WD14 models show only a threshold slider (0–1, default 0.35) — the style picker, custom prompt, `PromptPresetManager`, and `ResolutionPicker` are hidden. OpenAI-compat providers render a `ModelPicker` inline below the selected provider row; `captionProviderModel` state tracks the sub-model. The query is gated on `enabled: showCaption` and the model section shows a loading message while `!modelsData`.
+- **SelectionToolbar dataset breakdown**: because selections persist across dataset navigation, the toolbar pill and every action modal header show badge chips for each dataset represented in the current selection — solid style for the current dataset, amber `badge-warn` for images from other datasets. Computed via `useMemo` from `selectionStore.datasetByImageId` + the cached `["datasets"]` query (already fetched, `staleTime: 30_000`). `MoveToDatasetModal` receives this as `sourceInfo?: ReactNode`.
+- **QualityPage subfolder scope**: `POST /quality/score` (`ScoreRequest`) accepts `subfolder: str | None`. When set and `image_ids` is absent, the backend filters `Image.subfolder == normalize_subfolder(subfolder)` so only images in that subfolder are scored. `QualityPage` exposes a subfolder `<select>` in the "Run quality analysis" panel header (shown only when subfolders exist, uses the shared `["subfolders", datasetId]` query). `image_ids` (SelectionToolbar path) takes precedence over `subfolder` when both are provided.
+- **Upload progress** (`frontend/src/store/uploadStore.ts`): `uploadStore` holds `progress: { datasetId, done, total, errors } | null`. `GalleryPage` uploads files one at a time via `imagesApi.uploadSingle()`, writing progress to this global store after each file. `TopBar` (always mounted) reads the store and renders a `progress-pill` so the indicator persists across navigation. `GalleryPage` additionally shows an inline progress bar below the toolbar, filtered to the current dataset (`globalUploadProgress?.datasetId === datasetId`). `handleDrop` checks `!uploading` before calling `handleUpload` to prevent a drag-drop from starting a second concurrent upload that would clobber the store. Per-file `invalidateQueries` uses `{ cancelRefetch: false }` to coalesce rapid invalidations without cancelling in-flight gallery fetches.
+
+### Frontend constants
+
+`frontend/src/constants/captionStyles.ts` — `STYLE_LABELS: Record<string, string[]>` (style names per model type) and `modelType(model: string): string | null` (maps a model ID to its type key). Shared by `CaptioningPage`, `ImageDetailPage`, and `SelectionToolbar`; do not redeclare locally. Current entries:
+
+| Key | Styles | Notes |
+|---|---|---|
+| `florence2` | `short`, `detailed`, `tags` | Base Florence-2 (`florence2_large`). `dense` is absent — `<DENSE_REGION_CAPTION>` returns a bounding-box dict, not caption text. |
+| `florence2_promptgen` | `short`, `detailed`, `promptgen` | PromptGen v2 (`florence2_promptgen`). `tags` is absent — `<GENERATE_TAGS>` is not supported by this fine-tune. |
+| `paligemma2` | `short`, `detailed`, `tags`, `booru` | |
+| `joycaption` | `descriptive`, `casual`, `straightforward`, `sd_prompt`, `midjourney`, `danbooru`, `e621`, `rule34`, `booru_like`, `art_critic`, `product`, `social_media` | Shared by both `joycaption_alpha` and `joycaption_beta`. |
+
+Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. `modelType()` checks `model === "florence2_promptgen"` explicitly before the general `startsWith("florence2")` fallback to avoid misclassification. JoyCaption uses `model.startsWith("joycaption")` after the florence2 checks.
+
+`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
+
+`frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
+
+`frontend/src/constants/providerPresets.ts` — `PROVIDER_PRESETS: Record<string, string[]>` hardcoded model lists keyed by hostname substring (Gemini, Groq, OpenAI, Together.ai). `getPresetsForUrl(baseUrl: string): string[]` parses the URL and returns the matching preset list (or `[]` for unknown/local providers). Used by `ModelPicker` to show a dropdown without requiring a live fetch. Add new cloud provider entries here when preset model lists need updating.
+
+`frontend/src/constants/storage.ts` — `CONFIRM_DEFAULT_KEY`: the `localStorage` key for the user's delete-confirmation default-button preference (`"cancel"` or `"confirm"`). Imported by both `ConfirmDialog` (reads on mount) and `SettingsPage` (reads/writes on toggle). `BRANCH_SNAPSHOT_KEY`: the `localStorage` key for the branch/checkout snapshot behavior preference (`"ask"` or `"auto"`). Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage`. `VERSIONS_BRANCH_KEY`: the `sessionStorage` key prefix (`"versions-branch"`) for the user's last-browsed branch on `VersionsPage`; append `-${datasetId}` for the full key. Written by `VersionsPage.handleBranchSelect` and by `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount. `GALLERY_PAGE_SIZE_KEY`: the `localStorage` key for images-per-page in the gallery (`25 | 50 | 100 | 200`); read by `GalleryPage`, `ImageDetailPage` (for prefetch limit and end-of-page detection), and `SettingsPage`. `SUBFOLDER_RENAME_KEY`: the `localStorage` key for the subfolder auto-rename preference (`"on" | "off"`); read by `SelectionToolbar` at mutation time and written by `SettingsPage`. `DECLARED_CATEGORIES_KEY`: the `localStorage` key for frontend-only empty category names (`string[]`). Read/written by `DatasetsPage` — categories with no datasets assigned have no backend record, so this bridges the gap. Parsed with `Array.isArray` guard; synced back on every `emptyCategories` change via `useEffect`. Kept in sync with rename/delete mutations. Gallery default keys: `GALLERY_DEFAULT_SORT_KEY` (sort index), `GALLERY_DEFAULT_CAPTION_KEY` (`"all" | "captioned" | "uncaptioned"`), `GALLERY_DEFAULT_QUALITY_KEY` (flag key or `""`); all read at `GalleryPage` init time via `getGalleryDefaultSort()`, `getGalleryDefaultCaptionFilter()`, `getGalleryDefaultQualityFilter()`. Captioning default keys: `CAPTION_DEFAULT_MODEL_KEY`, `CAPTION_DEFAULT_STYLE_KEY`, `CAPTION_DEFAULT_SCOPE_KEY`, `CAPTION_DEFAULT_DELIMITER_KEY`, `CAPTION_DEFAULT_STRIP_REFS_KEY`, `CAPTION_DEFAULT_RENAME_KEY`, `CAPTION_DEFAULT_SAVE_BACKUP_KEY`; all read at `CaptioningPage` init time (model via `useEffect` after data loads). `getGalleryPageSize(): number` — shared helper that reads `GALLERY_PAGE_SIZE_KEY`, guards against `NaN`, and returns the default `100` on parse failure. Use this everywhere the page size is read; never inline the `parseInt` + fallback pattern. Add new storage keys here rather than defining them inline in components.
+
+`frontend/src/constants/galleryOptions.ts` — `SORT_OPTIONS` (`as const` array of `{ label, sort, order }` objects). Shared by `GalleryPage` (sort dropdown and `sortOpt` derivation), `SettingsPage` (gallery defaults sort picker), and `storage.ts` (`getGalleryDefaultSort` bounds-check). Do not redefine the array locally in any of these files.
+
+### Layout
+
+**Sidebar** uses `useMatch("/datasets/:datasetId/*")` (not `useParams`) to detect the active dataset, because the Sidebar renders outside the `<Routes>` tree and `useParams` would always return `{}` there.
+
+### Split view pane manager
+
+Allows the main content area to be split into any number of nested panes, each independently showing any page with its own dataset selection.
+
+**Data model** (`frontend/src/stores/paneStore.ts`):
+
+```
+PaneLeaf  { type: "leaf"; id: string; view: PaneView }
+PaneSplit { type: "split"; id: string; direction: "horizontal"|"vertical";
+            sizes: [number, number]; children: [PaneTree, PaneTree] }
+PaneView  { page: PageType; datasetId?: string; imageId?: string }
+```
+
+All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSizes`, `updateFirstLeaf`) are pure functions — the store holds a single immutable `layout: PaneTree` root. `syncFromRoute(view)` updates only the first leaf (left-to-top traversal) when URL navigation occurs, preserving all other panes.
+
+**Context & hooks** (`frontend/src/contexts/PaneContext.tsx`, `frontend/src/hooks/`):
+
+| Hook | Purpose |
+|---|---|
+| `usePaneDatasetId()` | Returns `ctx?.view.datasetId ?? useParams().datasetId` — works both inside and outside pane mode |
+| `usePaneImageId()` | Same pattern for `imageId` |
+| `usePaneNavigate()` | Returns `{ go(url, view), back(fallbackView) }`. **Inside a pane**: calls `paneStore.setView(paneId, view)`. **Outside**: calls `navigate(url)`. All intra-app navigation that may occur inside a pane MUST use this hook; raw `navigate()` calls change the URL and trigger `RouteSyncer` which only updates pane 1. |
+
+**Components** (`frontend/src/components/pane/`):
+
+- `PaneContainer` — recursive renderer; splits use `react-resizable-panels` `Group`/`Panel`/`Separator` with `orientation` prop. Installed version exports `Group`, `Panel`, `Separator` — NOT `PanelGroup`/`PanelResizeHandle`. `onLayoutChanged` receives `{ [panelId]: number }` keyed by `id` prop on each `<Panel>`. The leaf content wrapper is `display: flex; flexDirection: column` so that pages whose root div uses `flex: 1, overflowY: "auto"` (StatsPage, QualityPage, CaptioningPage, ExportPage, DatasetsPage) correctly fill the pane height and show a scrollbar. Pages that use `height: "100%"` instead (GalleryPage, FileBrowserPage) also work because `height: 100%` resolves against the flex container's definite height.
+- `PaneHeader` — 32 px header per pane: page-type `<select>`, dataset `<select>` (for pages in `NEEDS_DATASET`), split-H / split-V / close buttons.
+- `PageRenderer` — switch over `view.page` → imports and renders the matching page component.
+
+**App integration** (`frontend/src/App.tsx`):
+
+- `MainContent` renders `<PaneContainer node={layout}>` when `paneStore.enabled`, otherwise the normal `<Routes>` tree.
+- `RouteSyncer` (child of `BrowserRouter`) uses `useEffect` on `location.pathname` to call `syncFromRoute()` when pane mode is active — keeps the primary pane in sync with sidebar/URL navigation.
+- Toggle: `<Columns2>` icon button in `TopBar` calls `paneStore.toggleEnabled()`.
+
+### Styling
+
+Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties defined in `index.css` (`:root { --bg, --surface-1/2/3, --accent, --line, --fg, --warn, --bad, --info }`) and aliased in `tailwind.config.js` so they can be used as Tailwind classes. Geist/Geist Mono fonts are loaded via Google Fonts in `index.html`. Reusable component classes are defined in `frontend/src/index.css` under `@layer components`:
+
+| Class | Purpose |
+|---|---|
+| `.btn`, `.btn.primary`, `.btn.ghost`, `.btn.danger`, `.btn.sm` | Button variants |
+| `.input`, `.select`, `.checkbox` | Form controls |
+| `.panel`, `.panel-h`, `.panel-b` | Card container with header/body sections |
+| `.form-row` | 2-col grid (200px label + 1fr control) used in CaptioningPage and ExportPage |
+| `.model-row` | Radio-style model selector row with name, description, and VRAM label |
+| `.stat-card` | Metric card with large value, label, and optional delta |
+| `.hist` / `.hist-axis` | CSS grid bar chart; set `--cols` and `gridTemplateRows: "1fr"` inline; bars use percentage `height` |
+| `.flag-card` | 3-col grid (icon, label/desc, count) for quality flags |
+| `.badge`, `.badge.dot`, `.badge.good/warn/bad/info/solid` | Semantic badge variants |
+| `.icon-btn` | 30×30 ghost icon button |
+| `.sel-bar` | Sticky bottom pill bar for selection actions |
+| `.crumbs` | Breadcrumb navigation |
+| `.nav-section`, `.nav-tail` | Sidebar section header and count badge |
+| `.tabs`, `.tab` | Tab bar with accent underline active state |
+
+**`ConfirmDialog`** (`frontend/src/components/common/ConfirmDialog.tsx`) — shared modal for destructive confirmations. Keyboard-aware: auto-focuses Cancel on mount by default (safe default for destructive actions), ArrowLeft/ArrowRight switch focus between Cancel and the confirm button, Enter fires the focused button natively. When adding any global `keydown` listener that handles ArrowLeft/ArrowRight, suppress it while a `ConfirmDialog` is open to avoid background navigation competing with dialog focus — see `showDeleteConfirm` guard in `ImageDetailPage`'s arrow-key effect. Accepts an optional `defaultFocus?: "cancel" | "confirm"` prop to override the focused button per-callsite. When `danger=true` and no `defaultFocus` is provided, the component reads `localStorage.getItem(CONFIRM_DEFAULT_KEY)` (from `constants/storage.ts`) to respect the user's preference set in Settings → UI Behavior.
+
+**CSS hist bars**: The `.hist` class sets `display: grid; align-items: end; height: 90px`. For percentage `height` on bar children to resolve, you must also set `gridTemplateRows: "1fr"` as an inline style on the `.hist` div. Without this the single implicit row has no definite height and percentage heights collapse to 0.

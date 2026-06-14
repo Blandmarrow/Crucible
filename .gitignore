@@ -13,6 +13,7 @@ models/lut/
 frontend/dist/
 frontend/node_modules/
 .claude/
+.devcontainer/
 .DS_Store
 Thumbs.db
 .restart

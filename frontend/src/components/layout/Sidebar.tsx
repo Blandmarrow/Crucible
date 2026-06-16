@@ -5,6 +5,7 @@ import { versioningApi } from "../../api/versioning";
 import { useGpuStats } from "../../hooks/useGpuStats";
 import { useCpuRamStats } from "../../hooks/useCpuRamStats";
 import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
+import { useErrorConsoleStore } from "../../stores/errorConsoleStore";
 
 /* ── SVG icons matching the design spec ── */
 const IcoDatasets = () => (
@@ -75,6 +76,12 @@ const IcoSettings = () => (
     <path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/>
   </svg>
 );
+const IcoLogs = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
+    <path d="M5 5.5h6M5 8h6M5 10.5h4"/>
+  </svg>
+);
 const IcoCpu = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <rect x="4" y="4" width="8" height="8" rx="1"/>
@@ -132,11 +139,13 @@ function NavItem({
   icon,
   label,
   tail,
+  tailColor,
 }: {
   to: string;
   icon: React.ReactNode;
   label: string;
   tail?: React.ReactNode;
+  tailColor?: string;
 }) {
   return (
     <NavLink
@@ -177,7 +186,7 @@ function NavItem({
       <span style={{ flex: 1 }}>{label}</span>
       {tail && (
         <span style={{
-          fontSize: 11, color: "var(--fg-dim)",
+          fontSize: 11, color: tailColor ?? "var(--fg-dim)",
           background: "var(--surface-2)", padding: "1px 6px",
           borderRadius: 3, border: "1px solid var(--line)",
           fontFamily: "Geist Mono, monospace",
@@ -194,6 +203,7 @@ export default function Sidebar() {
   const datasetId = match?.params?.datasetId;
   const gpu = useGpuStats();
   const cpuRam = useCpuRamStats();
+  const errorCount = useErrorConsoleStore((s) => s.errors.length);
 
   const { data: dataset } = useQuery({
     queryKey: ["dataset", datasetId],
@@ -244,6 +254,13 @@ export default function Sidebar() {
         <NavItem to="/booru" icon={<IcoBooru />} label="Booru Browser" />
         <NavItem to="/file-browser" icon={<IcoFileBrowser />} label="File Browser" />
         <NavItem to="/settings" icon={<IcoSettings />} label="Settings" />
+        <NavItem
+          to="/logs"
+          icon={<IcoLogs />}
+          label="Logs"
+          tail={errorCount > 0 ? errorCount : undefined}
+          tailColor={errorCount > 0 ? "var(--bad)" : undefined}
+        />
 
         {datasetId && (
           <>

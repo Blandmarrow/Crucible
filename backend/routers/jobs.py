@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -14,9 +14,9 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.get("/", response_model=list[JobOut])
-async def list_jobs(db: AsyncSession = Depends(get_db)):
+async def list_jobs(limit: int = Query(50, ge=1, le=500), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(BackgroundJob).order_by(BackgroundJob.created_at.desc()).limit(50)
+        select(BackgroundJob).order_by(BackgroundJob.created_at.desc()).limit(limit)
     )
     return result.scalars().all()
 

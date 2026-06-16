@@ -19,6 +19,8 @@ import SettingsPage from "./pages/SettingsPage";
 import VersionsPage from "./pages/VersionsPage";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
+import ErrorConsole from "./components/common/ErrorConsole";
+import LogsPage from "./pages/LogsPage";
 import { usePaneStore } from "./stores/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
@@ -77,6 +79,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
+        <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />
       </Routes>
     </main>
   );
@@ -87,13 +90,14 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <RouteSyncer />
-        <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", height: "100vh", overflow: "hidden" }}>
+        <div style={{ "--sidebar-w": "240px", display: "grid", gridTemplateColumns: "var(--sidebar-w) 1fr", height: "100vh", overflow: "hidden" } as any}>
           <Sidebar />
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <TopBar />
             <MainContent />
           </div>
         </div>
+        <ErrorConsole />
         <Toaster
           position="bottom-right"
           toastOptions={{

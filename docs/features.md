@@ -192,3 +192,21 @@ Split the main content area into two independently operating panes:
 - Each pane has its own page selector and dataset selector — run Gallery in one pane and Stats in another, for example
 - Drag the resize handle between panes to adjust the split ratio
 - Close all panes to return to single-view
+
+## Logs
+
+A global **Logs** page (sidebar nav item) with two tabs:
+
+**History tab**
+- Lists up to 200 recent background jobs, newest first
+- Each row shows status badge (`pending` / `running` / `done` / `failed` / `cancelled`), label, dataset ID chip, relative timestamp (absolute on hover), duration, and item progress count
+- Failed jobs display their error message below the row in red
+- Plain-text filter input to search by label, type, or dataset ID
+- **Refresh** button to re-fetch the list on demand
+
+**Errors tab**
+- Captures JS runtime errors (`window.onerror`), unhandled promise rejections (`unhandledrejection`), and React render errors (ErrorBoundary)
+- Each entry shows timestamp, type badge (`error` / `rejection` / `render`), message, source file/line, and a collapsible stack trace
+- **Copy Errors** exports all entries as plain text; **Clear** removes them and resets the sidebar badge
+
+**Persistent overlay**: a fixed bottom panel auto-opens whenever a new JS error is captured, showing the same entries without requiring navigation to the Logs page. Close it with **×** — the sidebar badge count remains until errors are cleared.

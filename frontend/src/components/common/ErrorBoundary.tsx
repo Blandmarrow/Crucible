@@ -1,4 +1,5 @@
 import { Component, type ReactNode, type ErrorInfo } from "react";
+import { useErrorConsoleStore } from "../../stores/errorConsoleStore";
 
 interface Props {
   children: ReactNode;
@@ -18,6 +19,11 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[ErrorBoundary]", error, info.componentStack);
+    useErrorConsoleStore.getState().addError({
+      type: "boundary",
+      message: error.message,
+      stack: [error.stack, info.componentStack].filter(Boolean).join("\n\n--- Component Stack ---\n"),
+    });
   }
 
   render() {

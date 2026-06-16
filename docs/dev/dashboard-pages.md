@@ -188,3 +188,23 @@ Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered
 Frontend page: `FileBrowserPage.tsx`, route `/file-browser`, sidebar nav item "File Browser". Three-panel layout (`200px | 1fr | 280px`): left = drive roots + quick-access links, middle = breadcrumb + file list + context menu (rename/delete/import), right = image preview + `<GenerationMetadata>` panel.
 
 API client: `frontend/src/api/filesystem.ts` — thin wrappers over all endpoints; `previewUrl(path)` returns a URL string for use in `<img src>`.
+
+### Logs page
+
+Frontend page: `frontend/src/pages/LogsPage.tsx`, route `/logs`, sidebar nav item "Logs" (with a red badge showing the unread error count when `errorConsoleStore.errors.length > 0`).
+
+Two tabs rendered with the standard `.tabs` / `.tab` CSS classes:
+
+**History tab** (`HistoryTab` component):
+- Fetches `GET /api/v1/jobs/?limit=200` via TanStack Query (`queryKey: ["jobs"]`, `staleTime: 10_000`). The `limit` param was made configurable in `backend/routers/jobs.py` (`Query(50, ge=1, le=500)`) — `LogsPage` passes 200; existing callers (none pass `limit`) keep the former 50-record default.
+- Client-side filter input searches across `label`, `job_type`, and `dataset_id` fields.
+- Each row: `StatusBadge` (pending `--fg-mute` / running `--accent` / completed `--good` / failed `--bad` / cancelled `--fg-dim`), label (falls back to `job_type`), dataset ID chip (first 8 chars), relative timestamp (`Xm ago`) with absolute on `title`, duration (`finished_at − started_at`), and `done/total` counter when `total_items > 0`. Failed jobs show `error_msg` below the row in `--bad`.
+- **Refresh** button re-invokes `refetch()`.
+
+**Errors tab** (`ErrorsTab` component):
+- Reads from `errorConsoleStore` (same data as the `ErrorConsole` overlay). See `docs/dev/frontend-core.md` § Error console for store details.
+- Toolbar: error count summary, **Copy Errors** (calls `formatErrorsForCopy` → `navigator.clipboard.writeText`), **Clear** (calls `clearErrors()`).
+- Each entry: timestamp, type badge (`error` / `rejection` / `render`), message, source file/line/col, collapsible stack trace `<details>`.
+- Empty state: "No JS errors captured this session."
+
+The Errors tab button in the tab bar shows a red pill badge when `errorCount > 0` — the same count drives the sidebar `NavItem` `tail` prop (with `tailColor="var(--bad)"`).

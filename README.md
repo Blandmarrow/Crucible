@@ -28,6 +28,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/features.md#file-browser)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/features.md#booru-tag-lookup)
+- **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/features.md#logs)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 

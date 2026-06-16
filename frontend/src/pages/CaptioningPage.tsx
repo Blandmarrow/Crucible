@@ -14,6 +14,7 @@ import { useSelectionStore } from "../store/selectionStore";
 import { usePresetsStore } from "../store/promptPresetsStore";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import ModelPicker from "../components/providers/ModelPicker";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { FLAG_OPTIONS } from "../constants/flags";
@@ -25,7 +26,10 @@ import {
   CAPTION_DEFAULT_STRIP_REFS_KEY,
   CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY,
+  CAPTIONING_WORKFLOW_KEY,
+  CAPTIONING_FILTERS_PREFIX,
 } from "../constants/storage";
+import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
@@ -45,6 +49,60 @@ interface StepConfig {
   targetWidth: number | null;
   targetHeight: number | null;
 }
+
+interface CaptioningWorkflow {
+  selectedModel: string;
+  providerModelInput: string;
+  style: string;
+  customPrompt: string;
+  wd14Threshold: number;
+  targetWidth: number | null;
+  targetHeight: number | null;
+  scope: Scope;
+  delimiterMode: DelimiterMode;
+  delimiterParts: string[];
+  stripRefusals: boolean;
+  saveBackup: boolean;
+  renameOnCaption: boolean;
+  detectTask: string;
+  detectPrompt: string;
+  detectUseCaptions: boolean;
+  detectOverwrite: boolean;
+  additionalSteps: StepConfig[];
+}
+
+const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
+  selectedModel: "",
+  providerModelInput: "",
+  style: "detailed",
+  customPrompt: "",
+  wd14Threshold: 0.35,
+  targetWidth: null,
+  targetHeight: null,
+  scope: "uncaptioned",
+  delimiterMode: "overwrite",
+  delimiterParts: [",", " "],
+  stripRefusals: true,
+  saveBackup: false,
+  renameOnCaption: false,
+  detectTask: "<OD>",
+  detectPrompt: "",
+  detectUseCaptions: false,
+  detectOverwrite: true,
+  additionalSteps: [],
+};
+
+interface CaptioningFilters {
+  activeSubfolder: string | null;
+  minAestheticScore: string;
+  excludeFlags: string[];
+}
+
+const CAPTIONING_FILTERS_DEFAULTS: CaptioningFilters = {
+  activeSubfolder: null,
+  minAestheticScore: "",
+  excludeFlags: [],
+};
 
 function makeStepId() { return Math.random().toString(36).slice(2); }
 
@@ -197,46 +255,78 @@ export default function CaptioningPage() {
   const selCountForDataset = selectedIdsForDataset.length;
   const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
 
-  const [selectedModel, setSelectedModel] = useState("");
-  const [providerModelInput, setProviderModelInput] = useState("");
-  const [style, setStyle] = useState(
-    () => localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? "detailed"
+  // Remembered "workflow" config — global, shared across all datasets.
+  const [workflow] = useState(() => loadPersisted(CAPTIONING_WORKFLOW_KEY, CAPTIONING_WORKFLOW_DEFAULTS));
+  // True once any workflow blob has ever been saved — gates whether Settings' CAPTION_DEFAULT_*
+  // values still apply. After the first debounced save, this stays true forever (until Reset).
+  const [hasStoredWorkflow] = useState(() => localStorage.getItem(CAPTIONING_WORKFLOW_KEY) !== null);
+
+  const [selectedModel, setSelectedModel] = useState(hasStoredWorkflow ? workflow.selectedModel : "");
+  const [providerModelInput, setProviderModelInput] = useState(workflow.providerModelInput);
+  const [style, setStyle] = useState(() =>
+    hasStoredWorkflow
+      ? workflow.style
+      : (localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? CAPTIONING_WORKFLOW_DEFAULTS.style)
   );
-  const [customPrompt, setCustomPrompt] = useState("");
-  const [wd14Threshold, setWd14Threshold] = useState(0.35);
-  const [targetWidth, setTargetWidth] = useState<number | null>(null);
-  const [targetHeight, setTargetHeight] = useState<number | null>(null);
-  const [scope, setScope] = useState<Scope>(
-    () => (localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) as Scope) ?? "uncaptioned"
+  const [customPrompt, setCustomPrompt] = useState(workflow.customPrompt);
+  const [wd14Threshold, setWd14Threshold] = useState(workflow.wd14Threshold);
+  const [targetWidth, setTargetWidth] = useState<number | null>(workflow.targetWidth);
+  const [targetHeight, setTargetHeight] = useState<number | null>(workflow.targetHeight);
+  const [scope, setScope] = useState<Scope>(() =>
+    hasStoredWorkflow
+      ? workflow.scope
+      : ((localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) as Scope) ?? CAPTIONING_WORKFLOW_DEFAULTS.scope)
   );
-  const [delimiterMode, setDelimiterMode] = useState<DelimiterMode>(
-    () => (localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) as DelimiterMode) ?? "overwrite"
+  const [delimiterMode, setDelimiterMode] = useState<DelimiterMode>(() =>
+    hasStoredWorkflow
+      ? workflow.delimiterMode
+      : ((localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) as DelimiterMode) ?? CAPTIONING_WORKFLOW_DEFAULTS.delimiterMode)
   );
-  const [delimiterParts, setDelimiterParts] = useState<string[]>([",", " "]);
-  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
-  const [minAestheticScore, setMinAestheticScore] = useState("");
-  const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set());
-  const [stripRefusals, setStripRefusals] = useState(
-    () => localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false"
+  const [delimiterParts, setDelimiterParts] = useState<string[]>(workflow.delimiterParts);
+  const [stripRefusals, setStripRefusals] = useState(() =>
+    hasStoredWorkflow
+      ? workflow.stripRefusals
+      : localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false"
   );
-  const [saveBackup, setSaveBackup] = useState(
-    () => localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
+  const [saveBackup, setSaveBackup] = useState(() =>
+    hasStoredWorkflow
+      ? workflow.saveBackup
+      : localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
   );
-  const [renameOnCaption, setRenameOnCaption] = useState(
-    () => localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true"
+  const [renameOnCaption, setRenameOnCaption] = useState(() =>
+    hasStoredWorkflow
+      ? workflow.renameOnCaption
+      : localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true"
   );
+  const [detectTask, setDetectTask] = useState(workflow.detectTask);
+  const [detectPrompt, setDetectPrompt] = useState(workflow.detectPrompt);
+  const [detectUseCaptions, setDetectUseCaptions] = useState(workflow.detectUseCaptions);
+  const [detectOverwrite, setDetectOverwrite] = useState(workflow.detectOverwrite);
+
+  // Pipeline additional steps
+  const [additionalSteps, setAdditionalSteps] = useState<StepConfig[]>(workflow.additionalSteps);
+
+  // Remembered "filters" config — per-dataset.
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(() => {
+    if (!datasetId) return undefined;
+    const f = loadPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), CAPTIONING_FILTERS_DEFAULTS);
+    return f.activeSubfolder ?? undefined;
+  });
+  const [minAestheticScore, setMinAestheticScore] = useState(() => {
+    if (!datasetId) return CAPTIONING_FILTERS_DEFAULTS.minAestheticScore;
+    return loadPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), CAPTIONING_FILTERS_DEFAULTS).minAestheticScore;
+  });
+  const [excludeFlags, setExcludeFlags] = useState<Set<string>>(() => {
+    if (!datasetId) return new Set(CAPTIONING_FILTERS_DEFAULTS.excludeFlags);
+    return new Set(loadPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), CAPTIONING_FILTERS_DEFAULTS).excludeFlags);
+  });
+
   const [jobLabel, setJobLabel] = useState("");
   const [submittedJobIds, setSubmittedJobIds] = useState<string[]>([]);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
-  const [detectTask, setDetectTask] = useState("<OD>");
-  const [detectPrompt, setDetectPrompt] = useState("");
-  const [detectUseCaptions, setDetectUseCaptions] = useState(false);
-  const [detectOverwrite, setDetectOverwrite] = useState(true);
   const [detectJobId, setDetectJobId] = useState<string | null>(null);
-
-  // Pipeline additional steps
-  const [additionalSteps, setAdditionalSteps] = useState<StepConfig[]>([]);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const allActiveJobs = useJobStore((s) => s.activeJobs);
 
@@ -310,26 +400,74 @@ export default function CaptioningPage() {
   const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
   const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
 
-  // Apply stored default model once after models/providers load, if no model is selected yet.
-  // Also correct the style if it's incompatible with the default model.
+  // Apply stored default model once after models/providers load, if no model is selected yet —
+  // or if the remembered model is no longer valid (uninstalled model / removed provider).
+  // Also correct the style if it's incompatible with the resolved model.
   useEffect(() => {
-    if (!modelsData || selectedModel !== "") return;
-    const stored = localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY);
-    if (!stored) return;
+    if (!modelsData) return;
     const allIds = [
-      ...localModels.map((m) => m.id),
-      ...ollamaModels.map((m) => m.id),
-      ...wd14Models.map((m) => m.id),
-      ...providers.map((p) => `openai_compat:${p.id}`),
+      ...localModels.map((m) => m.id), ...ollamaModels.map((m) => m.id),
+      ...wd14Models.map((m) => m.id), ...providers.map((p) => `openai_compat:${p.id}`),
     ];
-    if (!allIds.includes(stored)) return;
-    setSelectedModel(stored);
-    const mt = modelType(stored);
-    const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
-    if (supported.length > 0 && !supported.includes(style)) {
-      setStyle(supported[0]);
+    const tryApply = (candidate: string | null | undefined): boolean => {
+      if (!candidate || !allIds.includes(candidate)) return false;
+      setSelectedModel(candidate);
+      const mt = modelType(candidate);
+      const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
+      if (supported.length > 0 && !supported.includes(style)) setStyle(supported[0]);
+      return true;
+    };
+    if (selectedModel !== "") {
+      if (!allIds.includes(selectedModel)) {
+        setSelectedModel("");
+        tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
+      }
+      return;
     }
+    tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
   }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      savePersisted(CAPTIONING_WORKFLOW_KEY, {
+        selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
+        targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
+        stripRefusals, saveBackup, renameOnCaption,
+        detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
+        additionalSteps,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [selectedModel, providerModelInput, style, customPrompt, wd14Threshold, targetWidth, targetHeight,
+      scope, delimiterMode, delimiterParts, stripRefusals, saveBackup, renameOnCaption,
+      detectTask, detectPrompt, detectUseCaptions, detectOverwrite, additionalSteps]);
+
+  // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
+  useEffect(() => {
+    if (!datasetId) return;
+    const t = setTimeout(() => {
+      savePersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), {
+        activeSubfolder: activeSubfolder ?? null,
+        minAestheticScore,
+        excludeFlags: [...excludeFlags],
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [datasetId, activeSubfolder, minAestheticScore, excludeFlags]);
+
+  // Reload the "filters" blob when datasetId changes without a remount (pane mode).
+  const prevDatasetId = useRef(datasetId);
+  useEffect(() => {
+    if (datasetId === prevDatasetId.current) return;
+    prevDatasetId.current = datasetId;
+    const next = datasetId
+      ? loadPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), CAPTIONING_FILTERS_DEFAULTS)
+      : CAPTIONING_FILTERS_DEFAULTS;
+    setActiveSubfolder(next.activeSubfolder ?? undefined);
+    setMinAestheticScore(next.minAestheticScore);
+    setExcludeFlags(new Set(next.excludeFlags));
+  }, [datasetId]);
 
   const isWd14 = selectedModel.startsWith("wd14:");
   const isOpenAICompat = selectedModel.startsWith("openai_compat:");
@@ -515,6 +653,56 @@ export default function CaptioningPage() {
     toast.success("Preset saved");
   }
 
+  function handleResetToDefaults() {
+    clearPersisted(CAPTIONING_WORKFLOW_KEY);
+    if (datasetId) clearPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId));
+
+    // Fields with no Settings-configured default — reset to hardcoded defaults.
+    setProviderModelInput(CAPTIONING_WORKFLOW_DEFAULTS.providerModelInput);
+    setCustomPrompt(CAPTIONING_WORKFLOW_DEFAULTS.customPrompt);
+    setWd14Threshold(CAPTIONING_WORKFLOW_DEFAULTS.wd14Threshold);
+    setTargetWidth(CAPTIONING_WORKFLOW_DEFAULTS.targetWidth);
+    setTargetHeight(CAPTIONING_WORKFLOW_DEFAULTS.targetHeight);
+    setDelimiterParts(CAPTIONING_WORKFLOW_DEFAULTS.delimiterParts);
+    setDetectTask(CAPTIONING_WORKFLOW_DEFAULTS.detectTask);
+    setDetectPrompt(CAPTIONING_WORKFLOW_DEFAULTS.detectPrompt);
+    setDetectUseCaptions(CAPTIONING_WORKFLOW_DEFAULTS.detectUseCaptions);
+    setDetectOverwrite(CAPTIONING_WORKFLOW_DEFAULTS.detectOverwrite);
+    setAdditionalSteps(CAPTIONING_WORKFLOW_DEFAULTS.additionalSteps);
+
+    // Fields with a Settings-configured default — re-read it directly.
+    const defaultStyle = localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? CAPTIONING_WORKFLOW_DEFAULTS.style;
+    setStyle(defaultStyle);
+    setScope((localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) as Scope) ?? CAPTIONING_WORKFLOW_DEFAULTS.scope);
+    setDelimiterMode((localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) as DelimiterMode) ?? CAPTIONING_WORKFLOW_DEFAULTS.delimiterMode);
+    setStripRefusals(localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false");
+    setSaveBackup(localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true");
+    setRenameOnCaption(localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true");
+
+    // Model — re-check the Settings default against currently available models/providers.
+    const allIds = [
+      ...localModels.map((m) => m.id), ...ollamaModels.map((m) => m.id),
+      ...wd14Models.map((m) => m.id), ...providers.map((p) => `openai_compat:${p.id}`),
+    ];
+    const defaultModel = localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY);
+    if (defaultModel && allIds.includes(defaultModel)) {
+      setSelectedModel(defaultModel);
+      const mt = modelType(defaultModel);
+      const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
+      if (supported.length > 0 && !supported.includes(defaultStyle)) setStyle(supported[0]);
+    } else {
+      setSelectedModel("");
+    }
+
+    // Filters — per-dataset.
+    setActiveSubfolder(CAPTIONING_FILTERS_DEFAULTS.activeSubfolder ?? undefined);
+    setMinAestheticScore(CAPTIONING_FILTERS_DEFAULTS.minAestheticScore);
+    setExcludeFlags(new Set(CAPTIONING_FILTERS_DEFAULTS.excludeFlags));
+
+    setShowResetConfirm(false);
+    toast.success("Configuration reset to defaults");
+  }
+
   // Step progress info for pipeline
   const stepIndex = (jobProgress as { step_index?: number } | undefined)?.step_index;
   const stepTotal = (jobProgress as { step_total?: number } | undefined)?.step_total;
@@ -592,6 +780,9 @@ export default function CaptioningPage() {
             <div className="panel-h">
               <h3>{isPipeline ? "Step 1" : "Configuration"}</h3>
               <div style={{ flex: 1 }} />
+              <button className="btn ghost sm" onClick={() => setShowResetConfirm(true)} title="Clear remembered configuration and revert to Settings defaults">
+                Reset to defaults
+              </button>
               <span className="badge solid mono">{dataset?.captioned_count ?? 0} / {dataset?.image_count ?? 0} captioned</span>
             </div>
             <div style={{ padding: "4px 22px" }}>
@@ -1110,6 +1301,21 @@ export default function CaptioningPage() {
           </div>
         </div>
       </div>
+
+      {showResetConfirm && (
+        <ConfirmDialog
+          title="Reset to defaults"
+          message={
+            isPipeline
+              ? "This clears your remembered captioning configuration and reverts every field to its Settings-configured default, including the pipeline steps below Step 1 — they will be removed. This cannot be undone."
+              : "This clears your remembered captioning configuration and reverts every field to its Settings-configured default."
+          }
+          confirmLabel="Reset"
+          danger
+          onConfirm={handleResetToDefaults}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
     </div>
   );
 }

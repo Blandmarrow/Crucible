@@ -9,6 +9,44 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
+import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+
+interface QualityWorkflow {
+  runAesthetic: boolean;
+  runTechnical: boolean;
+  runWatermark: boolean;
+  runEmbeddings: boolean;
+  runDino: boolean;
+  runNsfw: boolean;
+  runDinoLayers: boolean;
+  embeddingType: "clip" | "dino" | "combined";
+  dinoLayer: number | "all" | null;
+}
+
+const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
+  runAesthetic: true,
+  runTechnical: true,
+  runWatermark: false,
+  runEmbeddings: false,
+  runDino: false,
+  runNsfw: false,
+  runDinoLayers: false,
+  embeddingType: "clip",
+  dinoLayer: "all",
+};
+
+interface QualityFilters {
+  activeSubfolder: string | null;
+  showStyleSection: boolean;
+  selectedRefIds: string[];
+}
+
+const QUALITY_FILTERS_DEFAULTS: QualityFilters = {
+  activeSubfolder: null,
+  showStyleSection: false,
+  selectedRefIds: [],
+};
 
 const SCORING_OPTIONS = [
   { key: "aesthetic", label: "Aesthetic score · LAION", desc: "CLIP-based aesthetic predictor (1–10). Trained on human ratings.", vram: "GPU · 2.1 GB" },
@@ -24,20 +62,28 @@ export default function QualityPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [runAesthetic, setRunAesthetic] = useState(true);
-  const [runTechnical, setRunTechnical] = useState(true);
-  const [runWatermark, setRunWatermark] = useState(false);
-  const [runEmbeddings, setRunEmbeddings] = useState(false);
-  const [runDino, setRunDino] = useState(false);
-  const [runNsfw, setRunNsfw] = useState(false);
+
+  // Remembered "workflow" config — global, shared across all datasets.
+  const [workflow] = useState(() => loadPersisted(QUALITY_WORKFLOW_KEY, QUALITY_WORKFLOW_DEFAULTS));
+  const [runAesthetic, setRunAesthetic] = useState(workflow.runAesthetic);
+  const [runTechnical, setRunTechnical] = useState(workflow.runTechnical);
+  const [runWatermark, setRunWatermark] = useState(workflow.runWatermark);
+  const [runEmbeddings, setRunEmbeddings] = useState(workflow.runEmbeddings);
+  const [runDino, setRunDino] = useState(workflow.runDino);
+  const [runNsfw, setRunNsfw] = useState(workflow.runNsfw);
   const [jobLabel, setJobLabel] = useState("");
-  const [runDinoLayers, setRunDinoLayers] = useState(false);
-  const [showStyleSection, setShowStyleSection] = useState(false);
-  const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set());
+  const [runDinoLayers, setRunDinoLayers] = useState(workflow.runDinoLayers);
+  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">(workflow.embeddingType);
+  const [dinoLayer, setDinoLayer] = useState<number | "all" | null>(workflow.dinoLayer);
+
+  // Remembered "filters" config — per-dataset.
+  const [filters] = useState(() =>
+    datasetId ? loadPersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId), QUALITY_FILTERS_DEFAULTS) : QUALITY_FILTERS_DEFAULTS
+  );
+  const [showStyleSection, setShowStyleSection] = useState(filters.showStyleSection);
+  const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set(filters.selectedRefIds));
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
-  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">("clip");
-  const [dinoLayer, setDinoLayer] = useState<number | "all" | null>("all");
-  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(filters.activeSubfolder ?? undefined);
 
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -53,6 +99,43 @@ export default function QualityPage() {
     if (!embeddingTypeInitialized.current) { embeddingTypeInitialized.current = true; return; }
     if (embeddingType === "clip") setDinoLayer("all");
   }, [embeddingType]);
+
+  // Persist the "workflow" config (scoring toggles/style settings) — global, debounced.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      savePersisted(QUALITY_WORKFLOW_KEY, {
+        runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw,
+        runDinoLayers, embeddingType, dinoLayer,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw, runDinoLayers, embeddingType, dinoLayer]);
+
+  // Persist "filters" config (subfolder/style refs) — per-dataset, debounced.
+  useEffect(() => {
+    if (!datasetId) return;
+    const t = setTimeout(() => {
+      savePersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId), {
+        activeSubfolder: activeSubfolder ?? null,
+        showStyleSection,
+        selectedRefIds: [...selectedRefIds],
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [datasetId, activeSubfolder, showStyleSection, selectedRefIds]);
+
+  // Reload the "filters" blob when datasetId changes without a remount (pane mode).
+  const prevDatasetId = useRef(datasetId);
+  useEffect(() => {
+    if (datasetId === prevDatasetId.current) return;
+    prevDatasetId.current = datasetId;
+    const next = datasetId
+      ? loadPersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId), QUALITY_FILTERS_DEFAULTS)
+      : QUALITY_FILTERS_DEFAULTS;
+    setActiveSubfolder(next.activeSubfolder ?? undefined);
+    setShowStyleSection(next.showStyleSection);
+    setSelectedRefIds(new Set(next.selectedRefIds));
+  }, [datasetId]);
 
   useEffect(() => {
     if (jobProgress?.status === "completed") {
@@ -159,6 +242,28 @@ export default function QualityPage() {
     });
   };
 
+  function handleResetToDefaults() {
+    clearPersisted(QUALITY_WORKFLOW_KEY);
+    if (datasetId) clearPersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId));
+
+    setRunAesthetic(QUALITY_WORKFLOW_DEFAULTS.runAesthetic);
+    setRunTechnical(QUALITY_WORKFLOW_DEFAULTS.runTechnical);
+    setRunWatermark(QUALITY_WORKFLOW_DEFAULTS.runWatermark);
+    setRunEmbeddings(QUALITY_WORKFLOW_DEFAULTS.runEmbeddings);
+    setRunDino(QUALITY_WORKFLOW_DEFAULTS.runDino);
+    setRunNsfw(QUALITY_WORKFLOW_DEFAULTS.runNsfw);
+    setRunDinoLayers(QUALITY_WORKFLOW_DEFAULTS.runDinoLayers);
+    setEmbeddingType(QUALITY_WORKFLOW_DEFAULTS.embeddingType);
+    setDinoLayer(QUALITY_WORKFLOW_DEFAULTS.dinoLayer);
+
+    setActiveSubfolder(QUALITY_FILTERS_DEFAULTS.activeSubfolder ?? undefined);
+    setShowStyleSection(QUALITY_FILTERS_DEFAULTS.showStyleSection);
+    setSelectedRefIds(new Set(QUALITY_FILTERS_DEFAULTS.selectedRefIds));
+    setExternalRefFiles([]);
+
+    toast.success("Configuration reset to defaults");
+  }
+
   const dupGroups = duplicates?.groups ?? [];
   const isRunning = scoreMutation.isPending || jobProgress?.status === "running";
   const checkMap: Record<string, [boolean, (v: boolean) => void]> = {
@@ -188,6 +293,9 @@ export default function QualityPage() {
           )}
           <h3 style={{ marginLeft: lastRunLabel ? 12 : 0 }}>Run quality analysis</h3>
           <div style={{ flex: 1 }} />
+          <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
+            Reset to defaults
+          </button>
           {subfolders.length > 0 && (
             <select
               className="select"

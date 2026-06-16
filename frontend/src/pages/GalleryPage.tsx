@@ -82,7 +82,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 
 function loadSavedState(datasetId: string) {
   try {
-    const raw = sessionStorage.getItem(`gallery-state-${datasetId}`);
+    const raw = localStorage.getItem(`gallery-state-${datasetId}`);
     if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; scrollTop: number; activeSubfolder?: string | null };
   } catch {}
   return null;
@@ -136,8 +136,8 @@ export default function GalleryPage() {
   const isCustomOrder = sortOpt.sort === "sort_order";
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
-  const liveState = useRef({ page, sortIdx, captionedFilter, qualityFilter, activeSubfolder });
-  liveState.current = { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, activeSubfolder });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -163,18 +163,34 @@ export default function GalleryPage() {
     return () => clearTimeout(t);
   }, [detectionLabelInput]);
 
+  // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
+  useEffect(() => {
+    if (!datasetId) return;
+    const t = setTimeout(() => {
+      const scrollTop = scrollRef.current?.scrollTop ?? 0;
+      localStorage.setItem(
+        `gallery-state-${datasetId}`,
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+      );
+    }, 350);
+    return () => clearTimeout(t);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, activeSubfolder]);
+
+  // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
+  // and the debounce gap where a <350ms navigation would otherwise lose state changes.
   useEffect(() => {
     return () => {
+      if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder } = liveState.current;
-      if (datasetId) {
-        sessionStorage.setItem(
+      const { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder } = liveStateRef.current;
+      try {
+        localStorage.setItem(
           `gallery-state-${datasetId}`,
           JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
         );
-      }
+      } catch {}
     };
-  }, [datasetId]);
+  }, [datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: dataset } = useQuery({
     queryKey: ["dataset", datasetId],
@@ -455,6 +471,18 @@ export default function GalleryPage() {
 
   const resetPage = () => { setPage(1); hasRestoredScroll.current = false; };
 
+  const handleResetFilters = () => {
+    if (datasetId) localStorage.removeItem(`gallery-state-${datasetId}`);
+    setPage(1);
+    setSortIdx(getGalleryDefaultSort());
+    setCaptionedFilter(getGalleryDefaultCaptionFilter());
+    setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
+    setActiveSubfolder(undefined);
+    hasRestoredScroll.current = true;
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    toast.success("Gallery filters reset");
+  };
+
   const applyScoreFilter = () => {
     if (!draftMin && !draftMax) return;
     setScoreFilters(prev => [...prev, { field: draftField, min: draftMin, max: draftMax }]);
@@ -672,6 +700,14 @@ export default function GalleryPage() {
           <option value="has_watermark">Flagged: watermark</option>
           <option value="is_duplicate">Flagged: duplicate</option>
         </select>
+
+        <button
+          className="btn ghost sm"
+          onClick={handleResetFilters}
+          title="Clear remembered sort/filter settings for this dataset and revert to defaults"
+        >
+          Reset filters
+        </button>
 
         <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"

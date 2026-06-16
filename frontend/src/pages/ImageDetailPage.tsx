@@ -273,10 +273,10 @@ export default function ImageDetailPage() {
         sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify(newCtx));
         // Also update gallery state so "Back" returns to the right page
         try {
-          const raw = sessionStorage.getItem(`gallery-state-${datasetId}`);
+          const raw = localStorage.getItem(`gallery-state-${datasetId}`);
           if (raw) {
             const state = JSON.parse(raw);
-            sessionStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page: newCtx.page, scrollTop: 0 }));
+            localStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page: newCtx.page, scrollTop: 0 }));
           }
         } catch {}
       }

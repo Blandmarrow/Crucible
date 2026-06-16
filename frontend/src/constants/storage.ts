@@ -21,6 +21,21 @@ export const CAPTION_DEFAULT_STRIP_REFS_KEY  = "caption-default-strip-refusals";
 export const CAPTION_DEFAULT_RENAME_KEY      = "caption-default-rename";         // "true" | "false"
 export const CAPTION_DEFAULT_SAVE_BACKUP_KEY = "caption-default-save-backup";    // "true" | "false"
 
+// Remembered per-page "workflow" config — global blobs shared across all datasets.
+// Loaded/saved via loadPersisted/savePersisted/clearPersisted in utils/persistentState.ts
+export const CAPTIONING_WORKFLOW_KEY = "captioning-workflow-config";
+export const EXPORT_WORKFLOW_KEY     = "export-workflow-config";
+export const QUALITY_WORKFLOW_KEY    = "quality-workflow-config";
+export const BULK_EDIT_WORKFLOW_KEY  = "bulk-edit-workflow-config";
+
+// Remembered per-page "filters/scope" config — per-dataset blobs.
+// Append `-${datasetId}` via datasetScopedKey() from utils/persistentState.ts
+export const CAPTIONING_FILTERS_PREFIX = "captioning-filters";
+export const EXPORT_FILTERS_PREFIX     = "export-filters";
+export const QUALITY_FILTERS_PREFIX    = "quality-filters";
+export const BULK_EDIT_FILTERS_PREFIX  = "bulk-edit-filters";
+export const STATS_FILTERS_PREFIX      = "stats-filters";
+
 const GALLERY_PAGE_SIZE_DEFAULT = 100;
 
 export function getGalleryPageSize(): number {

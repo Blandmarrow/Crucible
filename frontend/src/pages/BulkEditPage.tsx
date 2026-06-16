@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
+import toast from "react-hot-toast";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useSelectionStore } from "../store/selectionStore";
 import { FLAG_OPTIONS } from "../constants/flags";
@@ -11,9 +12,31 @@ import UpscaleForm from "../components/upscale/UpscaleForm";
 import LutForm from "../components/lut/LutForm";
 import BulkRenameForm from "../components/image/BulkRenameForm";
 import BulkDeleteForm from "../components/image/BulkDeleteForm";
+import { BULK_EDIT_WORKFLOW_KEY, BULK_EDIT_FILTERS_PREFIX } from "../constants/storage";
+import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 
 type Scope = "all" | "flags" | "selected";
 type Tab = "captions" | "upscale" | "lut" | "rename" | "delete";
+
+interface BulkEditWorkflow {
+  tab: Tab;
+  scope: Scope;
+}
+
+const BULK_EDIT_WORKFLOW_DEFAULTS: BulkEditWorkflow = {
+  tab: "captions",
+  scope: "all",
+};
+
+interface BulkEditFilters {
+  selectedFlags: string[];
+  activeSubfolder: string | null;
+}
+
+const BULK_EDIT_FILTERS_DEFAULTS: BulkEditFilters = {
+  selectedFlags: [],
+  activeSubfolder: null,
+};
 
 function getCountLabel(data: { count: number } | undefined, fetching: boolean): string {
   if (fetching) return "Counting…";
@@ -26,10 +49,20 @@ export default function BulkEditPage() {
   const datasetId = usePaneDatasetId();
   const { selectedIds, count: selectedCount } = useSelectionStore();
 
-  const [tab, setTab] = useState<Tab>("captions");
-  const [scope, setScope] = useState<Scope>("all");
-  const [selectedFlags, setSelectedFlags] = useState<Set<string>>(new Set());
-  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>();
+  // Remembered "workflow" config — global, shared across all datasets.
+  const [workflow] = useState(() => loadPersisted(BULK_EDIT_WORKFLOW_KEY, BULK_EDIT_WORKFLOW_DEFAULTS));
+  const [tab, setTab] = useState<Tab>(workflow.tab);
+  const [scope, setScope] = useState<Scope>(() =>
+    workflow.scope === "selected" && selectedCount === 0 ? "all" : workflow.scope
+  );
+  const [resetKey, setResetKey] = useState(0);
+
+  // Remembered "filters" config — per-dataset.
+  const [filters] = useState(() =>
+    datasetId ? loadPersisted(datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId), BULK_EDIT_FILTERS_DEFAULTS) : BULK_EDIT_FILTERS_DEFAULTS
+  );
+  const [selectedFlags, setSelectedFlags] = useState<Set<string>>(new Set(filters.selectedFlags));
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(filters.activeSubfolder ?? undefined);
 
   const imageIds = useMemo(() => scope === "selected" ? [...selectedIds] : undefined, [scope, selectedIds]);
   const qualityFlags = useMemo(() => scope === "flags" ? [...selectedFlags] : undefined, [scope, selectedFlags]);
@@ -58,6 +91,51 @@ export default function BulkEditPage() {
     });
   };
 
+  // Persist "workflow" config (tab/scope) — global, debounced.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      savePersisted(BULK_EDIT_WORKFLOW_KEY, { tab, scope });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [tab, scope]);
+
+  // Persist "filters" config (selected flags/subfolder) — per-dataset, debounced.
+  useEffect(() => {
+    if (!datasetId) return;
+    const t = setTimeout(() => {
+      savePersisted(datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId), {
+        selectedFlags: [...selectedFlags],
+        activeSubfolder: activeSubfolder ?? null,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [datasetId, selectedFlags, activeSubfolder]);
+
+  // Reload the "filters" blob when datasetId changes without a remount (pane mode).
+  const prevDatasetId = useRef(datasetId);
+  useEffect(() => {
+    if (datasetId === prevDatasetId.current) return;
+    prevDatasetId.current = datasetId;
+    const next = datasetId
+      ? loadPersisted(datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId), BULK_EDIT_FILTERS_DEFAULTS)
+      : BULK_EDIT_FILTERS_DEFAULTS;
+    setSelectedFlags(new Set(next.selectedFlags));
+    setActiveSubfolder(next.activeSubfolder ?? undefined);
+  }, [datasetId]);
+
+  function handleResetToDefaults() {
+    clearPersisted(BULK_EDIT_WORKFLOW_KEY);
+    if (datasetId) clearPersisted(datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId));
+
+    setTab(BULK_EDIT_WORKFLOW_DEFAULTS.tab);
+    setScope(BULK_EDIT_WORKFLOW_DEFAULTS.scope);
+    setSelectedFlags(new Set(BULK_EDIT_FILTERS_DEFAULTS.selectedFlags));
+    setActiveSubfolder(BULK_EDIT_FILTERS_DEFAULTS.activeSubfolder ?? undefined);
+    setResetKey(k => k + 1);
+
+    toast.success("Configuration reset to defaults");
+  }
+
   if (!datasetId) {
     return <div style={{ padding: 32, color: "var(--fg-mute)" }}>No dataset selected.</div>;
   }
@@ -70,21 +148,26 @@ export default function BulkEditPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="tabs" style={{ marginBottom: 20 }}>
-        <button className={`tab${tab === "captions" ? " active" : ""}`} onClick={() => setTab("captions")}>
-          Edit Captions
-        </button>
-        <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
-          Upscale
-        </button>
-        <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
-          Apply LUT
-        </button>
-        <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
-          Rename
-        </button>
-        <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
-          Delete
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <div className="tabs" style={{ flex: 1 }}>
+          <button className={`tab${tab === "captions" ? " active" : ""}`} onClick={() => setTab("captions")}>
+            Edit Captions
+          </button>
+          <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
+            Upscale
+          </button>
+          <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
+            Apply LUT
+          </button>
+          <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
+            Rename
+          </button>
+          <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
+            Delete
+          </button>
+        </div>
+        <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
+          Reset to defaults
         </button>
       </div>
 
@@ -168,7 +251,7 @@ export default function BulkEditPage() {
           <div className="panel-h">Operation</div>
           <div className="panel-b">
             <BulkEditForm
-              key={scope}
+              key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}
               qualityFlags={qualityFlags}
@@ -184,7 +267,7 @@ export default function BulkEditPage() {
           <div className="panel-h">Upscale</div>
           <div className="panel-b">
             <UpscaleForm
-              key={scope}
+              key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}
               subfolder={subfolder}
@@ -199,7 +282,7 @@ export default function BulkEditPage() {
           <div className="panel-h">Apply LUT</div>
           <div className="panel-b">
             <LutForm
-              key={scope}
+              key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}
               subfolder={subfolder}
@@ -214,7 +297,7 @@ export default function BulkEditPage() {
           <div className="panel-h">Rename Images</div>
           <div className="panel-b">
             <BulkRenameForm
-              key={scope}
+              key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}
               qualityFlags={qualityFlags}
@@ -230,7 +313,7 @@ export default function BulkEditPage() {
           <div className="panel-h">Delete Images</div>
           <div className="panel-b">
             <BulkDeleteForm
-              key={scope}
+              key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}
               qualityFlags={qualityFlags}

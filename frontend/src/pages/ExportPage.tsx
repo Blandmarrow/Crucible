@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -10,6 +10,8 @@ import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
+import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
+import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
@@ -21,31 +23,87 @@ const FORMAT_LABELS: Record<Format, string> = {
   plain: "plain folder",
 };
 
+interface ExportWorkflow {
+  format: Format;
+  captionFmt: CaptionFmt;
+  outputDir: string;
+  nRepeats: number;
+  conceptToken: string;
+  outputImgFmt: string;
+  resizeTo: ResizeTo;
+  customResize: boolean;
+  customResizeVal: string;
+  stripMetadata: boolean;
+  captionsOnly: boolean;
+}
+
+const EXPORT_WORKFLOW_DEFAULTS: ExportWorkflow = {
+  format: "kohya",
+  captionFmt: "txt",
+  outputDir: "",
+  nRepeats: 10,
+  conceptToken: "concept",
+  outputImgFmt: "original",
+  resizeTo: null,
+  customResize: false,
+  customResizeVal: "",
+  stripMetadata: false,
+  captionsOnly: false,
+};
+
+interface ExportFilters {
+  filterAesthetic: boolean;
+  aestheticMin: number;
+  filterCaptioned: boolean;
+  excludeFlags: string[];
+  filterStyleSim: boolean;
+  styleSimMin: number;
+  subfolderFilterActive: boolean;
+  selectedSubfolders: string[];
+}
+
+const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
+  filterAesthetic: false,
+  aestheticMin: 5.0,
+  filterCaptioned: true,
+  excludeFlags: ["has_watermark"],
+  filterStyleSim: false,
+  styleSimMin: 0.5,
+  subfolderFilterActive: false,
+  selectedSubfolders: [],
+};
+
 export default function ExportPage() {
   const datasetId = usePaneDatasetId();
-  const [format, setFormat] = useState<Format>("kohya");
-  const [captionFmt, setCaptionFmt] = useState<CaptionFmt>("txt");
-  const [outputDir, setOutputDir] = useState("");
-  const [nRepeats, setNRepeats] = useState(10);
-  const [conceptToken, setConceptToken] = useState("concept");
-  const [outputImgFmt, setOutputImgFmt] = useState("original");
-  const [resizeTo, setResizeTo] = useState<ResizeTo>(null);
-  const [customResize, setCustomResize] = useState(false);
-  const [customResizeVal, setCustomResizeVal] = useState("");
+
+  // Remembered "workflow" config — global, shared across all datasets.
+  const [workflow] = useState(() => loadPersisted(EXPORT_WORKFLOW_KEY, EXPORT_WORKFLOW_DEFAULTS));
+  const [format, setFormat] = useState<Format>(workflow.format);
+  const [captionFmt, setCaptionFmt] = useState<CaptionFmt>(workflow.captionFmt);
+  const [outputDir, setOutputDir] = useState(workflow.outputDir);
+  const [nRepeats, setNRepeats] = useState(workflow.nRepeats);
+  const [conceptToken, setConceptToken] = useState(workflow.conceptToken);
+  const [outputImgFmt, setOutputImgFmt] = useState(workflow.outputImgFmt);
+  const [resizeTo, setResizeTo] = useState<ResizeTo>(workflow.resizeTo);
+  const [customResize, setCustomResize] = useState(workflow.customResize);
+  const [customResizeVal, setCustomResizeVal] = useState(workflow.customResizeVal);
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
 
-  // Filters
-  const [filterAesthetic, setFilterAesthetic] = useState(false);
-  const [aestheticMin, setAestheticMin] = useState(5.0);
-  const [filterCaptioned, setFilterCaptioned] = useState(true);
-  const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(["has_watermark"]));
-  const [filterStyleSim, setFilterStyleSim] = useState(false);
-  const [styleSimMin, setStyleSimMin] = useState(0.5);
-  const [subfolderFilterActive, setSubfolderFilterActive] = useState(false);
-  const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set());
+  // Remembered "filters" config — per-dataset.
+  const [filters] = useState(() =>
+    datasetId ? loadPersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId), EXPORT_FILTERS_DEFAULTS) : EXPORT_FILTERS_DEFAULTS
+  );
+  const [filterAesthetic, setFilterAesthetic] = useState(filters.filterAesthetic);
+  const [aestheticMin, setAestheticMin] = useState(filters.aestheticMin);
+  const [filterCaptioned, setFilterCaptioned] = useState(filters.filterCaptioned);
+  const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(filters.excludeFlags));
+  const [filterStyleSim, setFilterStyleSim] = useState(filters.filterStyleSim);
+  const [styleSimMin, setStyleSimMin] = useState(filters.styleSimMin);
+  const [subfolderFilterActive, setSubfolderFilterActive] = useState(filters.subfolderFilterActive);
+  const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set(filters.selectedSubfolders));
 
-  const [stripMetadata, setStripMetadata] = useState(false);
-  const [captionsOnly, setCaptionsOnly] = useState(false);
+  const [stripMetadata, setStripMetadata] = useState(workflow.stripMetadata);
+  const [captionsOnly, setCaptionsOnly] = useState(workflow.captionsOnly);
   const [jobLabel, setJobLabel] = useState("");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
@@ -76,9 +134,47 @@ export default function ExportPage() {
         style_sim_min: filterStyleSim ? styleSimMin : null,
         subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
       });
+      if (datasetId) {
+        savePersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId), {
+          filterAesthetic, aestheticMin, filterCaptioned,
+          excludeFlags: [...excludeFlags],
+          filterStyleSim, styleSimMin,
+          subfolderFilterActive,
+          selectedSubfolders: [...selectedSubfolders],
+        });
+      }
     }, 350);
     return () => clearTimeout(t);
-  }, [filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders]);
+
+  // Persist the "workflow" config (format/output settings) — global, debounced.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      savePersisted(EXPORT_WORKFLOW_KEY, {
+        format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt,
+        resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt, resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly]);
+
+  // Reload the "filters" blob when datasetId changes without a remount (pane mode).
+  const prevDatasetId = useRef(datasetId);
+  useEffect(() => {
+    if (datasetId === prevDatasetId.current) return;
+    prevDatasetId.current = datasetId;
+    const next = datasetId
+      ? loadPersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId), EXPORT_FILTERS_DEFAULTS)
+      : EXPORT_FILTERS_DEFAULTS;
+    setFilterAesthetic(next.filterAesthetic);
+    setAestheticMin(next.aestheticMin);
+    setFilterCaptioned(next.filterCaptioned);
+    setExcludeFlags(new Set(next.excludeFlags));
+    setFilterStyleSim(next.filterStyleSim);
+    setStyleSimMin(next.styleSimMin);
+    setSubfolderFilterActive(next.subfolderFilterActive);
+    setSelectedSubfolders(new Set(next.selectedSubfolders));
+  }, [datasetId]);
 
   const { data: preview } = useQuery({
     queryKey: ["export-preview", datasetId, debouncedFilters],
@@ -126,6 +222,34 @@ export default function ExportPage() {
     return next;
   });
 
+  function handleResetToDefaults() {
+    clearPersisted(EXPORT_WORKFLOW_KEY);
+    if (datasetId) clearPersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId));
+
+    setFormat(EXPORT_WORKFLOW_DEFAULTS.format);
+    setCaptionFmt(EXPORT_WORKFLOW_DEFAULTS.captionFmt);
+    setOutputDir(EXPORT_WORKFLOW_DEFAULTS.outputDir);
+    setNRepeats(EXPORT_WORKFLOW_DEFAULTS.nRepeats);
+    setConceptToken(EXPORT_WORKFLOW_DEFAULTS.conceptToken);
+    setOutputImgFmt(EXPORT_WORKFLOW_DEFAULTS.outputImgFmt);
+    setResizeTo(EXPORT_WORKFLOW_DEFAULTS.resizeTo);
+    setCustomResize(EXPORT_WORKFLOW_DEFAULTS.customResize);
+    setCustomResizeVal(EXPORT_WORKFLOW_DEFAULTS.customResizeVal);
+    setStripMetadata(EXPORT_WORKFLOW_DEFAULTS.stripMetadata);
+    setCaptionsOnly(EXPORT_WORKFLOW_DEFAULTS.captionsOnly);
+
+    setFilterAesthetic(EXPORT_FILTERS_DEFAULTS.filterAesthetic);
+    setAestheticMin(EXPORT_FILTERS_DEFAULTS.aestheticMin);
+    setFilterCaptioned(EXPORT_FILTERS_DEFAULTS.filterCaptioned);
+    setExcludeFlags(new Set(EXPORT_FILTERS_DEFAULTS.excludeFlags));
+    setFilterStyleSim(EXPORT_FILTERS_DEFAULTS.filterStyleSim);
+    setStyleSimMin(EXPORT_FILTERS_DEFAULTS.styleSimMin);
+    setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
+    setSelectedSubfolders(new Set(EXPORT_FILTERS_DEFAULTS.selectedSubfolders));
+
+    toast.success("Configuration reset to defaults");
+  }
+
   const isRunning = exportMutation.isPending || jobProgress?.status === "running";
   const isDone = jobProgress?.status === "completed";
   const showConcept = format === "kohya" || format === "aitoolkit";
@@ -149,7 +273,13 @@ export default function ExportPage() {
       <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, alignItems: "start" }}>
         {/* Left: Configuration */}
         <div className="panel">
-          <div className="panel-h"><h3>Configuration</h3></div>
+          <div className="panel-h">
+            <h3>Configuration</h3>
+            <div style={{ flex: 1 }} />
+            <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
+              Reset to defaults
+            </button>
+          </div>
           <div style={{ padding: "4px 22px" }}>
 
             {/* Format */}

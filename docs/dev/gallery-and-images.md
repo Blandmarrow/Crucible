@@ -87,14 +87,18 @@ The `onMouseDown` handler on the card's outer `<div>` calls `e.preventDefault()`
 
 ### Gallery navigation state
 
-`GalleryPage` persists two keys to `sessionStorage` (keyed by `datasetId`):
+`GalleryPage` persists two keys (keyed by `datasetId`):
 
-| Key | Contents | Purpose |
-|---|---|---|
-| `gallery-state-${datasetId}` | `{ page, sortIdx, captionedFilter, qualityFilter, scrollTop }` | Restores page/sort/filter/scroll when returning from detail view |
-| `gallery-nav-${datasetId}` | `{ ids, page, sort, order, captionedFilter }` | Ordered image ID list + query context for prev/next navigation in the detail view |
+| Key | Storage | Contents | Purpose |
+|---|---|---|---|
+| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, scrollTop }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart |
+| `gallery-nav-${datasetId}` | `sessionStorage` | `{ ids, page, sort, order, captionedFilter }` | Ordered image ID list + query context for prev/next navigation in the detail view — session-only, regenerated on next visit |
 
-`ImageDetailPage` reads `gallery-nav-*` for arrow-key navigation. At page boundaries it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`); on crossing, writes the new context back to `gallery-nav-*` and updates `gallery-state-*` so **Back** returns to the correct gallery page. Arrow keys are suppressed when an `<input>`, `<textarea>`, or `<select>` has focus, or when `isContentEditable` is true. The `Delete` key opens a confirm dialog in both gallery and detail view; both handlers share the same focus guard. The arrow-key handler is additionally suppressed while the delete confirm dialog is open (`showDeleteConfirm`) to prevent background navigation.
+The main save effect is a 350ms-debounced write on `[datasetId, page, sortIdx, captionedFilter, qualityFilter, activeSubfolder]` changes (to `localStorage`). A separate unmount-only effect merges `scrollTop: scrollRef.current?.scrollTop` into the existing entry — kept separate because scrollTop changes on every scroll event with no tracked state, and debouncing it into the main effect would thrash localStorage.
+
+`ImageDetailPage` reads `gallery-nav-*` (`sessionStorage`) for arrow-key navigation. At page boundaries it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`); on crossing, writes the new context back to `gallery-nav-*` (sessionStorage) and updates `gallery-state-*` (**`localStorage`**) so **Back** returns to the correct gallery page. Both pages must use the same storage backend for `gallery-state-*` — `ImageDetailPage` lines 276/279 write to `localStorage`; do not revert to `sessionStorage` there. Arrow keys are suppressed when an `<input>`, `<textarea>`, or `<select>` has focus, or when `isContentEditable` is true. The `Delete` key opens a confirm dialog in both gallery and detail view; both handlers share the same focus guard. The arrow-key handler is additionally suppressed while the delete confirm dialog is open (`showDeleteConfirm`) to prevent background navigation.
+
+**Reset filters button**: a small ghost/icon button in the gallery toolbar calls `localStorage.removeItem(\`gallery-state-${datasetId}\`)` and resets `page`, `sortIdx`, `captionedFilter`, `qualityFilter`, and `activeSubfolder` to their Settings-configured defaults; `hasRestoredScroll.current` is set to `true` to skip scroll restore. Follows the per-page "Reset to defaults" pattern — see Persistent page state in `docs/dev/frontend-core.md`.
 
 **Nav context invariant for newly created images**: When navigating to an image that was just created (crop, upscale new-file), the new image ID is not in the existing `gallery-nav-*` list, so `currentIndex === -1` and arrow keys would silently do nothing. Always call `injectNavId(datasetId, sourceImageId, newImageId)` (defined at module level in `ImageDetailPage.tsx`) before calling `paneGo` to insert the new ID immediately after the source in the nav context. This applies to: sync crop, crop+upscale job completion, and standalone upscale (non-replace) completion. Conversely, call `removeNavId(datasetId, imageId)` when deleting an image from `ImageDetailPage` to remove the stale ID so arrow-key navigation on adjacent images cannot land on it. Both functions delegate to `mutateNavIds(datasetId, transform)` — the shared helper that handles sessionStorage read/parse/write.
 

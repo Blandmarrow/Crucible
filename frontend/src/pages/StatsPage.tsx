@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, ChevronDown, ChevronRight, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
@@ -10,6 +10,8 @@ import { imagesApi, type ImageListParams } from "../api/images";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { useJobStore } from "../store/jobStore";
+import { STATS_FILTERS_PREFIX } from "../constants/storage";
+import { loadPersisted, savePersisted, datasetScopedKey } from "../utils/persistentState";
 
 const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score"]);
 
@@ -913,13 +915,43 @@ interface HistPanelProps {
   defaultEdgeStr?: string;
   fb?: FB;
   footer?: React.ReactNode;
+  storageKey?: string;
 }
 
-function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdgeStr, fb, footer }: HistPanelProps) {
+function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdgeStr, fb, footer, storageKey }: HistPanelProps) {
   const canEdit = rawValues !== undefined && defaultEdgeStr !== undefined && fb !== undefined;
   const [isEditing, setIsEditing] = useState(false);
-  const [activeEdgeStr, setActiveEdgeStr] = useState<string | null>(null);
-  const [draft, setDraft] = useState(defaultEdgeStr ?? "");
+  const [activeEdgeStr, setActiveEdgeStr] = useState<string | null>(() => {
+    if (!storageKey) return null;
+    try { return localStorage.getItem(storageKey) || null; } catch { return null; }
+  });
+  const [draft, setDraft] = useState(activeEdgeStr ?? defaultEdgeStr ?? "");
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      if (activeEdgeStr === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, activeEdgeStr);
+    } catch {}
+  }, [storageKey, activeEdgeStr]);
+
+  // Re-read from storage when the key changes (dataset switch without remount).
+  useEffect(() => {
+    if (!storageKey) {
+      setActiveEdgeStr(null);
+      setDraft(defaultEdgeStr ?? "");
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(storageKey) || null;
+      setActiveEdgeStr(stored);
+      setDraft(stored ?? defaultEdgeStr ?? "");
+    } catch {
+      setActiveEdgeStr(null);
+      setDraft(defaultEdgeStr ?? "");
+    }
+  }, [storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isCustom = activeEdgeStr !== null;
 
   const displayEntries = (() => {
@@ -995,16 +1027,39 @@ function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdg
 }
 
 // ─── StatsPage ────────────────────────────────────────────────────────────────
+interface StatsFilters { activeSubfolder: string | null; }
+const STATS_FILTERS_DEFAULTS: StatsFilters = { activeSubfolder: null };
+
 export default function StatsPage() {
   const datasetId = usePaneDatasetId();
   const [panelFilter, setPanelFilter] = useState<PanelFilter>(null);
-  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(undefined);
+  const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(() => {
+    if (!datasetId) return undefined;
+    const f = loadPersisted(datasetScopedKey(STATS_FILTERS_PREFIX, datasetId), STATS_FILTERS_DEFAULTS);
+    return f.activeSubfolder ?? undefined;
+  });
   const { vis, toggleCategory, toggleItem, toggleCollapsed, reset } = useStatsVisibility();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const prevDatasetId = useRef(datasetId);
   useEffect(() => {
-    setActiveSubfolder(undefined);
+    if (datasetId === prevDatasetId.current) return;
+    prevDatasetId.current = datasetId;
+    const next = datasetId
+      ? loadPersisted(datasetScopedKey(STATS_FILTERS_PREFIX, datasetId), STATS_FILTERS_DEFAULTS)
+      : STATS_FILTERS_DEFAULTS;
+    setActiveSubfolder(next.activeSubfolder ?? undefined);
   }, [datasetId]);
+
+  useEffect(() => {
+    if (!datasetId) return;
+    const t = setTimeout(() => {
+      savePersisted(datasetScopedKey(STATS_FILTERS_PREFIX, datasetId), {
+        activeSubfolder: activeSubfolder ?? null,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [datasetId, activeSubfolder]);
 
   const hasActiveJob = useJobStore(s =>
     [...s.activeJobs.values()].some(
@@ -1274,6 +1329,7 @@ export default function StatsPage() {
                 rawValues={sv?.aesthetic_score}
                 defaultEdgeStr={DEFAULT_EDGES.aesthetic}
                 fb={mkScore("aesthetic_score", "desc")}
+                storageKey={datasetId ? `stats-hist-edges-aesthetic-${datasetId}` : undefined}
               />
             )}
             {show("aesthetic", "style_sim") && hasStyleSimData && (
@@ -1285,6 +1341,7 @@ export default function StatsPage() {
                 rawValues={sv?.style_similarity_score}
                 defaultEdgeStr={DEFAULT_EDGES.style_sim}
                 fb={mkScore("style_similarity_score", "desc")}
+                storageKey={datasetId ? `stats-hist-edges-style_sim-${datasetId}` : undefined}
               />
             )}
           </div>
@@ -1292,10 +1349,10 @@ export default function StatsPage() {
         {(show("aesthetic", "color_richness") || show("aesthetic", "saturation")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "color_richness") && show("aesthetic", "saturation") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("aesthetic", "color_richness") && (
-              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} />
+              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} storageKey={datasetId ? `stats-hist-edges-color-${datasetId}` : undefined} />
             )}
             {show("aesthetic", "saturation") && (
-              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} />
+              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} storageKey={datasetId ? `stats-hist-edges-saturation-${datasetId}` : undefined} />
             )}
           </div>
         )}
@@ -1310,10 +1367,10 @@ export default function StatsPage() {
       >
         {hasQualityScores && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 14 }}>
-            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")} />}
-            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")} />}
-            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} />}
-            {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")} />}
+            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")}       storageKey={datasetId ? `stats-hist-edges-blur-${datasetId}` : undefined} />}
+            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined} />}
+            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} />}
+            {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-watermark-${datasetId}` : undefined} />}
           </div>
         )}
       </CategorySection>
@@ -1328,7 +1385,7 @@ export default function StatsPage() {
         {(show("properties", "aspect_ratio") || show("properties", "megapixels") || show("properties", "file_size") || show("properties", "file_formats")) && (
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${[show("properties", "aspect_ratio"), show("properties", "megapixels"), show("properties", "file_size"), show("properties", "file_formats")].filter(Boolean).length}, 1fr)`, gap: 10, marginBottom: 14 }}>
             {show("properties", "aspect_ratio") && <HistPanel title="Aspect ratio" entries={arData} onBarClick={open("Aspect ratio")} />}
-            {show("properties", "megapixels")   && <HistPanel title="Megapixels" entries={megapixelData} onBarClick={open("Megapixels")} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} />}
+            {show("properties", "megapixels")   && <HistPanel title="Megapixels" entries={megapixelData} onBarClick={open("Megapixels")} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} storageKey={datasetId ? `stats-hist-edges-megapixels-${datasetId}` : undefined} />}
             {show("properties", "file_size")    && (
               <HistPanel
                 title="File size"
@@ -1337,6 +1394,7 @@ export default function StatsPage() {
                 rawValues={sv?.file_size_mb}
                 defaultEdgeStr={DEFAULT_EDGES.file_size}
                 fb={mkFs}
+                storageKey={datasetId ? `stats-hist-edges-file_size-${datasetId}` : undefined}
                 footer={Object.keys(fs).length > 0 ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
                     {[
@@ -1369,10 +1427,10 @@ export default function StatsPage() {
         {(show("captions", "caption_wc") || show("captions", "caption_tc")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("captions", "caption_wc") && show("captions", "caption_tc") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("captions", "caption_wc") && capLenData.length > 0 && (
-              <HistPanel title="Caption word count" entries={capLenData} onBarClick={open("Caption word count")} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkCapWC} />
+              <HistPanel title="Caption word count" entries={capLenData} onBarClick={open("Caption word count")} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkCapWC} storageKey={datasetId ? `stats-hist-edges-caption_wc-${datasetId}` : undefined} />
             )}
             {show("captions", "caption_tc") && capTokenData.length > 0 && (
-              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={open("Caption token count")} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkCapTC} />
+              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={open("Caption token count")} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkCapTC} storageKey={datasetId ? `stats-hist-edges-caption_tc-${datasetId}` : undefined} />
             )}
           </div>
         )}

@@ -9,9 +9,10 @@ import {
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
   CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
   CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
-  CAPTION_DEFAULT_SAVE_BACKUP_KEY,
+  CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_WORKFLOW_KEY, CAPTIONING_FILTERS_PREFIX,
   getGalleryPageSize, getGalleryDefaultSort,
 } from "../constants/storage";
+import { clearPersisted } from "../utils/persistentState";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -335,7 +336,10 @@ export default function SettingsPage() {
             <div>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Gallery defaults</div>
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 12px" }}>
-                Applied when opening a dataset gallery for the first time. Session state (from navigating back) still takes precedence.
+                Applied the first time you open a dataset's gallery, before anything has been remembered for it.
+                After that, your filter choices are remembered per-dataset (even across restarts) and take
+                precedence — use the reset button in the gallery toolbar to clear them and fall back to these
+                defaults again.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -402,6 +406,13 @@ export default function SettingsPage() {
       {activeTab === "captioning" && (
           <div className="panel">
             <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
+                These fallback values apply only the first time you visit the Captioning page, or after resetting
+                your remembered configuration there. Once you've used the page, your model, prompt, style, and
+                other settings are remembered automatically (even across restarts) and take precedence over these
+                defaults.
+              </p>
+
               <div>
                 <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Default model</div>
                 <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
@@ -521,6 +532,25 @@ export default function SettingsPage() {
                     </label>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <button
+                  className="btn ghost sm"
+                  onClick={() => {
+                    clearPersisted(CAPTIONING_WORKFLOW_KEY);
+                    const prefix = CAPTIONING_FILTERS_PREFIX + "-";
+                    const toRemove: string[] = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                      const k = localStorage.key(i);
+                      if (k?.startsWith(prefix)) toRemove.push(k);
+                    }
+                    toRemove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+                    toast.success("Remembered captioning configuration cleared — defaults above will apply next visit.");
+                  }}
+                >
+                  Reset remembered Captioning configuration
+                </button>
               </div>
             </div>
           </div>

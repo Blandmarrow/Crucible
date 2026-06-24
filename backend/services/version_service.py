@@ -263,7 +263,6 @@ async def create_snapshot(
             file_size_bytes=img.file_size_bytes,
             format=img.format,
             caption_text=img.caption_text or "",
-            tags_json=img.tags_json,
             quality_flags=img.quality_flags,
             aesthetic_score=img.aesthetic_score,
             blur_score=img.blur_score,
@@ -310,7 +309,6 @@ _DIFF_COLS = (
     VersionImageState.subfolder,
     VersionImageState.file_hash,
     VersionImageState.caption_text,
-    VersionImageState.tags_json,
     VersionImageState.quality_flags,
     VersionImageState.aesthetic_score,
     VersionImageState.blur_score,
@@ -369,7 +367,7 @@ async def diff_versions(
         sb = states_b[k]
         changes: dict[str, dict] = {}
 
-        for field in ("caption_text", "tags_json", "quality_flags", "subfolder",
+        for field in ("caption_text", "quality_flags", "subfolder",
                       "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
                       "watermark_score", "style_similarity_score", "processing_history",
                       "sort_order"):
@@ -526,7 +524,6 @@ async def restore_snapshot(
         # Restore metadata
         if img is not None:
             img.caption_text = state.caption_text
-            img.tags_json = state.tags_json or []
             img.quality_flags = state.quality_flags or {}
             img.subfolder = state.subfolder
             img.aesthetic_score = state.aesthetic_score

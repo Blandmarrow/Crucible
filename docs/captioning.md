@@ -30,7 +30,7 @@ Batch-caption any selection of images using one of several backends:
 | `product` | Product listing caption |
 | `social_media` | Social media post caption |
 
-Tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are treated the same as WD14/booru output — the comma-separated list is split into individual tags and stored in the tags table. A custom prompt overrides the style prompt entirely.
+Tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are treated the same as WD14/booru output — they produce a comma-separated list of tags stored directly in the caption text. A custom prompt overrides the style prompt entirely.
 
 ## Post-processing options
 

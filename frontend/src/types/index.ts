@@ -117,7 +117,6 @@ export interface ImageListItem {
   quality_flags: Record<string, unknown>;
   generation_metadata?: GenerationMetadata | null;
   caption_text: string;
-  tags_json: string[];
   captioned_by: string;
   is_auto_named: boolean;
   sort_order: number | null;
@@ -167,7 +166,6 @@ export interface ImageDetail extends ImageListItem {
 export interface CaptionData {
   image_id: string;
   caption_text: string;
-  tags: string[];
   caption_style: string;
   captioned_by: string;
 }
@@ -175,7 +173,6 @@ export interface CaptionData {
 export interface TagStat {
   tag: string;
   count: number;
-  category: string;
 }
 
 export interface Job {

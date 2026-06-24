@@ -7,10 +7,10 @@ logger = logging.getLogger(__name__)
 
 _REGEX_TIMEOUT = 30.0  # seconds; protects event loop from catastrophic backtracking
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import Image, Tag
+from backend.models import Image
 from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
 
 
@@ -21,7 +21,6 @@ async def get_caption(db: AsyncSession, image_id: str) -> dict:
     return {
         "image_id": image_id,
         "caption_text": img.caption_text,
-        "tags": img.tags_json,
         "caption_style": img.caption_style,
         "captioned_by": img.captioned_by,
     }
@@ -31,26 +30,27 @@ async def set_caption(
     db: AsyncSession,
     image_id: str,
     caption_text: str,
-    tags: list[str],
     caption_style: str = "",
     captioned_by: str = "manual",
+    has_ai_artifacts: bool | None = None,
 ) -> str | None:
     img = await db.get(Image, image_id)
     if not img:
         return None
 
-    tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))
     img.caption_text = caption_text
-    img.tags_json = tags
     img.caption_style = caption_style
     img.captioned_by = captioned_by
     img.captioned_at = datetime.utcnow()
 
-    await _sync_tags(db, img, tags, captioned_by)
-    _write_txt_sidecar(img.file_path, caption_text or ", ".join(tags))
+    if has_ai_artifacts is not None:
+        flags = dict(img.quality_flags or {})
+        flags["has_ai_artifacts"] = has_ai_artifacts
+        img.quality_flags = flags
+
+    _write_txt_sidecar(img.file_path, caption_text)
     await db.commit()
     return img.dataset_id
-
 
 
 async def bulk_edit_captions(
@@ -115,7 +115,7 @@ async def bulk_edit_captions(
             img = img_map[img_id]
             img.caption_text = new_text
             img.captioned_at = datetime.utcnow()
-            _write_txt_sidecar(img.file_path, new_text or ", ".join(img.tags_json))
+            _write_txt_sidecar(img.file_path, new_text)
             affected += 1
         skipped = len(images) - affected
         await db.commit()
@@ -152,7 +152,7 @@ async def bulk_edit_captions(
 
         img.caption_text = new_text
         img.captioned_at = datetime.utcnow()
-        _write_txt_sidecar(img.file_path, new_text or ", ".join(img.tags_json))
+        _write_txt_sidecar(img.file_path, new_text)
         affected += 1
 
     await db.commit()
@@ -220,24 +220,23 @@ async def find_replace_captions(
 
 
 async def get_tag_stats(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> list[dict]:
-    from sqlalchemy import func
-    q = (
-        select(Tag.tag, Tag.category, func.count(Tag.id).label("count"))
-        .where(Tag.dataset_id == dataset_id)
-        .group_by(Tag.tag, Tag.category)
-        .order_by(func.count(Tag.id).desc())
-        .limit(500)
+    q = select(Image.caption_text).where(
+        Image.dataset_id == dataset_id,
+        Image.caption_text != "",
     )
     if subfolder is not None:
-        q = q.join(Image, Tag.image_id == Image.id).where(Image.subfolder == subfolder)
-    result = await db.execute(q)
-    return [{"tag": r.tag, "category": r.category, "count": r.count} for r in result.all()]
-
-
-async def _sync_tags(db: AsyncSession, img: Image, tags: list[str], source: str) -> None:
-    await db.execute(delete(Tag).where(Tag.image_id == img.id))
-    for tag in tags:
-        db.add(Tag(image_id=img.id, dataset_id=img.dataset_id, tag=tag, source=source))
+        q = q.where(Image.subfolder == subfolder)
+    result = await db.stream(q)
+    freq: dict[str, int] = {}
+    async for (caption_text,) in result:
+        for tag in caption_text.split(","):
+            tag = tag.strip()
+            if tag:
+                freq[tag] = freq.get(tag, 0) + 1
+    return [
+        {"tag": tag, "count": count}
+        for tag, count in sorted(freq.items(), key=lambda x: -x[1])[:500]
+    ]
 
 
 def _write_txt_sidecar(image_path: str, text: str) -> None:

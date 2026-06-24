@@ -120,7 +120,7 @@ The gallery sort dropdown includes a **Custom order** option. Selecting it activ
 - A gear icon in the page header opens a settings drawer to toggle individual histogram panels on/off; visibility state is persisted per-browser
 - All histograms and charts can be scoped to a specific subfolder via a dropdown in the page header
 - **Export Stats CSV** — downloads a key-value CSV of all dataset statistics: summary fields, file-size percentiles, quality flag counts, score coverage, mean scores, and every histogram distribution; button is disabled while score data is still loading
-- **Export Tags CSV** — downloads a tabular CSV (`tag,count,category`) of all tag frequencies (up to 500 tags); disabled when no tags exist
+- **Export Tags CSV** — downloads a tabular CSV (`tag,count`) of all tag frequencies (up to 500 tags), computed from caption text; disabled when no tags exist
 
 ## File Browser
 

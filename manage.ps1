@@ -25,10 +25,15 @@ function Install-Deps {
         if ($LASTEXITCODE -eq 0 -and "$ver" -match "Python (\d+)\.(\d+)") {
             $maj = [int]$Matches[1]; $min = [int]$Matches[2]
             if ($maj -gt 3 -or ($maj -eq 3 -and $min -ge 12)) {
-                Write-Host "  Found: $ver" -ForegroundColor Green
-                $script:PythonExe = $cmd
-                $pythonOk = $true
-                break
+                if ("$ver" -match "(a|b|rc)\d+") {
+                    # Pre-release versions have no wheels for scipy/torch/numpy yet
+                    Write-Host "  Found $ver - pre-release Python is not supported; use a stable 3.12+ release." -ForegroundColor Yellow
+                } else {
+                    Write-Host "  Found: $ver" -ForegroundColor Green
+                    $script:PythonExe = $cmd
+                    $pythonOk = $true
+                    break
+                }
             } else {
                 Write-Host "  Found $ver - 3.12+ is required." -ForegroundColor Yellow
             }
@@ -50,9 +55,21 @@ function Install-Deps {
             winget install --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
             if ($LASTEXITCODE -eq 0) {
                 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-                $ver = & python --version 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    $script:PythonExe = "python"
+                # Use py -3.12 to resolve the exact executable that was just installed,
+                # bypassing any pre-release Python that may be first in PATH.
+                $pyExe = $null
+                if (Get-Command py -ErrorAction SilentlyContinue) {
+                    $pyPath = & py -3.12 -c "import sys; print(sys.executable)" 2>&1
+                    if ($LASTEXITCODE -eq 0 -and (Test-Path "$pyPath")) { $pyExe = "$pyPath" }
+                }
+                if (-not $pyExe) {
+                    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+                    $pyPath = if ($pyCmd) { $pyCmd.Source } else { $null }
+                    if ($pyPath) { $pyExe = $pyPath }
+                }
+                if ($pyExe) {
+                    $script:PythonExe = $pyExe
+                    $ver = & $pyExe --version 2>&1
                     Write-Host "  Installed: $ver" -ForegroundColor Green
                 } else {
                     Write-Host "  Python installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
@@ -227,7 +244,22 @@ function Cmd-Setup {
 
     Write-Host "[3/6] Creating Python virtual environment..." -ForegroundColor Yellow
     if (Test-Path "$ROOT\venv") {
-        Write-Host "  venv already exists, skipping creation." -ForegroundColor DarkGray
+        # Validate existing venv before reusing - recreate if Python is wrong version or pre-release.
+        $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+        $venvOk = $false
+        if ("$venvVer" -match "Python (\d+)\.(\d+)") {
+            $vMaj = [int]$Matches[1]; $vMin = [int]$Matches[2]
+            $venvOk = ($vMaj -gt 3 -or ($vMaj -eq 3 -and $vMin -ge 12)) -and
+                      ("$venvVer" -notmatch "(a|b|rc)\d+")
+        }
+        if ($venvOk) {
+            Write-Host "  venv already exists, skipping creation." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Existing venv uses $venvVer - recreating with stable Python 3.12+..." -ForegroundColor Yellow
+            Remove-Item -Recurse -Force "$ROOT\venv"
+            & $script:PythonExe -m venv --system-site-packages "$ROOT\venv"
+            Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green
+        }
     } else {
         & $script:PythonExe -m venv --system-site-packages "$ROOT\venv"
         Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green
@@ -388,11 +420,16 @@ function Cmd-Update {
     $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
     if ($venvPyVer -match "Python (\d+)\.(\d+)") {
         $pvMaj = [int]$Matches[1]; $pvMin = [int]$Matches[2]
-        if (-not ($pvMaj -gt 3 -or ($pvMaj -eq 3 -and $pvMin -ge 12))) {
+        $pvPreRelease = "$venvPyVer" -match "(a|b|rc)\d+"
+        if ($pvPreRelease -or -not ($pvMaj -gt 3 -or ($pvMaj -eq 3 -and $pvMin -ge 12))) {
             Write-Host ""
-            Write-Host "ERROR: Python 3.12+ is now required, but your venv uses $venvPyVer." -ForegroundColor Red
-            Write-Host "  To upgrade:" -ForegroundColor Yellow
-            Write-Host "  1. Install Python 3.12+ from https://www.python.org/downloads/" -ForegroundColor Cyan
+            if ($pvPreRelease) {
+                Write-Host "ERROR: Pre-release Python ($venvPyVer) is not supported — packages like scipy and torch have no wheels for it." -ForegroundColor Red
+            } else {
+                Write-Host "ERROR: Python 3.12+ is now required, but your venv uses $venvPyVer." -ForegroundColor Red
+            }
+            Write-Host "  To fix:" -ForegroundColor Yellow
+            Write-Host "  1. Install a stable Python 3.12+ from https://www.python.org/downloads/" -ForegroundColor Cyan
             Write-Host "  2. Delete the venv/ directory: Remove-Item -Recurse -Force venv\" -ForegroundColor Cyan
             Write-Host "  3. Re-run: .\manage.ps1 setup" -ForegroundColor Cyan
             Write-Host ""

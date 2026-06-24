@@ -5,9 +5,7 @@ from pydantic import BaseModel
 
 class CaptionUpdate(BaseModel):
     caption_text: str
-    tags: list[str]
     caption_style: str = ""
-
 
 
 class FindReplaceRequest(BaseModel):
@@ -35,12 +33,10 @@ class BulkEditResponse(BaseModel):
 class TagStatItem(BaseModel):
     tag: str
     count: int
-    category: str
 
 
 class CaptionOut(BaseModel):
     image_id: str
     caption_text: str
-    tags: list[str]
     caption_style: str
     captioned_by: str

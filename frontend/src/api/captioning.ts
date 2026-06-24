@@ -21,6 +21,9 @@ export interface CaptionRunParams {
   target_height?: number;
   append_tags?: boolean;
   strip_refusals?: boolean;
+  strip_thinking?: boolean;
+  strip_underscores?: boolean;
+  strip_hedges?: boolean;
   save_backup?: boolean;
   rename_on_caption?: boolean;
   min_aesthetic_score?: number;
@@ -38,6 +41,9 @@ export interface PipelineStep {
   overwrite: boolean;
   append_tags: boolean;
   strip_refusals: boolean;
+  strip_thinking?: boolean;
+  strip_underscores?: boolean;
+  strip_hedges?: boolean;
   wd14_threshold: number;
   target_width?: number | null;
   target_height?: number | null;

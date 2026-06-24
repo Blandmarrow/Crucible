@@ -127,7 +127,6 @@ export default function ImageDetailPage() {
   const isImageSelected = useSelectionStore((s) => (imageId ? s.isSelected(imageId) : false));
   const toggle = useSelectionStore((s) => s.toggle);
 
-  const [tags, setTags] = useState<string[]>([]);
   const [captionText, setCaptionText] = useState("");
   const [captionStyle, setCaptionStyle] = useState("");
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -484,7 +483,6 @@ export default function ImageDetailPage() {
 
   useEffect(() => {
     if (captionData && !captionDirty) {
-      setTags(captionData.tags);
       setCaptionText(captionData.caption_text);
       setCaptionStyle(captionData.caption_style);
     }
@@ -539,7 +537,7 @@ export default function ImageDetailPage() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: () => captionsApi.update(imageId!, { caption_text: captionText, tags, caption_style: captionStyle }),
+    mutationFn: () => captionsApi.update(imageId!, { caption_text: captionText, caption_style: captionStyle }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["caption", imageId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });

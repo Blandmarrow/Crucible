@@ -18,7 +18,7 @@ export interface BulkEditResponse {
 
 export const captionsApi = {
   get: (imageId: string) => client.get<CaptionData>(`/captions/image/${imageId}`).then((r) => r.data),
-  update: (imageId: string, data: { caption_text: string; tags: string[]; caption_style?: string }) =>
+  update: (imageId: string, data: { caption_text: string; caption_style?: string }) =>
     client.put<CaptionData>(`/captions/image/${imageId}`, data).then((r) => r.data),
   tagStats: (dataset_id: string, subfolder?: string) =>
     client.get<TagStat[]>(`/captions/dataset/${dataset_id}/tag-stats`, { params: { subfolder } }).then((r) => r.data),

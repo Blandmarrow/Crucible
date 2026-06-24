@@ -34,6 +34,94 @@ def _strip_refusals(text: str) -> str:
     return _REFUSAL_RE.sub("", text).strip()
 
 
+# ── Thinking-block detection & stripping ──────────────────────────────────────
+
+_THINKING_TAG_RE = re.compile(
+    r"<think(?:ing)?>\s*.*?\s*</think(?:ing)?>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# Matches a thinking preamble at the very start of the text (first line only)
+_THINKING_PREAMBLE_RE = re.compile(
+    r"^(?:Let me (?:think|analyze|consider|examine|look at)"
+    r"|I(?:'ll| will) (?:analyze|examine|describe|look at)"
+    r"|Alright[,.]?\s+(?:let(?:'s| me)|I(?:'ll| will)))",
+    re.IGNORECASE,
+)
+
+
+def _has_thinking(text: str) -> bool:
+    if _THINKING_TAG_RE.search(text):
+        return True
+    if "\n" in text:
+        preamble = text[: text.index("\n")].strip()
+        if _THINKING_PREAMBLE_RE.match(preamble):
+            return True
+    return False
+
+
+def _strip_thinking(text: str) -> str:
+    text = _THINKING_TAG_RE.sub("", text).strip()
+    if "\n" in text:
+        preamble, _, rest = text.partition("\n")
+        if rest.strip() and _THINKING_PREAMBLE_RE.match(preamble.strip()):
+            text = rest.strip()
+    return text
+
+
+# ── Underscore normalisation (word_word → word word in prose) ─────────────────
+
+_UNDERSCORE_RE = re.compile(r"(?<=\w)_(?=\w)")
+
+
+def _has_underscores(text: str) -> bool:
+    return bool(_UNDERSCORE_RE.search(text))
+
+
+def _normalize_underscores(text: str) -> str:
+    return _UNDERSCORE_RE.sub(" ", text)
+
+
+# ── Hedging-phrase detection & stripping (phrase-level) ───────────────────────
+
+_HEDGE_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"It (?:appears|seems)(?: to \w+\s*)?"
+    r"|It (?:looks|comes across) (?:like |as (?:if |though ))?"
+    r"|This (?:appears|seems)(?: to \w+\s*)?"
+    r"|This (?:looks|comes across) (?:like |as (?:if |though ))?"
+    r"|The (?:image|photo|picture|photograph) (?:appears|seems|looks)(?: to \w+\s*)?"
+    r"|(?:Possibly|Likely|Perhaps|Maybe|Presumably),?\s+"
+    r"|I (?:believe|think|would say),?\s+"
+    r"|It (?:could|might|may) be(?: that)?,?\s+"
+    r"|Looking at (?:this image|the image|this),?\s+"
+    r"|Upon (?:closer )?(?:inspection|examination),?\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _has_hedges(text: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if _HEDGE_PREFIX_RE.match(sentence):
+            return True
+    return False
+
+
+def _strip_hedges(text: str) -> str:
+    def _process(sentence: str) -> str:
+        m = _HEDGE_PREFIX_RE.match(sentence)
+        if not m:
+            return sentence
+        remainder = sentence[m.end():].lstrip()
+        if not remainder:
+            return ""
+        return remainder[0].upper() + remainder[1:]
+
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(s for s in (_process(p) for p in parts) if s)
+
+
 class CaptionJobRequest(BaseModel):
     dataset_id: str
     image_ids: list[str] | None = None
@@ -46,6 +134,9 @@ class CaptionJobRequest(BaseModel):
     target_height: int | None = None
     append_tags: bool = True
     strip_refusals: bool = True
+    strip_thinking: bool = False
+    strip_underscores: bool = False
+    strip_hedges: bool = False
     save_backup: bool = False
     rename_on_caption: bool = False
     min_aesthetic_score: float | None = None
@@ -109,7 +200,7 @@ async def list_models(db: AsyncSession = Depends(get_db)):
 @router.post("/run")
 async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get_db)):
     query = (
-        select(Image.id, Image.file_path, Image.tags_json, Image.filename, Image.subfolder, Image.caption_text)
+        select(Image.id, Image.file_path, Image.filename, Image.subfolder, Image.caption_text)
         .where(Image.dataset_id == body.dataset_id)
     )
     if body.image_ids:
@@ -140,7 +231,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     db.add(job)
     await db.commit()
 
-    image_data = [(r.id, r.file_path, r.tags_json or [], r.filename, r.subfolder or "", r.caption_text or "") for r in rows]
+    image_data = [(r.id, r.file_path, r.filename, r.subfolder or "", r.caption_text or "") for r in rows]
 
     async def _run(job_id: str) -> None:
         import time
@@ -231,7 +322,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     _occupied_thumb_stems = {p.stem for p in _thumb_dir.glob("*.webp")}
 
         async with AsyncSessionLocal() as session:
-            for i, (img_id, file_path, existing_tags, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
+            for i, (img_id, file_path, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
                 # Check for user-initiated stop before each image (reuse outer session)
                 _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
                 if _status == "cancelled":
@@ -286,16 +377,36 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     if body.strip_refusals:
                         caption = _strip_refusals(caption)
                     if caption:
+                        # Artifact detection always runs; stripping is optional per checkbox.
+                        is_prose_style = body.style not in _TAG_STYLES
+                        artifact_detected = False
+
+                        if _has_thinking(caption):
+                            artifact_detected = True
+                            if body.strip_thinking:
+                                caption = _strip_thinking(caption)
+
+                        if caption and body.strip_underscores and is_prose_style:
+                            caption = _normalize_underscores(caption)
+
+                        if caption and _has_hedges(caption):
+                            artifact_detected = True
+                            if body.strip_hedges:
+                                caption = _strip_hedges(caption)
+
                         if body.style in _TAG_STYLES:
-                            tags = [t.strip() for t in caption.split(",") if t.strip()]
-                            if body.append_tags and existing_tags:
-                                existing_set = set(tags)
-                                tags = tags + [t for t in existing_tags if t not in existing_set]
-                                caption = ", ".join(tags)
-                        else:
-                            tags = []
-                            if body.append_tags and existing_tags:
-                                caption = caption.rstrip() + ", " + ", ".join(existing_tags)
+                            new_tags = [
+                                _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
+                                for t in caption.split(",") if t.strip()
+                            ]
+                            if body.append_tags and existing_caption and body.delimiter_mode != "overwrite":
+                                existing_tags = [
+                                    _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
+                                    for t in existing_caption.split(",") if t.strip()
+                                ]
+                                existing_set = set(new_tags)
+                                new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
+                            caption = ", ".join(new_tags)
 
                         if body.delimiter_mode == "append" and existing_caption:
                             caption = existing_caption + body.delimiter + caption
@@ -308,7 +419,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                 bak_path = txt_path.with_suffix(".txt.bak")
                                 bak_path.write_text(txt_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-                        await set_caption(session, img_id, caption, tags, body.style, body.model)
+                        await set_caption(session, img_id, caption, body.style, body.model,
+                                          has_ai_artifacts=artifact_detected)
 
                         if body.rename_on_caption:
                             try:
@@ -393,6 +505,9 @@ class PipelineStep(BaseModel):
     overwrite: bool = True
     append_tags: bool = False
     strip_refusals: bool = True
+    strip_thinking: bool = False
+    strip_underscores: bool = False
+    strip_hedges: bool = False
     wd14_threshold: float = 0.35
     target_width: int | None = None
     target_height: int | None = None
@@ -431,7 +546,7 @@ class CaptionPipelineRequest(BaseModel):
 @router.post("/pipeline")
 async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(get_db)):
     query = (
-        select(Image.id, Image.file_path, Image.tags_json, Image.filename, Image.subfolder)
+        select(Image.id, Image.file_path, Image.filename, Image.subfolder)
         .where(Image.dataset_id == body.dataset_id)
     )
     if body.image_ids:
@@ -462,7 +577,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
     db.add(job)
     await db.commit()
 
-    image_data = [(r.id, r.file_path, r.tags_json or [], r.filename, r.subfolder or "") for r in rows]
+    image_data = [(r.id, r.file_path, r.filename, r.subfolder or "") for r in rows]
 
     async def _run_pipeline_job(job_id: str) -> None:
         import time
@@ -557,7 +672,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
 
             async with AsyncSessionLocal() as session:
                 cached_vram_mb = 0
-                for i, (img_id, file_path, existing_tags, img_filename, img_subfolder) in enumerate(image_data):
+                for i, (img_id, file_path, img_filename, img_subfolder) in enumerate(image_data):
                     # Cancellation check (reuse outer session — avoids a new DB session per image)
                     _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
                     if _status == "cancelled":
@@ -610,19 +725,43 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         if step.strip_refusals:
                             caption = _strip_refusals(caption)
                         if caption:
-                            tags: list[str] = []
+                            is_prose_style = step.style not in _TAG_STYLES and not is_wd14
+                            artifact_detected = False
+
+                            if _has_thinking(caption):
+                                artifact_detected = True
+                                if step.strip_thinking:
+                                    caption = _strip_thinking(caption)
+
+                            if caption and step.strip_underscores and is_prose_style:
+                                caption = _normalize_underscores(caption)
+
+                            if caption and _has_hedges(caption):
+                                artifact_detected = True
+                                if step.strip_hedges:
+                                    caption = _strip_hedges(caption)
+
                             if step.style in _TAG_STYLES or is_wd14:
-                                tags = [t.strip() for t in caption.split(",") if t.strip()]
-                                if step.append_tags and existing_tags:
-                                    existing_set = set(tags)
-                                    tags = tags + [t for t in existing_tags if t not in existing_set]
-                                    caption = ", ".join(tags)
+                                new_tags = [
+                                    _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
+                                    for t in caption.split(",") if t.strip()
+                                ]
+                                existing_prev = prev_captions.get(img_id, "")
+                                if step.append_tags and existing_prev and step.delimiter_mode != "overwrite":
+                                    existing_tags = [
+                                        _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
+                                        for t in existing_prev.split(",") if t.strip()
+                                    ]
+                                    existing_set = set(new_tags)
+                                    new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
+                                caption = ", ".join(new_tags)
                             existing = prev_captions.get(img_id, "")
                             if step.delimiter_mode == "append" and existing:
                                 caption = existing + step.delimiter + caption
                             elif step.delimiter_mode == "prepend" and existing:
                                 caption = caption + step.delimiter + existing
-                            await set_caption(session, img_id, caption, tags, step.style, step.model)
+                            await set_caption(session, img_id, caption, step.style, step.model,
+                                              has_ai_artifacts=artifact_detected)
 
                     overall_done += 1
                     if i % 10 == 0:

@@ -6,7 +6,7 @@ Three fully implemented export formats, all with identical filter and processing
 |---|---|
 | **Kohya** | Kohya SS LoRA / full fine-tune training |
 | **AI Toolkit** | AI Toolkit training |
-| **Plain folder** | Any other framework (`images/` + `captions.jsonl` + `tags.csv`) |
+| **Plain folder** | Any other framework (`images/` + `captions.jsonl`) |
 
 ## Per-export options
 

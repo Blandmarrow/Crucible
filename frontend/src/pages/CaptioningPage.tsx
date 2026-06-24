@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -46,6 +46,9 @@ interface StepConfig {
   delimiterParts: string[];
   usePreviousCaption: boolean;
   stripRefusals: boolean;
+  stripThinking: boolean;
+  stripUnderscores: boolean;
+  stripHedges: boolean;
   targetWidth: number | null;
   targetHeight: number | null;
 }
@@ -62,6 +65,9 @@ interface CaptioningWorkflow {
   delimiterMode: DelimiterMode;
   delimiterParts: string[];
   stripRefusals: boolean;
+  stripThinking: boolean;
+  stripUnderscores: boolean;
+  stripHedges: boolean;
   saveBackup: boolean;
   renameOnCaption: boolean;
   detectTask: string;
@@ -83,6 +89,9 @@ const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
   delimiterMode: "overwrite",
   delimiterParts: [",", " "],
   stripRefusals: true,
+  stripThinking: false,
+  stripUnderscores: false,
+  stripHedges: false,
   saveBackup: false,
   renameOnCaption: false,
   detectTask: "<OD>",
@@ -288,6 +297,9 @@ export default function CaptioningPage() {
       ? workflow.stripRefusals
       : localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false"
   );
+  const [stripThinking, setStripThinking] = useState(workflow.stripThinking ?? false);
+  const [stripUnderscores, setStripUnderscores] = useState(workflow.stripUnderscores ?? false);
+  const [stripHedges, setStripHedges] = useState(workflow.stripHedges ?? false);
   const [saveBackup, setSaveBackup] = useState(() =>
     hasStoredWorkflow
       ? workflow.saveBackup
@@ -433,14 +445,16 @@ export default function CaptioningPage() {
       savePersisted(CAPTIONING_WORKFLOW_KEY, {
         selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
         targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
-        stripRefusals, saveBackup, renameOnCaption,
+        stripRefusals, stripThinking, stripUnderscores, stripHedges,
+        saveBackup, renameOnCaption,
         detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
         additionalSteps,
       });
     }, 350);
     return () => clearTimeout(t);
   }, [selectedModel, providerModelInput, style, customPrompt, wd14Threshold, targetWidth, targetHeight,
-      scope, delimiterMode, delimiterParts, stripRefusals, saveBackup, renameOnCaption,
+      scope, delimiterMode, delimiterParts, stripRefusals, stripThinking, stripUnderscores, stripHedges,
+      saveBackup, renameOnCaption,
       detectTask, detectPrompt, detectUseCaptions, detectOverwrite, additionalSteps]);
 
   // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
@@ -492,6 +506,9 @@ export default function CaptioningPage() {
       overwrite: scope === "all",
       append_tags: true,
       strip_refusals: stripRefusals,
+      strip_thinking: stripThinking,
+      strip_underscores: stripUnderscores,
+      strip_hedges: stripHedges,
       wd14_threshold: wd14Threshold,
       target_width: targetWidth,
       target_height: targetHeight,
@@ -515,6 +532,9 @@ export default function CaptioningPage() {
       overwrite: true,
       append_tags: false,
       strip_refusals: s.stripRefusals,
+      strip_thinking: s.stripThinking,
+      strip_underscores: s.stripUnderscores,
+      strip_hedges: s.stripHedges,
       wd14_threshold: s.wd14Threshold,
       target_width: s.targetWidth,
       target_height: s.targetHeight,
@@ -551,6 +571,9 @@ export default function CaptioningPage() {
         subfolder: scope !== "selected" ? activeSubfolder : undefined,
         ...(targetWidth && targetHeight ? { target_width: targetWidth, target_height: targetHeight } : {}),
         strip_refusals: stripRefusals,
+        strip_thinking: stripThinking,
+        strip_underscores: stripUnderscores,
+        strip_hedges: stripHedges,
         save_backup: saveBackup,
         rename_on_caption: renameOnCaption,
         min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
@@ -676,6 +699,9 @@ export default function CaptioningPage() {
     setScope((localStorage.getItem(CAPTION_DEFAULT_SCOPE_KEY) as Scope) ?? CAPTIONING_WORKFLOW_DEFAULTS.scope);
     setDelimiterMode((localStorage.getItem(CAPTION_DEFAULT_DELIMITER_KEY) as DelimiterMode) ?? CAPTIONING_WORKFLOW_DEFAULTS.delimiterMode);
     setStripRefusals(localStorage.getItem(CAPTION_DEFAULT_STRIP_REFS_KEY) !== "false");
+    setStripThinking(CAPTIONING_WORKFLOW_DEFAULTS.stripThinking);
+    setStripUnderscores(CAPTIONING_WORKFLOW_DEFAULTS.stripUnderscores);
+    setStripHedges(CAPTIONING_WORKFLOW_DEFAULTS.stripHedges);
     setSaveBackup(localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true");
     setRenameOnCaption(localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true");
 
@@ -1045,11 +1071,14 @@ export default function CaptioningPage() {
                   <p>Post-processing applied to each caption.</p>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[
+                  {([
                     { label: "Strip refusal phrases & identity guesses", val: stripRefusals, set: setStripRefusals },
+                    { label: "Strip thinking blocks (<think>…</think> and reasoning preambles)", val: stripThinking, set: setStripThinking },
+                    { label: "Normalise underscores in prose (word_word → word word)", val: stripUnderscores, set: setStripUnderscores },
+                    { label: "Strip hedging phrases (\"It appears to be…\" → \"…\")", val: stripHedges, set: setStripHedges },
                     { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup },
                     { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption },
-                  ].map((opt, i) => (
+                  ] as { label: React.ReactNode; val: boolean; set: (v: boolean) => void }[]).map((opt, i) => (
                     <label key={i} className="row-flex" style={{ gap: 8, cursor: "pointer" }}>
                       <input type="checkbox" className="checkbox" checked={opt.val} onChange={(e) => opt.set(e.target.checked)} />
                       <span style={{ fontSize: 12.5 }}>{opt.label}</span>
@@ -1141,6 +1170,9 @@ export default function CaptioningPage() {
               delimiterParts: [",", " "],
               usePreviousCaption: false,
               stripRefusals: true,
+              stripThinking: false,
+              stripUnderscores: false,
+              stripHedges: false,
               targetWidth: null,
               targetHeight: null,
             }])}
@@ -1520,14 +1552,23 @@ function PipelineStepCard({
             <div className="lbl-col">
               <h4>Post-processing</h4>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={step.stripRefusals}
-                onChange={(e) => onChange({ stripRefusals: e.target.checked })}
-              />
-              Strip refusal phrases
-            </label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {([
+                { label: "Strip refusal phrases", key: "stripRefusals" as const },
+                { label: "Strip thinking blocks", key: "stripThinking" as const },
+                { label: "Normalise underscores (word_word → word word)", key: "stripUnderscores" as const },
+                { label: "Strip hedging phrases", key: "stripHedges" as const },
+              ] as { label: string; key: keyof StepConfig }[]).map((opt) => (
+                <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!step[opt.key]}
+                    onChange={(e) => onChange({ [opt.key]: e.target.checked })}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
           </div>
 
           {stepProvider?.is_remote && (

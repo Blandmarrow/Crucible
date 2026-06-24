@@ -58,19 +58,17 @@ class Image(Base):
     # Manual sort order (NULL = no custom order set; NULLS LAST when sorting)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
-    # Caption / tags
+    # Caption
     caption_text: Mapped[str] = mapped_column(Text, default="")
     caption_style: Mapped[str] = mapped_column(String(32), default="")
     captioned_by: Mapped[str] = mapped_column(String(128), default="")
     captioned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    tags_json: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     @property
     def has_dino_layer_embeddings(self) -> bool:
         return self.dino_layer_embeddings is not None
 
     dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="images")
-    tags: Mapped[list["Tag"]] = relationship("Tag", back_populates="image", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_images_dataset_aesthetic", "dataset_id", "aesthetic_score"),

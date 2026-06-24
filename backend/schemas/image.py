@@ -37,7 +37,6 @@ class ImageOut(BaseModel):
     is_auto_named: bool = False
     sort_order: int | None = None
     updated_at: datetime
-    tags_json: list[str]
     detections: list[DetectionOut] = []
 
     model_config = {"from_attributes": True}
@@ -63,7 +62,6 @@ class ImageListItem(BaseModel):
     quality_flags: dict[str, Any]
     generation_metadata: dict | None = None
     caption_text: str
-    tags_json: list[str]
     captioned_by: str
     is_auto_named: bool = False
     sort_order: int | None = None

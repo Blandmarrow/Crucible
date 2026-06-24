@@ -18,7 +18,7 @@ import { useUploadStore } from "../store/uploadStore";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter } from "../constants/storage";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 
-type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate";
+type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
 interface ScoreFilter { field: string; min: string; max: string; }
 
@@ -699,6 +699,8 @@ export default function GalleryPage() {
           <option value="is_uniform">Flagged: near-uniform</option>
           <option value="has_watermark">Flagged: watermark</option>
           <option value="is_duplicate">Flagged: duplicate</option>
+          <option value="is_nsfw">Flagged: NSFW</option>
+          <option value="has_ai_artifacts">Flagged: AI artifacts</option>
         </select>
 
         <button

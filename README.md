@@ -66,6 +66,8 @@ chmod +x manage.sh && ./manage.sh setup
 
 Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
+During setup you are also prompted to install **SAM2** (Segment Anything Model 2, ~50 MB from GitHub) — required only for Grounded SAM2 segmentation; all other features work without it.
+
 <details>
 <summary><strong>Manual installation (if you prefer not to use the setup script)</strong></summary>
 
@@ -132,6 +134,14 @@ pip install -r backend\requirements.txt
 # Linux / macOS
 pip install -r backend/requirements.txt
 ```
+
+**4.5. Install SAM2 (optional — segmentation features)**
+
+```bash
+pip install "git+https://github.com/facebookresearch/sam2.git" pycocotools
+```
+
+Skipping this disables Grounded SAM2 segmentation only; everything else still works.
 
 **5. Build the frontend**
 

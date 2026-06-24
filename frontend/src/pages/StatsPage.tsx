@@ -57,8 +57,10 @@ const FLAG_DEFS = [
     icon: <><path d="M3 6h10M3 9h7"/></> },
   { key: "duplicate",   flag: "is_duplicate",  label: "Duplicate",    cls: "info",
     icon: <><rect x="2.5" y="2.5" width="9" height="9" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1"/></> },
-  { key: "nsfw",        flag: "is_nsfw",       label: "NSFW",         cls: "bad",
+  { key: "nsfw",        flag: "is_nsfw",          label: "NSFW",         cls: "bad",
     icon: <><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></> },
+  { key: "ai_artifacts", flag: "has_ai_artifacts", label: "AI artifacts", cls: "warn",
+    icon: <><circle cx="8" cy="8" r="5.5"/><path d="M5.5 7.5C5.5 6.4 6.4 5.5 7.5 5.5h1C9.6 5.5 10.5 6.4 10.5 7.5c0 .8-.5 1.5-1.2 1.8L9 9.5V11"/><circle cx="9" cy="12.5" r=".5" fill="currentColor" stroke="none"/></> },
 ];
 
 function flagHint(key: string, t: Thresholds): string {
@@ -900,8 +902,8 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string,
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function downloadTagsCsv(tags: any[], datasetId: string, datasetName: string) {
-  const header = "tag,count,category";
-  const rows = tags.map(t => `${escapeCsv(String(t.tag))},${t.count},${escapeCsv(String(t.category ?? ""))}`);
+  const header = "tag,count";
+  const rows = tags.map(t => `${escapeCsv(String(t.tag))},${t.count}`);
   triggerDownload([header, ...rows].join("\n"), `dataset-${safeFilename(datasetName) || datasetId}-tags.csv`);
 }
 

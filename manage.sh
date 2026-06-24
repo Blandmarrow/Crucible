@@ -10,10 +10,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 
 _python_version_ok() {
-    # Returns 0 if $1 is Python 3.12+
+    # Returns 0 if $1 is stable Python 3.12+ (pre-release versions are rejected)
     command -v "$1" &>/dev/null || return 1
-    local ver maj min
-    ver=$("$1" --version 2>&1 | grep -oE "[0-9]+\.[0-9]+" | head -1 || true)
+    local fullver ver maj min
+    fullver=$("$1" --version 2>&1 || true)
+    # Reject alpha/beta/rc pre-release versions — no wheels exist yet for them
+    echo "$fullver" | grep -qE "[0-9](a|b|rc)[0-9]" && return 1
+    ver=$(echo "$fullver" | grep -oE "[0-9]+\.[0-9]+" | head -1 || true)
     [ -n "$ver" ] || return 1
     maj=$(echo "$ver" | cut -d. -f1)
     min=$(echo "$ver" | cut -d. -f2)
@@ -71,7 +74,10 @@ _install_deps() {
     # --- Python ---
     echo "[1/2] Checking Python..."
     PYTHON=""
-    if _python_version_ok python3; then
+    if _python_version_ok python3.12; then
+        PYTHON=python3.12
+        echo "  Found: $($PYTHON --version)"
+    elif _python_version_ok python3; then
         PYTHON=python3
         echo "  Found: $($PYTHON --version)"
     elif _python_version_ok python; then
@@ -80,7 +86,12 @@ _install_deps() {
     else
         for cmd in python3 python; do
             if command -v "$cmd" &>/dev/null; then
-                echo "  Found $($cmd --version 2>&1) - 3.12+ is required."
+                local _v; _v="$($cmd --version 2>&1)"
+                if echo "$_v" | grep -qE "[0-9](a|b|rc)[0-9]"; then
+                    echo "  Found $_v - pre-release Python is not supported; use a stable 3.12+ release."
+                else
+                    echo "  Found $_v - 3.12+ is required."
+                fi
             fi
         done
         echo "  Python 3.12+ is required but not found."
@@ -117,7 +128,9 @@ _install_deps() {
             echo "  Install Python 3.12+ from https://www.python.org/downloads/" >&2
             exit 1
         fi
-        if _python_version_ok python3; then
+        if _python_version_ok python3.12; then
+            PYTHON=python3.12
+        elif _python_version_ok python3; then
             PYTHON=python3
         elif _python_version_ok python; then
             PYTHON=python
@@ -316,15 +329,21 @@ cmd_setup() {
     _install_deps
 
     echo "[3/6] Creating Python virtual environment..."
+    _do_create_venv=true
     if [ -d "$ROOT/venv" ]; then
-        echo "  venv already exists, skipping creation."
-    else
+        _venv_py="$ROOT/venv/bin/python"
+        if [ -f "$_venv_py" ] && _python_version_ok "$_venv_py"; then
+            echo "  venv already exists, skipping creation."
+            _do_create_venv=false
+        else
+            _venv_ver=$("$_venv_py" --version 2>&1 || echo "unknown")
+            echo "  Existing venv uses $_venv_ver -- recreating with $($PYTHON --version)..."
+            rm -rf "$ROOT/venv"
+        fi
+    fi
+    if [ "$_do_create_venv" = true ]; then
         $PYTHON -m venv --system-site-packages "$ROOT/venv"
         echo "  venv created at $ROOT/venv (inherits system site-packages)"
-        echo ""
-        echo "  NOTE: GPU inference requires PyTorch with CUDA in your system Python."
-        echo "  Install it first if needed: https://pytorch.org/get-started/locally/"
-        echo ""
     fi
 
     echo "[4/6] Installing Python dependencies..."

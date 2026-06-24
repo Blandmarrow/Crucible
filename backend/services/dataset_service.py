@@ -12,7 +12,7 @@ from sqlalchemy import case, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
-from backend.models import Dataset, Image, Tag
+from backend.models import Dataset, Image
 from backend.services.image_service import extract_generation_metadata, generate_thumbnail, get_image_info
 from backend.utils import copy_with_sidecar, thumbnail_path_for
 
@@ -338,6 +338,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
             _flag_sum("has_watermark").label("watermarked"),
             _flag_sum("is_duplicate").label("duplicate"),
             _flag_sum("is_nsfw").label("nsfw"),
+            _flag_sum("has_ai_artifacts").label("ai_artifacts"),
         ).where(*_base_where)
     )).one()
     flag_counts = {
@@ -347,6 +348,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "watermarked": flag_row.watermarked,
         "duplicate": flag_row.duplicate,
         "nsfw": flag_row.nsfw,
+        "ai_artifacts": flag_row.ai_artifacts,
     }
 
     # Bucket edge/label definitions
@@ -612,7 +614,7 @@ async def duplicate_dataset(
             Image.original_filename, Image.subfolder, Image.is_auto_named,
             Image.width, Image.height, Image.file_size_bytes, Image.format,
             Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
-            Image.tags_json, Image.quality_flags, Image.aesthetic_score, Image.blur_score,
+            Image.quality_flags, Image.aesthetic_score, Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
             Image.generation_metadata, Image.processing_history, Image.sort_order,
@@ -654,7 +656,6 @@ async def duplicate_dataset(
                     caption_style=row.caption_style,
                     captioned_by=row.captioned_by,
                     captioned_at=row.captioned_at,
-                    tags_json=row.tags_json,
                     quality_flags=row.quality_flags,
                     aesthetic_score=row.aesthetic_score,
                     blur_score=row.blur_score,
@@ -736,7 +737,6 @@ async def duplicate_dataset(
                     file_path=str(new_path),
                     thumbnail_path=str(new_thumb),
                     caption_text=state.caption_text,
-                    tags_json=state.tags_json or [],
                     quality_flags=state.quality_flags or {},
                     width=state.width,
                     height=state.height,
@@ -782,15 +782,17 @@ async def duplicate_dataset(
 
 
 async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15, subfolder: str | None = None) -> dict:
-    q = select(Image.tags_json).where(Image.dataset_id == dataset_id, Image.tags_json.isnot(None))
+    q = select(Image.caption_text).where(Image.dataset_id == dataset_id, Image.caption_text != "")
     if subfolder is not None:
         q = q.where(Image.subfolder == subfolder)
-    result = await db.execute(q)
-    all_tags_json = [r[0] for r in result.all() if r[0]]
+    result = await db.stream(q)
+    all_tag_lists = []
+    async for (caption_text,) in result:
+        all_tag_lists.append([t.strip() for t in caption_text.split(",") if t.strip()])
 
     # Count tag frequencies, pick top N
     freq: dict[str, int] = {}
-    for tags in all_tags_json:
+    for tags in all_tag_lists:
         for t in tags:
             freq[t] = freq.get(t, 0) + 1
 
@@ -802,7 +804,7 @@ async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 1
     n = len(top_tags)
     matrix = [[0] * n for _ in range(n)]
 
-    for tags in all_tags_json:
+    for tags in all_tag_lists:
         present = [tag_idx[t] for t in tags if t in tag_idx]
         for i in present:
             for j in present:

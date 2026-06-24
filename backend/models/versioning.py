@@ -73,7 +73,6 @@ class VersionImageState(Base):
     format: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     caption_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    tags_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     quality_flags: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Quality scores

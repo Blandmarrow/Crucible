@@ -34,7 +34,7 @@ async def get(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/image/{image_id}", response_model=CaptionOut)
 async def update(image_id: str, body: CaptionUpdate, db: AsyncSession = Depends(get_db)):
-    dataset_id = await set_caption(db, image_id, body.caption_text, body.tags, body.caption_style, "manual")
+    dataset_id = await set_caption(db, image_id, body.caption_text, body.caption_style, "manual")
     if dataset_id:
         await refresh_stats(db, dataset_id)
     return await get_caption(db, image_id)

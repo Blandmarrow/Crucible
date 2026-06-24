@@ -16,7 +16,6 @@ _EXPORT_COLS = (
     Image.filename,
     Image.subfolder,
     Image.caption_text,
-    Image.tags_json,
     Image.aesthetic_score,
     Image.quality_flags,
     Image.style_similarity_score,
@@ -24,11 +23,7 @@ _EXPORT_COLS = (
 
 
 def _caption_text(img: Any) -> str:
-    if img.caption_text:
-        return img.caption_text
-    if img.tags_json:
-        return ", ".join(img.tags_json)
-    return ""
+    return img.caption_text or ""
 
 
 def _is_excluded(
@@ -40,7 +35,7 @@ def _is_excluded(
 ) -> bool:
     if aesthetic_min is not None and (img.aesthetic_score is None or img.aesthetic_score < aesthetic_min):
         return True
-    if captioned_only and not (img.caption_text or img.tags_json):
+    if captioned_only and not img.caption_text:
         return True
     if exclude_flags:
         flags = img.quality_flags or {}
@@ -138,7 +133,6 @@ async def _run_export_loop(
     images = result.all()
 
     jsonl_entries: list[dict] = []
-    csv_rows: list[tuple[str, str]] = []
     exported = 0
 
     for i, img in enumerate(images):
@@ -156,14 +150,11 @@ async def _run_export_loop(
             _write_image(src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata)
 
         caption = _caption_text(img)
-        tags = img.tags_json or []
 
         if accumulate_plain:
-            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": tags})
-            for tag in tags:
-                csv_rows.append((dest_img.name, tag))
+            jsonl_entries.append({"file": dest_img.name, "caption": caption})
         elif caption_format == "jsonl":
-            jsonl_entries.append({"file": dest_img.name, "caption": caption, "tags": tags})
+            jsonl_entries.append({"file": dest_img.name, "caption": caption})
         else:
             _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
 
@@ -180,7 +171,6 @@ async def _run_export_loop(
     return {
         "exported": exported,
         "jsonl_entries": jsonl_entries,
-        "csv_rows": csv_rows,
     }
 
 
@@ -300,12 +290,6 @@ async def export_plain(
         for entry in loop_result["jsonl_entries"]:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    csv_path = Path(output_dir) / "tags.csv"
-    with csv_path.open("w", encoding="utf-8") as f:
-        f.write("file,tag\n")
-        for fname, tag in loop_result["csv_rows"]:
-            f.write(f"{fname},{tag}\n")
-
     return {"exported": loop_result["exported"], "output_dir": output_dir}
 
 
@@ -321,7 +305,7 @@ async def preview_export(
     exclude_flags = exclude_flags or []
 
     query = select(
-        Image.filename, Image.caption_text, Image.tags_json,
+        Image.filename, Image.caption_text,
         Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
@@ -339,7 +323,7 @@ async def preview_export(
 
     for r in rows:
         low_aes = aesthetic_min is not None and (r.aesthetic_score is None or r.aesthetic_score < aesthetic_min)
-        no_cap = captioned_only and not (r.caption_text or r.tags_json)
+        no_cap = captioned_only and not r.caption_text
         flagged = bool(exclude_flags) and any((r.quality_flags or {}).get(f) for f in exclude_flags)
         low_sim = style_sim_min is not None and (r.style_similarity_score is None or r.style_similarity_score < style_sim_min)
 
@@ -355,13 +339,13 @@ async def preview_export(
         if not (low_aes or no_cap or flagged or low_sim):
             will_export += 1
             if len(sample_files) < 5:
-                caption = r.caption_text or (", ".join(r.tags_json) if r.tags_json else "")
+                caption = r.caption_text or ""
                 sample_files.append({"image": r.filename, "caption_preview": caption[:80]})
 
     return {
         "image_count": total,
         "will_export": will_export,
-        "captioned_count": sum(1 for r in rows if r.caption_text or r.tags_json),
+        "captioned_count": sum(1 for r in rows if r.caption_text),
         "excluded_low_aesthetic": excl_aesthetic,
         "excluded_uncaptioned": excl_uncaptioned,
         "excluded_flagged": excl_flagged,

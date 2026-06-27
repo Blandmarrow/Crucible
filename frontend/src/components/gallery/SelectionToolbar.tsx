@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -10,6 +10,7 @@ import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
 import { datasetsApi } from "../../api/datasets";
 import { captioningApi, type DelimiterMode } from "../../api/captioning";
+import { tagConsolidationApi } from "../../api/tagConsolidation";
 import DelimiterControls from "../caption/DelimiterControls";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
@@ -187,6 +188,22 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
   const type = modelType(captionModel);
   const availableStyles = type ? (STYLE_LABELS[type] ?? []) : [];
+
+  const mergeTagsMutation = useMutation({
+    mutationFn: () => tagConsolidationApi.subsume(datasetId, { image_ids: ids, dry_run: false }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      qc.invalidateQueries({ queryKey: ["caption"] });
+      qc.invalidateQueries({ queryKey: ["image"] });
+      clear();
+      if (data.affected === 0) toast("No redundant tags found");
+      else toast.success(`Merged tags in ${data.affected} image${data.affected !== 1 ? "s" : ""}`);
+    },
+    onError: () => toast.error("Merge tags failed"),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: () => imagesApi.batchDelete(ids),
@@ -410,6 +427,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
           <Pencil size={14} /> Edit
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => mergeTagsMutation.mutate()}
+          disabled={mergeTagsMutation.isPending}
+          title="Drop redundant tags (e.g. 'tail' when 'long tail' is present)"
+        >
+          <Combine size={14} /> Merge tags
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowUpscale(true)}>
           <Maximize2 size={14} /> Upscale

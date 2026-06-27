@@ -29,6 +29,7 @@ spandrel_extra_arches>=0.1
 # With --system-site-packages the venv will pick up an already-installed
 # CUDA torch from the system Python, so this line is a no-op in that case.
 transformers>=4.36
+sentence-transformers>=3.0
 open_clip_torch>=2.20
 accelerate>=0.27
 safetensors>=0.7

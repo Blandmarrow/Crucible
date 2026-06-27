@@ -36,7 +36,7 @@ from backend.database import init_db
 
 if settings.hf_token:
     os.environ.setdefault("HF_TOKEN", settings.hf_token)
-from backend.routers import booru, captions, captioning, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, upscaling, versioning
+from backend.routers import booru, captions, captioning, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning
 from backend.workers.job_queue import job_queue
 
 
@@ -81,6 +81,7 @@ app.include_router(lut.router, prefix=PREFIX)
 app.include_router(settings_router.router, prefix=PREFIX)
 app.include_router(providers.router, prefix=PREFIX)
 app.include_router(versioning.router, prefix=PREFIX)
+app.include_router(tag_consolidation.router, prefix=PREFIX)
 
 _RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
 _SHUTDOWN_SENTINEL = Path(__file__).parent.parent / ".shutdown"

@@ -612,6 +612,55 @@ class ModelManager:
         _device.empty_cache()
         return model_ids
 
+    async def load_tag_embedder(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = "tag_embedder"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_tag_embedder_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
+    def _load_tag_embedder_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        from sentence_transformers import SentenceTransformer
+        from backend.ml.tag_embedder import MODEL_NAME
+
+        logger.info("Loading tag embedder (%s)...", MODEL_NAME)
+
+        if job_id and loop:
+            from backend.ml.download_progress import emit_sync, is_hf_cached
+            cached = is_hf_cached(MODEL_NAME, "config.json")
+            emit_sync(
+                job_id, loop,
+                "Loading tag embedder into VRAM..." if cached
+                else "Downloading tag embedder model (first run)...",
+                -1.0, dataset_id,
+            )
+
+        self._evict_lru(500)
+
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        model = SentenceTransformer(MODEL_NAME, device=_device.get_device())
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(500, (vram_after - vram_before) // (1024 * 1024))
+        return ModelEntry(model, None, vram_mb=vram_used)
+
     def list_models(self) -> list[dict]:
         loaded = set(self._registry.keys())
         all_models = [
@@ -624,6 +673,7 @@ class ModelManager:
             {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
             {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000},
             {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800},
+            {"id": "tag_embedder", "name": "MiniLM Tag Embedder", "vram_mb": 500},
         ]
         return [{**m, "loaded": m["id"] in loaded} for m in all_models]
 

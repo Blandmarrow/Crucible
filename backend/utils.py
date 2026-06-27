@@ -120,3 +120,33 @@ def thumbnail_path_for(image_path: Path | str) -> str:
     """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder."""
     p = Path(image_path)
     return str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
+
+
+def subsume_tags(tags: list[str]) -> list[str]:
+    """Drop any tag that is a whole-word subsequence of a longer tag in the same list.
+
+    "tail" is removed when "long tail" is present; "shirt" when "white shirt" is present.
+    Exact case-insensitive duplicates collapse to the first occurrence. Order-stable:
+    survivors keep their first-seen order. Matching is case-insensitive and whole-word
+    (so "car" does not subsume "scar" or "carpet"). Used by captioning post-processing
+    and the bulk dedupe operation so the rule never diverges.
+    """
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for t in tags:
+        low = t.lower()
+        if low not in seen:
+            seen.add(low)
+            deduped.append(t)
+    lowered = [t.lower() for t in deduped]
+    patterns = [re.compile(r"\b" + re.escape(low) + r"\b") for low in lowered]
+    survivors: list[str] = []
+    for i, tag in enumerate(deduped):
+        # subsumed if a strictly longer tag contains this tag as a whole word
+        subsumed = any(
+            j != i and len(lowered[j]) > len(lowered[i]) and patterns[i].search(lowered[j])
+            for j in range(len(deduped))
+        )
+        if not subsumed:
+            survivors.append(tag)
+    return survivors

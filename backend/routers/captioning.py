@@ -15,7 +15,7 @@ from backend.ml import ollama_captioner
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, subsume_tags
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/captioning", tags=["captioning"])
@@ -137,6 +137,7 @@ class CaptionJobRequest(BaseModel):
     strip_thinking: bool = False
     strip_underscores: bool = False
     strip_hedges: bool = False
+    dedupe_tags: bool = False
     save_backup: bool = False
     rename_on_caption: bool = False
     min_aesthetic_score: float | None = None
@@ -399,6 +400,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                 _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
                                 for t in caption.split(",") if t.strip()
                             ]
+                            if body.dedupe_tags:
+                                new_tags = subsume_tags(new_tags)
                             if body.append_tags and existing_caption and body.delimiter_mode != "overwrite":
                                 existing_tags = [
                                     _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
@@ -508,6 +511,7 @@ class PipelineStep(BaseModel):
     strip_thinking: bool = False
     strip_underscores: bool = False
     strip_hedges: bool = False
+    dedupe_tags: bool = False
     wd14_threshold: float = 0.35
     target_width: int | None = None
     target_height: int | None = None
@@ -746,6 +750,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                                     _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
                                     for t in caption.split(",") if t.strip()
                                 ]
+                                if step.dedupe_tags:
+                                    new_tags = subsume_tags(new_tags)
                                 existing_prev = prev_captions.get(img_id, "")
                                 if step.append_tags and existing_prev and step.delimiter_mode != "overwrite":
                                     existing_tags = [

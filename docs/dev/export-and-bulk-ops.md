@@ -20,6 +20,8 @@ This file covers bulk caption editing, bulk image rename/delete/count/reorder, a
 
 Images with no `caption_text` are skipped for `remove` and `find_replace`. For `prepend`/`append` they receive just the added text. A single `db.commit()` is made after the loop — not per image.
 
+Per-caption subsumption cleanup (drop `tail` when `long tail` is present) is **not** a bulk-edit operation — it lives on the Consolidate Tags page as "Quick cleanup" (`POST /tag-consolidation/dataset/{id}/subsume`); see `docs/dev/tag-consolidation.md`. `BulkEditForm` invalidates the per-image `["caption"]` / `["image"]` query families on success (in addition to `["images", datasetId]` + the four stats keys) so an open `ImageDetailPage` refreshes immediately.
+
 ### Bulk image operations (rename / delete / count)
 
 Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged=False)` helper (module-level private function) that applies the triple filter — `image_ids` takes precedence over `subfolder`; `quality_flags` direction is controlled by `include_flagged`: when `False` (default) it excludes images where ANY flag is `True` (`AND IS NOT TRUE` per flag); when `True` it targets images where ANY flag is `True` (`OR IS TRUE` per flag). All three accept a `BulkFilterBase`-derived schema (`backend/schemas/image.py`).

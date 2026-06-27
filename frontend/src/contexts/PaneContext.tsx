@@ -11,6 +11,7 @@ export type PageType =
   | "image-detail"
   | "booru"
   | "bulk-edit"
+  | "consolidate"
   | "versions";
 
 export interface PaneView {

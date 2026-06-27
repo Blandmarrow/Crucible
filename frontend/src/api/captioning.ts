@@ -24,6 +24,7 @@ export interface CaptionRunParams {
   strip_thinking?: boolean;
   strip_underscores?: boolean;
   strip_hedges?: boolean;
+  dedupe_tags?: boolean;
   save_backup?: boolean;
   rename_on_caption?: boolean;
   min_aesthetic_score?: number;
@@ -44,6 +45,7 @@ export interface PipelineStep {
   strip_thinking?: boolean;
   strip_underscores?: boolean;
   strip_hedges?: boolean;
+  dedupe_tags?: boolean;
   wd14_threshold: number;
   target_width?: number | null;
   target_height?: number | null;

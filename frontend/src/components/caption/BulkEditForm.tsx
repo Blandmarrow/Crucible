@@ -55,6 +55,11 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      // Captions are rewritten across many images we don't individually track, so
+      // invalidate the per-image caption/detail query families (["caption", id] /
+      // ["image", id]) used by ImageDetailPage so an open detail view refreshes now.
+      qc.invalidateQueries({ queryKey: ["caption"] });
+      qc.invalidateQueries({ queryKey: ["image"] });
       setResult(data);
       onSuccess?.(data.affected, data.skipped);
       if (data.affected === 0) {
@@ -66,7 +71,7 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
     onError: () => toast.error("Bulk edit failed"),
   });
 
-  const canSubmit = !disabled && text.trim().length > 0 && !mutation.isPending;
+  const canSubmit = !disabled && !mutation.isPending && text.trim().length > 0;
 
   const scopeLabel = imageIds != null
     ? `${imageIds.length} selected image${imageIds.length !== 1 ? "s" : ""}`

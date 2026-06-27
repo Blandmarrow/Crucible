@@ -13,6 +13,7 @@ import QualityPage from "./pages/QualityPage";
 import StatsPage from "./pages/StatsPage";
 import ExportPage from "./pages/ExportPage";
 import BulkEditPage from "./pages/BulkEditPage";
+import TagConsolidatePage from "./pages/TagConsolidatePage";
 import BooruPage from "./pages/BooruPage";
 import FileBrowserPage from "./pages/FileBrowserPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -76,6 +77,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/stats" element={<ErrorBoundary><StatsPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/export" element={<ErrorBoundary><ExportPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/bulk-edit" element={<ErrorBoundary><BulkEditPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />

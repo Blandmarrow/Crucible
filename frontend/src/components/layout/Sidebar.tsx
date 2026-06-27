@@ -56,6 +56,12 @@ const IcoBulkEdit = () => (
     <path d="M11.5 10l1.5-1.5 1.5 1.5-3 3-1.5.5.5-1.5z"/>
   </svg>
 );
+const IcoConsolidate = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <path d="M3 3v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3v1"/>
+    <path d="M11 7l2-2-2-2"/>
+  </svg>
+);
 const IcoVersions = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <circle cx="8" cy="3" r="1.5"/>
@@ -290,6 +296,7 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/quality`} icon={<IcoQuality />} label="Score images" />
             <NavItem to={`/datasets/${datasetId}/stats`} icon={<IcoStats />} label="Stats" />
             <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
+            <NavItem to={`/datasets/${datasetId}/consolidate`} icon={<IcoConsolidate />} label="Consolidate Tags" />
             <NavItem to={`/datasets/${datasetId}/versions`} icon={<IcoVersions />} label="Versions" />
             <NavItem to={`/datasets/${datasetId}/export`} icon={<IcoExport />} label="Export" />
           </>

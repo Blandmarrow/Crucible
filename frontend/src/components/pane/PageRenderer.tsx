@@ -7,6 +7,7 @@ import QualityPage from "../../pages/QualityPage";
 import StatsPage from "../../pages/StatsPage";
 import ExportPage from "../../pages/ExportPage";
 import BulkEditPage from "../../pages/BulkEditPage";
+import TagConsolidatePage from "../../pages/TagConsolidatePage";
 import FileBrowserPage from "../../pages/FileBrowserPage";
 import BooruPage from "../../pages/BooruPage";
 import VersionsPage from "../../pages/VersionsPage";
@@ -21,6 +22,7 @@ export default function PageRenderer({ view }: { view: PaneView }) {
     case "stats":        return <StatsPage />;
     case "export":       return <ExportPage />;
     case "bulk-edit":    return <BulkEditPage />;
+    case "consolidate":  return <TagConsolidatePage />;
     case "versions":     return <VersionsPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;

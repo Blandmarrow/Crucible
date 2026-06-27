@@ -4,11 +4,12 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
 import { captionsApi } from "../api/captions";
+import { tagConsolidationApi } from "../api/tagConsolidation";
 import { captioningApi, type DelimiterMode } from "../api/captioning";
 import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
@@ -550,6 +551,28 @@ export default function ImageDetailPage() {
       toast.success("Saved");
     },
     onError: () => toast.error("Save failed"),
+  });
+
+  const mergeTagsMutation = useMutation({
+    mutationFn: async () => {
+      // If the editor has unsaved edits, persist them first so subsumption runs on the
+      // text the user sees (the backend operates on the stored caption).
+      if (captionDirty) {
+        await captionsApi.update(imageId!, { caption_text: captionText, caption_style: captionStyle });
+      }
+      return tagConsolidationApi.subsume(datasetId!, { image_ids: [imageId!], dry_run: false });
+    },
+    onSuccess: (data) => {
+      setCaptionDirty(false); // allow the caption query refetch to refresh the textarea
+      qc.invalidateQueries({ queryKey: ["caption", imageId] });
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      if (data.affected === 0) toast("No redundant tags found");
+      else toast.success("Merged redundant tags");
+    },
+    onError: () => toast.error("Merge tags failed"),
   });
 
   const cropMutation = useMutation({
@@ -1361,6 +1384,15 @@ export default function ImageDetailPage() {
             disabled={!captionDirty || saveMutation.isPending}
           >
             <Save size={14} /> Save
+          </button>
+
+          <button
+            className="btn-ghost btn-sm w-full flex items-center justify-center gap-2"
+            onClick={() => mergeTagsMutation.mutate()}
+            disabled={mergeTagsMutation.isPending}
+            title="Drop redundant tags (e.g. 'tail' when 'long tail' is present) and collapse duplicates"
+          >
+            <Combine size={14} /> Merge redundant tags
           </button>
 
           {/* AI Generate section */}

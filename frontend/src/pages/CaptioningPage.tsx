@@ -49,6 +49,7 @@ interface StepConfig {
   stripThinking: boolean;
   stripUnderscores: boolean;
   stripHedges: boolean;
+  dedupeTags: boolean;
   targetWidth: number | null;
   targetHeight: number | null;
 }
@@ -68,6 +69,7 @@ interface CaptioningWorkflow {
   stripThinking: boolean;
   stripUnderscores: boolean;
   stripHedges: boolean;
+  dedupeTags: boolean;
   saveBackup: boolean;
   renameOnCaption: boolean;
   detectTask: string;
@@ -92,6 +94,7 @@ const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
   stripThinking: false,
   stripUnderscores: false,
   stripHedges: false,
+  dedupeTags: false,
   saveBackup: false,
   renameOnCaption: false,
   detectTask: "<OD>",
@@ -300,6 +303,7 @@ export default function CaptioningPage() {
   const [stripThinking, setStripThinking] = useState(workflow.stripThinking ?? false);
   const [stripUnderscores, setStripUnderscores] = useState(workflow.stripUnderscores ?? false);
   const [stripHedges, setStripHedges] = useState(workflow.stripHedges ?? false);
+  const [dedupeTags, setDedupeTags] = useState(workflow.dedupeTags ?? false);
   const [saveBackup, setSaveBackup] = useState(() =>
     hasStoredWorkflow
       ? workflow.saveBackup
@@ -445,7 +449,7 @@ export default function CaptioningPage() {
       savePersisted(CAPTIONING_WORKFLOW_KEY, {
         selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
         targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
-        stripRefusals, stripThinking, stripUnderscores, stripHedges,
+        stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
         saveBackup, renameOnCaption,
         detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
         additionalSteps,
@@ -453,7 +457,7 @@ export default function CaptioningPage() {
     }, 350);
     return () => clearTimeout(t);
   }, [selectedModel, providerModelInput, style, customPrompt, wd14Threshold, targetWidth, targetHeight,
-      scope, delimiterMode, delimiterParts, stripRefusals, stripThinking, stripUnderscores, stripHedges,
+      scope, delimiterMode, delimiterParts, stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
       saveBackup, renameOnCaption,
       detectTask, detectPrompt, detectUseCaptions, detectOverwrite, additionalSteps]);
 
@@ -509,6 +513,7 @@ export default function CaptioningPage() {
       strip_thinking: stripThinking,
       strip_underscores: stripUnderscores,
       strip_hedges: stripHedges,
+      dedupe_tags: dedupeTags,
       wd14_threshold: wd14Threshold,
       target_width: targetWidth,
       target_height: targetHeight,
@@ -535,6 +540,7 @@ export default function CaptioningPage() {
       strip_thinking: s.stripThinking,
       strip_underscores: s.stripUnderscores,
       strip_hedges: s.stripHedges,
+      dedupe_tags: s.dedupeTags,
       wd14_threshold: s.wd14Threshold,
       target_width: s.targetWidth,
       target_height: s.targetHeight,
@@ -574,6 +580,7 @@ export default function CaptioningPage() {
         strip_thinking: stripThinking,
         strip_underscores: stripUnderscores,
         strip_hedges: stripHedges,
+        dedupe_tags: dedupeTags,
         save_backup: saveBackup,
         rename_on_caption: renameOnCaption,
         min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
@@ -702,6 +709,7 @@ export default function CaptioningPage() {
     setStripThinking(CAPTIONING_WORKFLOW_DEFAULTS.stripThinking);
     setStripUnderscores(CAPTIONING_WORKFLOW_DEFAULTS.stripUnderscores);
     setStripHedges(CAPTIONING_WORKFLOW_DEFAULTS.stripHedges);
+    setDedupeTags(CAPTIONING_WORKFLOW_DEFAULTS.dedupeTags);
     setSaveBackup(localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true");
     setRenameOnCaption(localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true");
 
@@ -1076,6 +1084,7 @@ export default function CaptioningPage() {
                     { label: "Strip thinking blocks (<think>…</think> and reasoning preambles)", val: stripThinking, set: setStripThinking },
                     { label: "Normalise underscores in prose (word_word → word word)", val: stripUnderscores, set: setStripUnderscores },
                     { label: "Strip hedging phrases (\"It appears to be…\" → \"…\")", val: stripHedges, set: setStripHedges },
+                    { label: "Merge redundant tags (drop \"tail\" when \"long tail\" present; tag styles only)", val: dedupeTags, set: setDedupeTags },
                     { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup },
                     { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption },
                   ] as { label: React.ReactNode; val: boolean; set: (v: boolean) => void }[]).map((opt, i) => (
@@ -1173,6 +1182,7 @@ export default function CaptioningPage() {
               stripThinking: false,
               stripUnderscores: false,
               stripHedges: false,
+              dedupeTags: false,
               targetWidth: null,
               targetHeight: null,
             }])}
@@ -1558,6 +1568,7 @@ function PipelineStepCard({
                 { label: "Strip thinking blocks", key: "stripThinking" as const },
                 { label: "Normalise underscores (word_word → word word)", key: "stripUnderscores" as const },
                 { label: "Strip hedging phrases", key: "stripHedges" as const },
+                { label: "Merge redundant tags (tag styles only)", key: "dedupeTags" as const },
               ] as { label: string; key: keyof StepConfig }[]).map((opt) => (
                 <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
                   <input

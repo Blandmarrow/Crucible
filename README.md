@@ -21,6 +21,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
+- **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/features.md#tag-consolidation)
 - **Process** images with ML upscaling and LUT color grading → [details](docs/features.md#image-processing)
 - **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, or Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts → [details](docs/features.md#object-detection)
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
@@ -183,7 +184,7 @@ To shut down, click the power icon in the top-right of the app, or press `Ctrl+C
 
 ## Tech Stack
 
-**Backend:** Python · FastAPI · SQLAlchemy (async) · SQLite · Alembic · Pillow · OpenCV · PyTorch · Transformers · OpenCLIP · spandrel
+**Backend:** Python · FastAPI · SQLAlchemy (async) · SQLite · Alembic · Pillow · OpenCV · PyTorch · Transformers · OpenCLIP · sentence-transformers · spandrel
 
 **Frontend:** React 19 · TypeScript · Vite · TanStack Query · Zustand · Tailwind CSS · Recharts
 

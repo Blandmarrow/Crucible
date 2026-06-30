@@ -424,7 +424,7 @@ function Cmd-Update {
         if ($pvPreRelease -or -not ($pvMaj -gt 3 -or ($pvMaj -eq 3 -and $pvMin -ge 12))) {
             Write-Host ""
             if ($pvPreRelease) {
-                Write-Host "ERROR: Pre-release Python ($venvPyVer) is not supported — packages like scipy and torch have no wheels for it." -ForegroundColor Red
+                Write-Host "ERROR: Pre-release Python ($venvPyVer) is not supported - packages like scipy and torch have no wheels for it." -ForegroundColor Red
             } else {
                 Write-Host "ERROR: Python 3.12+ is now required, but your venv uses $venvPyVer." -ForegroundColor Red
             }

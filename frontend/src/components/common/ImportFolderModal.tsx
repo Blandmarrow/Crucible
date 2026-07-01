@@ -45,6 +45,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   });
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="card p-5" style={{ width: 460, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Import from folder</h3>
@@ -152,15 +153,16 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
             <button className="btn primary" onClick={() => importMutation.mutate()} disabled={!path || !targetId || importMutation.isPending}>Import</button>
           </div>
       </div>
-      {dirPickerOpen && (
-        <DirPickerModal
-          initialPath={path}
-          title="Select a folder to import"
-          confirmLabel="Use folder"
-          onConfirm={(p) => { setPath(p); setDirPickerOpen(false); }}
-          onCancel={() => setDirPickerOpen(false)}
-        />
-      )}
     </div>
+    {dirPickerOpen && (
+      <DirPickerModal
+        initialPath={path}
+        title="Select a folder to import"
+        confirmLabel="Use folder"
+        onConfirm={(p) => { setPath(p); setDirPickerOpen(false); }}
+        onCancel={() => setDirPickerOpen(false)}
+      />
+    )}
+    </>
   );
 }

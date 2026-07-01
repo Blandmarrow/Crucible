@@ -16,7 +16,6 @@ A local web-based application for building, curating, and exporting Stable Diffu
 
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/features.md#datasets--gallery)
-- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
@@ -28,6 +27,7 @@ A local web-based application for building, curating, and exporting Stable Diffu
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/features.md#file-browser)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/features.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/features.md#logs)

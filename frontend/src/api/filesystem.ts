@@ -29,6 +29,12 @@ export const filesystemApi = {
     return r.data;
   },
 
+  /** Open the host OS's native folder dialog; resolves to the chosen path or null if cancelled. */
+  async pickFolder(): Promise<{ path: string | null }> {
+    const r = await client.post("/filesystem/pick-folder");
+    return r.data;
+  },
+
   previewUrl(path: string): string {
     return `/api/v1/filesystem/preview?path=${encodeURIComponent(path)}`;
   },

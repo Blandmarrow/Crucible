@@ -21,6 +21,7 @@ class ThresholdsOut(BaseModel):
     nsfw_threshold: float
     gdino_threshold: float
     versioning_mode: str = "off"
+    auto_rescan_on_open: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -34,6 +35,7 @@ class ThresholdsUpdate(BaseModel):
     nsfw_threshold: float | None = Field(default=None, gt=0, le=1.0)
     gdino_threshold: float | None = Field(default=None, gt=0, le=1.0)
     versioning_mode: str | None = Field(default=None)
+    auto_rescan_on_open: bool | None = Field(default=None)
 
     @field_validator("versioning_mode")
     @classmethod

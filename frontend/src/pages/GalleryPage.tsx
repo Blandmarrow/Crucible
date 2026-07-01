@@ -10,11 +10,15 @@ import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
+import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
+import { jobsApi } from "../api/jobs";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
+import { useJobStore } from "../store/jobStore";
+import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter } from "../constants/storage";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 
@@ -118,6 +122,7 @@ export default function GalleryPage() {
   const uploadProgress = globalUploadProgress?.datasetId === datasetId ? globalUploadProgress : null;
   const uploading = uploadProgress !== null;
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepth = useRef(0);
   const [genMetaImage, setGenMetaImage] = useState<ImageListItem | null>(null);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
     saved?.activeSubfolder == null ? undefined : saved.activeSubfolder
@@ -198,6 +203,13 @@ export default function GalleryPage() {
     enabled: !!datasetId,
   });
 
+  // Full dataset list so the import modal lets the user retarget without leaving the gallery.
+  const { data: allDatasets = [] } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: datasetsApi.list,
+    staleTime: 30_000,
+  });
+
   const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
     queryKey: ["subfolders", datasetId],
     queryFn: () => datasetsApi.subfolders(datasetId!),
@@ -209,6 +221,78 @@ export default function GalleryPage() {
   useEffect(() => {
     setUploadSubfolder(activeSubfolder ?? "");
   }, [activeSubfolder]);
+
+  // ── Rescan from disk (manual button + auto-on-open gated by Settings) ──────
+  const { data: thresholds } = useQuery({
+    queryKey: ["settings", "thresholds"],
+    queryFn: settingsApi.getThresholds,
+    staleTime: 60_000,
+  });
+  const [rescanJobId, setRescanJobId] = useState<string | null>(null);
+  const rescanProgress = useJobStore((s) => s.activeJobs.get(rescanJobId ?? ""));
+  const autoRescannedRef = useRef<Set<string>>(new Set());
+  // true when the active rescan was started by the user (show a summary toast on completion)
+  const rescanManualRef = useRef(false);
+
+  const runRescan = useCallback((manual: boolean) => {
+    if (!datasetId || rescanJobId) return;
+    rescanManualRef.current = manual;
+    if (manual) toast.loading("Rescanning folder…", { id: "gallery-rescan" });
+    datasetsApi.rescan(datasetId, true)
+      .then((data) => setRescanJobId(data.job_id))
+      .catch(() => { if (manual) toast.error("Rescan failed", { id: "gallery-rescan" }); });
+  }, [datasetId, rescanJobId]);
+
+  useEffect(() => {
+    if (!datasetId || !thresholds?.auto_rescan_on_open) return;
+    if (autoRescannedRef.current.has(datasetId)) return;
+    autoRescannedRef.current.add(datasetId);
+    runRescan(false);
+  }, [datasetId, thresholds?.auto_rescan_on_open, runRescan]);
+
+  useEffect(() => {
+    if (!rescanJobId || rescanProgress?.status !== "completed") return;
+    qc.invalidateQueries({ queryKey: ["images", datasetId] });
+    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    if (rescanManualRef.current) {
+      const jid = rescanJobId;
+      jobsApi.get(jid).then((job) => {
+        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
+        const missing = (r.missing ?? []).length;
+        toast.success(
+          `Rescan complete — ${r.added ?? 0} added, ${r.captions_updated ?? 0} caption(s) updated` +
+          (missing ? `, ${missing} missing on disk` : ""),
+          { id: "gallery-rescan" }
+        );
+      }).catch(() => toast.success("Rescan complete", { id: "gallery-rescan" }));
+    }
+    setRescanJobId(null);
+  }, [rescanProgress?.status, rescanJobId, datasetId, qc]);
+
+  // ── Import folder (from the gallery toolbar) ──────────────────────────────
+  const [showImport, setShowImport] = useState(false);
+  const [importJobId, setImportJobId] = useState<string | null>(null);
+  const importProgress = useJobStore((s) => s.activeJobs.get(importJobId ?? ""));
+
+  useEffect(() => {
+    if (!importJobId || importProgress?.status !== "completed") return;
+    qc.invalidateQueries({ queryKey: ["images", datasetId] });
+    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    setImportJobId(null);
+    toast.success("Import complete");
+  }, [importProgress?.status, importJobId, datasetId, qc]);
 
   const scoreFiltersParam = scoreFilters.length > 0
     ? JSON.stringify(scoreFilters.map(f => ({
@@ -346,7 +430,7 @@ export default function GalleryPage() {
     reorderMutation.mutate(newOrder.map((img, idx) => ({ id: img.id, sort_order: pageOffset + idx })));
   }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation]);
 
-  const handleUpload = useCallback(async (files: FileList, sf?: string) => {
+  const handleUpload = useCallback(async (files: FileList | File[], sf?: string) => {
     if (!datasetId) return;
     const fileArray = Array.from(files);
     const subfolder = sf ?? uploadSubfolder;
@@ -449,23 +533,53 @@ export default function GalleryPage() {
     onError: () => toast.error("Copy to dataset failed"),
   });
 
+  // Only the image-upload overlay cares about *image* drags. A .txt caption drag is
+  // consumed per-card (which stopPropagations, so the grid's drop never fires) — gating
+  // the overlay on image presence means a caption drag never turns it on, so it can't
+  // get stuck. The depth counter keeps nested child enter/leave events balanced.
+  const dragHasImage = (dt: DataTransfer | null) =>
+    !!dt && Array.from(dt.items || []).some((it) => it.kind === "file" && it.type.startsWith("image/"));
+
   const handleDragEnter = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("Files")) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    dragDepth.current += 1;
+    if (dragHasImage(e.dataTransfer)) {
       e.preventDefault();
       setIsDragOver(true);
     }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    const related = e.relatedTarget as Node | null;
-    if (!related || !e.currentTarget.contains(related)) setIsDragOver(false);
+    if (!e.dataTransfer.types.includes("Files")) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragOver(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
+    e.preventDefault(); // always, so the browser never opens/navigates to a dropped file
+    dragDepth.current = 0;
     setIsDragOver(false);
-    if (!uploading && e.dataTransfer.files.length) handleUpload(e.dataTransfer.files);
+    // Only upload images; a stray .txt dropped on the grid gap is ignored here (per-card
+    // caption drops are handled by ImageCard and never reach this handler).
+    const imageFiles = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+    if (!uploading && imageFiles.length) handleUpload(imageFiles);
   };
+
+  // Safety net: if a drag ends anywhere (drop outside the grid, Esc-cancel, or a child
+  // that consumed the drop), force the overlay off so it can never persist. Registered in
+  // the CAPTURE phase: a per-card caption drop calls stopPropagation() (to keep the .txt
+  // from reaching the image uploader), which would otherwise block a bubble-phase window
+  // listener and leave dragDepth stuck non-zero — desyncing every later drag's overlay.
+  // Capture runs window→target before any descendant stopPropagation, so it always fires.
+  useEffect(() => {
+    const reset = () => { dragDepth.current = 0; setIsDragOver(false); };
+    window.addEventListener("drop", reset, true);
+    window.addEventListener("dragend", reset, true);
+    return () => {
+      window.removeEventListener("drop", reset, true);
+      window.removeEventListener("dragend", reset, true);
+    };
+  }, []);
 
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
 
@@ -862,6 +976,27 @@ export default function GalleryPage() {
               ))}
             </select>
           )}
+          <button
+            className="btn ghost"
+            title="Import a folder of images into this dataset"
+            onClick={() => setShowImport(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
+            </svg>
+            Import folder
+          </button>
+          <button
+            className="btn ghost"
+            title="Rescan folder from disk — pick up images and .txt captions added outside the app"
+            disabled={rescanJobId !== null}
+            onClick={() => runRescan(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
+            </svg>
+            {rescanJobId !== null ? "Rescanning…" : "Rescan"}
+          </button>
           <label className="btn" style={{ cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.65 : 1, pointerEvents: uploading ? "none" : "auto" }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
@@ -1169,6 +1304,15 @@ export default function GalleryPage() {
           isPending={copySubfolderToDatasetMutation.isPending}
           onConfirm={(targetId, subfolder) => copySubfolderToDatasetMutation.mutate({ targetId, subfolder })}
           onClose={() => setPendingCopySubfolder(null)}
+        />
+      )}
+
+      {showImport && (
+        <ImportFolderModal
+          datasets={allDatasets.length ? allDatasets : dataset ? [dataset] : []}
+          initialDatasetId={datasetId ?? undefined}
+          onStarted={setImportJobId}
+          onClose={() => setShowImport(false)}
         />
       )}
     </div>

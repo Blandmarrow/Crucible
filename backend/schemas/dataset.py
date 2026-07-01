@@ -22,6 +22,15 @@ class DatasetImportWithOptions(BaseModel):
     folder_path: str
     subfolder: str = ""
     preserve_structure: bool = False
+    import_captions: bool = True
+
+
+class DatasetRescanRequest(BaseModel):
+    import_captions: bool = True
+
+
+class CaptionImportRequest(BaseModel):
+    folder_path: str
 
 
 class SubfolderInfo(BaseModel):

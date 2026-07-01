@@ -5,10 +5,13 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
+import { jobsApi } from "../api/jobs";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
 import type { Dataset } from "../types";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import ImportFolderModal from "../components/common/ImportFolderModal";
+import { filesystemApi } from "../api/filesystem";
 import { useJobStore } from "../store/jobStore";
 
 function formatSize(bytes: number) {
@@ -159,12 +162,22 @@ export default function DatasetsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
 
   // ── Import modal ─────────────────────────────────────────────────────────
-  const [importTarget, setImportTarget] = useState<Dataset | null>(null);
-  const [importPath, setImportPath] = useState("");
-  const [importSubfolder, setImportSubfolder] = useState("");
-  const [importPreserveStructure, setImportPreserveStructure] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importInitialId, setImportInitialId] = useState<string | undefined>(undefined);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const importJobProgress = useJobStore((s) => s.activeJobs.get(importJobId ?? ""));
+
+  // ── Rescan + caption-import jobs ──────────────────────────────────────────
+  const [rescanJobId, setRescanJobId] = useState<string | null>(null);
+  const [rescanTargetId, setRescanTargetId] = useState<string | null>(null);
+  const rescanJobProgress = useJobStore((s) => s.activeJobs.get(rescanJobId ?? ""));
+
+  // ── Import-captions modal ─────────────────────────────────────────────────
+  const [captionImportTarget, setCaptionImportTarget] = useState<Dataset | null>(null);
+  const [captionImportPath, setCaptionImportPath] = useState("");
+  const [captionPicking, setCaptionPicking] = useState(false);
+  const [captionJobId, setCaptionJobId] = useState<string | null>(null);
+  const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
 
   // ── Duplicate modal ──────────────────────────────────────────────────────
   const [duplicateTarget, setDuplicateTarget] = useState<Dataset | null>(null);
@@ -259,6 +272,60 @@ export default function DatasetsPage() {
     }
   }, [importJobProgress?.status, importJobId, qc]);
 
+  const invalidateDatasetCaches = useCallback((datasetId: string) => {
+    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["images", datasetId] });
+    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+  }, [qc]);
+
+  useEffect(() => {
+    if (!rescanJobId || !rescanJobProgress) return;
+    if (rescanJobProgress.status === "completed") {
+      const dsId = rescanJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      jobsApi.get(rescanJobId).then((job) => {
+        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
+        const added = r.added ?? 0;
+        const captions = r.captions_updated ?? 0;
+        const missing = (r.missing ?? []).length;
+        toast.success(
+          `Rescan complete — ${added} added, ${captions} caption(s) updated` +
+          (missing ? `, ${missing} missing on disk` : "")
+        );
+      }).catch(() => toast.success("Rescan complete"));
+      setRescanJobId(null);
+      setRescanTargetId(null);
+    } else if (rescanJobProgress.status === "failed") {
+      toast.error("Rescan failed");
+      setRescanJobId(null);
+      setRescanTargetId(null);
+    }
+  }, [rescanJobProgress?.status, rescanJobId, invalidateDatasetCaches]);
+
+  useEffect(() => {
+    if (!captionJobId || !captionJobProgress) return;
+    if (captionJobProgress.status === "completed") {
+      const dsId = captionJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      jobsApi.get(captionJobId).then((job) => {
+        const r = job.result_data as { matched?: number; unmatched?: unknown[] };
+        const matched = r.matched ?? 0;
+        const unmatched = (r.unmatched ?? []).length;
+        toast.success(
+          `Captions imported — ${matched} matched` + (unmatched ? `, ${unmatched} unmatched` : "")
+        );
+      }).catch(() => toast.success("Captions imported"));
+      setCaptionJobId(null);
+    } else if (captionJobProgress.status === "failed") {
+      toast.error("Caption import failed");
+      setCaptionJobId(null);
+    }
+  }, [captionJobProgress?.status, captionJobId, invalidateDatasetCaches]);
+
   useEffect(() => {
     if (!duplicateJobId || !duplicateJobProgress) return;
     if (duplicateJobProgress.status === "completed") {
@@ -310,14 +377,24 @@ export default function DatasetsPage() {
     onError: () => toast.error("Failed to update dataset"),
   });
 
-  const importMutation = useMutation({
-    mutationFn: () => datasetsApi.importFolder(importTarget!.id, importPath, importSubfolder, importPreserveStructure),
+  const rescanMutation = useMutation({
+    mutationFn: (ds: Dataset) => datasetsApi.rescan(ds.id, true),
+    onMutate: (ds: Dataset) => { setRescanTargetId(ds.id); },
     onSuccess: (data) => {
-      toast.success(`Import started`);
-      setImportTarget(null); setImportPath(""); setImportSubfolder(""); setImportPreserveStructure(false);
-      setImportJobId(data.job_id);
+      toast.success("Rescanning folder…");
+      setRescanJobId(data.job_id);
     },
-    onError: () => toast.error("Import failed"),
+    onError: () => { toast.error("Rescan failed"); setRescanTargetId(null); },
+  });
+
+  const captionImportMutation = useMutation({
+    mutationFn: () => datasetsApi.importCaptions(captionImportTarget!.id, captionImportPath),
+    onSuccess: (data) => {
+      toast.success("Importing captions…");
+      setCaptionImportTarget(null); setCaptionImportPath("");
+      setCaptionJobId(data.job_id);
+    },
+    onError: () => toast.error("Caption import failed"),
   });
 
   const duplicateMutation = useMutation({
@@ -553,10 +630,31 @@ export default function DatasetsPage() {
             className="icon-btn"
             title="Import folder"
             style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => { setImportTarget(ds); setImportPath(""); }}
+            onClick={() => { setImportInitialId(ds.id); setImportOpen(true); }}
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
+            </svg>
+          </button>
+          <button
+            className="icon-btn"
+            title="Import captions (.txt sidecars from a folder)"
+            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
+            onClick={() => { setCaptionImportTarget(ds); setCaptionImportPath(""); }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M4 2.5h6l2.5 2.5v8.5h-8.5v-11z"/><path d="M5.5 8h5M5.5 10.5h3"/>
+            </svg>
+          </button>
+          <button
+            className="icon-btn"
+            title="Rescan folder from disk"
+            disabled={rescanTargetId === ds.id}
+            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
+            onClick={() => rescanMutation.mutate(ds)}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
             </svg>
           </button>
           <button
@@ -825,7 +923,7 @@ export default function DatasetsPage() {
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-          <button className="btn" onClick={() => setImportTarget(datasets[0] ?? null)}>
+          <button className="btn" onClick={() => { setImportInitialId(undefined); setImportOpen(true); }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
             </svg>
@@ -952,47 +1050,53 @@ export default function DatasetsPage() {
       )}
 
       {/* ── Import Modal ───────────────────────────────────────────────────── */}
-      {importTarget && (
+      {importOpen && (
+        <ImportFolderModal
+          datasets={datasets}
+          initialDatasetId={importInitialId}
+          onStarted={setImportJobId}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
+
+      {/* ── Import Captions Modal ──────────────────────────────────────────── */}
+      {captionImportTarget && (
         <div className="dialog-bg">
           <div className="dialog">
-            <h3>Import from folder</h3>
-            <p>Into: <strong style={{ color: "var(--fg)" }}>{importTarget.name}</strong></p>
-            <div style={{ marginBottom: 14 }}>
+            <h3>Import captions from folder</h3>
+            <p>Into: <strong style={{ color: "var(--fg)" }}>{captionImportTarget.name}</strong></p>
+            <p style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: -4, marginBottom: 14 }}>
+              Matches each <code>.txt</code> file to an image by filename and overwrites its caption.
+            </p>
+            <div style={{ marginBottom: 18 }}>
               <label className="label">Folder path</label>
-              <input className="input" placeholder="D:\datasets\my_images" value={importPath}
-                onChange={(e) => setImportPath(e.target.value)} autoFocus />
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" placeholder="/home/user/captions or D:\captions" value={captionImportPath}
+                  onChange={(e) => setCaptionImportPath(e.target.value)} autoFocus style={{ flex: 1 }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && captionImportPath && !captionImportMutation.isPending) captionImportMutation.mutate(); }} />
+                <button
+                  className="btn"
+                  disabled={captionPicking}
+                  onClick={async () => {
+                    setCaptionPicking(true);
+                    try {
+                      const { path } = await filesystemApi.pickFolder();
+                      if (path) setCaptionImportPath(path);
+                    } catch (e) {
+                      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+                      toast.error(detail ?? "Couldn't open a folder dialog — type the path manually.");
+                    } finally {
+                      setCaptionPicking(false);
+                    }
+                  }}
+                >
+                  {captionPicking ? "Opening…" : "Browse…"}
+                </button>
+              </div>
             </div>
-            <div style={{ marginBottom: 14 }}>
-              <label className="label">Target subfolder <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
-              <input
-                className="input"
-                placeholder="e.g. characters (leave blank for root)"
-                value={importSubfolder}
-                onChange={(e) => setImportSubfolder(e.target.value)}
-                disabled={importPreserveStructure}
-                style={{ opacity: importPreserveStructure ? 0.5 : 1 }}
-              />
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={importPreserveStructure}
-                onChange={(e) => {
-                  setImportPreserveStructure(e.target.checked);
-                  if (e.target.checked) setImportSubfolder("");
-                }}
-              />
-              <span style={{ fontSize: 13 }}>Preserve source folder structure</span>
-            </label>
-            {importPreserveStructure && (
-              <p style={{ fontSize: 11.5, color: "var(--fg-mute)", marginTop: -12, marginBottom: 14, paddingLeft: 22 }}>
-                Subfolders from the source directory will be recreated as logical subfolders.
-              </p>
-            )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => { setImportTarget(null); setImportSubfolder(""); setImportPreserveStructure(false); }}>Cancel</button>
-              <button className="btn primary" onClick={() => importMutation.mutate()} disabled={!importPath || importMutation.isPending}>Import</button>
+              <button className="btn ghost" onClick={() => { setCaptionImportTarget(null); setCaptionImportPath(""); }}>Cancel</button>
+              <button className="btn primary" onClick={() => captionImportMutation.mutate()} disabled={!captionImportPath || captionImportMutation.isPending}>Import captions</button>
             </div>
           </div>
         </div>

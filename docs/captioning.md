@@ -13,6 +13,8 @@ Batch-caption any selection of images using one of several backends:
 | **WD14 Tagger** | CPU only | Booru-style tag output (Eva02 Large, ViT Large, or SwinV2); downloads from SmilingWolf on HuggingFace; adjustable confidence threshold |
 | **OpenAI-compatible** | — | Any provider with a `/v1/chat/completions` vision endpoint — Gemini, Groq, OpenAI, LM Studio, llama.cpp, etc.; configured in Settings → LLM Providers |
 
+Captions can also be **imported** rather than generated: from `.txt` sidecars during a folder import, via the per-dataset "Import captions" folder dialog, or by dragging a `.txt` file onto an image — see [Datasets & Gallery](features.md#datasets--gallery).
+
 ### JoyCaption styles
 
 | Style | Output |

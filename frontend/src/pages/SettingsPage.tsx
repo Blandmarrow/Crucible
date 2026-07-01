@@ -47,6 +47,7 @@ const DEFAULTS: Thresholds = {
   nsfw_threshold: 0.5,
   gdino_threshold: 0.35,
   versioning_mode: "off",
+  auto_rescan_on_open: false,
 };
 
 interface ThresholdField {
@@ -189,6 +190,9 @@ export default function SettingsPage() {
     if (form.versioning_mode !== thresholds.versioning_mode) {
       changed.versioning_mode = form.versioning_mode;
     }
+    if (form.auto_rescan_on_open !== thresholds.auto_rescan_on_open) {
+      changed.auto_rescan_on_open = form.auto_rescan_on_open;
+    }
     if (Object.keys(changed).length === 0) {
       toast("No changes to save", { icon: "ℹ️" });
       return;
@@ -203,7 +207,8 @@ export default function SettingsPage() {
   const isChanged =
     thresholds &&
     (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
-      form.versioning_mode !== thresholds.versioning_mode);
+      form.versioning_mode !== thresholds.versioning_mode ||
+      form.auto_rescan_on_open !== thresholds.auto_rescan_on_open);
 
   const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers">("gallery");
 
@@ -575,6 +580,30 @@ export default function SettingsPage() {
                 }}
               />
             </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Folder sync</div>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  style={{ marginTop: 2 }}
+                  checked={form.auto_rescan_on_open}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setForm((prev) => ({ ...prev, auto_rescan_on_open: next }));
+                    mutation.mutate({ auto_rescan_on_open: next });
+                  }}
+                />
+                <div>
+                  <div style={{ fontSize: 13 }}>Auto-rescan dataset on open</div>
+                  <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "2px 0 0" }}>
+                    When opening a dataset gallery, scan its folder on disk for new images and
+                    <code> .txt</code> captions added outside the app. Off by default.
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
         </div>
       )}
@@ -602,7 +631,7 @@ export default function SettingsPage() {
                         step={field.step}
                         min={field.min}
                         max={field.max}
-                        value={form[field.key]}
+                        value={form[field.key] as number}
                         onChange={(e) =>
                           setForm((prev) => ({ ...prev, [field.key]: parseFloat(e.target.value) }))
                         }

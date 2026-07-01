@@ -13,6 +13,7 @@ DEFAULTS = dict(
     nsfw_threshold=0.5,
     gdino_threshold=0.35,
     versioning_mode="off",
+    auto_rescan_on_open=False,
 )
 
 

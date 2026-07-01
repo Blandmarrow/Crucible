@@ -9,6 +9,7 @@ export interface Thresholds {
   nsfw_threshold: number;
   gdino_threshold: number;
   versioning_mode: "off" | "manual" | "auto";
+  auto_rescan_on_open: boolean;
 }
 
 export const settingsApi = {

@@ -132,6 +132,7 @@ export default function ImageDetailPage() {
   const [captionStyle, setCaptionStyle] = useState("");
   const captionRef = useRef<HTMLTextAreaElement>(null);
   const [captionDirty, setCaptionDirty] = useState(false);
+  const [captionDragActive, setCaptionDragActive] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const [cropReplace, setCropReplace] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -552,6 +553,35 @@ export default function ImageDetailPage() {
     },
     onError: () => toast.error("Save failed"),
   });
+
+  // Drag a .txt file onto the caption box to apply it as the caption.
+  const handleCaptionFileDrop = (e: React.DragEvent) => {
+    setCaptionDragActive(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) return;
+    // Always consume the drop so the browser never navigates to / opens the file,
+    // even when the dropped file isn't a .txt.
+    e.preventDefault();
+    const txt = files.find((f) => f.name.toLowerCase().endsWith(".txt"));
+    if (!txt) return;
+    txt.text()
+      .then((text) => {
+        const t = text.trim();
+        // Keep the editor marked dirty until the save confirms, so a failed save
+        // doesn't leave the box showing unsaved text labelled as saved.
+        setCaptionText(t);
+        setCaptionDirty(true);
+        return captionsApi
+          .update(imageId!, { caption_text: t, caption_style: captionStyle })
+          .then(() => {
+            setCaptionDirty(false);
+            qc.invalidateQueries({ queryKey: ["caption", imageId] });
+            qc.invalidateQueries({ queryKey: ["images", datasetId] });
+            toast.success("Caption applied");
+          });
+      })
+      .catch(() => toast.error("Failed to apply caption"));
+  };
 
   const mergeTagsMutation = useMutation({
     mutationFn: async () => {
@@ -1371,10 +1401,23 @@ export default function ImageDetailPage() {
             <textarea
               ref={captionRef}
               className="input resize-none overflow-hidden"
-              style={{ minHeight: "8rem" }}
+              style={{
+                minHeight: "8rem",
+                ...(captionDragActive
+                  ? { borderColor: "var(--accent)", boxShadow: "0 0 0 1px var(--accent)", background: "var(--accent-glow)" }
+                  : {}),
+              }}
               value={captionText}
               onChange={(e) => { setCaptionText(e.target.value); setCaptionDirty(true); }}
-              placeholder="Natural language description..."
+              onDragOver={(e) => {
+                if (Array.from(e.dataTransfer.items || []).some((it) => it.kind === "file")) {
+                  e.preventDefault();
+                  if (!captionDragActive) setCaptionDragActive(true);
+                }
+              }}
+              onDragLeave={() => setCaptionDragActive(false)}
+              onDrop={handleCaptionFileDrop}
+              placeholder="Natural language description... (or drop a .txt file here)"
             />
           </div>
 

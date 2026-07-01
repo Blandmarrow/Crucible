@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
+from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
     create_dataset,
     declare_subfolder,
@@ -18,10 +18,12 @@ from backend.services.dataset_service import (
     get_dataset_stats,
     get_score_values,
     get_tag_cooccurrence,
+    import_captions_from_folder,
     import_images_from_folder,
     list_subfolders,
     refresh_stats,
     rename_dataset,
+    rescan_dataset,
 )
 from backend.workers.job_queue import job_queue
 
@@ -199,7 +201,72 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 job_id=job_id,
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
+                import_captions=body.import_captions,
             )
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.post("/{dataset_id}/rescan")
+async def rescan_folder(dataset_id: str, body: DatasetRescanRequest, db: AsyncSession = Depends(get_db)):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+
+    job = BackgroundJob(
+        job_type="rescan",
+        label=f"Rescan - {ds.name}",
+        dataset_id=dataset_id,
+        total_items=0,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            ds2 = await session.get(Dataset, dataset_id)
+            summary = await rescan_dataset(
+                session, ds2, job_id=job_id, import_captions=body.import_captions,
+            )
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = summary
+                await session.commit()
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.post("/{dataset_id}/import-captions")
+async def import_captions(dataset_id: str, body: CaptionImportRequest, db: AsyncSession = Depends(get_db)):
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+
+    job = BackgroundJob(
+        job_type="import_captions",
+        label=f"Import captions - {Path(body.folder_path).name}",
+        dataset_id=dataset_id,
+        total_items=0,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            ds2 = await session.get(Dataset, dataset_id)
+            summary = await import_captions_from_folder(
+                session, ds2, body.folder_path, job_id=job_id,
+            )
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = summary
+                await session.commit()
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

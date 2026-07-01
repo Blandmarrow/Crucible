@@ -1,4 +1,4 @@
-from sqlalchemy import Float, Integer, String
+from sqlalchemy import Boolean, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -16,3 +16,4 @@ class ThresholdSettings(Base):
     nsfw_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
     gdino_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.35")
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'off'")
+    auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")

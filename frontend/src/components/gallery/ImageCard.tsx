@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { Cpu } from "lucide-react";
+import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
+import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
@@ -24,9 +28,52 @@ interface Props {
 
 export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable, isActiveDrag }: Props) {
   const datasetId = usePaneDatasetId();
+  const qc = useQueryClient();
   const { go } = usePaneNavigate();
   const { toggle, isSelected } = useSelectionStore();
   const selected = isSelected(image.id);
+  const [captionDragOver, setCaptionDragOver] = useState(false);
+
+  // Drag a .txt file onto a card to apply it as that image's caption.
+  // Only intervenes when the drag carries a text file — image drops still bubble
+  // up to the gallery grid's upload drop zone.
+  const handleCaptionDragOver = (e: React.DragEvent) => {
+    const items = e.dataTransfer.items;
+    // `.txt` files often report an empty `type` (Windows / some browsers), so accept
+    // both. Images always report a concrete `image/*` type and still pass through to
+    // the grid uploader; the drop handler's `.endsWith(".txt")` guard is the real filter.
+    const hasTxt = items && Array.from(items).some((it) => it.kind === "file" && (it.type === "text/plain" || it.type === ""));
+    if (!hasTxt) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!captionDragOver) setCaptionDragOver(true);
+  };
+  const handleCaptionDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setCaptionDragOver(false);
+  };
+  const handleCaptionDrop = (e: React.DragEvent) => {
+    const files = Array.from(e.dataTransfer.files || []);
+    const txt = files.find((f) => f.name.toLowerCase().endsWith(".txt"));
+    if (!txt) return; // not a caption drop — let it bubble to the image uploader
+    e.preventDefault();
+    e.stopPropagation();
+    setCaptionDragOver(false);
+    txt.text()
+      .then((text) => captionsApi.update(image.id, { caption_text: text.trim() }))
+      .then(() => {
+        toast.success("Caption applied");
+        // Invalidate every cache the caption feeds, so the detail view (and stats) don't
+        // show a stale caption. Mirrors ImageDetailPage's own save-caption invalidations.
+        qc.invalidateQueries({ queryKey: ["images", datasetId] });
+        qc.invalidateQueries({ queryKey: ["caption", image.id] });
+        qc.invalidateQueries({ queryKey: ["image", image.id] });
+        qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+        qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+        qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+        qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      })
+      .catch(() => toast.error("Failed to apply caption"));
+  };
   const isDuplicate = image.quality_flags?.is_duplicate as boolean | undefined;
   const isBlurry = image.quality_flags?.is_blurry as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
@@ -39,7 +86,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   return (
     <div
       style={{
-        border: selected ? "1px solid var(--accent)" : "1px solid var(--line)",
+        border: captionDragOver ? "1px solid var(--accent)" : selected ? "1px solid var(--accent)" : "1px solid var(--line)",
         boxShadow: selected ? "0 0 0 1px var(--accent), 0 0 24px -8px var(--accent-glow)" : "none",
         borderRadius: "var(--r-lg)",
         overflow: "hidden",
@@ -48,6 +95,9 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
         transition: "border-color .12s",
         position: "relative",
       }}
+      onDragOver={handleCaptionDragOver}
+      onDragLeave={handleCaptionDragLeave}
+      onDrop={handleCaptionDrop}
       onClick={(e) => {
         if (e.shiftKey && onSelect) { onSelect(image.id, true, false); }
         else { go(`/datasets/${datasetId}/image/${image.id}`, { page: "image-detail", datasetId, imageId: image.id }); }
@@ -58,6 +108,16 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
     >
       {/* Thumbnail */}
       <div style={{ aspectRatio: "1/1", background: "var(--surface-2)", position: "relative", overflow: "hidden" }}>
+        {captionDragOver && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none",
+            background: "rgba(7,9,11,.6)", display: "grid", placeContent: "center",
+            border: "2px dashed var(--accent)", borderRadius: "var(--r-lg)",
+            color: "var(--accent)", fontSize: 11.5, fontWeight: 600, textAlign: "center", padding: 8,
+          }}>
+            Drop .txt to set caption
+          </div>
+        )}
         <img
           src={imagesApi.thumbnailUrlVersioned(image.id, image.updated_at)}
           alt={image.filename}

@@ -31,8 +31,12 @@ export const datasetsApi = {
         source_version_id: sourceVersionId ?? null,
       })
       .then((r) => r.data),
-  importFolder: (id: string, folder_path: string, subfolder = "", preserve_structure = false) =>
-    client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path, subfolder, preserve_structure }).then((r) => r.data),
+  importFolder: (id: string, folder_path: string, subfolder = "", preserve_structure = false, import_captions = true) =>
+    client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path, subfolder, preserve_structure, import_captions }).then((r) => r.data),
+  rescan: (id: string, import_captions = true) =>
+    client.post<{ job_id: string }>(`/datasets/${id}/rescan`, { import_captions }).then((r) => r.data),
+  importCaptions: (id: string, folder_path: string) =>
+    client.post<{ job_id: string }>(`/datasets/${id}/import-captions`, { folder_path }).then((r) => r.data),
   subfolders: (id: string) =>
     client.get<SubfolderInfo[]>(`/datasets/${id}/subfolders`).then((r) => r.data),
   createSubfolder: (id: string, path: string) =>

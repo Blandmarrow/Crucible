@@ -15,8 +15,9 @@ A local web-based application for building, curating, and exporting Stable Diffu
 ## Features
 
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
-- **Import** images from local folders into named datasets with subfolder organization → [details](docs/features.md#datasets--gallery)
-- **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
+- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/features.md#datasets--gallery)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
+- **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)

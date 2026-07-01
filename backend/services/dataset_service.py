@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.models import Dataset, Image
 from backend.services.image_service import extract_generation_metadata, generate_thumbnail, get_image_info
-from backend.utils import copy_with_sidecar, thumbnail_path_for
+from backend.utils import copy_with_sidecar, read_caption_sidecar, thumbnail_path_for
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
@@ -183,8 +183,10 @@ async def import_images_from_folder(
     job_id: str | None = None,
     subfolder: str = "",
     preserve_structure: bool = False,
+    import_captions: bool = True,
 ) -> int:
     from backend.workers.progress import broadcaster
+    from backend.services.caption_service import _write_txt_sidecar
 
     src = Path(folder_path)
     if not src.exists() or not src.is_dir():
@@ -197,13 +199,16 @@ async def import_images_from_folder(
     total = len(image_files)
     added = 0
 
-    from backend.utils import slugify_filename, unique_filename
+    from backend.utils import slugify_filename, unique_filename_with_thumb
 
     dest_images = Path(dataset.folder_path) / "images"
     dest_thumbs = Path(dataset.folder_path) / "thumbnails"
 
     existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset.id))
     db_filenames: set[str] = {r[0] for r in existing_result.all()}
+
+    occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
+    planned_thumb_stems: set[str] = set()
 
     for i, src_file in enumerate(image_files):
         try:
@@ -215,9 +220,11 @@ async def import_images_from_folder(
                 rel_subfolder = subfolder
 
             slug = slugify_filename(src_file.stem) or "image"
-            new_name = unique_filename(dest_images, slug, src_file.suffix.lower(), db_filenames)
+            new_name = unique_filename_with_thumb(
+                dest_images, slug, src_file.suffix.lower(), db_filenames,
+                occupied_thumb_stems, planned_thumb_stems,
+            )
             dest_file = dest_images / new_name
-            db_filenames.add(new_name)
 
             shutil.copy2(src_file, dest_file)
 
@@ -227,6 +234,8 @@ async def import_images_from_folder(
             await asyncio.get_event_loop().run_in_executor(
                 None, generate_thumbnail, str(dest_file), thumb_path
             )
+
+            caption = read_caption_sidecar(src_file) if import_captions else None
 
             img = Image(
                 dataset_id=dataset.id,
@@ -238,6 +247,11 @@ async def import_images_from_folder(
                 generation_metadata=gen_meta,
                 **info,
             )
+            if caption:
+                img.caption_text = caption
+                img.captioned_by = "import"
+                img.captioned_at = datetime.utcnow()
+                _write_txt_sidecar(str(dest_file), caption)
             db.add(img)
             added += 1
         except Exception:
@@ -260,6 +274,176 @@ async def import_images_from_folder(
     await db.commit()
     await refresh_stats(db, dataset.id)
     return added
+
+
+async def rescan_dataset(
+    db: AsyncSession,
+    dataset: Dataset,
+    job_id: str | None = None,
+    import_captions: bool = True,
+) -> dict:
+    """Reconcile a dataset's DB records with the files on disk under images/.
+
+    - Files on disk not in the DB are registered (thumbnail + sidecar caption).
+    - DB records whose file is missing on disk are reported (never removed).
+    - Existing records pick up changed/added .txt sidecars when import_captions is set.
+    Returns {added, captions_updated, missing, total_on_disk}.
+    """
+    from backend.workers.progress import broadcaster
+
+    images_dir = Path(dataset.folder_path) / "images"
+    if not images_dir.exists():
+        return {"added": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0}
+
+    disk_files = [
+        f for f in images_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
+    total = len(disk_files)
+
+    # Image files are stored flat in images/ — subfolder is a purely logical DB column,
+    # never reflected in the physical path. So key reconciliation on filename alone
+    # (unique per dataset via uq_dataset_filename), not on the on-disk directory.
+    existing = await db.execute(select(Image).where(Image.dataset_id == dataset.id))
+    by_filename: dict[str, Image] = {}
+    for img in existing.scalars().all():
+        by_filename[img.filename] = img
+
+    seen_filenames: set[str] = set()
+    added = 0
+    captions_updated = 0
+
+    for i, f in enumerate(disk_files):
+        try:
+            seen_filenames.add(f.name)
+            caption = read_caption_sidecar(f) if import_captions else None
+
+            existing_img = by_filename.get(f.name)
+            if existing_img is None:
+                info = get_image_info(str(f))
+                gen_meta = extract_generation_metadata(str(f))
+                thumb_path = thumbnail_path_for(f)
+                await asyncio.get_event_loop().run_in_executor(
+                    None, generate_thumbnail, str(f), thumb_path
+                )
+                img = Image(
+                    dataset_id=dataset.id,
+                    filename=f.name,
+                    original_filename=f.name,
+                    subfolder="",
+                    file_path=str(f),
+                    thumbnail_path=thumb_path,
+                    generation_metadata=gen_meta,
+                    **info,
+                )
+                if caption:
+                    img.caption_text = caption
+                    img.captioned_by = "import"
+                    img.captioned_at = datetime.utcnow()
+                db.add(img)
+                added += 1
+            elif caption is not None and caption != (existing_img.caption_text or "").strip():
+                existing_img.caption_text = caption
+                existing_img.captioned_by = "import"
+                existing_img.captioned_at = datetime.utcnow()
+                captions_updated += 1
+        except Exception:
+            pass  # skip broken files, continue rescan
+
+        if job_id and i % 10 == 0:
+            pct = round((i + 1) / total * 100, 1) if total else 100.0
+            await broadcaster.emit(job_id, {
+                "type": "progress",
+                "job_id": job_id,
+                "job_type": "rescan",
+                "status": "running",
+                "done": i + 1,
+                "total": total,
+                "percent": pct,
+                "current_item": f.name,
+                "message": f"Scanning {f.name}",
+            })
+
+    missing = [
+        {"subfolder": img.subfolder or "", "filename": fn}
+        for fn, img in by_filename.items()
+        if fn not in seen_filenames
+    ]
+
+    await db.commit()
+    await refresh_stats(db, dataset.id)
+    return {
+        "added": added,
+        "captions_updated": captions_updated,
+        "missing": missing,
+        "total_on_disk": total,
+    }
+
+
+async def import_captions_from_folder(
+    db: AsyncSession,
+    dataset: Dataset,
+    folder_path: str,
+    job_id: str | None = None,
+) -> dict:
+    """Match .txt files in folder_path to existing dataset images by filename stem and apply them.
+
+    Matches each .txt stem against image original_filename stem first, then filename stem.
+    Existing captions are overwritten. Returns {matched, unmatched}.
+    """
+    from backend.workers.progress import broadcaster
+    from backend.services.caption_service import _write_txt_sidecar
+
+    src = Path(folder_path)
+    if not src.exists() or not src.is_dir():
+        raise ValueError(f"Folder not found: {folder_path}")
+
+    txt_files = [f for f in src.rglob("*.txt") if f.is_file()]
+    total = len(txt_files)
+
+    rows = await db.execute(select(Image).where(Image.dataset_id == dataset.id))
+    by_original: dict[str, Image] = {}
+    by_filename: dict[str, Image] = {}
+    for img in rows.scalars().all():
+        by_original.setdefault(Path(img.original_filename or "").stem, img)
+        by_filename.setdefault(Path(img.filename).stem, img)
+
+    matched = 0
+    unmatched: list[str] = []
+
+    for i, txt in enumerate(txt_files):
+        try:
+            stem = txt.stem
+            img = by_original.get(stem) or by_filename.get(stem)
+            if img is None:
+                unmatched.append(txt.name)
+            else:
+                text = txt.read_text(encoding="utf-8").strip()
+                img.caption_text = text
+                img.captioned_by = "import"
+                img.captioned_at = datetime.utcnow()
+                _write_txt_sidecar(img.file_path, text)
+                matched += 1
+        except Exception:
+            unmatched.append(txt.name)
+
+        if job_id and i % 10 == 0:
+            pct = round((i + 1) / total * 100, 1) if total else 100.0
+            await broadcaster.emit(job_id, {
+                "type": "progress",
+                "job_id": job_id,
+                "job_type": "import_captions",
+                "status": "running",
+                "done": i + 1,
+                "total": total,
+                "percent": pct,
+                "current_item": txt.name,
+                "message": f"Importing caption {txt.name}",
+            })
+
+    await db.commit()
+    await refresh_stats(db, dataset.id)
+    return {"matched": matched, "unmatched": unmatched}
 
 
 async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:

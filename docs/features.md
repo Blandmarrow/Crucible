@@ -11,7 +11,10 @@
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
 - Drag-and-drop image files onto the gallery to add them to the dataset; a live progress bar shows how many files have been processed, and the counter persists in the top bar if you navigate away mid-upload
 - Organize images into subfolders (logical groupings — images stay flat on disk); move or copy images or entire subfolders to a different dataset in one operation
-- **Import** — when importing a folder, the **Preserve structure** option recursively walks subdirectories and maps each level to a logical subfolder matching the relative path; when off, all images land in the specified target subfolder
+- **Import a folder** — the import dialog (reachable from a dataset card, the Datasets page header, or the gallery toolbar) lets you **choose the target dataset**, pick the source folder with a native **"Browse…"** dialog (or type the path), and optionally **import captions** from `.txt` sidecars next to each image (on by default). The **Preserve structure** option recursively walks subdirectories and maps each level to a logical subfolder matching the relative path; when off, all images land in the specified target subfolder
+- **Rescan folder from disk** — a per-dataset-card button and a Rescan button in the gallery toolbar reconcile the dataset with its `images/` folder: new files on disk are registered (with thumbnails), added or changed `.txt` captions are applied, and files missing on disk are reported in a summary toast (DB records are never deleted). Enable **Auto-rescan dataset on open** in Settings to run this automatically each time you open a dataset gallery
+- **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
+- **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
 - Per-image detail view with metadata, caption editor, and crop/rotate tools; **keyboard shortcuts**: ← / → navigate between images, **Space** toggles selection, **Delete** opens the delete confirmation. A **Select** button in the toolbar (checkbox icon) also toggles whether the current image is in the active selection. The caption editor shows a live **token counter** (word count · GPT-2 BPE token count) that turns amber at ≥ 70 tokens and red at ≥ 77 — the CLIP truncation limit.
 - **Generation Metadata** — PNG metadata from AUTOMATIC1111 and ComfyUI workflows is extracted at import and displayed per-image: prompt, negative prompt, model, sampler, steps, CFG scale, seed, VAE, size, and optional raw ComfyUI workflow JSON
 
@@ -158,9 +161,10 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into si
 - Rename on caption (default off)
 - Save backup (default off)
 
-**UI Behavior** — browser-local preferences, each taking effect immediately:
+**UI Behavior** — preferences that take effect immediately (browser-local unless noted):
 - Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
 - Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
+- **Auto-rescan dataset on open** (off by default) — when enabled, opening a dataset gallery scans its folder on disk for new images and `.txt` captions added outside the app. Unlike the settings above, this is a **server-side** preference (persisted per-install, shared across browsers)
 
 **Quality Thresholds** — configurable number inputs (require Save; changes apply to the next scoring or detection run only):
 

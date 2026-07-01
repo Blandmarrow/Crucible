@@ -95,6 +95,23 @@ def copy_with_sidecar(old_path: Path, new_path: Path) -> None:
         shutil.copy2(old_txt, new_path.with_suffix(".txt"))
 
 
+def read_caption_sidecar(image_path: Path | str) -> str | None:
+    """Read the .txt caption sidecar next to an image (symmetric with _write_txt_sidecar).
+
+    Returns the stripped text of {stem}.txt sitting beside image_path if it exists and is
+    non-empty, else None. Use everywhere a sidecar is read (import, rescan, caption import);
+    never inline the .with_suffix(".txt") logic.
+    """
+    txt = Path(image_path).with_suffix(".txt")
+    if not txt.exists():
+        return None
+    try:
+        text = txt.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text or None
+
+
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:
     """Normalise a file suffix to a PIL format name; fall back to PNG for unsupported types.
 

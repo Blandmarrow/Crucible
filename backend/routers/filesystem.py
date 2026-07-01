@@ -3,6 +3,8 @@ import mimetypes
 import os
 import shutil
 import string
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -100,6 +102,92 @@ async def list_directory(path: str = Query(...)):
         raise HTTPException(403, "Access denied")
 
     return {"path": str(p), "entries": entries}
+
+
+# ── Native OS folder picker ────────────────────────────────────────────────────
+
+_TK_SCRIPT = (
+    "import tkinter as tk\n"
+    "from tkinter import filedialog\n"
+    "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+    "p = filedialog.askdirectory(title='Select a folder to import into Crucible')\n"
+    "print(p or '')\n"
+)
+
+
+def _tk_pick_folder() -> str | None:
+    """Try a tkinter folder dialog in a subprocess (widens Linux coverage where zenity/
+    kdialog are absent but python3-tk is present).
+
+    Runs in a fresh process so Tk never touches the async server's threads. Returns the
+    chosen path ("" if the user cancels), or None if tkinter is unavailable or cannot
+    open a window (no python3-tk, no display, etc.) so the caller can fall through.
+    """
+    try:
+        proc = subprocess.run([sys.executable, "-c", _TK_SCRIPT], capture_output=True, text=True, timeout=600)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _pick_folder_sync() -> str:
+    """Open the host OS's native folder-selection dialog and return the chosen path.
+
+    Crucible is a local-first app (server == the user's machine), so the dialog appears
+    on the user's desktop. Returns "" if the user cancels. Raises RuntimeError if no
+    native dialog is available (e.g. a headless server).
+    """
+    plat = sys.platform
+    if plat == "win32":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$f.Description = 'Select a folder to import into Crucible';"
+            "$f.ShowDialog() | Out-Null;"
+            "Write-Output $f.SelectedPath"
+        )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-Command", script],
+            capture_output=True, text=True, timeout=600,
+        )
+        return proc.stdout.strip()
+    if plat == "darwin":
+        script = 'POSIX path of (choose folder with prompt "Select a folder to import into Crucible")'
+        proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=600)
+        return proc.stdout.strip()  # empty on cancel (osascript exits non-zero, no output)
+    # Linux / other: try zenity, then kdialog, then a tkinter dialog
+    for cmd in (
+        ["zenity", "--file-selection", "--directory", "--title=Select a folder to import into Crucible"],
+        ["kdialog", "--getexistingdirectory", "."],
+    ):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        except FileNotFoundError:
+            continue
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+        return ""  # non-zero from a present tool means the user cancelled
+    tk_path = _tk_pick_folder()
+    if tk_path is not None:
+        return tk_path
+    raise RuntimeError(
+        "No native folder dialog available on this machine "
+        "(install zenity, kdialog, or the python3-tk package on Linux). "
+        "You can also type or paste the folder path manually."
+    )
+
+
+@router.post("/pick-folder")
+async def pick_folder():
+    try:
+        path = await asyncio.get_running_loop().run_in_executor(None, _pick_folder_sync)
+    except subprocess.TimeoutExpired:
+        path = ""
+    except (RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(501, str(e) or "No native folder dialog available on this machine.")
+    return {"path": path or None}
 
 
 # ── Image preview ─────────────────────────────────────────────────────────────

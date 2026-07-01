@@ -5,11 +5,13 @@ import { parentOf, breadcrumbsFromPath } from "../../utils/pathUtils";
 
 interface Props {
   initialPath?: string;
+  title?: string;
+  confirmLabel?: string;
   onConfirm: (path: string) => void;
   onCancel: () => void;
 }
 
-export default function DirPickerModal({ initialPath = "", onConfirm, onCancel }: Props) {
+export default function DirPickerModal({ initialPath = "", title = "Select output folder", confirmLabel = "Select folder", onConfirm, onCancel }: Props) {
   const trimmed = initialPath.trim();
   const [currentPath, setCurrentPath] = useState<string | null>(trimmed || null);
   const [entries, setEntries] = useState<FsEntry[]>([]);
@@ -75,7 +77,7 @@ export default function DirPickerModal({ initialPath = "", onConfirm, onCancel }
           display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "12px 16px", borderBottom: "1px solid var(--line)", flexShrink: 0,
         }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Select output folder</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
           <button className="icon-btn" onClick={onCancel}><X size={15} /></button>
         </div>
 
@@ -201,7 +203,7 @@ export default function DirPickerModal({ initialPath = "", onConfirm, onCancel }
               disabled={!selectedPath.trim()}
               onClick={() => onConfirm(selectedPath.trim())}
             >
-              Select folder
+              {confirmLabel}
             </button>
           </div>
         </div>

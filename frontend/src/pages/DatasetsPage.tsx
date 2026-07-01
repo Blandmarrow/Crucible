@@ -11,7 +11,7 @@ import { settingsApi } from "../api/settings";
 import type { Dataset } from "../types";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ImportFolderModal from "../components/common/ImportFolderModal";
-import { filesystemApi } from "../api/filesystem";
+import DirPickerModal from "../components/common/DirPickerModal";
 import { useJobStore } from "../store/jobStore";
 
 function formatSize(bytes: number) {
@@ -175,7 +175,7 @@ export default function DatasetsPage() {
   // ── Import-captions modal ─────────────────────────────────────────────────
   const [captionImportTarget, setCaptionImportTarget] = useState<Dataset | null>(null);
   const [captionImportPath, setCaptionImportPath] = useState("");
-  const [captionPicking, setCaptionPicking] = useState(false);
+  const [captionDirPickerOpen, setCaptionDirPickerOpen] = useState(false);
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
 
@@ -1074,26 +1074,18 @@ export default function DatasetsPage() {
                 <input className="input" placeholder="/home/user/captions or D:\captions" value={captionImportPath}
                   onChange={(e) => setCaptionImportPath(e.target.value)} autoFocus style={{ flex: 1 }}
                   onKeyDown={(e) => { if (e.key === "Enter" && captionImportPath && !captionImportMutation.isPending) captionImportMutation.mutate(); }} />
-                <button
-                  className="btn"
-                  disabled={captionPicking}
-                  onClick={async () => {
-                    setCaptionPicking(true);
-                    try {
-                      const { path } = await filesystemApi.pickFolder();
-                      if (path) setCaptionImportPath(path);
-                    } catch (e) {
-                      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-                      toast.error(detail ?? "Couldn't open a folder dialog — type the path manually.");
-                    } finally {
-                      setCaptionPicking(false);
-                    }
-                  }}
-                >
-                  {captionPicking ? "Opening…" : "Browse…"}
-                </button>
+                <button className="btn" onClick={() => setCaptionDirPickerOpen(true)}>Browse…</button>
               </div>
             </div>
+            {captionDirPickerOpen && (
+              <DirPickerModal
+                initialPath={captionImportPath}
+                title="Select a caption folder"
+                confirmLabel="Use folder"
+                onConfirm={(p) => { setCaptionImportPath(p); setCaptionDirPickerOpen(false); }}
+                onCancel={() => setCaptionDirPickerOpen(false)}
+              />
+            )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn ghost" onClick={() => { setCaptionImportTarget(null); setCaptionImportPath(""); }}>Cancel</button>
               <button className="btn primary" onClick={() => captionImportMutation.mutate()} disabled={!captionImportPath || captionImportMutation.isPending}>Import captions</button>

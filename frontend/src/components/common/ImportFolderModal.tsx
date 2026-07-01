@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import type { Dataset } from "../../types";
 import { datasetsApi } from "../../api/datasets";
-import { filesystemApi } from "../../api/filesystem";
+import DirPickerModal from "./DirPickerModal";
 
 interface Props {
   /** Candidate datasets to import into. When more than one, a target selector is shown. */
@@ -21,7 +21,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const [subfolder, setSubfolder] = useState("");
   const [preserveStructure, setPreserveStructure] = useState(false);
   const [importCaptions, setImportCaptions] = useState(true);
-  const [picking, setPicking] = useState(false);
+  const [dirPickerOpen, setDirPickerOpen] = useState(false);
   const [showSubfolders, setShowSubfolders] = useState(false);
 
   const target = datasets.find((d) => d.id === targetId) ?? null;
@@ -33,19 +33,6 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
     enabled: !!targetId,
   });
   const subfolderPaths = subfolders.map((s) => s.path).filter(Boolean).sort();
-
-  const handleBrowse = async () => {
-    setPicking(true);
-    try {
-      const { path: picked } = await filesystemApi.pickFolder();
-      if (picked) setPath(picked);
-    } catch (e) {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Couldn't open a folder dialog — type the path manually.");
-    } finally {
-      setPicking(false);
-    }
-  };
 
   const importMutation = useMutation({
     mutationFn: () => datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions),
@@ -85,7 +72,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
                 autoFocus
                 style={{ flex: 1 }}
               />
-              <button className="btn" onClick={handleBrowse} disabled={picking}>{picking ? "Opening…" : "Browse…"}</button>
+              <button className="btn" onClick={() => setDirPickerOpen(true)}>Browse…</button>
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
@@ -165,6 +152,15 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
             <button className="btn primary" onClick={() => importMutation.mutate()} disabled={!path || !targetId || importMutation.isPending}>Import</button>
           </div>
       </div>
+      {dirPickerOpen && (
+        <DirPickerModal
+          initialPath={path}
+          title="Select a folder to import"
+          confirmLabel="Use folder"
+          onConfirm={(p) => { setPath(p); setDirPickerOpen(false); }}
+          onCancel={() => setDirPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

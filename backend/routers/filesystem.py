@@ -141,11 +141,19 @@ def _pick_folder_sync() -> str:
     """
     plat = sys.platform
     if plat == "win32":
+        # ShowDialog() with no owner opens *behind* other windows when launched from
+        # the background server process, so the dialog is invisible and the request
+        # hangs until timeout. Pass a TopMost owner form so it surfaces to the front
+        # (FolderBrowserDialog itself has no TopMost property).
         script = (
             "Add-Type -AssemblyName System.Windows.Forms;"
+            "$owner = New-Object System.Windows.Forms.Form;"
+            "$owner.TopMost = $true;"
+            "$owner.ShowInTaskbar = $false;"
             "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
             "$f.Description = 'Select a folder to import into Crucible';"
-            "$f.ShowDialog() | Out-Null;"
+            "$f.ShowDialog($owner) | Out-Null;"
+            "$owner.Dispose();"
             "Write-Output $f.SelectedPath"
         )
         proc = subprocess.run(

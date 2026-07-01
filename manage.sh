@@ -72,7 +72,7 @@ _install_deps() {
     os="$(uname -s)"
 
     # --- Python ---
-    echo "[1/7] Checking Python..."
+    echo "[1/6] Checking Python..."
     PYTHON=""
     if _python_version_ok python3.12; then
         PYTHON=python3.12
@@ -142,7 +142,7 @@ _install_deps() {
     fi
 
     # --- Node.js ---
-    echo "[2/7] Checking Node.js..."
+    echo "[2/6] Checking Node.js..."
     if _node_version_ok; then
         echo "  Found: Node $(node --version)"
     else
@@ -176,52 +176,6 @@ _install_deps() {
             exit 1
         fi
         echo "  Installed: Node $(node --version)"
-    fi
-}
-
-_check_folder_dialog_linux() {
-    # Optional (Linux only): a native folder dialog powers the "Browse…" button in the
-    # Import-folder screen. Without one, the manual folder-path field still works, so this
-    # never blocks setup. Windows/macOS always have a dialog (PowerShell / osascript).
-    [ "$(uname -s)" = "Linux" ] || return 0
-
-    if command -v zenity &>/dev/null || command -v kdialog &>/dev/null; then
-        echo "  Native folder dialog available ($(command -v zenity 2>/dev/null || command -v kdialog))."
-        return 0
-    fi
-    if "$ROOT/venv/bin/python" -c "import tkinter" 2>/dev/null; then
-        echo "  Native folder dialog available (python tkinter)."
-        return 0
-    fi
-
-    echo "  No native folder dialog found (zenity / kdialog / python3-tk)."
-    echo "  Optional: enables the 'Browse…' button when importing a folder."
-    echo "  The manual folder-path field works without it, and it is not needed on a headless server."
-    echo "  Source: your package manager (installs 'zenity', a few MB)."
-    printf "  Install zenity now? [y/N] "
-    read -r _reply || true
-    case "$_reply" in
-        [Yy]*) ;;
-        *) echo "  Skipping — the manual folder-path field will still work."; return 0 ;;
-    esac
-
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq || true
-        sudo apt-get install -y zenity || true
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y zenity || true
-    elif command -v pacman &>/dev/null; then
-        sudo pacman -Sy --noconfirm zenity || true
-    else
-        echo "  No supported package manager (apt/dnf/pacman) found."
-        echo "  Install 'zenity' or 'python3-tk' manually to enable the Browse button."
-        return 0
-    fi
-
-    if command -v zenity &>/dev/null; then
-        echo "  zenity installed."
-    else
-        echo "  WARNING: zenity install failed. The manual folder-path field will still work."
     fi
 }
 
@@ -374,7 +328,7 @@ cmd_setup() {
 
     _install_deps
 
-    echo "[3/7] Creating Python virtual environment..."
+    echo "[3/6] Creating Python virtual environment..."
     _do_create_venv=true
     if [ -d "$ROOT/venv" ]; then
         _venv_py="$ROOT/venv/bin/python"
@@ -392,7 +346,7 @@ cmd_setup() {
         echo "  venv created at $ROOT/venv (inherits system site-packages)"
     fi
 
-    echo "[4/7] Installing Python dependencies..."
+    echo "[4/6] Installing Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
@@ -416,7 +370,7 @@ cmd_setup() {
             ;;
     esac
 
-    echo "[5/7] Installing SAM2 (Segment Anything Model 2)..."
+    echo "[5/6] Installing SAM2 (Segment Anything Model 2)..."
     printf "  Download and install SAM2 from GitHub (~50 MB)? [Y/n] "
     read -r _reply || true
     case "$_reply" in
@@ -431,15 +385,12 @@ cmd_setup() {
             ;;
     esac
 
-    echo "[6/7] Installing frontend dependencies and building..."
+    echo "[6/6] Installing frontend dependencies and building..."
     cd "$ROOT/frontend"
     npm install
     npm run build
     cd "$ROOT"
     echo "  Frontend built."
-
-    echo "[7/7] Checking native folder dialog (optional, Linux only)..."
-    _check_folder_dialog_linux
 
     if [ ! -f "$ROOT/.env" ]; then
         cp "$ROOT/.env.example" "$ROOT/.env"

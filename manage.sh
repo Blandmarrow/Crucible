@@ -200,6 +200,45 @@ _migrate() {
     echo "  Migrations applied."
 }
 
+# Echo the newest PyTorch CUDA wheel tag (e.g. cu130) that the driver's CUDA
+# version supports, by querying the live wheel index at download.pytorch.org.
+# Args: driver CUDA major, minor. Prints the chosen "cuNNN" tag (empty if the
+# index was reached but nothing suitable ≤ driver exists) and returns 0.
+# Returns 1 without printing if the index could not be fetched, so the caller
+# can fall back to a built-in version table.
+#
+# Wheel-tag convention (matches PyTorch's own naming): the last digit is the
+# CUDA minor, the preceding digits are the major — cu128 → 12.8, cu130 → 13.0.
+# PyTorch 2.7+ requires CUDA 12.6+, so tags below cu126 are ignored.
+_query_cuda_tag() {
+    local dmaj="$1" dmin="$2" idx="https://download.pytorch.org/whl/"
+    local html driver_ver best_ver=0 best_tag="" tag num tmaj tmin tver
+    driver_ver=$((dmaj * 100 + dmin))
+
+    if command -v curl &>/dev/null; then
+        html=$(curl -fsSL --max-time 10 "$idx" 2>/dev/null) || html=""
+    elif command -v wget &>/dev/null; then
+        html=$(wget -qO- --timeout=10 "$idx" 2>/dev/null) || html=""
+    fi
+    [ -z "$html" ] && return 1
+
+    # Anchor on real directory links (href="cuNNN/") so unrelated substrings
+    # like cudnn-cu13 / nvidia-nccl-cu12 don't get mistaken for wheel tags.
+    for tag in $(echo "$html" | grep -oE 'href="cu[0-9]+/"' | grep -oE 'cu[0-9]+' | sort -u); do
+        num="${tag#cu}"
+        [ "${#num}" -lt 2 ] && continue
+        tmin="${num: -1}"
+        tmaj="${num:0:${#num}-1}"
+        tver=$((10#$tmaj * 100 + 10#$tmin))
+        if [ "$tver" -le "$driver_ver" ] && [ "$tver" -ge 1206 ] && [ "$tver" -gt "$best_ver" ]; then
+            best_ver=$tver
+            best_tag=$tag
+        fi
+    done
+    echo "$best_tag"
+    return 0
+}
+
 _install_torch_if_needed() {
     # Fast-path: skip if a GPU-capable torch is already present.
     # Covers both CUDA (NVIDIA/ROCm) and MPS (Apple Silicon).
@@ -223,9 +262,14 @@ _install_torch_if_needed() {
             min=$(echo "$cuda_ver" | cut -d. -f2)
             echo "  NVIDIA GPU detected — driver supports CUDA $maj.$min."
 
+            # Pick the newest wheel the driver supports by querying the live
+            # wheel index; fall back to a built-in table if it's unreachable.
             # PyTorch 2.7+ requires CUDA 12.6+ (driver 560.94+ on Linux).
-            if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
-            elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
+            if ! tag=$(_query_cuda_tag "$maj" "$min"); then
+                echo "  Could not reach PyTorch wheel index — using built-in version table."
+                if   [ "$maj" -gt 12 ] || { [ "$maj" -eq 12 ] && [ "$min" -ge 8 ]; }; then tag="cu128"
+                elif [ "$maj" -eq 12 ] && [ "$min" -ge 6 ]; then tag="cu126"
+                fi
             fi
 
             if [ -n "$tag" ]; then

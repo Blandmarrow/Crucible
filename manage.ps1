@@ -142,6 +142,41 @@ function Activate-Venv {
     & "$ROOT\venv\Scripts\Activate.ps1"
 }
 
+function Get-BestCudaTag {
+    # Returns the newest PyTorch CUDA wheel tag (e.g. "cu130") that the driver's
+    # CUDA version supports, by querying the live wheel index at
+    # download.pytorch.org. Returns "" if the index was reached but nothing
+    # suitable <= driver exists, and $null if the index could not be fetched
+    # (caller should fall back to the built-in table).
+    #
+    # Wheel-tag convention (matches PyTorch's own naming): the last digit is the
+    # CUDA minor, the preceding digits the major - cu128 -> 12.8, cu130 -> 13.0.
+    # PyTorch 2.7+ requires CUDA 12.6+, so tags below cu126 are ignored.
+    param([int]$DriverMaj, [int]$DriverMin)
+    $driverVer = $DriverMaj * 100 + $DriverMin
+    $html = $null
+    try {
+        $html = (Invoke-WebRequest -Uri "https://download.pytorch.org/whl/" `
+                 -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop).Content
+    } catch { return $null }
+    if (-not $html) { return $null }
+
+    # Anchor on real directory links (href="cuNNN/") so unrelated substrings
+    # like cudnn-cu13 / nvidia-nccl-cu12 don't get mistaken for wheel tags.
+    $best = 0; $bestTag = ""
+    foreach ($m in [regex]::Matches($html, 'href="cu(\d+)/"')) {
+        $num = $m.Groups[1].Value
+        if ($num.Length -lt 2) { continue }
+        $tmin = [int]$num.Substring($num.Length - 1, 1)
+        $tmaj = [int]$num.Substring(0, $num.Length - 1)
+        $ver = $tmaj * 100 + $tmin
+        if ($ver -le $driverVer -and $ver -ge 1206 -and $ver -gt $best) {
+            $best = $ver; $bestTag = "cu$num"
+        }
+    }
+    return $bestTag
+}
+
 function Install-TorchIfNeeded {
     # If a CUDA-capable torch is already reachable (e.g. via --system-site-packages
     # from a prior CUDA install) there is nothing to do.
@@ -168,13 +203,20 @@ function Install-TorchIfNeeded {
         $maj = [int]$Matches[1]; $min = [int]$Matches[2]
         Write-Host "  NVIDIA GPU detected - driver supports CUDA $maj.$min." -ForegroundColor Green
 
-        # Pick the highest PyTorch CUDA wheel that the driver version supports.
+        # Pick the newest wheel the driver supports by querying the live wheel
+        # index; fall back to a built-in table if it's unreachable.
         # PyTorch 2.7+ requires CUDA 12.6+ (driver 560.94+ on Windows).
-        if ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) {
-            $tag = "cu128"
-        } elseif ($maj -eq 12 -and $min -ge 6) {
-            $tag = "cu126"
-        } else {
+        $tag = Get-BestCudaTag -DriverMaj $maj -DriverMin $min
+        if ($null -eq $tag) {
+            Write-Host "  Could not reach PyTorch wheel index - using built-in version table." -ForegroundColor DarkGray
+            if ($maj -gt 12 -or ($maj -eq 12 -and $min -ge 8)) {
+                $tag = "cu128"
+            } elseif ($maj -eq 12 -and $min -ge 6) {
+                $tag = "cu126"
+            } else {
+                $tag = $null
+            }
+        } elseif ($tag -eq "") {
             $tag = $null
         }
 

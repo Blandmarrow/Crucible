@@ -1,6 +1,7 @@
-from datetime import datetime
 from typing import Any
 from pydantic import BaseModel
+
+from backend.schemas import UtcDatetime
 
 
 class JobOut(BaseModel):
@@ -14,9 +15,9 @@ class JobOut(BaseModel):
     error_msg: str | None
     result_data: dict[str, Any]
     config: dict[str, Any]
-    created_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
+    created_at: UtcDatetime
+    started_at: UtcDatetime | None
+    finished_at: UtcDatetime | None
 
     model_config = {"from_attributes": True}
 

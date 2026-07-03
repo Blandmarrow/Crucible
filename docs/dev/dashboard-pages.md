@@ -1,6 +1,6 @@
-# Dashboard pages: Datasets, Statistics, Settings, hardware stats & file browser
+# Dashboard pages: Datasets, Statistics, Settings, hardware stats, file browser & Booru lookup
 
-This file covers the Datasets page (categories, import, duplicate), the Statistics page (histograms, CSV export, BucketPanel), the Settings page (tabs, thresholds), system hardware stats, and the file browser.
+This file covers the Datasets page (categories, import, duplicate), the Statistics page (histograms, CSV export, BucketPanel), the Settings page (tabs, thresholds), system hardware stats, the file browser, and the Booru tag lookup page.
 
 ### Datasets page
 
@@ -60,6 +60,8 @@ It makes six queries:
 | `["settings", "thresholds"]` | `GET /api/v1/settings/thresholds` | Live flag threshold values for the quality flag hint text; `staleTime: 60_000` |
 
 All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` is persisted per-dataset via `STATS_FILTERS_PREFIX` + `loadPersisted`/`savePersisted` (350ms-debounced) so the chosen subfolder survives navigation. On dataset change (without remount — pane mode) a `prevDatasetId` ref guard effect reloads the per-dataset blob and updates `activeSubfolder`. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
+
+**Server-side stats aggregation** (`dataset_service.get_dataset_stats` / `get_score_values`): the async handler does only DB work (row fetch + coverage/flag/embedding count queries), then hands the pure-Python bucketing/aggregation to a thread executor (`run_in_executor`) via the module-level `_aggregate_dataset_stats` helper and a local `_collect` closure respectively, so a large dataset's per-row loop never blocks the event loop while Stats loads. Caption **token** counts come straight from the persisted `Image.caption_token_count` column (`caption_token_distribution`, `score-values.caption_tokens`) — no `tiktoken` call in the request path; **word** counts are still computed from `caption_text` (cheap `split()`). Response keys are unchanged (`StatsPage.tsx` depends on them).
 
 **`DatasetStats` subfolder invariant**: When subfolder is not None, all out-of-row-scan queries in `get_dataset_stats()` must include `.where(Image.subfolder == subfolder)`: (a) embedding count, (b) score coverage (`func.count` per score column), (c) quality flag counts (`json_extract` + `SUM(CASE …)` per flag key). `total_size_mb` derives from the filtered `file_sizes_mb` list; `ds.total_size_bytes` only used for the all-images case.
 
@@ -213,3 +215,15 @@ Two tabs rendered with the standard `.tabs` / `.tab` CSS classes:
 - Empty state: "No JS errors captured this session."
 
 The Errors tab button in the tab bar shows a red pill badge when `errorCount > 0` — the same count drives the sidebar `NavItem` `tail` prop (with `tailColor="var(--bad)"`).
+
+### Booru tag lookup page
+
+A read-only tag-name/post-count lookup against external image boards. Nothing is persisted — it's a reference tool for finding correct booru tag spellings and gauging tag popularity while captioning.
+
+**Router**: `backend/routers/booru.py`, prefix `/booru`. Two endpoints, no service-layer DB access:
+- `GET /booru/search` — `q` (required, `min_length=1`), `source` (`safebooru` | `gelbooru`, regex-validated, default `safebooru`), `limit` (`1..100`, default 20). Dispatches to the matching service function.
+- `POST /booru/autocomplete` — `AutocompleteRequest { prefix, source="safebooru", limit=10 }`. Same dispatch; intended for type-ahead (the current `BooruPage` doesn't wire it up — search is submit-driven).
+
+**Service**: `backend/services/booru_service.py`. `search_safebooru(query, limit)` hits Danbooru's safe host `https://safebooru.donmai.us/tags.json` (`search[name_matches]=*query*`, ordered by count); `search_gelbooru(query, limit, api_key, user_id)` hits `https://gelbooru.com/index.php` (`s=tag` API). Gelbooru credentials come from `settings.gelbooru_api_key` / `settings.gelbooru_user_id` (env vars `GELBOORU_API_KEY` / `GELBOORU_USER_ID` via `config.py`); they're optional — omitted when blank, so anonymous requests still work but may be rate-limited. Both functions normalize results to `{tag, count, category, source}` dicts, mapping the numeric category id to a name (`0` general, `1` artist, `3` copyright, `4` character, `5` meta) via `_safebooru_category` / `_gelbooru_category`. Guardrails: an in-module 5-minute TTL cache (`_cache`, keyed `{source}:{query}:{limit}`, evicts expired entries on read), an `asyncio.Semaphore(2)` capping concurrent outbound requests, a 10-second per-request timeout, a 0.5s politeness delay before each Gelbooru call, and a blanket `except Exception: return []` so a booru outage never surfaces as a 500.
+
+**Frontend**: `frontend/src/pages/BooruPage.tsx`, route `/booru` (`App.tsx`, also in `PageRenderer`/`PaneHeader` for split-view), sidebar nav "Booru Browser". API wrapper `frontend/src/api/booru.ts` (`booruApi.search` / `booruApi.autocomplete`), result type `BooruTag`. Search is submit-driven: the text input and Source/Limit selects update local state, and `handleSearch` (Enter or the Search button) copies `query` into a separate `search` state that is the actual query trigger — `useQuery({ queryKey: ["booru-search", search, source, limit], enabled: search.length > 0 })`. TanStack Query's default cache makes repeat searches instant (backed additionally by the backend 5-minute cache; the footer notes "Results cached for 5 minutes"). The `SOURCES` list includes `danbooru`/`e621` marked `supported: false` — selecting one and searching shows a toast ("… is not yet supported") and skips the request. Results render as a table (tag in category color, category `badge`, post count, and a **Copy** button that writes the tag to `navigator.clipboard` and toasts). Limit choices are 20/50/100 (default 50 in the UI).

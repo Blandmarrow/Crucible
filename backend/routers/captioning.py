@@ -324,10 +324,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
         async with AsyncSessionLocal() as session:
             for i, (img_id, file_path, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
-                # Check for user-initiated stop before each image (reuse outer session)
-                _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
-                if _status == "cancelled":
-                    raise asyncio.CancelledError()
+                # Check for user-initiated stop before each image
+                job_queue.raise_if_cancelled(job_id)
 
                 # Generate caption for this image
                 caption = ""
@@ -677,10 +675,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             async with AsyncSessionLocal() as session:
                 cached_vram_mb = 0
                 for i, (img_id, file_path, img_filename, img_subfolder) in enumerate(image_data):
-                    # Cancellation check (reuse outer session — avoids a new DB session per image)
-                    _status = (await session.execute(select(BackgroundJob.status).where(BackgroundJob.id == job_id))).scalar_one_or_none()
-                    if _status == "cancelled":
-                        raise asyncio.CancelledError()
+                    # Cancellation check
+                    job_queue.raise_if_cancelled(job_id)
 
                     prev_caption = prev_captions.get(img_id, "")
                     resolved_prompt = step.custom_prompt.replace("{previous_caption}", prev_caption)

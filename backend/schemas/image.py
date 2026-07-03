@@ -1,7 +1,7 @@
-from datetime import datetime
 from typing import Any
 from pydantic import BaseModel
 
+from backend.schemas import UtcDatetime
 from backend.schemas.detection import DetectionOut
 
 
@@ -16,7 +16,7 @@ class ImageOut(BaseModel):
     file_size_bytes: int | None
     format: str | None
     phash: str | None
-    created_at: datetime
+    created_at: UtcDatetime
     aesthetic_score: float | None
     blur_score: float | None
     noise_score: float | None
@@ -33,10 +33,10 @@ class ImageOut(BaseModel):
     caption_text: str
     caption_style: str
     captioned_by: str
-    captioned_at: datetime | None
+    captioned_at: UtcDatetime | None
     is_auto_named: bool = False
     sort_order: int | None = None
-    updated_at: datetime
+    updated_at: UtcDatetime
     detections: list[DetectionOut] = []
 
     model_config = {"from_attributes": True}
@@ -65,7 +65,7 @@ class ImageListItem(BaseModel):
     captioned_by: str
     is_auto_named: bool = False
     sort_order: int | None = None
-    updated_at: datetime
+    updated_at: UtcDatetime
 
     model_config = {"from_attributes": True}
 

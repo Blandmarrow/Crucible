@@ -103,6 +103,7 @@ async def score_images_watermark(
     watermark_threshold: float = 0.6,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     text_feats = _precompute_watermark_text_features(model_entry_dict)
@@ -110,6 +111,8 @@ async def score_images_watermark(
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats, watermark_threshold)
             r = await loop.run_in_executor(None, fn)
@@ -159,12 +162,15 @@ async def extract_clip_embeddings_batch(
     job_id: str | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             fn = functools.partial(extract_clip_embedding_sync, path, model_entry_dict)
             r = await loop.run_in_executor(None, fn)
@@ -189,12 +195,15 @@ async def score_images_batch(
     job_id: str | None = None,
 ) -> list[float]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     scores = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             score = await loop.run_in_executor(None, score_image_sync, path, model_entry_dict)
         except Exception:

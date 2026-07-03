@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
+import { showImportSummaryToast } from "../utils/importToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
 import type { Dataset } from "../types";
@@ -266,6 +267,7 @@ export default function DatasetsPage() {
         qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["tag-cooccurrence", importJobProgress.dataset_id] });
       }
+      showImportSummaryToast(importJobId);
       setImportJobId(null);
     } else if (importJobProgress.status === "failed") {
       setImportJobId(null);

@@ -137,10 +137,16 @@ async def apply(
     result = await db.execute(query)
     images = result.scalars().all()
 
+    from backend.workers.job_queue import job_queue
+
     total = len(images)
     affected = 0
     skipped = 0
+    cancelled = False
     for i, img in enumerate(images):
+        if job_queue.cancel_requested(job_id):
+            cancelled = True
+            break
         old_text = img.caption_text or ""
         tags = _parse_tags(old_text)
         seen: set[str] = set()
@@ -166,6 +172,8 @@ async def apply(
             })
 
     await db.commit()
+    if cancelled:
+        job_queue.raise_if_cancelled(job_id)
     return {"affected": affected, "skipped": skipped}
 
 

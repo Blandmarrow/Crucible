@@ -76,12 +76,15 @@ async def extract_layer_embeddings_dino(
     job_id: str | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             r = await loop.run_in_executor(
                 None, extract_dino_layer_embeddings_sync, path, model_entry
@@ -108,12 +111,15 @@ async def extract_embeddings_dino(
     job_id: str | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             r = await loop.run_in_executor(
                 None, extract_dino_embedding_sync, path, model_entry

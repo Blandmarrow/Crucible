@@ -13,6 +13,7 @@ import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
 import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
+import { showImportSummaryToast } from "../utils/importToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
@@ -290,8 +291,8 @@ export default function GalleryPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    showImportSummaryToast(importJobId);
     setImportJobId(null);
-    toast.success("Import complete");
   }, [importProgress?.status, importJobId, datasetId, qc]);
 
   const scoreFiltersParam = scoreFilters.length > 0

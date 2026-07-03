@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 
 import cv2
-import imagehash
 import numpy as np
 from PIL import Image
 
@@ -14,6 +13,9 @@ BLUR_THRESHOLD = 100.0   # Laplacian variance below this = blurry
 NOISE_THRESHOLD = 15.0   # noise score above this = noisy
 DUPLICATE_THRESHOLD = 8  # Hamming distance threshold
 UNIFORMITY_THRESHOLD = 12.0  # grayscale std dev below this = near-uniform
+
+# 256-entry popcount lookup: POPCNT[b] = number of set bits in byte value b.
+POPCNT = np.array([bin(x).count("1") for x in range(256)], dtype=np.uint8)
 
 
 def score_technical_sync(
@@ -77,12 +79,15 @@ async def score_images_technical(
     uniformity_threshold: float = UNIFORMITY_THRESHOLD,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             fn = functools.partial(score_technical_sync, path, blur_threshold, noise_threshold, uniformity_threshold)
             scores = await loop.run_in_executor(None, fn)
@@ -106,24 +111,42 @@ async def score_images_technical(
 
 
 def find_duplicates_sync(phashes: list[tuple[str, str]], duplicate_threshold: int = DUPLICATE_THRESHOLD) -> list[list[str]]:
-    """Group image IDs by near-identical phash (Hamming distance < threshold)."""
-    groups: list[list[str]] = []
-    assigned: set[str] = set()
+    """Group image IDs by near-identical phash (Hamming distance < threshold).
 
-    for i, (id_a, hash_a) in enumerate(phashes):
-        if id_a in assigned:
+    Vectorized: hex hashes are decoded once into an (N, L) uint8 array and each
+    row's Hamming distance to all later rows is computed in one numpy op via a
+    popcount lookup table. Greedy grouping semantics match the original scalar
+    loop exactly — the first unassigned row becomes a group root and each member
+    is claimed once.
+    """
+    n = len(phashes)
+    if n == 0:
+        return []
+
+    ids = [id_ for id_, _ in phashes]
+    # Decode all hex hashes once. Length-generic (no assumption of 64-bit phash).
+    hashes = np.array(
+        [np.frombuffer(bytes.fromhex(h), dtype=np.uint8) for _, h in phashes]
+    )  # (N, L)
+
+    groups: list[list[str]] = []
+    assigned = np.zeros(n, dtype=bool)
+
+    for i in range(n):
+        if assigned[i]:
             continue
-        group = [id_a]
-        h_a = imagehash.hex_to_hash(hash_a)
-        for id_b, hash_b in phashes[i + 1:]:
-            if id_b in assigned:
-                continue
-            h_b = imagehash.hex_to_hash(hash_b)
-            if h_a - h_b < duplicate_threshold:
-                group.append(id_b)
-                assigned.add(id_b)
+        # Hamming distance from row i to every later row, in one vectorized op.
+        rest = hashes[i + 1:]
+        group = [ids[i]]
+        if rest.shape[0]:
+            dists = POPCNT[hashes[i] ^ rest].sum(axis=1)  # (N-i-1,)
+            close = (dists < duplicate_threshold) & ~assigned[i + 1:]
+            for offset in np.nonzero(close)[0]:
+                j = i + 1 + int(offset)
+                group.append(ids[j])
+                assigned[j] = True
         if len(group) > 1:
-            assigned.add(id_a)
+            assigned[i] = True
             groups.append(group)
 
     return groups

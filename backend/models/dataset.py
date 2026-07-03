@@ -27,4 +27,6 @@ class Dataset(Base):
 
     current_branch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
-    images: Mapped[list["Image"]] = relationship("Image", back_populates="dataset", cascade="all, delete-orphan")
+    images: Mapped[list["Image"]] = relationship(
+        "Image", back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
+    )

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import shutil
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -47,12 +46,20 @@ from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/images", tags=["images"])
 
-@lru_cache(maxsize=None)
-def _get_enc():
-    import tiktoken
-    return tiktoken.get_encoding("gpt2")
-
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
+
+
+def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, dict | None]:
+    """Persist one upload and derive its metadata + thumbnail off the event loop.
+
+    `src_fileobj` is an UploadFile's SpooledTemporaryFile; sync reads of it are safe in a thread.
+    """
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(src_fileobj, f)
+    info = get_image_info(str(dest))
+    gen_meta = extract_generation_metadata(str(dest))
+    generate_thumbnail(str(dest), thumb_path)
+    return info, gen_meta
 
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
@@ -213,33 +220,14 @@ async def list_images(
         q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
 
     if caption_tokens_min is not None or caption_tokens_max is not None:
-        # "No caption" bucket (tokens < 1 == empty caption): use fast SQL filter.
-        if caption_tokens_min is None and caption_tokens_max is not None and caption_tokens_max <= 1:
-            q = q.where(func.trim(Image.caption_text) == "")
-        else:
-            # BPE encoding can't run in SQL; fetch a capped result set and
-            # filter in a thread executor so the event loop isn't blocked.
-            _TOKEN_FETCH_CAP = 5000
-            capped_result = await db.execute(q.limit(_TOKEN_FETCH_CAP))
-            all_rows = list(capped_result.scalars().all())
-            id_texts = [(img.id, img.caption_text) for img in all_rows]
-
-            def _filter_by_tokens() -> list[str]:
-                enc = _get_enc()
-                matching: list[str] = []
-                for row_id, caption_text in id_texts:
-                    trimmed = (caption_text or "").strip()
-                    tc = len(enc.encode_ordinary(trimmed)) if trimmed else 0
-                    if (caption_tokens_min is None or tc >= caption_tokens_min) and \
-                       (caption_tokens_max is None or tc < caption_tokens_max):
-                        matching.append(row_id)
-                return matching[(page - 1) * limit : page * limit]
-
-            page_ids = await asyncio.get_running_loop().run_in_executor(None, _filter_by_tokens)
-            if not page_ids:
-                return []
-            id_set = set(page_ids)
-            return [img for img in all_rows if img.id in id_set]
+        # Token counts are persisted in Image.caption_token_count (kept in sync by the
+        # caption_text listener), so filtering is plain SQL — min inclusive, max exclusive,
+        # empty caption = 0. No fetch cap, no in-Python BPE pass.
+        tc_expr = func.coalesce(Image.caption_token_count, 0)
+        if caption_tokens_min is not None:
+            q = q.where(tc_expr >= caption_tokens_min)
+        if caption_tokens_max is not None:
+            q = q.where(tc_expr < caption_tokens_max)
 
     q = q.offset((page - 1) * limit).limit(limit)
     result = await db.execute(q)
@@ -287,13 +275,10 @@ async def upload_images(
         slug = slugify_filename(raw_stem) or "image"
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(upload.file, f)
-
-        info = get_image_info(str(dest))
-        gen_meta = extract_generation_metadata(str(dest))
         thumb_path = str(dest_thumbs / (dest.stem + ".webp"))
-        await asyncio.get_event_loop().run_in_executor(None, generate_thumbnail, str(dest), thumb_path)
+        info, gen_meta = await asyncio.get_event_loop().run_in_executor(
+            None, _write_upload_sync, upload.file, dest, thumb_path
+        )
 
         img = Image(
             dataset_id=dataset_id,
@@ -829,6 +814,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
             images = result.scalars().all()
             for i, img in enumerate(images):
                 loop = asyncio.get_event_loop()
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 new_w, new_h = await loop.run_in_executor(
                     None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar
                 )

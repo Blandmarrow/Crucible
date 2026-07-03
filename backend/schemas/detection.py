@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel
+
+from backend.schemas import UtcDatetime
 
 
 class DetectionOut(BaseModel):
@@ -11,7 +11,7 @@ class DetectionOut(BaseModel):
     model: str
     task: str
     mask: str | None = None
-    detected_at: datetime
+    detected_at: UtcDatetime
 
     model_config = {"from_attributes": True}
 

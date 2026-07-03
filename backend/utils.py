@@ -1,8 +1,24 @@
 import re
 import shutil
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import HTTPException
+
+
+@lru_cache(maxsize=None)
+def _get_enc():
+    """Cached GPT-2 BPE encoder (tiktoken imported lazily to keep import cheap)."""
+    import tiktoken
+    return tiktoken.get_encoding("gpt2")
+
+
+def count_caption_tokens(text: str | None) -> int:
+    """GPT-2 BPE token count for a caption. Empty/whitespace/None → 0."""
+    trimmed = (text or "").strip()
+    if not trimmed:
+        return 0
+    return len(_get_enc().encode_ordinary(trimmed))
 
 ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
 

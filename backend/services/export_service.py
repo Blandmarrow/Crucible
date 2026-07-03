@@ -1,3 +1,4 @@
+import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
+from backend.workers.job_queue import job_queue
 
 # Only the columns the export loop actually reads — avoids loading multi-MB blob fields
 _EXPORT_COLS = (
@@ -136,6 +138,8 @@ async def _run_export_loop(
     exported = 0
 
     for i, img in enumerate(images):
+        if job_id:
+            job_queue.raise_if_cancelled(job_id)
         src = Path(img.file_path)
         if not captions_only and not src.exists():
             continue
@@ -147,7 +151,9 @@ async def _run_export_loop(
             dest_img = dest_dir / img.filename
         else:
             dest_img = _dest_img_path(dest_dir, img, output_format)
-            _write_image(src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata)
+            await asyncio.get_event_loop().run_in_executor(
+                None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata
+            )
 
         caption = _caption_text(img)
 

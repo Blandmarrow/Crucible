@@ -1,12 +1,11 @@
 import asyncio
+import logging
 import re
 import shutil
 import statistics
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
-
-import tiktoken
 
 from sqlalchemy import case, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +15,54 @@ from backend.models import Dataset, Image
 from backend.services.image_service import extract_generation_metadata, generate_thumbnail, get_image_info
 from backend.utils import copy_with_sidecar, read_caption_sidecar, thumbnail_path_for
 
+logger = logging.getLogger(__name__)
+
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
+
+# Cap on how many per-file error details we retain in a job summary (failed_count keeps the full tally).
+_MAX_FAILED_DETAILS = 50
+
+
+def _ingest_file_sync(
+    src_file: Path,
+    dest_file: Path,
+    thumb_path: str,
+    read_caption: bool,
+) -> tuple[dict, dict | None, str | None]:
+    """Copy an imported file and derive its metadata/thumbnail/caption.
+
+    Pure filesystem + CPU work (no DB session) so it can run in a single executor hop,
+    keeping the blocking copy/decode/phash/thumbnail off the event loop.
+    """
+    shutil.copy2(src_file, dest_file)
+    info = get_image_info(str(dest_file))
+    gen_meta = extract_generation_metadata(str(dest_file))
+    generate_thumbnail(str(dest_file), thumb_path)
+    caption = read_caption_sidecar(src_file) if read_caption else None
+    return info, gen_meta, caption
+
+
+def _register_file_sync(f: Path, thumb_path: str) -> tuple[dict, dict | None]:
+    """Derive metadata + thumbnail for a file already on disk (rescan new-file path)."""
+    info = get_image_info(str(f))
+    gen_meta = extract_generation_metadata(str(f))
+    generate_thumbnail(str(f), thumb_path)
+    return info, gen_meta
+
+
+def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb: Path) -> None:
+    """Copy an image (+ sidecar) and its existing thumbnail. Runs in an executor."""
+    copy_with_sidecar(old_path, new_path)
+    if old_thumb.exists():
+        shutil.copy2(old_thumb, new_thumb)
+
+
+def _copy_snapshot_image_sync(src_file: Path, new_path: Path, new_thumb: Path, caption_text: str) -> None:
+    """Copy a snapshot object into a new dataset, writing its sidecar + regenerating a thumbnail."""
+    shutil.copy2(src_file, new_path)
+    if caption_text:
+        new_path.with_suffix(".txt").write_text(caption_text, encoding="utf-8")
+    generate_thumbnail(str(new_path), str(new_thumb))
 
 
 def _name_to_slug(name: str) -> str:
@@ -184,8 +230,9 @@ async def import_images_from_folder(
     subfolder: str = "",
     preserve_structure: bool = False,
     import_captions: bool = True,
-) -> int:
+) -> dict:
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
     from backend.services.caption_service import _write_txt_sidecar
 
     src = Path(folder_path)
@@ -198,6 +245,8 @@ async def import_images_from_folder(
         image_files = [f for f in src.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
     total = len(image_files)
     added = 0
+    failed_count = 0
+    failed: list[dict] = []
 
     from backend.utils import slugify_filename, unique_filename_with_thumb
 
@@ -211,6 +260,8 @@ async def import_images_from_folder(
     planned_thumb_stems: set[str] = set()
 
     for i, src_file in enumerate(image_files):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             if preserve_structure:
                 rel_subfolder = str(src_file.parent.relative_to(src)).replace("\\", "/")
@@ -225,17 +276,11 @@ async def import_images_from_folder(
                 occupied_thumb_stems, planned_thumb_stems,
             )
             dest_file = dest_images / new_name
-
-            shutil.copy2(src_file, dest_file)
-
-            info = get_image_info(str(dest_file))
-            gen_meta = extract_generation_metadata(str(dest_file))
             thumb_path = str(dest_thumbs / (dest_file.stem + ".webp"))
-            await asyncio.get_event_loop().run_in_executor(
-                None, generate_thumbnail, str(dest_file), thumb_path
-            )
 
-            caption = read_caption_sidecar(src_file) if import_captions else None
+            info, gen_meta, caption = await asyncio.get_event_loop().run_in_executor(
+                None, _ingest_file_sync, src_file, dest_file, thumb_path, import_captions
+            )
 
             img = Image(
                 dataset_id=dataset.id,
@@ -254,8 +299,17 @@ async def import_images_from_folder(
                 _write_txt_sidecar(str(dest_file), caption)
             db.add(img)
             added += 1
-        except Exception:
-            pass  # skip broken files, continue import
+        except Exception as exc:  # skip broken files, continue import
+            failed_count += 1
+            if len(failed) < _MAX_FAILED_DETAILS:
+                failed.append({"file": src_file.name, "error": str(exc)})
+            logger.warning("import: failed for %s", src_file, exc_info=True)
+
+        # Commit periodically so completed work survives a crash/cancel mid-import and the
+        # gallery populates live. expire_on_commit=False (see database.py) means `dataset`
+        # attributes stay valid across these commits.
+        if (i + 1) % 200 == 0:
+            await db.commit()
 
         if job_id and i % 10 == 0:
             pct = round((i + 1) / total * 100, 1)
@@ -273,7 +327,9 @@ async def import_images_from_folder(
 
     await db.commit()
     await refresh_stats(db, dataset.id)
-    return added
+    if job_id:
+        job_queue.raise_if_cancelled(job_id)
+    return {"added": added, "failed_count": failed_count, "failed": failed}
 
 
 async def rescan_dataset(
@@ -290,6 +346,7 @@ async def rescan_dataset(
     Returns {added, captions_updated, missing, total_on_disk}.
     """
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     images_dir = Path(dataset.folder_path) / "images"
     if not images_dir.exists():
@@ -312,19 +369,23 @@ async def rescan_dataset(
     seen_filenames: set[str] = set()
     added = 0
     captions_updated = 0
+    failed_count = 0
+    failed: list[dict] = []
 
+    cancelled = False
     for i, f in enumerate(disk_files):
+        if job_id and job_queue.cancel_requested(job_id):
+            cancelled = True
+            break
         try:
             seen_filenames.add(f.name)
             caption = read_caption_sidecar(f) if import_captions else None
 
             existing_img = by_filename.get(f.name)
             if existing_img is None:
-                info = get_image_info(str(f))
-                gen_meta = extract_generation_metadata(str(f))
                 thumb_path = thumbnail_path_for(f)
-                await asyncio.get_event_loop().run_in_executor(
-                    None, generate_thumbnail, str(f), thumb_path
+                info, gen_meta = await asyncio.get_event_loop().run_in_executor(
+                    None, _register_file_sync, f, thumb_path
                 )
                 img = Image(
                     dataset_id=dataset.id,
@@ -347,8 +408,11 @@ async def rescan_dataset(
                 existing_img.captioned_by = "import"
                 existing_img.captioned_at = datetime.utcnow()
                 captions_updated += 1
-        except Exception:
-            pass  # skip broken files, continue rescan
+        except Exception as exc:  # skip broken files, continue rescan
+            failed_count += 1
+            if len(failed) < _MAX_FAILED_DETAILS:
+                failed.append({"file": f.name, "error": str(exc)})
+            logger.warning("rescan: failed for %s", f, exc_info=True)
 
         if job_id and i % 10 == 0:
             pct = round((i + 1) / total * 100, 1) if total else 100.0
@@ -364,7 +428,9 @@ async def rescan_dataset(
                 "message": f"Scanning {f.name}",
             })
 
-    missing = [
+    # When cancelled mid-scan, unscanned files would falsely appear "missing" — suppress
+    # the report in that case (partial add/caption results are still committed).
+    missing = [] if cancelled else [
         {"subfolder": img.subfolder or "", "filename": fn}
         for fn, img in by_filename.items()
         if fn not in seen_filenames
@@ -372,11 +438,15 @@ async def rescan_dataset(
 
     await db.commit()
     await refresh_stats(db, dataset.id)
+    if cancelled:
+        job_queue.raise_if_cancelled(job_id)
     return {
         "added": added,
         "captions_updated": captions_updated,
         "missing": missing,
         "total_on_disk": total,
+        "failed_count": failed_count,
+        "failed": failed,
     }
 
 
@@ -392,6 +462,7 @@ async def import_captions_from_folder(
     Existing captions are overwritten. Returns {matched, unmatched}.
     """
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
     from backend.services.caption_service import _write_txt_sidecar
 
     src = Path(folder_path)
@@ -411,7 +482,11 @@ async def import_captions_from_folder(
     matched = 0
     unmatched: list[str] = []
 
+    cancelled = False
     for i, txt in enumerate(txt_files):
+        if job_id and job_queue.cancel_requested(job_id):
+            cancelled = True
+            break
         try:
             stem = txt.stem
             img = by_original.get(stem) or by_filename.get(stem)
@@ -443,6 +518,8 @@ async def import_captions_from_folder(
 
     await db.commit()
     await refresh_stats(db, dataset.id)
+    if cancelled:
+        job_queue.raise_if_cancelled(job_id)
     return {"matched": matched, "unmatched": unmatched}
 
 
@@ -474,67 +551,14 @@ async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:
         await db.commit()
 
 
-async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
-    ds = await db.get(Dataset, dataset_id)
-    if not ds:
-        return {}
+def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dict:
+    """Pure-Python bucketing/aggregation for get_dataset_stats.
 
-    q = select(
-        Image.width, Image.height, Image.format,
-        Image.aesthetic_score, Image.caption_text,
-        Image.blur_score, Image.noise_score, Image.uniformity_score,
-        Image.watermark_score, Image.color_score, Image.saturation_score,
-        Image.file_size_bytes,
-        Image.style_similarity_score,
-    ).where(Image.dataset_id == dataset_id)
-    if subfolder is not None:
-        q = q.where(Image.subfolder == subfolder)
-    result = await db.execute(q)
-    rows = result.all()
-
-    # Score coverage: count rows where each score column is non-null.
-    _base_where = [Image.dataset_id == dataset_id]
-    if subfolder is not None:
-        _base_where.append(Image.subfolder == subfolder)
-    cov_row = (await db.execute(
-        select(
-            func.count(Image.aesthetic_score).label("aesthetic"),
-            func.count(Image.blur_score).label("technical"),
-            func.count(Image.watermark_score).label("watermark"),
-        ).where(*_base_where)
-    )).one()
-    score_cov = {
-        "aesthetic": cov_row.aesthetic,
-        "technical": cov_row.technical,
-        "watermark": cov_row.watermark,
-    }
-
-    # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
-    def _flag_sum(json_key: str):
-        return func.coalesce(
-            func.sum(case((func.json_extract(Image.quality_flags, f"$.{json_key}") == 1, 1), else_=0)), 0
-        )
-    flag_row = (await db.execute(
-        select(
-            _flag_sum("is_blurry").label("blurry"),
-            _flag_sum("is_noisy").label("noisy"),
-            _flag_sum("is_uniform").label("uniform"),
-            _flag_sum("has_watermark").label("watermarked"),
-            _flag_sum("is_duplicate").label("duplicate"),
-            _flag_sum("is_nsfw").label("nsfw"),
-            _flag_sum("has_ai_artifacts").label("ai_artifacts"),
-        ).where(*_base_where)
-    )).one()
-    flag_counts = {
-        "blurry": flag_row.blurry,
-        "noisy": flag_row.noisy,
-        "uniform": flag_row.uniform,
-        "watermarked": flag_row.watermarked,
-        "duplicate": flag_row.duplicate,
-        "nsfw": flag_row.nsfw,
-        "ai_artifacts": flag_row.ai_artifacts,
-    }
-
+    Runs in a thread executor so the whole per-row loop doesn't block the event loop.
+    All DB work (row fetch, coverage/flag/embedding counts) happens in the async caller;
+    this function only touches the already-materialized `rows`. Token counts come from the
+    persisted Image.caption_token_count column — no tokenization here.
+    """
     # Bucket edge/label definitions
     blur_edges =       [20, 40, 80, 150, 300]
     blur_labels =      ["0–20", "20–40", "40–80", "80–150", "150–300", "300+"]
@@ -577,7 +601,6 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     ssim_dist: dict[str, int] = {}
 
     captioned = 0
-    enc = tiktoken.get_encoding("gpt2")
 
     for r in rows:
         # Formats
@@ -649,28 +672,17 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
             b = _watermark_bucket(r.style_similarity_score)
             ssim_dist[b] = ssim_dist.get(b, 0) + 1
 
-        text = r.caption_text or ""
-        trimmed = text.strip()
+        trimmed = (r.caption_text or "").strip()
         if trimmed:
             captioned += 1
             wc = len(trimmed.split())
-            tc = len(enc.encode_ordinary(trimmed))
         else:
-            wc = tc = 0
+            wc = 0
+        tc = r.caption_token_count or 0
         b = _bucket(wc, wc_edges, wc_labels)
         wc_dist[b] = wc_dist.get(b, 0) + 1
         b = _bucket(tc, tc_edges, tc_labels)
         tc_dist[b] = tc_dist.get(b, 0) + 1
-
-    # Embedding coverage — separate count query to avoid loading blobs
-    embed_q = select(func.count(Image.id)).where(
-        Image.dataset_id == dataset_id,
-        Image.clip_embedding.isnot(None),
-    )
-    if subfolder is not None:
-        embed_q = embed_q.where(Image.subfolder == subfolder)
-    embed_count = await db.scalar(embed_q)
-    score_cov["embeddings"] = embed_count or 0
 
     total = len(rows)
     coverage = round(captioned / total * 100, 1) if total else 0.0
@@ -723,6 +735,83 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     }
 
 
+async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        return {}
+
+    q = select(
+        Image.width, Image.height, Image.format,
+        Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
+        Image.blur_score, Image.noise_score, Image.uniformity_score,
+        Image.watermark_score, Image.color_score, Image.saturation_score,
+        Image.file_size_bytes,
+        Image.style_similarity_score,
+    ).where(Image.dataset_id == dataset_id)
+    if subfolder is not None:
+        q = q.where(Image.subfolder == subfolder)
+    result = await db.execute(q)
+    rows = result.all()
+
+    # Score coverage: count rows where each score column is non-null.
+    _base_where = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        _base_where.append(Image.subfolder == subfolder)
+    cov_row = (await db.execute(
+        select(
+            func.count(Image.aesthetic_score).label("aesthetic"),
+            func.count(Image.blur_score).label("technical"),
+            func.count(Image.watermark_score).label("watermark"),
+        ).where(*_base_where)
+    )).one()
+    score_cov = {
+        "aesthetic": cov_row.aesthetic,
+        "technical": cov_row.technical,
+        "watermark": cov_row.watermark,
+    }
+
+    # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
+    def _flag_sum(json_key: str):
+        return func.coalesce(
+            func.sum(case((func.json_extract(Image.quality_flags, f"$.{json_key}") == 1, 1), else_=0)), 0
+        )
+    flag_row = (await db.execute(
+        select(
+            _flag_sum("is_blurry").label("blurry"),
+            _flag_sum("is_noisy").label("noisy"),
+            _flag_sum("is_uniform").label("uniform"),
+            _flag_sum("has_watermark").label("watermarked"),
+            _flag_sum("is_duplicate").label("duplicate"),
+            _flag_sum("is_nsfw").label("nsfw"),
+            _flag_sum("has_ai_artifacts").label("ai_artifacts"),
+        ).where(*_base_where)
+    )).one()
+    flag_counts = {
+        "blurry": flag_row.blurry,
+        "noisy": flag_row.noisy,
+        "uniform": flag_row.uniform,
+        "watermarked": flag_row.watermarked,
+        "duplicate": flag_row.duplicate,
+        "nsfw": flag_row.nsfw,
+        "ai_artifacts": flag_row.ai_artifacts,
+    }
+
+    # Embedding coverage — separate count query to avoid loading blobs (async, done before
+    # the CPU-bound aggregation below so that aggregation can run entirely off the event loop).
+    embed_q = select(func.count(Image.id)).where(
+        Image.dataset_id == dataset_id,
+        Image.clip_embedding.isnot(None),
+    )
+    if subfolder is not None:
+        embed_q = embed_q.where(Image.subfolder == subfolder)
+    embed_count = await db.scalar(embed_q)
+    score_cov["embeddings"] = embed_count or 0
+
+    return await asyncio.get_running_loop().run_in_executor(
+        None, _aggregate_dataset_stats, rows, ds, subfolder, score_cov, flag_counts
+    )
+
+
 async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
     q = select(
         Image.aesthetic_score,
@@ -737,37 +826,41 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
         Image.height,
         Image.file_size_bytes,
         Image.caption_text,
+        Image.caption_token_count,
     ).where(Image.dataset_id == dataset_id)
     if subfolder is not None:
         q = q.where(Image.subfolder == subfolder)
     result = await db.execute(q)
     rows = result.all()
 
-    score_fields = [
-        "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-        "watermark_score", "color_score", "saturation_score", "style_similarity_score",
-    ]
-    out: dict[str, list[float]] = {f: [] for f in score_fields}
-    out["megapixels"] = []
-    out["file_size_mb"] = []
-    out["caption_words"] = []
-    out["caption_tokens"] = []
+    # Pure-Python aggregation runs off the event loop; token counts come from the
+    # persisted column (no tokenization).
+    def _collect() -> dict:
+        score_fields = [
+            "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+            "watermark_score", "color_score", "saturation_score", "style_similarity_score",
+        ]
+        out: dict[str, list[float]] = {f: [] for f in score_fields}
+        out["megapixels"] = []
+        out["file_size_mb"] = []
+        out["caption_words"] = []
+        out["caption_tokens"] = []
 
-    enc = tiktoken.get_encoding("gpt2")
-    for row in rows:
-        for field in score_fields:
-            val = getattr(row, field)
-            if val is not None:
-                out[field].append(float(val))
-        if row.width and row.height:
-            out["megapixels"].append(row.width * row.height / 1_000_000)
-        if row.file_size_bytes:
-            out["file_size_mb"].append(row.file_size_bytes / 1_048_576)
-        trimmed = (row.caption_text or "").strip()
-        out["caption_words"].append(len(trimmed.split()) if trimmed else 0)
-        out["caption_tokens"].append(len(enc.encode_ordinary(trimmed)) if trimmed else 0)
+        for row in rows:
+            for field in score_fields:
+                val = getattr(row, field)
+                if val is not None:
+                    out[field].append(float(val))
+            if row.width and row.height:
+                out["megapixels"].append(row.width * row.height / 1_000_000)
+            if row.file_size_bytes:
+                out["file_size_mb"].append(row.file_size_bytes / 1_048_576)
+            trimmed = (row.caption_text or "").strip()
+            out["caption_words"].append(len(trimmed.split()) if trimmed else 0)
+            out["caption_tokens"].append(row.caption_token_count or 0)
+        return out
 
-    return out
+    return await asyncio.get_running_loop().run_in_executor(None, _collect)
 
 
 async def duplicate_dataset(
@@ -778,10 +871,12 @@ async def duplicate_dataset(
     source_version_id: str | None = None,
 ) -> str:
     """Deep-clone a dataset into a new one.  Returns the new dataset's id."""
-    import logging
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
-    log = logging.getLogger(__name__)
+    log = logger
+    cancelled = False
+    loop = asyncio.get_event_loop()
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
@@ -818,10 +913,13 @@ async def duplicate_dataset(
 
         # File copies + DB inserts — add() only after successful copy so no ghost records
         for i, (old_path, new_path, old_thumb, new_thumb, row) in enumerate(plan):
+            if job_queue.cancel_requested(job_id):
+                cancelled = True
+                break
             try:
-                copy_with_sidecar(old_path, new_path)
-                if old_thumb.exists():
-                    shutil.copy2(old_thumb, new_thumb)
+                await loop.run_in_executor(
+                    None, _copy_image_sync, old_path, new_path, old_thumb, new_thumb
+                )
                 db.add(Image(
                     id=str(uuid4()),
                     dataset_id=new_ds.id,
@@ -884,9 +982,11 @@ async def duplicate_dataset(
         states = result.scalars().all()
         total = len(states)
         skipped = 0
-        loop = asyncio.get_event_loop()
 
         for i, state in enumerate(states):
+            if job_queue.cancel_requested(job_id):
+                cancelled = True
+                break
             # Resolve source file: object store or current on-disk path
             if state.file_hash:
                 src_file = (
@@ -907,10 +1007,9 @@ async def duplicate_dataset(
             new_thumb = dest_thumbs / (Path(state.filename).stem + ".webp")
 
             try:
-                shutil.copy2(src_file, new_path)
-                if state.caption_text:
-                    new_path.with_suffix(".txt").write_text(state.caption_text, encoding="utf-8")
-                await loop.run_in_executor(None, generate_thumbnail, str(new_path), str(new_thumb))
+                await loop.run_in_executor(
+                    None, _copy_snapshot_image_sync, src_file, new_path, new_thumb, state.caption_text or "",
+                )
 
                 db.add(Image(
                     id=str(uuid4()),
@@ -962,6 +1061,8 @@ async def duplicate_dataset(
     # --- Step 3: commit and refresh stats ---
     await db.commit()
     await refresh_stats(db, new_ds.id)
+    if cancelled:
+        job_queue.raise_if_cancelled(job_id)
     return new_ds.id
 
 

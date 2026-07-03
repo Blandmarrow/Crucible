@@ -563,10 +563,21 @@ async def restore_snapshot(
         extra_ids = set(current_images.keys()) - target_image_ids
         for extra_id in extra_ids:
             extra_img = current_images[extra_id]
+            # Fire the COW hook so the pre-restore snapshot (created moments ago with a
+            # NULL hash for this image) backs the file up before it is unlinked, making the
+            # restore itself undoable in auto mode.
+            await mark_image_deleted_in_versions(extra_img.id, extra_img.file_path, db)
             try:
                 p = Path(extra_img.file_path)
                 if p.exists():
                     p.unlink()
+                sidecar = p.with_suffix(".txt")
+                if sidecar.exists():
+                    sidecar.unlink()
+                if extra_img.thumbnail_path:
+                    thumb = Path(extra_img.thumbnail_path)
+                    if thumb.exists():
+                        thumb.unlink()
             except Exception:
                 pass
             await db.delete(extra_img)

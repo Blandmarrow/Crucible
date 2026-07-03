@@ -8,6 +8,18 @@ import imagehash
 from PIL import Image, ImageOps
 
 from backend.config import settings
+from backend.utils import image_save_kwargs
+
+
+def _save_kwargs(path: str) -> dict:
+    """PIL save() kwargs for an in-place save, keyed off the file extension.
+
+    JPEG destinations get quality=95 + no chroma subsampling (via utils.image_save_kwargs)
+    so re-encoding on resize/crop doesn't silently drop to Pillow's default quality 75.
+    Other formats keep their defaults. Deliberately keyed on the existing suffix — these
+    are in-place saves whose filename is recorded in the DB, so the extension must not change.
+    """
+    return image_save_kwargs("JPEG") if Path(path).suffix.lower() in (".jpg", ".jpeg") else {}
 
 
 RESAMPLE_MAP = {
@@ -223,7 +235,7 @@ def resize_image(
         raise ValueError("Provide width, height, or scale")
 
     resized = img.resize((new_w, new_h), resampler)
-    resized.save(path)
+    resized.save(path, **_save_kwargs(path))
     return new_w, new_h
 
 
@@ -250,7 +262,7 @@ def crop_image_to_dest(
         cropped = cropped.resize((ow, output_height), Image.Resampling.LANCZOS)
     w, h = cropped.width, cropped.height
     phash_str = str(imagehash.phash(cropped))
-    cropped.save(dest_path)
+    cropped.save(dest_path, **_save_kwargs(dest_path))
     return {
         "width": w,
         "height": h,
@@ -279,7 +291,7 @@ def crop_to_aspect(path: str, target_ar: float, strategy: str = "center") -> tup
         x, y = 0, 0
 
     cropped = img.crop((x, y, x + new_w, y + new_h))
-    cropped.save(path)
+    cropped.save(path, **_save_kwargs(path))
     return cropped.width, cropped.height
 
 

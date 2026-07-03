@@ -13,7 +13,7 @@ class DatasetBranch(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    head_version_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("dataset_versions.id", use_alter=True, name="fk_branch_head"), nullable=True)
+    head_version_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("dataset_versions.id", use_alter=True, name="fk_branch_head", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     versions: Mapped[list["DatasetVersion"]] = relationship(

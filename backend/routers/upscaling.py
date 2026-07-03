@@ -94,7 +94,11 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 if dest_thumb_dir.exists():
                     occupied_thumb_stems = {p.stem for p in dest_thumb_dir.glob("*.webp")}
 
+            cancelled = False
             for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
                 src_path = Path(img.file_path)
                 dest_path_str: str
 
@@ -182,6 +186,8 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 })
 
             await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": total}

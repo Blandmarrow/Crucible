@@ -83,11 +83,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             from backend.ml.nudenet_scorer import detect_sync
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
+                job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
-                    job_row = await session.get(BackgroundJob, job_id)
-                    if job_row and job_row.status == "cancelled":
-                        raise asyncio.CancelledError()
-
                     detections: list[dict] = []
                     try:
                         fn = functools.partial(detect_sync, file_path, body.min_prob)
@@ -144,11 +141,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
+                job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
-                    job_row = await session.get(BackgroundJob, job_id)
-                    if job_row and job_row.status == "cancelled":
-                        raise asyncio.CancelledError()
-
                     detections = []
                     try:
                         fn = functools.partial(
@@ -214,11 +208,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         model_entry = await model_manager.load_florence2(variant)
 
         for i, (img_id, file_path, caption_text) in enumerate(image_data):
+            job_queue.raise_if_cancelled(job_id)
             async with AsyncSessionLocal() as session:
-                job_row = await session.get(BackgroundJob, job_id)
-                if job_row and job_row.status == "cancelled":
-                    raise asyncio.CancelledError()
-
                 prompt = caption_text if body.use_caption_as_prompt else body.custom_prompt
                 detections = []
                 try:

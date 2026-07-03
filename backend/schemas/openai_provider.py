@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field, field_validator
+
+from backend.schemas import UtcDatetime
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
@@ -51,7 +51,7 @@ class OpenAIProviderOut(BaseModel):
     max_image_px: int
     max_tokens: int
     is_remote: bool
-    created_at: datetime
+    created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
 

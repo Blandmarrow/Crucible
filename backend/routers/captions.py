@@ -54,13 +54,14 @@ async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSessi
         )
     except asyncio.TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
+    await refresh_stats(db, dataset_id)
     return {"updated": count}
 
 
 @router.post("/dataset/{dataset_id}/bulk-edit", response_model=BulkEditResponse)
 async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = Depends(get_db)):
     try:
-        return await bulk_edit_captions(
+        result = await bulk_edit_captions(
             db,
             dataset_id,
             operation=body.operation,
@@ -73,3 +74,5 @@ async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = D
         )
     except asyncio.TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
+    await refresh_stats(db, dataset_id)
+    return result

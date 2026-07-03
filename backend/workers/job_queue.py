@@ -15,6 +15,21 @@ class JobQueue:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._current_job_id: str | None = None
+        self._cancel_requested: set[str] = set()
+
+    def request_cancel(self, job_id: str) -> None:
+        """Flag a running job for cooperative cancellation. Loops check this flag."""
+        self._cancel_requested.add(job_id)
+
+    def cancel_requested(self, job_id: str) -> bool:
+        """Non-raising cancellation check for loops that keep partial results."""
+        return job_id in self._cancel_requested
+
+    def raise_if_cancelled(self, job_id: str) -> None:
+        """Raise CancelledError if the job was cancelled — for loops with per-item
+        commits (or additive file output) where nothing needs preserving on stop."""
+        if job_id in self._cancel_requested:
+            raise asyncio.CancelledError()
 
     async def start(self) -> None:
         self._worker_task = asyncio.create_task(self._worker())
@@ -58,6 +73,7 @@ class JobQueue:
                 if job_row and job_row.status == "cancelled":
                     # Cancelled while waiting in the queue — skip it
                     self._current_job_id = None
+                    self._cancel_requested.discard(job.id)
                     self._queue.task_done()
                     await broadcaster.emit(job.id, {
                         "type": "progress",
@@ -137,6 +153,7 @@ class JobQueue:
                 })
             finally:
                 self._current_job_id = None
+                self._cancel_requested.discard(job.id)
                 self._queue.task_done()
 
 

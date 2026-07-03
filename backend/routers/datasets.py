@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.utils import normalize_subfolder
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -45,15 +45,23 @@ async def list_datasets(
     previews: defaultdict[str, list[str]] = defaultdict(list)
     if datasets:
         ds_ids = [ds.id for ds in datasets]
-        rows = (await db.execute(
-            select(Image.dataset_id, Image.id)
+        # Window function: rank images within each dataset by created_at and keep only
+        # the first 8 per dataset, so cost is O(datasets) instead of O(total library).
+        rn = func.row_number().over(
+            partition_by=Image.dataset_id, order_by=Image.created_at
+        ).label("rn")
+        ranked = (
+            select(Image.dataset_id, Image.id, rn)
             .where(Image.dataset_id.in_(ds_ids))
-            .order_by(Image.dataset_id, Image.created_at)
+            .subquery()
+        )
+        rows = (await db.execute(
+            select(ranked.c.dataset_id, ranked.c.id)
+            .where(ranked.c.rn <= 8)
+            .order_by(ranked.c.dataset_id, ranked.c.rn)
         )).all()
         for row in rows:
-            did, iid = row[0], row[1]
-            if len(previews[did]) < 8:
-                previews[did].append(iid)
+            previews[row[0]].append(row[1])
 
     return [
         DatasetOut(
@@ -196,13 +204,17 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
             ds2 = await session.get(Dataset, dataset_id)
-            await import_images_from_folder(
+            summary = await import_images_from_folder(
                 session, ds2, body.folder_path,
                 job_id=job_id,
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
                 import_captions=body.import_captions,
             )
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = summary
+                await session.commit()
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

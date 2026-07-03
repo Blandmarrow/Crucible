@@ -63,11 +63,13 @@ Key functions:
 
 | File | Operation |
 |---|---|
-| `backend/routers/images.py` | `resize` endpoint, batch crop `_run` — calls `protect_file_before_overwrite` |
+| `backend/routers/images.py` | `resize` endpoint, batch crop `_run`, batch resize `_run` — calls `protect_file_before_overwrite` |
 | `backend/routers/images.py` | `crop` endpoint, replace=True branch — calls `protect_file_before_overwrite` |
-| `backend/routers/images.py` | `delete_image`, `batch_delete` — calls `mark_image_deleted_in_versions` |
+| `backend/routers/images.py` | `delete_image`, `batch_delete`, `bulk_delete_filtered` (`POST /images/bulk-delete`) — calls `mark_image_deleted_in_versions` |
 | `backend/routers/upscaling.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
+| `backend/routers/quality.py` | `resolve_duplicates`, delete branch — calls `mark_image_deleted_in_versions` per row, then `refresh_stats` per dataset |
+| `backend/services/version_service.py` | `restore_snapshot`, `handle_extra_images="remove"` branch — calls `mark_image_deleted_in_versions` before unlinking each extra (backs it up into the pre-restore snapshot, making the restore undoable); also unlinks the extra's `.txt` sidecar and thumbnail |
 
 **Frontend**:
 - `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch). Active branch persisted to `sessionStorage` under `VERSIONS_BRANCH_KEY-${datasetId}`; falls back to `dataset.current_branch_id`, then `branches[0]`. `resolvedBranchId = activeBranch?.id` is passed to `BranchSelector` (not raw `activeBranchId`) so the dropdown stays in sync after restarts. A `useRef`+`useEffect` watches `dataset.current_branch_id` post-mount; the guard (`prev !== undefined`) prevents the initial data load from clobbering the stored preference.

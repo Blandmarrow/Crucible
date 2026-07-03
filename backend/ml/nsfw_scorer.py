@@ -44,12 +44,15 @@ async def score_images_nsfw_batch(
     Returns a list of dicts with keys: nsfw_score (float), is_nsfw (bool).
     """
     from backend.workers.progress import broadcaster
+    from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
+        if job_id and job_queue.cancel_requested(job_id):
+            break
         try:
             fn = functools.partial(score_image_sync, path, model_entry)
             score = await loop.run_in_executor(None, fn)

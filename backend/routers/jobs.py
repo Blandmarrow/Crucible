@@ -8,6 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 from backend.database import get_db
 from backend.models import BackgroundJob
 from backend.schemas.job import JobOut
+from backend.workers.job_queue import job_queue
 from backend.workers.progress import broadcaster
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -37,6 +38,7 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
     if job.status in ("running", "pending"):
         job.status = "cancelled"
         await db.commit()
+        job_queue.request_cancel(job_id)
 
 
 @router.get("/stream/{job_id}")

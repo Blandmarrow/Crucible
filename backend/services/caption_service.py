@@ -14,6 +14,22 @@ from backend.models import Image
 from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
 
 
+def _maybe_clear_ai_artifact(img: Image, caption_text: str | None) -> None:
+    """Clear the ``has_ai_artifacts`` flag when a caption becomes empty.
+
+    ``has_ai_artifacts`` describes cruft in the caption text (thinking blocks,
+    hedging phrases), so an empty caption can't have artifacts. No-op unless the
+    flag is actually set. Copies the JSON dict before mutating per the
+    never-mutate-in-place invariant.
+    """
+    if caption_text and caption_text.strip():
+        return
+    if img.quality_flags and img.quality_flags.get("has_ai_artifacts"):
+        flags = dict(img.quality_flags)
+        flags["has_ai_artifacts"] = False
+        img.quality_flags = flags
+
+
 async def get_caption(db: AsyncSession, image_id: str) -> dict:
     img = await db.get(Image, image_id)
     if not img:
@@ -43,7 +59,10 @@ async def set_caption(
     img.captioned_by = captioned_by
     img.captioned_at = datetime.utcnow()
 
-    if has_ai_artifacts is not None:
+    if not (caption_text and caption_text.strip()):
+        # Removing the caption unmarks a previously flagged image.
+        _maybe_clear_ai_artifact(img, caption_text)
+    elif has_ai_artifacts is not None:
         flags = dict(img.quality_flags or {})
         flags["has_ai_artifacts"] = has_ai_artifacts
         img.quality_flags = flags
@@ -115,6 +134,7 @@ async def bulk_edit_captions(
             img = img_map[img_id]
             img.caption_text = new_text
             img.captioned_at = datetime.utcnow()
+            _maybe_clear_ai_artifact(img, new_text)
             _write_txt_sidecar(img.file_path, new_text)
             affected += 1
         skipped = len(images) - affected
@@ -152,6 +172,7 @@ async def bulk_edit_captions(
 
         img.caption_text = new_text
         img.captioned_at = datetime.utcnow()
+        _maybe_clear_ai_artifact(img, new_text)
         _write_txt_sidecar(img.file_path, new_text)
         affected += 1
 
@@ -203,6 +224,7 @@ async def find_replace_captions(
         for img_id, new_text in new_texts.items():
             img = img_map[img_id]
             img.caption_text = new_text
+            _maybe_clear_ai_artifact(img, new_text)
             _write_txt_sidecar(img.file_path, new_text)
             updated += 1
         await db.commit()
@@ -213,6 +235,7 @@ async def find_replace_captions(
         new = old.replace(find, replace)
         if new != old:
             img.caption_text = new
+            _maybe_clear_ai_artifact(img, new)
             _write_txt_sidecar(img.file_path, new)
             updated += 1
     await db.commit()

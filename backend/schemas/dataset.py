@@ -1,5 +1,6 @@
-from datetime import datetime
 from pydantic import BaseModel, Field
+
+from backend.schemas import UtcDatetime
 
 
 class DatasetCreate(BaseModel):
@@ -53,8 +54,8 @@ class DatasetOut(BaseModel):
     description: str
     category: str = ""
     folder_path: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
     image_count: int
     captioned_count: int
     total_size_bytes: int

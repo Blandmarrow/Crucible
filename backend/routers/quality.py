@@ -2,6 +2,7 @@ import asyncio
 import base64
 import functools
 
+import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from pathlib import Path
@@ -12,10 +13,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
+from backend.services import version_service
+from backend.services.dataset_service import refresh_stats
 from backend.utils import normalize_subfolder
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/quality", tags=["quality"])
+
+# Per-layer DINOv2 blob layout: 12 transformer layers × 768 dims × float16.
+_DINO_LAYERS = 12
+_DINO_DIM = 768
+
+
+def _decode_dino_layers(blob: bytes) -> np.ndarray:
+    """Decode a per-layer DINOv2 blob into an (12, 768) float32 array (rows already L2-normalized)."""
+    return np.frombuffer(blob, dtype=np.float16).reshape(_DINO_LAYERS, _DINO_DIM).astype(np.float32)
+
+
+def _mean_layer_refs(ref_blobs: list[bytes]) -> np.ndarray:
+    """Per-layer normalized mean reference embedding, shape (12, 768).
+
+    Mirrors compute_style_similarity's normalize-then-dot pattern applied
+    independently to each of the 12 layers: stack the references, mean over
+    references per layer, then L2-normalize each layer's mean vector.
+    """
+    ref_stack = np.stack([_decode_dino_layers(b) for b in ref_blobs])  # (R, 12, 768)
+    mean = ref_stack.mean(axis=0)  # (12, 768)
+    norms = np.linalg.norm(mean, axis=1, keepdims=True)  # (12, 1)
+    return mean / (norms + 1e-8)
 
 
 class ScoreRequest(BaseModel):
@@ -141,50 +166,56 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                 paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
             )
 
+        # Any of the *_results lists may be shorter than `ids` if the job was cancelled
+        # mid-batch (scorers return partial results). Guard every indexed access with
+        # `i < len(...)` so completed work still persists.
         async with AsyncSessionLocal() as session:
             for i, img_id in enumerate(ids):
                 img = await session.get(Image, img_id)
                 if not img:
                     continue
-                if aesthetic_scores:
+                if i < len(aesthetic_scores):
                     img.aesthetic_score = aesthetic_scores[i]
-                if technical_results:
+                if i < len(technical_results):
                     t = technical_results[i]
                     img.blur_score = t.get("blur_score")
                     img.noise_score = t.get("noise_score")
                     img.uniformity_score = t.get("uniformity_score")
                     img.color_score = t.get("color_score")
                     img.saturation_score = t.get("saturation_score")
-                    flags = img.quality_flags or {}
+                    flags = dict(img.quality_flags or {})
                     flags["is_blurry"] = t.get("is_blurry", False)
                     flags["is_noisy"] = t.get("is_noisy", False)
                     flags["is_uniform"] = t.get("is_uniform", False)
                     img.quality_flags = flags
-                if watermark_results:
+                if i < len(watermark_results):
                     w = watermark_results[i]
                     img.watermark_score = w.get("watermark_score")
-                    flags = img.quality_flags or {}
+                    flags = dict(img.quality_flags or {})
                     flags["has_watermark"] = w.get("has_watermark", False)
                     img.quality_flags = flags
-                if clip_embeddings:
+                if i < len(clip_embeddings):
                     img.clip_embedding = clip_embeddings[i]
-                if dino_embeddings:
+                if i < len(dino_embeddings):
                     img.dino_embedding = dino_embeddings[i]
-                if dino_layer_embeddings:
+                if i < len(dino_layer_embeddings):
                     img.dino_layer_embeddings = dino_layer_embeddings[i]
-                if nsfw_results:
+                if i < len(nsfw_results):
                     n = nsfw_results[i]
                     img.nsfw_score = n.get("nsfw_score")
-                    flags = img.quality_flags or {}
+                    flags = dict(img.quality_flags or {})
                     flags["is_nsfw"] = n.get("is_nsfw", False)
                     img.quality_flags = flags
             await session.commit()
 
+        # Persist completed work before honoring the cancellation.
+        job_queue.raise_if_cancelled(job_id)
+
         # Detect duplicates after scoring
         if body.run_technical:
-            await _flag_duplicates(body.dataset_id, int(thresholds.duplicate_threshold))
+            await _flag_duplicates(job_id, body.dataset_id, int(thresholds.duplicate_threshold))
 
-    async def _flag_duplicates(dataset_id: str, duplicate_threshold: int) -> None:
+    async def _flag_duplicates(job_id: str, dataset_id: str, duplicate_threshold: int) -> None:
         from backend.database import AsyncSessionLocal
         from backend.ml.technical_scorer import find_duplicates_sync
 
@@ -197,19 +228,31 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             )
             phashes = [(r.id, r.phash) for r in result.all()]
 
+        # The O(N²) scan itself is uninterruptible; skip it entirely if cancelled.
+        job_queue.raise_if_cancelled(job_id)
         fn = functools.partial(find_duplicates_sync, phashes, duplicate_threshold)
         groups = await asyncio.get_running_loop().run_in_executor(None, fn)
 
+        # Map each duplicate image id to the group root it should point at.
+        dup_of: dict[str, str] = {}
+        for group in groups:
+            keep = group[0]
+            for dup_id in group[1:]:
+                dup_of[dup_id] = keep
+        if not dup_of:
+            return
+
         async with AsyncSessionLocal() as session:
-            for group in groups:
-                keep = group[0]
-                for dup_id in group[1:]:
-                    img = await session.get(Image, dup_id)
-                    if img:
-                        flags = img.quality_flags or {}
-                        flags["is_duplicate"] = True
-                        flags["duplicate_of"] = keep
-                        img.quality_flags = flags
+            affected_ids = list(dup_of.keys())
+            # Chunk the in_() to stay well under SQLite's ~32k bound-parameter limit.
+            for start in range(0, len(affected_ids), 10000):
+                chunk = affected_ids[start : start + 10000]
+                result = await session.execute(select(Image).where(Image.id.in_(chunk)))
+                for img in result.scalars().all():
+                    flags = dict(img.quality_flags or {})
+                    flags["is_duplicate"] = True
+                    flags["duplicate_of"] = dup_of[img.id]
+                    img.quality_flags = flags
             await session.commit()
 
     await job_queue.enqueue(job, _run)
@@ -248,6 +291,39 @@ async def compute_style_similarity(
         select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id, *id_filter)
     )
     total_images = total_count_result.scalar() or 0
+
+    async def _score_all_layers_paginated(select_cols, extra_filters, score_chunk) -> int:
+        """Keyset-paginate the candidate set and score each chunk off the event loop.
+
+        Avoids loading every ~18 KB per-layer blob into one result set (~1.8 GB at
+        100k images). `score_chunk(rows) -> list[dict]` runs in an executor; `rows`
+        are SQLAlchemy Rows whose first column is `Image.id`. Returns the number of
+        rows updated. Used by both all-layers branches.
+        """
+        last_id = ""
+        total_updated = 0
+        while True:
+            chunk_rows = (await db.execute(
+                select(*select_cols)
+                .where(
+                    Image.dataset_id == body.dataset_id,
+                    *extra_filters,
+                    *id_filter,
+                    Image.id > last_id,
+                )
+                .order_by(Image.id)
+                .limit(2000)
+            )).all()
+            if not chunk_rows:
+                break
+            updates = await loop.run_in_executor(None, score_chunk, chunk_rows)
+            if updates:
+                await db.execute(update(Image), updates)
+                total_updated += len(updates)
+            last_id = chunk_rows[-1][0]
+        if total_updated:
+            await db.commit()
+        return total_updated
 
     # --- CLIP branch (unchanged behaviour) ---
     if body.embedding_type == "clip":
@@ -367,7 +443,40 @@ async def compute_style_similarity(
         ref_clip = [r[1] for r in ref_rows]
         ref_dino_raw = [r[2] for r in ref_rows]  # either dino_embedding bytes or dino_layer_embeddings bytes
 
-        # Fetch candidates
+        if body.embedding_type == "combined_all_layers":
+            # Score CLIP + each DINOv2 layer independently, store in dino_layer_scores.
+            # Reference work is hoisted out of the per-candidate loop: the CLIP score
+            # doesn't depend on the layer (one _cosine_sim call per chunk), and the
+            # per-layer normalized mean reference is computed once here.
+            mean_refs = _mean_layer_refs(ref_dino_raw)  # (12, 768)
+
+            def _score_chunk_combined(chunk_rows) -> list[dict]:
+                ids = [r[0] for r in chunk_rows]
+                clip_blobs = [r[1] for r in chunk_rows]
+                dino_blobs = [r[2] for r in chunk_rows]
+                clip_scores = _cosine_sim(ref_clip, clip_blobs)  # (N,), rounded to 4
+                cand = np.stack([_decode_dino_layers(b) for b in dino_blobs])  # (N, 12, 768)
+                # Per-layer cosine sim to the normalized mean ref (matches compute_style_similarity).
+                dino_by_layer = [cand[:, l, :] @ mean_refs[l] for l in range(_DINO_LAYERS)]
+                results = []
+                for n, img_id in enumerate(ids):
+                    layer_scores: dict[str, float] = {}
+                    for l in range(_DINO_LAYERS):
+                        d = float(round(float(dino_by_layer[l][n]), 4))
+                        layer_scores[str(l + 1)] = round(0.38 * clip_scores[n] + 0.62 * d, 4)
+                    results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
+                return results
+
+            updated = await _score_all_layers_paginated(
+                (Image.id, Image.clip_embedding, Image.dino_layer_embeddings),
+                (Image.clip_embedding.isnot(None), Image.dino_layer_embeddings.isnot(None)),
+                _score_chunk_combined,
+            )
+            if updated == 0:
+                raise HTTPException(status_code=400, detail="No dataset images have both CLIP and per-layer DINOv2 embeddings. Run per-layer embedding extraction first.")
+            return {"updated": updated, "skipped": total_images - updated}
+
+        # Single layer or final layer combined score
         if use_layer_col:
             cand_result = await db.execute(
                 select(Image.id, Image.clip_embedding, Image.dino_layer_embeddings)
@@ -400,41 +509,19 @@ async def compute_style_similarity(
         cand_clip = [r[1] for r in cand_rows_full]
         cand_dino_raw = [r[2] for r in cand_rows_full]
 
-        if body.embedding_type == "combined_all_layers":
-            # Score CLIP + each DINOv2 layer independently, store in dino_layer_scores
-            def _combined_all_layers() -> list[dict]:
-                results = []
-                for i, (img_id, _, blob) in enumerate(cand_rows_full):
-                    layer_scores: dict[str, float] = {}
-                    for lyr in range(1, 13):
-                        r_slices = [slice_layer_embedding(b, lyr) for b in ref_dino_raw]
-                        c_slice = slice_layer_embedding(blob, lyr)
-                        dino_scores = _cosine_sim(r_slices, [c_slice])
-                        clip_scores = _cosine_sim(ref_clip, [cand_clip[i]])
-                        layer_scores[str(lyr)] = round(0.38 * clip_scores[0] + 0.62 * dino_scores[0], 4)
-                    results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
-                return results
-
-            updates = await loop.run_in_executor(None, _combined_all_layers)
-            await db.execute(update(Image), updates)
-            await db.commit()
-            return {"updated": len(updates), "skipped": total_images - len(updates)}
+        if layer is not None:
+            ref_dino = [slice_layer_embedding(b, layer) for b in ref_dino_raw]
+            cand_dino = [slice_layer_embedding(b, layer) for b in cand_dino_raw]
         else:
-            # Single layer or final layer combined score
-            if layer is not None:
-                ref_dino = [slice_layer_embedding(b, layer) for b in ref_dino_raw]
-                cand_dino = [slice_layer_embedding(b, layer) for b in cand_dino_raw]
-            else:
-                ref_dino = ref_dino_raw
-                cand_dino = cand_dino_raw
-            scores = await loop.run_in_executor(None, compute_combined_similarity, ref_clip, cand_clip, ref_dino, cand_dino)
-            await db.execute(update(Image), [{"id": r[0], "style_similarity_score": s} for r, s in zip(cand_rows_full, scores)])
-            await db.commit()
-            return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full)}
+            ref_dino = ref_dino_raw
+            cand_dino = cand_dino_raw
+        scores = await loop.run_in_executor(None, compute_combined_similarity, ref_clip, cand_clip, ref_dino, cand_dino)
+        await db.execute(update(Image), [{"id": r[0], "style_similarity_score": s} for r, s in zip(cand_rows_full, scores)])
+        await db.commit()
+        return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full)}
 
     # --- All DINOv2 layers branch ---
     if body.embedding_type == "dino_all_layers":
-        from backend.ml.dino_scorer import slice_layer_embedding
         col = Image.dino_layer_embeddings
         ref_blobs: list[bytes] = []
         if body.reference_image_ids:
@@ -444,30 +531,29 @@ async def compute_style_similarity(
             ref_blobs.extend(r[1] for r in ref_result.all() if r[1] is not None)
         if not ref_blobs:
             raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
-        cand_result = await db.execute(
-            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-        )
-        cand_rows_blobs = [(r[0], r[1]) for r in cand_result.all()]
-        if not cand_rows_blobs:
-            raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for dataset images. Run per-layer embedding extraction first.")
 
-        # Compute similarity for each layer independently, in a single executor call
-        def _all_layer_scores() -> list[dict]:
+        # Per-layer normalized mean reference, computed once (hoisted out of the loop).
+        mean_refs = _mean_layer_refs(ref_blobs)  # (12, 768)
+
+        def _score_chunk_dino(chunk_rows) -> list[dict]:
+            ids = [r[0] for r in chunk_rows]
+            dino_blobs = [r[1] for r in chunk_rows]
+            cand = np.stack([_decode_dino_layers(b) for b in dino_blobs])  # (N, 12, 768)
+            dino_by_layer = [cand[:, l, :] @ mean_refs[l] for l in range(_DINO_LAYERS)]
             results = []
-            for img_id, blob in cand_rows_blobs:
-                layer_scores: dict[str, float] = {}
-                for layer in range(1, 13):
-                    r_slices = [slice_layer_embedding(b, layer) for b in ref_blobs]
-                    c_slice = slice_layer_embedding(blob, layer)
-                    score = _cosine_sim(r_slices, [c_slice])[0]
-                    layer_scores[str(layer)] = score
+            for n, img_id in enumerate(ids):
+                layer_scores = {str(l + 1): float(round(float(dino_by_layer[l][n]), 4)) for l in range(_DINO_LAYERS)}
                 results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
             return results
 
-        updates = await loop.run_in_executor(None, _all_layer_scores)
-        await db.execute(update(Image), updates)
-        await db.commit()
-        return {"updated": len(updates), "skipped": total_images - len(updates)}
+        updated = await _score_all_layers_paginated(
+            (Image.id, Image.dino_layer_embeddings),
+            (Image.dino_layer_embeddings.isnot(None),),
+            _score_chunk_dino,
+        )
+        if updated == 0:
+            raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for dataset images. Run per-layer embedding extraction first.")
+        return {"updated": updated, "skipped": total_images - updated}
 
     raise HTTPException(status_code=422, detail=f"Unknown embedding_type '{body.embedding_type}'. Use 'clip', 'dino', 'combined', or 'dino_all_layers'.")
 
@@ -497,13 +583,15 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
 async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(get_db)):
     if body.delete_ids:
         result = await db.execute(
-            select(Image.id, Image.file_path, Image.thumbnail_path)
+            select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
             .where(Image.id.in_(body.delete_ids))
         )
         rows = result.all()
+        dataset_ids = {r.dataset_id for r in rows}
         files_to_delete: list[Path] = []
         for r in rows:
             p = Path(r.file_path)
+            await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
             files_to_delete.append(p)
             files_to_delete.append(p.with_suffix(".txt"))
             if r.thumbnail_path:
@@ -515,10 +603,13 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         for f in files_to_delete:
             f.unlink(missing_ok=True)
 
+        for did in dataset_ids:
+            await refresh_stats(db, did)
+
     for img_id in body.keep_ids:
         img = await db.get(Image, img_id)
         if img:
-            flags = img.quality_flags or {}
+            flags = dict(img.quality_flags or {})
             flags.pop("is_duplicate", None)
             flags.pop("duplicate_of", None)
             img.quality_flags = flags

@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
+
+from backend.schemas import UtcDatetime
 
 
 class BranchOut(BaseModel):
@@ -10,7 +11,7 @@ class BranchOut(BaseModel):
     name: str
     head_version_id: str | None
     head_version_name: str | None = None
-    created_at: datetime
+    created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
 
@@ -33,7 +34,7 @@ class VersionOut(BaseModel):
     name: str | None
     description: str
     image_count: int
-    created_at: datetime
+    created_at: UtcDatetime
     source: Literal["manual", "pre_restore", "branch_init"]
     is_pinned: bool
 

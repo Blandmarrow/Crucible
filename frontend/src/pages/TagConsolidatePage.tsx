@@ -254,13 +254,13 @@ export default function TagConsolidatePage() {
         </p>
       </div>
 
-      {subfolders.length > 0 && (
+      {subfolders.some((s) => s.path) && (
         <div className="flex items-center gap-2">
           <label className="label mb-0">Scope</label>
           <select className="input" value={subfolder ?? ""} onChange={(e) => setSubfolder(e.target.value || undefined)}>
             <option value="">All subfolders</option>
-            {subfolders.map((s) => (
-              <option key={s.path} value={s.path}>{s.path}</option>
+            {subfolders.filter((s) => s.path).map((s) => (
+              <option key={s.path} value={s.path}>{s.path} ({s.image_count})</option>
             ))}
           </select>
         </div>

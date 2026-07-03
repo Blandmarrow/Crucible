@@ -225,7 +225,7 @@ export default function BulkEditPage() {
       )}
 
       {/* Subfolder filter — shown when subfolders exist and scope is not "selected" */}
-      {subfolders.length > 0 && scope !== "selected" && (
+      {subfolders.some((sf) => sf.path) && scope !== "selected" && (
         <div className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-h">Subfolder</div>
           <div className="panel-b">
@@ -235,9 +235,9 @@ export default function BulkEditPage() {
               onChange={(e) => setActiveSubfolder(e.target.value || undefined)}
             >
               <option value="">All subfolders</option>
-              {subfolders.map((sf) => (
+              {subfolders.filter((sf) => sf.path).map((sf) => (
                 <option key={sf.path} value={sf.path}>
-                  {sf.path === "" ? "(root)" : sf.path}
+                  {sf.path} ({sf.image_count})
                 </option>
               ))}
             </select>

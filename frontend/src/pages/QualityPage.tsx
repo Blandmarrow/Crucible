@@ -296,7 +296,7 @@ export default function QualityPage() {
           <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
             Reset to defaults
           </button>
-          {subfolders.length > 0 && (
+          {subfolders.some((sf) => sf.path) && (
             <select
               className="select"
               value={activeSubfolder ?? ""}
@@ -305,7 +305,7 @@ export default function QualityPage() {
               disabled={isRunning}
             >
               <option value="">All subfolders</option>
-              {subfolders.map((sf) => (
+              {subfolders.filter((sf) => sf.path).map((sf) => (
                 <option key={sf.path} value={sf.path}>{sf.path} ({sf.image_count})</option>
               ))}
             </select>

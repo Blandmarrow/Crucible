@@ -1012,7 +1012,7 @@ export default function CaptioningPage() {
               </div>
 
               {/* Subfolder */}
-              {subfolders.length > 0 && (
+              {subfolders.some((sf) => sf.path) && (
                 <div className="form-row">
                   <div className="lbl-col">
                     <h4>Subfolder</h4>
@@ -1024,8 +1024,8 @@ export default function CaptioningPage() {
                     onChange={(e) => setActiveSubfolder(e.target.value || undefined)}
                   >
                     <option value="">All subfolders</option>
-                    {subfolders.map((sf) => (
-                      <option key={sf.path} value={sf.path}>{sf.path || "(root)"} ({sf.image_count})</option>
+                    {subfolders.filter((sf) => sf.path).map((sf) => (
+                      <option key={sf.path} value={sf.path}>{sf.path} ({sf.image_count})</option>
                     ))}
                   </select>
                 </div>

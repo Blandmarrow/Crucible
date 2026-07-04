@@ -1,6 +1,6 @@
 # Crucible
 
-A local web-based application for building, curating, and exporting Stable Diffusion training datasets. Manage your image collections with AI-powered captioning, multi-metric quality scoring, and flexible export to the most common training formats.
+A local web-based application that takes your text-to-image diffusion training datasets — Stable Diffusion, SDXL, Flux, and more — from a raw folder of images all the way to a training-ready export, the entire pipeline in one place. Import and organize, caption with local ML models (Florence-2, JoyCaption, WD14) or any OpenAI-compatible API, score and curate across multiple quality metrics, detect and segment objects, consolidate tags, and version your work with snapshots and branches — then export straight to Kohya or AI Toolkit.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -12,22 +12,54 @@ A local web-based application for building, curating, and exporting Stable Diffu
 
 ---
 
+## Workflow
+
+Crucible covers the entire dataset-preparation pipeline — from a raw folder of images to a training-ready export — in one place:
+
+```
+Import  →  Organize  →  Caption  →  Score & Curate  →  Refine  →  Version  →  Export
+```
+
+1. **Import** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/features.md#datasets--gallery)
+2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
+3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
+4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
+5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/features.md#batch-operations)
+6. **Version** — capture named snapshots and branches, and restore any prior state → [details](docs/versioning.md)
+7. **Export** — output to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
+
+---
+
 ## Features
 
+### Dataset management
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/features.md#datasets--gallery)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
+
+### Captioning
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
+
+### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
-- **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
+
+### Object detection
+- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, or Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts → [details](docs/features.md#object-detection)
+
+### Editing & processing
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
 - **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/features.md#tag-consolidation)
 - **Process** images with ML upscaling and LUT color grading → [details](docs/features.md#image-processing)
-- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, or Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts → [details](docs/features.md#object-detection)
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
+
+### Versioning & export
+- **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
+
+### Workspace & tooling
+- **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/features.md#statistics-dashboard)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
-- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/features.md#file-browser)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/features.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/features.md#logs)

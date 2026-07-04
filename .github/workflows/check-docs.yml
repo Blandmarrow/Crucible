@@ -1,0 +1,30 @@
+name: check-docs
+
+# Runs the documentation drift check (scripts/check_docs.py). Fails the build on
+# broken repo-path references or the `@docs/`/`@CLAUDE` auto-load footgun; size and
+# Documentation Map <-> file mismatches are warnings only. Stdlib-only, no deps.
+
+on:
+  pull_request:
+    paths:
+      - "CLAUDE.md"
+      - "docs/dev/**"
+      - "scripts/check_docs.py"
+      - ".github/workflows/check-docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "CLAUDE.md"
+      - "docs/dev/**"
+      - "scripts/check_docs.py"
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run documentation drift check
+        run: python scripts/check_docs.py

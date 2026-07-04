@@ -83,51 +83,80 @@ when your task touches that subsystem — do not read all of them up front. Do N
 to reference these files anywhere — `@path` syntax causes Claude Code to auto-load the target
 file into every conversation, defeating the purpose of this split. Use plain relative paths.
 
-| File | Contents | Read this when... |
-|---|---|---|
-| `docs/dev/ml-models.md` | Model manager (VRAM/unload), model ID registry, JoyCaption/Florence-2 details, quality scorers, object detection, upscaling, LUT grading, device abstraction, TorchDynamo, config validation | Working on captioning models, quality scoring, object detection, upscaling, LUT grading, or `backend/ml/` |
-| `docs/dev/gallery-and-images.md` | Image naming/renaming/collisions, gallery selection/filters/subfolder sidebar, manual drag ordering, gallery navigation state (incl. ImageDetailPage crop/selection/caption panel), generation metadata | Working on `GalleryPage`, `ImageDetailPage`, image upload/move/copy/rename, or generation-metadata display |
-| `docs/dev/captioning.md` | Captioning post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config and ModelPicker | Working on `CaptioningPage`, the caption job pipeline, or LLM provider integration |
-| `docs/dev/export-and-bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count, dataset export (kohya/ai-toolkit/plain, filters, resize, metadata stripping) | Working on `ExportPage`, `BulkEditPage`, or any `bulk-*` endpoint |
-| `docs/dev/tag-consolidation.md` | Dataset-wide semantic tag consolidation: MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, `TagConsolidatePage` preview/confirm UI | Working on `TagConsolidatePage`, the `tag-consolidation` router, `tag_embedder`, or per-image `dedupe_tags` |
-| `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store, diff, restore, COW injection points | Working on `VersionsPage`, branch/snapshot logic, or any code path that overwrites/deletes image files in place |
-| `docs/dev/dashboard-pages.md` | Datasets page (categories, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` |
-| `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console |
-| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure |
+| File | Contents | Read this when... | Lines |
+|---|---|---|---|
+| `docs/dev/ml-models.md` | Model manager (VRAM/unload), model ID registry, JoyCaption/Florence-2 details, quality scorers, object detection, upscaling, LUT grading, device abstraction, TorchDynamo, config validation | Working on captioning models, quality scoring, object detection, upscaling, LUT grading, or `backend/ml/` | ~200 |
+| `docs/dev/gallery-and-images.md` | Image naming/renaming/collisions, gallery selection/filters/subfolder sidebar, manual drag ordering, gallery navigation state (incl. ImageDetailPage crop/selection/caption panel), generation metadata | Working on `GalleryPage`, `ImageDetailPage`, image upload/move/copy/rename, or generation-metadata display | ~150 |
+| `docs/dev/captioning.md` | Captioning post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config and ModelPicker | Working on `CaptioningPage`, the caption job pipeline, or LLM provider integration | ~55 |
+| `docs/dev/export-and-bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count, dataset export (kohya/ai-toolkit/plain, filters, resize, metadata stripping) | Working on `ExportPage`, `BulkEditPage`, or any `bulk-*` endpoint | ~75 |
+| `docs/dev/tag-consolidation.md` | Dataset-wide semantic tag consolidation: MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, `TagConsolidatePage` preview/confirm UI | Working on `TagConsolidatePage`, the `tag-consolidation` router, `tag_embedder`, or per-image `dedupe_tags` | ~100 |
+| `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store, diff, restore, COW injection points | Working on `VersionsPage`, branch/snapshot logic, or any code path that overwrites/deletes image files in place | ~95 |
+| `docs/dev/dashboard-pages.md` | Datasets page (categories, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~230 |
+| `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console | ~120 |
+| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~65 |
 
 ## Maintaining this documentation
 
-This documentation is split across this file (always loaded) and topic files under `docs/dev/`
-(loaded on demand via the Read tool, per the Documentation Map above). Keep it that way as you
-learn new things during a session:
+This documentation is split across this file (always loaded) and topic files under
+`docs/dev/` (loaded on demand via the Documentation Map above). Keep it that way as
+you learn new things during a session:
 
-- **Plain relative paths only.** Never write `@docs/dev/...` anywhere in this file or in any
-  `docs/dev/*.md` file. The `@path` syntax triggers Claude Code's automatic recursive loading,
-  which would pull every topic file into context on every conversation. Always write paths as
-  plain text, e.g. `docs/dev/ml-models.md`.
+- **Plain relative paths only.** Never write `@docs/...` anywhere in documentation.
+  The `@path` syntax triggers automatic recursive loading into every conversation.
+- **Narrow, subsystem-specific knowledge**: append it to the relevant `docs/dev/`
+  file under the best-fitting heading. If this makes that file's "read this when"
+  hint incomplete, update the hint (keep trigger keywords front-loaded).
+- **Cross-cutting knowledge** (a new shared utility, a universal invariant, a
+  pattern every module must follow): add it to Key invariants or Shared utilities
+  in this file. Test: "would I want this loaded even for a task in an unrelated
+  subsystem?" Utility entries stay one line here; detailed behavior goes in the
+  utility's docstring.
+- **New subsystem, or a topic file growing past ~250 lines**: split into a new
+  `docs/dev/<topic>.md` and add a Documentation Map row (contents, keyword-front-
+  loaded triggers, line count). Don't append new features to the least-bad
+  existing file.
+- **Cross-references between topic files**: when documenting something in file A
+  that depends on something in file B, add a one-line pointer, e.g. "see
+  `docs/dev/versioning.md` for the copy-on-write mechanism" — don't duplicate it.
+- **Line counts in the Documentation Map** are approximate; refresh a row's count
+  when you substantially edit its file.
+- **Run `scripts/check_docs.py`** after any documentation change; fix what it
+  reports.
+- **Periodic rebalancing**: if a topic file becomes a dumping ground of unrelated
+  facts, propose splitting it during that session rather than continuing to append.
+- **Doc audits**: when asked for a "doc audit", diff each topic file against the
+  code it describes and propose corrections for anything stale.
+- **`docs/*.md` vs `docs/dev/*.md`**: `docs/*.md` (flat, no `dev/`) is end-user
+  documentation referenced from `README.md` — different audience, do not confuse
+  the two.
 
-- **Narrow, subsystem-specific knowledge** (a quirk in one router, one component's behavior, one
-  ML model's inference detail): append it to the relevant file under `docs/dev/` — find it via
-  the Documentation Map, add a new bullet/paragraph under the most relevant heading (or a new
-  heading if none fits). If the change makes that file's "when to read" hint noticeably
-  incomplete, update the hint too.
+### Proposing skills
 
-- **Cross-cutting knowledge** (applies to most tasks regardless of subsystem — a new shared
-  utility function, a new universal invariant, a pattern every router/component must follow):
-  add it to **Key invariants** or **Shared utilities** in this file, not to a topic file. Ask:
-  "would I want this loaded even for a task in an unrelated subsystem?" If yes, it belongs here.
+Reference documentation stays in `docs/dev/` — never duplicate it into skills.
+But when you notice **procedural** knowledge that meets ALL of these criteria,
+propose creating a project skill in `.claude/skills/<name>/SKILL.md`:
 
-- **New subsystem, or a topic file growing past ~250 lines**: split the new/overgrown cluster
-  into a new `docs/dev/<topic>.md` file and add a row to the Documentation Map. If a new feature
-  doesn't fit any existing file's theme, create a new file rather than appending to the
-  least-bad existing one.
+1. It's a *workflow* (a sequence of steps/commands), not facts about the code.
+2. It has recurred, or clearly will recur, across sessions (e.g. release process,
+   migration workflow, scaffolding a new module of an established pattern,
+   regenerating fixtures).
+3. It benefits from automatic triggering and/or a bundled script whose code
+   shouldn't occupy context (only script *output* costs tokens).
 
-- **Cross-references between topic files**: when documenting something in file A that depends
-  on something documented in file B, add a one-line pointer, e.g. "see `docs/dev/versioning.md`
-  for the copy-on-write mechanism" — don't duplicate the explanation.
+**Never create a skill without approval.** Propose it in this exact format and
+wait for a yes/no:
 
-- **Periodic rebalancing**: if a topic file becomes a dumping ground for unrelated facts (low
-  thematic coherence), propose splitting it during that session rather than continuing to append.
+> **Skill proposal:** `<name>` — <one sentence: what workflow it captures>.
+> **Trigger description:** "<the frontmatter description, keyword-front-loaded>"
+> **Bundles:** <scripts/templates, or "none">
+> **Why a skill and not docs:** <one sentence>
 
-- **`docs/*.md` vs `docs/dev/*.md`**: `docs/*.md` (flat, no `dev/`) is end-user documentation
-  referenced from `README.md` — different audience, do not confuse the two.
+If approved: keep SKILL.md focused on the workflow steps, put reusable code in
+bundled scripts rather than inline instructions, and keep the description short
+and keyword-rich (descriptions of all skills are always loaded and may be
+truncated when many skills exist — every word must earn its place). If rejected,
+don't re-propose the same skill unless circumstances change.
+
+Be conservative: a handful of high-value skills beats many marginal ones, since
+every skill's description permanently occupies context and dilutes trigger
+matching for the others.

@@ -1,6 +1,8 @@
 # Crucible
 
-A local web-based application that takes your text-to-image diffusion training datasets — Stable Diffusion, SDXL, Flux, and more — from a raw folder of images all the way to a training-ready export, the entire pipeline in one place. Import and organize, caption with local ML models (Florence-2, JoyCaption, WD14) or any OpenAI-compatible API, score and curate across multiple quality metrics, detect and segment objects, consolidate tags, and version your work with snapshots and branches — then export straight to Kohya or AI Toolkit.
+Crucible is a local dataset engineering platform for AI image training. Instead of juggling folders, captioning scripts, scoring tools, duplicate finders, and export scripts, it brings the entire dataset workflow into one application.
+
+**Import → Organize → Caption → Score & Curate → Refine → Version → Export**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -14,11 +16,7 @@ A local web-based application that takes your text-to-image diffusion training d
 
 ## Workflow
 
-Crucible covers the entire dataset-preparation pipeline — from a raw folder of images to a training-ready export — in one place:
-
-```
-Import  →  Organize  →  Caption  →  Score & Curate  →  Refine  →  Version  →  Export
-```
+Every step from a raw folder of images to a training-ready export, in order:
 
 1. **Import** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/features.md#datasets--gallery)
 2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
@@ -26,7 +24,7 @@ Import  →  Organize  →  Caption  →  Score & Curate  →  Refine  →  Vers
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/features.md#batch-operations)
 6. **Version** — capture named snapshots and branches, and restore any prior state → [details](docs/versioning.md)
-7. **Export** — output to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
+7. **Export** — output to Kohya, AI Toolkit, or plain folder format — ready to train Stable Diffusion, SDXL, Flux, and more — with per-export filtering and resizing → [details](docs/export.md)
 
 ---
 

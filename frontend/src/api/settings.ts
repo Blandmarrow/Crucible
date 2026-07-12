@@ -10,6 +10,7 @@ export interface Thresholds {
   gdino_threshold: number;
   versioning_mode: "off" | "manual" | "auto";
   auto_rescan_on_open: boolean;
+  comfyui_url: string;
 }
 
 export const settingsApi = {

@@ -17,3 +17,4 @@ class ThresholdSettings(Base):
     gdino_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.35")
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'off'")
     auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")

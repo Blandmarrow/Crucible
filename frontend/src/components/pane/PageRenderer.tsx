@@ -11,6 +11,7 @@ import TagConsolidatePage from "../../pages/TagConsolidatePage";
 import FileBrowserPage from "../../pages/FileBrowserPage";
 import BooruPage from "../../pages/BooruPage";
 import VersionsPage from "../../pages/VersionsPage";
+import ComfyPage from "../../pages/ComfyPage";
 
 export default function PageRenderer({ view }: { view: PaneView }) {
   switch (view.page) {
@@ -24,6 +25,7 @@ export default function PageRenderer({ view }: { view: PaneView }) {
     case "bulk-edit":    return <BulkEditPage />;
     case "consolidate":  return <TagConsolidatePage />;
     case "versions":     return <VersionsPage />;
+    case "comfy":        return <ComfyPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
     default:             return <DatasetsPage />;

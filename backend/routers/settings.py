@@ -22,6 +22,7 @@ class ThresholdsOut(BaseModel):
     gdino_threshold: float
     versioning_mode: str = "off"
     auto_rescan_on_open: bool = False
+    comfyui_url: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -36,6 +37,7 @@ class ThresholdsUpdate(BaseModel):
     gdino_threshold: float | None = Field(default=None, gt=0, le=1.0)
     versioning_mode: str | None = Field(default=None)
     auto_rescan_on_open: bool | None = Field(default=None)
+    comfyui_url: str | None = Field(default=None, max_length=500)
 
     @field_validator("versioning_mode")
     @classmethod

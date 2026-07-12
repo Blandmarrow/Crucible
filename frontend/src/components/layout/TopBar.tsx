@@ -11,7 +11,7 @@ import { usePaneStore } from "../../stores/paneStore";
 import { Columns2, RefreshCw } from "lucide-react";
 
 const CAPTION_JOB_TYPES = new Set(["caption", "caption_pipeline"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -21,6 +21,7 @@ const PAGE_LABELS: Record<string, string> = {
   stats: "Stats",
   export: "Export",
   image: "Image detail",
+  comfy: "ComfyUI",
 };
 
 function Breadcrumbs() {

@@ -14,6 +14,7 @@ DEFAULTS = dict(
     gdino_threshold=0.35,
     versioning_mode="off",
     auto_rescan_on_open=False,
+    comfyui_url="",
 )
 
 

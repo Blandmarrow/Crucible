@@ -56,7 +56,10 @@ completion); `workflow_format(obj)` classifies parsed workflow JSON as
 
 Router endpoints: plan CRUD (`/comfy/plans…`), row CRUD (`…/rows`, `…/rows/bulk` one row per
 non-empty line into the `is_prompt` alias, `…/rows/delete`, `…/rows/reorder`, `…/rows/reset`
-failed→pending, `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
+failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
+`{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
+each non-empty row, used to browse/reuse prompts across plans and datasets (the
+`ImportPromptsModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
 `{alias, value}`, `value: null|""` clears back to the default/template), and `POST /comfy/run`. Editing a
 completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
 `rows/set-value`) resets it to `pending` and clears `error_msg`/`prompt_id` (image links are
@@ -159,11 +162,22 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
   the variable row heights). Status badge with the error as tooltip,
   View button → image detail via `usePaneNavigate`. Cell edits PATCH on blur.
 - **`ComfyRunBar`** — subfolder select (`["subfolders", datasetId]`), "Prompt as caption"
-  toggle, *Run pending (n)* / *Run selected (n)* → `setActiveJobId` + `useJobSSE`; progress bar
-  from `jobStore`. While a run is live the page invalidates `["comfy","rows",planId]` on each
+  toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
+  status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
+  which runs explicit `row_ids` regardless of status) → `setActiveJobId` + `useJobSSE`; progress
+  bar from `jobStore`. While a run is live the page invalidates `["comfy","rows",planId]` on each
   progress event so row statuses update in place; on terminal status it also invalidates
   `["images", datasetId]`, `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and
-  `["datasets"]`.
+  `["datasets"]`. **Live gallery refresh during a run is driven by TopBar**, not this page:
+  `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
+  `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
+  gallery updates per-row as images import, regardless of which pane is showing it.
+- **`ImportPromptsModal`** (Rows toolbar *Import prompts…*, disabled until a pin is marked as
+  prompt) — reuse prompts across plans/datasets: pick any dataset → one of its plans (self
+  excluded) → checkbox-list its prompts (`GET /comfy/plans/{id}/prompts`) → *Copy* (adds them to
+  the current plan via `rows/bulk`) or *Move* (also `rows/delete`s them from the source). Only
+  prompt **text** carries over (lands in the current plan's prompt column; other params use this
+  plan's defaults/template).
 - Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
   disabled until a pin is marked as prompt; a *Load .txt files…* button appends browser-picked
   files to the textarea, **one file = one prompt**, inner newlines collapsed to spaces),

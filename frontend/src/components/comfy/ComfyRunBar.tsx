@@ -6,19 +6,21 @@ interface Props {
   datasetId: string;
   pendingCount: number;
   selectedCount: number;
+  totalCount: number;
   subfolder: string;
   onSubfolderChange: (v: string) => void;
   setCaption: boolean;
   onSetCaptionChange: (v: boolean) => void;
   onRunPending: () => void;
   onRunSelected: () => void;
+  onRunAll: () => void;
   isRunning: boolean;
   jobProgress: JobProgress | undefined;
 }
 
 export default function ComfyRunBar({
-  datasetId, pendingCount, selectedCount, subfolder, onSubfolderChange,
-  setCaption, onSetCaptionChange, onRunPending, onRunSelected, isRunning, jobProgress,
+  datasetId, pendingCount, selectedCount, totalCount, subfolder, onSubfolderChange,
+  setCaption, onSetCaptionChange, onRunPending, onRunSelected, onRunAll, isRunning, jobProgress,
 }: Props) {
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -52,6 +54,12 @@ export default function ComfyRunBar({
         </label>
         <button className="btn ghost" onClick={onRunSelected} disabled={isRunning || selectedCount === 0}>
           Run selected ({selectedCount})
+        </button>
+        <button
+          className="btn ghost" onClick={onRunAll} disabled={isRunning || totalCount === 0}
+          title="Run every row regardless of status — re-runs completed prompts and regenerates images"
+        >
+          Run all ({totalCount})
         </button>
         <button className="btn primary" onClick={onRunPending} disabled={isRunning || pendingCount === 0}>
           {isRunning ? "Running…" : `Run pending (${pendingCount})`}

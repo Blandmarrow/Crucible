@@ -389,6 +389,31 @@ async def list_rows(plan_id: str, db: AsyncSession = Depends(get_db)):
     return [_row_out(r) for r in rows]
 
 
+@router.get("/plans/{plan_id}/prompts")
+async def list_plan_prompts(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Effective prompt text of each row — used to reuse prompts across plans/datasets.
+
+    Returns the row → run-default → template prompt for every row (the same chain
+    the run uses), so prompts can be browsed and imported into another plan even
+    when the two plans have different pinned parameters. Rows whose effective
+    prompt is empty are omitted.
+    """
+    plan = await _get_plan(db, plan_id)
+    workflow = plan.workflow_json or {}
+    pinned = plan.pinned_params or []
+    rows = (
+        await db.execute(
+            select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
+        )
+    ).scalars().all()
+    out = []
+    for r in rows:
+        prompt = effective_prompt(workflow, pinned, r.values or {}) or ""
+        if prompt.strip():
+            out.append({"row_id": r.id, "prompt": prompt, "status": r.status})
+    return {"prompts": out}
+
+
 async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
     max_order = (
         await db.execute(select(func.max(ComfyRow.sort_order)).where(ComfyRow.plan_id == plan_id))

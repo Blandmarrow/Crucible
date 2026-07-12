@@ -12,6 +12,7 @@ import ComfyRunBar from "../components/comfy/ComfyRunBar";
 import ComfyDefaultsStrip from "../components/comfy/ComfyDefaultsStrip";
 import GeneratePromptsModal from "../components/comfy/GeneratePromptsModal";
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
+import ImportPromptsModal from "../components/comfy/ImportPromptsModal";
 
 function apiErrorDetail(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
@@ -39,6 +40,7 @@ export default function ComfyPage() {
   const [pasteText, setPasteText] = useState("");
   const [showGenerate, setShowGenerate] = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const txtFilesRef = useRef<HTMLInputElement>(null);
 
   /** Each .txt file is one prompt: newlines inside a file collapse to spaces,
@@ -333,12 +335,14 @@ export default function ComfyPage() {
             datasetId={datasetId}
             pendingCount={pendingCount}
             selectedCount={selected.size}
+            totalCount={rows.length}
             subfolder={subfolder}
             onSubfolderChange={setSubfolder}
             setCaption={setCaption}
             onSetCaptionChange={setSetCaption}
             onRunPending={() => runMutation.mutate(undefined)}
             onRunSelected={() => runMutation.mutate([...selected])}
+            onRunAll={() => runMutation.mutate(rows.map((r) => r.id))}
             isRunning={isRunning}
             jobProgress={jobProgress}
           />
@@ -366,6 +370,11 @@ export default function ComfyPage() {
               disabled={!hasPromptPin || rows.length === 0}
               title={hasPromptPin ? "Find & replace / prepend / append / remove across row prompts" : "Mark a pinned parameter as the prompt first"}>
               Edit prompts…
+            </button>
+            <button className="btn ghost sm" onClick={() => setShowImport(true)}
+              disabled={!hasPromptPin}
+              title={hasPromptPin ? "Reuse prompts from another dataset's plan" : "Mark a pinned parameter as the prompt first"}>
+              Import prompts…
             </button>
             <div style={{ flex: 1 }} />
             {failedCount > 0 && (
@@ -452,6 +461,15 @@ export default function ComfyPage() {
           rowCount={rows.length}
           selectedIds={[...selected]}
           onClose={() => setShowBulkEdit(false)}
+        />
+      )}
+
+      {showImport && plan && (
+        <ImportPromptsModal
+          targetPlanId={plan.id}
+          targetDatasetId={datasetId}
+          onImported={() => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] })}
+          onClose={() => setShowImport(false)}
         />
       )}
 

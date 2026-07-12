@@ -45,6 +45,12 @@ export interface ComfyRow {
   prompt_id: string | null;
 }
 
+export interface PlanPrompt {
+  row_id: string;
+  prompt: string;
+  status: ComfyRow["status"];
+}
+
 export interface ComfyRunParams {
   plan_id: string;
   row_ids?: string[];
@@ -77,6 +83,9 @@ export const comfyApi = {
 
   listRows: (planId: string) =>
     client.get<ComfyRow[]>(`/comfy/plans/${planId}/rows`).then((r) => r.data),
+  /** Effective prompt text per row, for reusing prompts across plans/datasets. */
+  listPlanPrompts: (planId: string) =>
+    client.get<{ prompts: PlanPrompt[] }>(`/comfy/plans/${planId}/prompts`).then((r) => r.data.prompts),
   createRow: (planId: string, values: Record<string, unknown> = {}) =>
     client.post<ComfyRow>(`/comfy/plans/${planId}/rows`, { values }).then((r) => r.data),
   bulkAddRows: (planId: string, lines: string[]) =>

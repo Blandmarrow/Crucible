@@ -151,7 +151,12 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
   the prompt column) + a source chip (`#6 KSampler · seed`) + ✎ bulk-edit (modal → 
   `rows/set-value`, set or clear-to-default on all rows). Cell placeholders show the effective
   fallback (run default / template / "🎲 random" / "auto +n"); `number` input when the template
-  value is numeric; blank cell = use the fallback. Status badge with the error as tooltip,
+  value is numeric; blank cell = use the fallback. The **prompt column renders a `PromptCell`
+  textarea** (`resize: vertical` per-cell drag handle; Enter commits, Shift+Enter newline) instead
+  of the single-line `EditableCell`; a ⤢/⤒ toggle in the prompt column header auto-sizes every
+  prompt cell to its full text (height set to `scrollHeight` in a layout effect; collapsing resets
+  inline heights, wiping manual drags — the virtualizer's `measureElement` ResizeObserver absorbs
+  the variable row heights). Status badge with the error as tooltip,
   View button → image detail via `usePaneNavigate`. Cell edits PATCH on blur.
 - **`ComfyRunBar`** — subfolder select (`["subfolders", datasetId]`), "Prompt as caption"
   toggle, *Run pending (n)* / *Run selected (n)* → `setActiveJobId` + `useJobSSE`; progress bar

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -32,6 +32,60 @@ function fallbackLabel(plan: ComfyPlan, pin: PinnedParam): string {
   if (pin.value !== null && pin.value !== undefined && pin.value !== "") return String(pin.value);
   const tv = templateValue(plan, pin);
   return tv === undefined ? "" : String(tv);
+}
+
+/** Prompt-column cell: a textarea that can be dragged taller per cell, or auto-sized
+ *  to its full content via the column-header expand toggle. Enter commits,
+ *  Shift+Enter inserts a newline. The virtualizer's measureElement picks up the
+ *  height changes (ResizeObserver on the row). */
+function PromptCell({ row, alias, disabled, placeholder, expanded, onCommit }: {
+  row: ComfyRow;
+  alias: string;
+  disabled: boolean;
+  placeholder: string;
+  expanded: boolean;
+  onCommit: (alias: string, raw: string) => void;
+}) {
+  const stored = row.values[alias];
+  const value = stored === undefined || stored === null ? "" : String(stored);
+  const [draft, setDraft] = useState<string | null>(null);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const text = draft ?? value;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (expanded) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight + 2}px`;
+    } else {
+      el.style.height = ""; // back to the rows=1 natural height (also clears manual drags)
+    }
+  }, [expanded, text]);
+  return (
+    <textarea
+      ref={ref}
+      className="input"
+      rows={1}
+      style={{
+        width: "100%", fontSize: 12, minHeight: 26, padding: "4px 6px",
+        resize: "vertical", lineHeight: 1.35, display: "block",
+      }}
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== null && draft !== value) onCommit(alias, draft);
+        setDraft(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          (e.target as HTMLTextAreaElement).blur();
+        }
+      }}
+    />
+  );
 }
 
 function EditableCell({ row, alias, numeric, disabled, placeholder, onCommit }: {
@@ -102,6 +156,9 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     }
     updateMutation.mutate({ rowId: row.id, values });
   }
+
+  // Expand every prompt cell to its full text (toggle in the prompt column header).
+  const [expandPrompts, setExpandPrompts] = useState(false);
 
   // Bulk "set for all rows" per column.
   const [bulkPin, setBulkPin] = useState<PinnedParam | null>(null);
@@ -182,6 +239,19 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
               >
                 ✎
               </button>
+              {p.is_prompt && (
+                <button
+                  className="icon-btn"
+                  style={{
+                    fontSize: 11, padding: 0, width: 16, height: 16, lineHeight: 1, flexShrink: 0,
+                    color: expandPrompts ? "var(--accent)" : undefined,
+                  }}
+                  title={expandPrompts ? "Collapse prompts to one line" : "Expand all prompts to full text"}
+                  onClick={() => setExpandPrompts((v) => !v)}
+                >
+                  {expandPrompts ? "⤒" : "⤢"}
+                </button>
+              )}
             </span>
             <span className="mono" style={{
               fontSize: 10, color: "var(--fg-dim)", textTransform: "none", letterSpacing: 0,
@@ -224,13 +294,23 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                     onChange={() => onToggle(row.id)}
                   />
                   {columns.map((p) => (
-                    <EditableCell
-                      key={p.alias} row={row} alias={p.alias}
-                      numeric={numericAlias.get(p.alias) ?? false}
-                      disabled={rowBusy}
-                      placeholder={fallbackLabel(plan, p)}
-                      onCommit={(alias, raw) => commitCell(row, alias, raw)}
-                    />
+                    p.is_prompt ? (
+                      <PromptCell
+                        key={p.alias} row={row} alias={p.alias}
+                        disabled={rowBusy}
+                        placeholder={fallbackLabel(plan, p)}
+                        expanded={expandPrompts}
+                        onCommit={(alias, raw) => commitCell(row, alias, raw)}
+                      />
+                    ) : (
+                      <EditableCell
+                        key={p.alias} row={row} alias={p.alias}
+                        numeric={numericAlias.get(p.alias) ?? false}
+                        disabled={rowBusy}
+                        placeholder={fallbackLabel(plan, p)}
+                        onCommit={(alias, raw) => commitCell(row, alias, raw)}
+                      />
+                    )
                   ))}
                   <span
                     className={STATUS_BADGE[row.status]}

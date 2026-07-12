@@ -200,6 +200,20 @@ export default function TopBar() {
             {(runningJob.percent ?? 0) >= 0 && (
               <span className="pp-num mono">{runningJob.done ?? 0} / {runningJob.total ?? 0}</span>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                jobsApi.cancel(runningJob.job_id);
+              }}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "var(--fg-dim)", padding: 0, lineHeight: 1, fontSize: 13,
+              }}
+              title="Cancel the running job"
+            >
+              ×
+            </button>
           </div>
         )}
         {pendingJobs.length > 0 && (
@@ -207,7 +221,7 @@ export default function TopBar() {
             <span className="badge dot" style={{ color: "var(--fg-dim)" }}>
               {pendingJobs.length} queued
             </span>
-            {pendingJobs.map((j) => (
+            {pendingJobs.slice(0, 3).map((j) => (
               <span
                 key={j.job_id}
                 style={{
@@ -235,6 +249,32 @@ export default function TopBar() {
                 </button>
               </span>
             ))}
+            {pendingJobs.length > 3 && (
+              <span
+                style={{ fontSize: 11, color: "var(--fg-dim)", padding: "2px 4px", cursor: "default" }}
+                title={pendingJobs.slice(3).map((j) => j.label || j.job_type).join("\n")}
+              >
+                +{pendingJobs.length - 3} more
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn ghost sm"
+              style={{ fontSize: 11, padding: "1px 8px" }}
+              title="Cancel every queued job and the currently running one"
+              onClick={() => {
+                for (const j of pendingJobs) {
+                  useJobStore.getState().updateJob(j.job_id, { status: "cancelled" });
+                  jobsApi.cancel(j.job_id);
+                }
+                if (runningJob) {
+                  useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                  jobsApi.cancel(runningJob.job_id);
+                }
+              }}
+            >
+              Cancel all
+            </button>
           </div>
         )}
         {!runningJob && !uploadProgress && pendingJobs.length === 0 && (

@@ -17,6 +17,7 @@ import { clearPersisted } from "../utils/persistentState";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 
 type ModelOption = { id: string; label: string; group: string };
@@ -50,6 +51,7 @@ const DEFAULTS: Thresholds = {
   versioning_mode: "off",
   auto_rescan_on_open: false,
   comfyui_url: "",
+  comfy_workflow_dir: "",
 };
 
 interface ThresholdField {
@@ -217,6 +219,7 @@ export default function SettingsPage() {
   // ComfyUI connection test
   const [pingResult, setPingResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [pinging, setPinging] = useState(false);
+  const [showWorkflowDirPicker, setShowWorkflowDirPicker] = useState(false);
   async function testComfyConnection() {
     setPinging(true);
     setPingResult(null);
@@ -348,8 +351,44 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Workflow folder</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Default folder scanned for exported API-format workflow .json files by the
+                &ldquo;Scan folder&rdquo; button on the ComfyUI page. Must be a path on the machine
+                running Crucible.
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="e.g. C:\ComfyUI\user\default\workflows\api"
+                  value={form.comfy_workflow_dir}
+                  onChange={(e) => setForm({ ...form, comfy_workflow_dir: e.target.value })}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn ghost" onClick={() => setShowWorkflowDirPicker(true)}>Browse…</button>
+                <button
+                  className="btn primary"
+                  onClick={() => mutation.mutate({ comfy_workflow_dir: form.comfy_workflow_dir.trim() })}
+                  disabled={!thresholds || form.comfy_workflow_dir === thresholds.comfy_workflow_dir}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
         </div>
+      )}
+
+      {showWorkflowDirPicker && (
+        <DirPickerModal
+          title="Select workflow folder"
+          confirmLabel="Use folder"
+          initialPath={form.comfy_workflow_dir}
+          onConfirm={(path) => { setForm({ ...form, comfy_workflow_dir: path }); setShowWorkflowDirPicker(false); }}
+          onCancel={() => setShowWorkflowDirPicker(false)}
+        />
       )}
 
       {activeTab === "gallery" && (

@@ -15,6 +15,7 @@ DEFAULTS = dict(
     versioning_mode="off",
     auto_rescan_on_open=False,
     comfyui_url="",
+    comfy_workflow_dir="",
 )
 
 

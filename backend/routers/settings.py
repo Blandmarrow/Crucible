@@ -23,6 +23,7 @@ class ThresholdsOut(BaseModel):
     versioning_mode: str = "off"
     auto_rescan_on_open: bool = False
     comfyui_url: str = ""
+    comfy_workflow_dir: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -38,6 +39,7 @@ class ThresholdsUpdate(BaseModel):
     versioning_mode: str | None = Field(default=None)
     auto_rescan_on_open: bool | None = Field(default=None)
     comfyui_url: str | None = Field(default=None, max_length=500)
+    comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
 
     @field_validator("versioning_mode")
     @classmethod

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { comfyApi, type ComfyPlan, type ComfyRow } from "../../api/comfy";
+import { comfyApi, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 
 interface Props {
@@ -21,18 +21,25 @@ const STATUS_BADGE: Record<ComfyRow["status"], string> = {
   failed: "badge dot bad",
 };
 
-/** Template value for a pinned param — shown as the cell placeholder. */
-function templateValue(plan: ComfyPlan, alias: string): unknown {
-  const pin = plan.pinned_params.find((p) => p.alias === alias);
-  if (!pin) return "";
-  return plan.workflow_json[pin.node_id]?.inputs?.[pin.input] ?? "";
+function templateValue(plan: ComfyPlan, pin: PinnedParam): unknown {
+  return plan.workflow_json[pin.node_id]?.inputs?.[pin.input];
 }
 
-function EditableCell({ row, alias, numeric, disabled, onCommit }: {
+/** What a blank cell falls back to: run default, else template (or an int-mode roll). */
+function fallbackLabel(plan: ComfyPlan, pin: PinnedParam): string {
+  if (pin.int_mode === "random") return "🎲 random";
+  if (pin.int_mode === "increment") return "auto +n";
+  if (pin.value !== null && pin.value !== undefined && pin.value !== "") return String(pin.value);
+  const tv = templateValue(plan, pin);
+  return tv === undefined ? "" : String(tv);
+}
+
+function EditableCell({ row, alias, numeric, disabled, placeholder, onCommit }: {
   row: ComfyRow;
   alias: string;
   numeric: boolean;
   disabled: boolean;
+  placeholder: string;
   onCommit: (alias: string, raw: string) => void;
 }) {
   const stored = row.values[alias];
@@ -44,6 +51,7 @@ function EditableCell({ row, alias, numeric, disabled, onCommit }: {
       style={{ width: "100%", fontSize: 12, height: 26, padding: "0 6px" }}
       type={numeric ? "number" : "text"}
       value={draft ?? value}
+      placeholder={placeholder}
       disabled={disabled}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
@@ -60,12 +68,13 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
   const { go } = usePaneNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const aliases = plan.pinned_params.map((p) => p.alias);
+  // Only per-row pins get columns; run defaults live in the defaults strip above.
+  const columns = useMemo(() => plan.pinned_params.filter((p) => p.per_row), [plan.pinned_params]);
   const numericAlias = useMemo(() => {
     const m = new Map<string, boolean>();
-    for (const a of aliases) m.set(a, typeof templateValue(plan, a) === "number");
+    for (const p of columns) m.set(p.alias, typeof templateValue(plan, p) === "number");
     return m;
-  }, [plan, aliases]);
+  }, [plan, columns]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -94,20 +103,54 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     updateMutation.mutate({ rowId: row.id, values });
   }
 
+  // Bulk "set for all rows" per column.
+  const [bulkPin, setBulkPin] = useState<PinnedParam | null>(null);
+  const [bulkValue, setBulkValue] = useState("");
+
+  const setAllMutation = useMutation({
+    mutationFn: ({ alias, value }: { alias: string; value: string | number | boolean | null }) =>
+      comfyApi.setValueAllRows(plan.id, alias, value),
+    onSuccess: (data, vars) => {
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", plan.dataset_id] });
+      setBulkPin(null);
+      setBulkValue("");
+      toast.success(
+        vars.value === null
+          ? `Cleared "${vars.alias}" on ${data.updated} row${data.updated !== 1 ? "s" : ""} (default applies)`
+          : `Set "${vars.alias}" on ${data.updated} row${data.updated !== 1 ? "s" : ""}`
+      );
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ?? "Failed to update rows");
+    },
+  });
+
+  function applyBulk(clear: boolean) {
+    if (!bulkPin) return;
+    const raw = bulkValue.trim();
+    if (!clear && raw === "") return;
+    const value = clear
+      ? null
+      : numericAlias.get(bulkPin.alias) && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+    setAllMutation.mutate({ alias: bulkPin.alias, value });
+  }
+
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  // Grid: checkbox | param columns (prompt column wider) | status | image
-  const promptAlias = plan.pinned_params.find((p) => p.is_prompt)?.alias;
+  // Grid: checkbox | per-row columns (prompt wider) | status | image
   const gridTemplate = [
     "28px",
-    ...aliases.map((a) => (a === promptAlias ? "minmax(240px, 3fr)" : "minmax(90px, 1fr)")),
+    ...columns.map((p) => (p.is_prompt ? "minmax(240px, 3fr)" : "minmax(110px, 1fr)")),
     "96px",
     "60px",
   ].join(" ");
 
-  if (aliases.length === 0) {
+  if (columns.length === 0) {
     return (
       <p style={{ fontSize: 12, color: "var(--fg-mute)" }}>
-        Pin at least one workflow parameter (in Workflow &amp; Pins) to start adding rows.
+        No per-row columns yet — pin a parameter in Workflow &amp; Pins and switch <b>per row</b> on
+        (the prompt parameter is per-row automatically).
       </p>
     );
   }
@@ -116,17 +159,41 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     <div style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", overflow: "hidden" }}>
       {/* Header */}
       <div style={{
-        display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "center",
+        display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "start",
         padding: "6px 10px", background: "var(--surface-2)", borderBottom: "1px solid var(--line)",
-        fontSize: 11, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: ".06em",
+        fontSize: 11, color: "var(--fg-mute)",
       }}>
         <input
           type="checkbox" className="checkbox" checked={allSelected}
           onChange={(e) => onToggleAll(rows.map((r) => r.id), e.target.checked)}
         />
-        {aliases.map((a) => <span key={a}>{a}{a === promptAlias ? " (prompt)" : ""}</span>)}
-        <span>Status</span>
-        <span>Image</span>
+        {columns.map((p) => (
+          <span key={p.alias} style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {p.alias}{p.is_prompt ? " ★" : ""}
+              </span>
+              <button
+                className="icon-btn"
+                style={{ fontSize: 11, padding: 0, width: 16, height: 16, lineHeight: 1, flexShrink: 0 }}
+                title={`Set "${p.alias}" on all rows at once`}
+                disabled={runningJob || rows.length === 0}
+                onClick={() => { setBulkPin(p); setBulkValue(""); }}
+              >
+                ✎
+              </button>
+            </span>
+            <span className="mono" style={{
+              fontSize: 10, color: "var(--fg-dim)", textTransform: "none", letterSpacing: 0,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+              title={`${plan.workflow_json[p.node_id]?.class_type ?? "?"} node #${p.node_id}, input "${p.input}"`}>
+              #{p.node_id} {plan.workflow_json[p.node_id]?.class_type ?? "?"} · {p.input}
+            </span>
+          </span>
+        ))}
+        <span style={{ textTransform: "uppercase", letterSpacing: ".06em" }}>Status</span>
+        <span style={{ textTransform: "uppercase", letterSpacing: ".06em" }}>Image</span>
       </div>
 
       {/* Virtualized body */}
@@ -156,11 +223,12 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                     type="checkbox" className="checkbox" checked={selected.has(row.id)}
                     onChange={() => onToggle(row.id)}
                   />
-                  {aliases.map((a) => (
+                  {columns.map((p) => (
                     <EditableCell
-                      key={a} row={row} alias={a}
-                      numeric={numericAlias.get(a) ?? false}
+                      key={p.alias} row={row} alias={p.alias}
+                      numeric={numericAlias.get(p.alias) ?? false}
                       disabled={rowBusy}
+                      placeholder={fallbackLabel(plan, p)}
                       onCommit={(alias, raw) => commitCell(row, alias, raw)}
                     />
                   ))}
@@ -193,6 +261,56 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
           </div>
         )}
       </div>
+
+      {/* Bulk column edit */}
+      {bulkPin && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setBulkPin(null)}
+        >
+          <div className="panel" style={{ width: 440, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
+            <div className="panel-h"><h3>Set “{bulkPin.alias}” on all rows</h3></div>
+            <div className="panel-b">
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
+                Applies to all {rows.length} row{rows.length !== 1 ? "s" : ""} of{" "}
+                <span className="mono">#{bulkPin.node_id} {plan.workflow_json[bulkPin.node_id]?.class_type ?? "?"} · {bulkPin.input}</span>.
+                Completed and failed rows whose value changes reset to pending. Blank cells currently
+                fall back to: <span className="mono">{fallbackLabel(plan, bulkPin) || "—"}</span>
+              </p>
+              <input
+                className="input" autoFocus
+                type={numericAlias.get(bulkPin.alias) ? "number" : "text"}
+                style={{ width: "100%", fontSize: 12 }}
+                placeholder={fallbackLabel(plan, bulkPin)}
+                value={bulkValue}
+                onChange={(e) => setBulkValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && bulkValue.trim() !== "") applyBulk(false);
+                  if (e.key === "Escape") setBulkPin(null);
+                }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn ghost" onClick={() => setBulkPin(null)}>Cancel</button>
+                <button
+                  className="btn ghost"
+                  disabled={setAllMutation.isPending}
+                  title="Remove the per-row override everywhere; the run default / template applies again"
+                  onClick={() => applyBulk(true)}
+                >
+                  Clear all (use default)
+                </button>
+                <button
+                  className="btn primary"
+                  disabled={bulkValue.trim() === "" || setAllMutation.isPending}
+                  onClick={() => applyBulk(false)}
+                >
+                  Apply to all
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

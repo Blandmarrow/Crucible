@@ -119,10 +119,42 @@ def _coerce(value, template_val):
     return value
 
 
-def extract_output_images(history_entry: dict) -> list[dict]:
-    """Collect {filename, subfolder, type} refs for final outputs (skips previews)."""
-    images = []
-    for out in (history_entry.get("outputs") or {}).values():
+def workflow_format(obj) -> str:
+    """Classify a parsed workflow JSON: "api", "ui", or "invalid".
+
+    Mirrors the client-side isApiFormat check in WorkflowPinPanel: an API-format
+    export is a non-empty {node_id: {class_type, inputs}} mapping; a UI-format
+    editor export has "nodes"/"links" keys and cannot be executed directly.
+    """
+    if not isinstance(obj, dict) or not obj:
+        return "invalid"
+    if "nodes" in obj or "links" in obj:
+        return "ui"
+    if all(
+        isinstance(n, dict) and "class_type" in n and "inputs" in n
+        for n in obj.values()
+    ):
+        return "api"
+    return "invalid"
+
+
+def extract_output_images(history_entry: dict, output_node_ids: list | None = None) -> list[dict]:
+    """Collect {filename, subfolder, type} refs to import from a history entry.
+
+    Default (no output_node_ids): all type=="output" images — what SaveImage
+    nodes produce; temp previews are skipped. With output_node_ids: those
+    nodes' images regardless of type (in the given node order), so PreviewImage
+    nodes can be import sources for workflows that have no SaveImage node
+    (their temp files are downloaded immediately, before ComfyUI clears them).
+    """
+    outputs = history_entry.get("outputs") or {}
+    images: list[dict] = []
+    if output_node_ids:
+        for node_id in output_node_ids:
+            node_out = outputs.get(str(node_id)) or {}
+            images.extend(img for img in node_out.get("images", []) if img.get("filename"))
+        return images
+    for out in outputs.values():
         for img in out.get("images", []):
             if img.get("type") == "output" and img.get("filename"):
                 images.append(img)
@@ -152,14 +184,18 @@ def patch_workflow(
     workflow: dict,
     pinned: list[dict],
     row_values: dict,
-    seed_mode: str,
     row_index: int,
 ) -> dict:
-    """Deep-copy the template and apply a row's pinned-parameter values.
+    """Deep-copy the template and apply pinned-parameter values for one row.
 
-    Blank/absent row values keep the template value, except a pin aliased
-    "seed" (case-insensitive), where seed_mode applies: fixed = template,
-    random = fresh random int, increment = template + row index within the run.
+    Value resolution per pin, first hit wins:
+      1. the row's value (only meaningful for per_row pins — non-column pins
+         have no row values by construction),
+      2. the pin's `int_mode` (integer params only): random = fresh
+         random int, increment = base + row index within the run (base = run
+         default or template),
+      3. the pin's run-default `value`,
+      4. the template value (pin untouched).
     """
     wf = copy.deepcopy(workflow)
     for p in pinned:
@@ -170,25 +206,36 @@ def patch_workflow(
         if input_name not in node["inputs"]:
             raise ComfyRowError(f"input {input_name!r} not found on node {node_id!r}")
         template_val = node["inputs"][input_name]
-        value = row_values.get(alias)
-        if value not in (None, ""):
-            node["inputs"][input_name] = _coerce(value, template_val)
-        elif isinstance(alias, str) and alias.lower() == "seed":
-            if seed_mode == "random":
-                node["inputs"][input_name] = random.randint(0, 2**48)
-            elif seed_mode == "increment" and isinstance(template_val, (int, float)):
-                node["inputs"][input_name] = int(template_val) + row_index
-            # fixed: keep template value
+        default_val = p.get("value")
+        base_val = default_val if default_val not in (None, "") else template_val
+
+        row_val = row_values.get(alias)
+        if row_val not in (None, ""):
+            node["inputs"][input_name] = _coerce(row_val, template_val)
+            continue
+        int_mode = p.get("int_mode")
+        if int_mode == "random":
+            node["inputs"][input_name] = random.randint(0, 2**48)
+            continue
+        if int_mode == "increment" and isinstance(base_val, (int, float)):
+            node["inputs"][input_name] = int(base_val) + row_index
+            continue
+        if default_val not in (None, ""):
+            node["inputs"][input_name] = _coerce(default_val, template_val)
     return wf
 
 
 def effective_prompt(plan_workflow: dict, pinned: list[dict], row_values: dict) -> str | None:
-    """The prompt text a row will run with: its override, else the template value."""
+    """The prompt text a row runs with: row override, else the prompt pin's
+    run default, else the template value."""
     for p in pinned:
         if p.get("is_prompt"):
             value = row_values.get(p.get("alias"))
             if value not in (None, ""):
                 return str(value)
+            default_val = p.get("value")
+            if default_val not in (None, ""):
+                return str(default_val)
             node = plan_workflow.get(str(p.get("node_id"))) or {}
             tv = (node.get("inputs") or {}).get(p.get("input"))
             return str(tv) if tv not in (None, "") else None

@@ -11,6 +11,7 @@ export interface Thresholds {
   versioning_mode: "off" | "manual" | "auto";
   auto_rescan_on_open: boolean;
   comfyui_url: string;
+  comfy_workflow_dir: string;
 }
 
 export const settingsApi = {

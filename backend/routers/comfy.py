@@ -6,6 +6,7 @@ to the ComfyUI server sequentially, downloads the outputs, and ingests them
 into the dataset. See docs/dev/comfyui.md.
 """
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime
@@ -29,15 +30,22 @@ from backend.services.comfy_service import (
     effective_prompt,
     extract_output_images,
     patch_workflow,
+    workflow_format,
 )
 from backend.services.threshold_service import get_thresholds
-from backend.utils import normalize_subfolder, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import (
+    normalize_subfolder,
+    sanitize_abs_path,
+    slugify_filename,
+    thumbnail_path_for,
+    unique_filename_with_thumb,
+)
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/comfy", tags=["comfy"])
 logger = logging.getLogger(__name__)
 
-SEED_MODES = ("fixed", "random", "increment")
+INT_MODES = ("fixed", "random", "increment")
 ROW_STATUSES = ("pending", "running", "completed", "failed")
 
 
@@ -48,6 +56,12 @@ class PinnedParam(BaseModel):
     input: str
     alias: str = Field(min_length=1, max_length=100)
     is_prompt: bool = False
+    # per_row=True → queue-table column; False → run default only (no column).
+    per_row: bool = True
+    # Run-default override applied to every row without a row value; None/"" = template.
+    value: str | int | float | bool | None = None
+    # Integer params only: fixed (default) | random | increment, applied when no row value.
+    int_mode: str | None = None
 
 
 class PlanCreate(BaseModel):
@@ -55,14 +69,15 @@ class PlanCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     workflow_json: dict = Field(default_factory=dict)
     pinned_params: list[PinnedParam] = Field(default_factory=list)
-    seed_mode: str = "fixed"
+    output_node_ids: list[str] = Field(default_factory=list)
 
 
 class PlanUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     workflow_json: dict | None = None
     pinned_params: list[PinnedParam] | None = None
-    seed_mode: str | None = None
+    # [] clears back to auto (import all SaveImage outputs); absent = unchanged.
+    output_node_ids: list[str] | None = None
 
 
 class RowCreate(BaseModel):
@@ -86,6 +101,37 @@ class RowResetRequest(BaseModel):
     row_ids: list[str] | None = None
 
 
+class SetValueRequest(BaseModel):
+    alias: str
+    # None / "" clears the override on every row (back to the template value).
+    value: str | int | float | bool | None = None
+
+
+class GeneratePromptsRequest(BaseModel):
+    provider_id: str
+    model_name: str = ""  # empty → provider default_model
+    # Standing rules for HOW prompts are written (style/format) — system message.
+    system_instructions: str = Field(default="", max_length=4000)
+    # The per-call ask: WHAT to generate now.
+    instruction: str = Field(min_length=1, max_length=4000)
+    batch_size: int = Field(default=5, ge=1, le=10)
+    # Prompts that already exist (queue rows + prior batches) — the LLM is told
+    # to diverge from them; this is the diversity mechanism.
+    existing: list[str] = Field(default_factory=list)
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+
+
+BULK_EDIT_OPS = ("prepend", "append", "remove", "find_replace")
+
+
+class RowsBulkEditRequest(BaseModel):
+    operation: str
+    text: str = Field(min_length=1)
+    replacement: str = ""
+    use_regex: bool = False
+    row_ids: list[str] | None = None  # None = all rows of the plan
+
+
 class RunRequest(BaseModel):
     plan_id: str
     row_ids: list[str] | None = None
@@ -102,7 +148,7 @@ def _plan_out(plan: ComfyPlan) -> dict:
         "name": plan.name,
         "workflow_json": plan.workflow_json or {},
         "pinned_params": plan.pinned_params or [],
-        "seed_mode": plan.seed_mode,
+        "output_node_ids": plan.output_node_ids or [],
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
     }
@@ -135,6 +181,11 @@ def _validate_pins(pins: list[PinnedParam]) -> list[dict]:
         raise HTTPException(400, "Pinned parameter aliases must be unique")
     if sum(1 for p in pins if p.is_prompt) > 1:
         raise HTTPException(400, "Only one pinned parameter can be marked as the prompt")
+    for p in pins:
+        if p.int_mode is not None and p.int_mode not in INT_MODES:
+            raise HTTPException(400, f"int_mode must be one of {INT_MODES}")
+        if p.is_prompt and not p.per_row:
+            raise HTTPException(400, "The prompt parameter must be per-row (it is the queue's prompt column)")
     return [p.model_dump() for p in pins]
 
 
@@ -153,6 +204,86 @@ async def ping(url: str | None = None, db: AsyncSession = Depends(get_db)):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ── Workflow folder scan ──────────────────────────────────────────────────────
+
+_WORKFLOW_SCAN_MAX_FILES = 500
+_WORKFLOW_SNIFF_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/workflow-files")
+async def list_workflow_files(dir: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Scan a folder (recursively) for ComfyUI workflow .json files.
+
+    `dir` falls back to the comfy_workflow_dir setting. Each file is sniffed as
+    api / ui / invalid so the client can offer only loadable (API-format) ones.
+    """
+    scan_dir = (dir or "").strip()
+    if not scan_dir:
+        thresholds = await get_thresholds(db)
+        scan_dir = (thresholds.comfy_workflow_dir or "").strip()
+    if not scan_dir:
+        raise HTTPException(400, "No folder given — set a workflow folder in Settings → ComfyUI or pick one")
+    p = sanitize_abs_path(scan_dir)
+    if not p.is_dir():
+        raise HTTPException(404, "Folder not found")
+
+    def _scan() -> list[dict]:
+        files: list[dict] = []
+        for f in sorted(p.rglob("*.json"), key=lambda x: x.name.lower()):
+            if not f.is_file():
+                continue
+            if len(files) >= _WORKFLOW_SCAN_MAX_FILES:
+                break
+            try:
+                stat = f.stat()
+            except OSError:
+                continue
+            try:
+                if stat.st_size > _WORKFLOW_SNIFF_MAX_BYTES:
+                    fmt = "invalid"
+                else:
+                    fmt = workflow_format(json.loads(f.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                fmt = "invalid"
+            files.append({
+                "name": str(f.relative_to(p)),
+                "path": str(f),
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "format": fmt,
+            })
+        return files
+
+    try:
+        files = await asyncio.get_running_loop().run_in_executor(None, _scan)
+    except PermissionError:
+        raise HTTPException(403, "Access denied")
+    return {"dir": str(p), "files": files}
+
+
+@router.get("/workflow-file")
+async def load_workflow_file(path: str):
+    """Read one .json workflow file; returns the parsed API-format workflow."""
+    p = sanitize_abs_path(path)
+    if not p.is_file():
+        raise HTTPException(404, "File not found")
+    if p.stat().st_size > _WORKFLOW_SNIFF_MAX_BYTES:
+        raise HTTPException(400, "File too large to be a workflow export")
+    try:
+        parsed = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise HTTPException(400, f"Could not parse JSON: {e}")
+    fmt = workflow_format(parsed)
+    if fmt == "ui":
+        raise HTTPException(
+            400,
+            'UI-format export — in ComfyUI use "Workflow → Export (API)" and save that file instead',
+        )
+    if fmt != "api":
+        raise HTTPException(400, "Not an API-format workflow ({node_id: {class_type, inputs}})")
+    return {"workflow": parsed}
 
 
 # ── Plan CRUD ─────────────────────────────────────────────────────────────────
@@ -180,7 +311,6 @@ async def list_plans(dataset_id: str, db: AsyncSession = Depends(get_db)):
             "id": p.id,
             "dataset_id": p.dataset_id,
             "name": p.name,
-            "seed_mode": p.seed_mode,
             "row_count": sum(status_counts.get(p.id, {}).values()),
             "status_counts": status_counts.get(p.id, {}),
         }
@@ -190,8 +320,6 @@ async def list_plans(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/plans")
 async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
-    if body.seed_mode not in SEED_MODES:
-        raise HTTPException(400, f"seed_mode must be one of {SEED_MODES}")
     ds = await db.get(Dataset, body.dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
@@ -205,7 +333,7 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
         name=body.name,
         workflow_json=body.workflow_json,
         pinned_params=_validate_pins(body.pinned_params),
-        seed_mode=body.seed_mode,
+        output_node_ids=body.output_node_ids,
     )
     db.add(plan)
     await db.commit()
@@ -235,10 +363,8 @@ async def update_plan(plan_id: str, body: PlanUpdate, db: AsyncSession = Depends
         plan.workflow_json = body.workflow_json
     if body.pinned_params is not None:
         plan.pinned_params = _validate_pins(body.pinned_params)
-    if body.seed_mode is not None:
-        if body.seed_mode not in SEED_MODES:
-            raise HTTPException(400, f"seed_mode must be one of {SEED_MODES}")
-        plan.seed_mode = body.seed_mode
+    if body.output_node_ids is not None:
+        plan.output_node_ids = list(body.output_node_ids)
     await db.commit()
     return _plan_out(plan)
 
@@ -339,6 +465,145 @@ async def reorder_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Dep
     await db.commit()
 
 
+@router.post("/plans/{plan_id}/rows/set-value")
+async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSession = Depends(get_db)):
+    """Set (or clear) one pinned parameter's value on every row of the plan.
+
+    Same semantics as editing a cell via PATCH /rows/{id}: completed/failed rows
+    whose values change reset to pending (image links are kept).
+    """
+    plan = await _get_plan(db, plan_id)
+    aliases = {p["alias"] for p in (plan.pinned_params or [])}
+    if body.alias not in aliases:
+        raise HTTPException(400, f"No pinned parameter with alias {body.alias!r}")
+    clear = body.value in (None, "")
+    rows = (
+        await db.execute(select(ComfyRow).where(ComfyRow.plan_id == plan_id))
+    ).scalars().all()
+    updated = 0
+    for r in rows:
+        vals = dict(r.values or {})
+        if clear:
+            if body.alias not in vals:
+                continue
+            del vals[body.alias]
+        else:
+            if vals.get(body.alias) == body.value:
+                continue
+            vals[body.alias] = body.value
+        r.values = vals
+        if r.status in ("completed", "failed"):
+            r.status = "pending"
+            r.error_msg = None
+            r.prompt_id = None
+        updated += 1
+    await db.commit()
+    return {"updated": updated}
+
+
+@router.post("/generate-prompts")
+async def generate_prompts_endpoint(body: GeneratePromptsRequest, db: AsyncSession = Depends(get_db)):
+    """One LLM batch call → {prompts}. The client loops for 'generate until N'."""
+    from backend.ml.prompt_generator import generate_prompts
+    from backend.models.openai_provider import OpenAIProvider
+
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    model_name = body.model_name.strip() or provider.default_model
+    if not model_name:
+        raise HTTPException(400, "No model given and the provider has no default model")
+    try:
+        prompts = await generate_prompts(
+            base_url=provider.base_url,
+            api_key=provider.api_key,
+            model_name=model_name,
+            instruction=body.instruction,
+            system_instructions=body.system_instructions,
+            batch_size=body.batch_size,
+            existing=body.existing,
+            temperature=body.temperature,
+            max_tokens=provider.max_tokens,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Prompt generation failed: {e}")
+    return {"prompts": prompts, "model": model_name}
+
+
+@router.post("/plans/{plan_id}/rows/bulk-edit")
+async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSession = Depends(get_db)):
+    """Bulk text operation on the prompt column (mirrors caption bulk-edit semantics).
+
+    The base text per row is its effective prompt (row value → run default →
+    template); the result is written into the row's values, and changed
+    completed/failed rows reset to pending. Returns {affected, skipped}.
+    """
+    import re as _re
+
+    if body.operation not in BULK_EDIT_OPS:
+        raise HTTPException(400, f"operation must be one of {BULK_EDIT_OPS}")
+    plan = await _get_plan(db, plan_id)
+    pinned = plan.pinned_params or []
+    prompt_alias = next((p["alias"] for p in pinned if p.get("is_prompt")), None)
+    if not prompt_alias:
+        raise HTTPException(400, "No pinned parameter is marked as the prompt — pin one first")
+    workflow = plan.workflow_json or {}
+
+    stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
+    if body.row_ids is not None:
+        stmt = stmt.where(ComfyRow.id.in_(body.row_ids))
+    rows = (await db.execute(stmt)).scalars().all()
+
+    if body.use_regex:
+        try:
+            pattern = _re.compile(body.text)
+        except _re.error as e:
+            raise HTTPException(400, f"Invalid regex: {e}")
+
+    bases = [(row, effective_prompt(workflow, pinned, row.values or {}) or "") for row in rows]
+
+    def _transform() -> list[tuple[ComfyRow, str, str]]:
+        out = []
+        for row, base in bases:
+            if body.operation == "prepend":
+                new = body.text + base
+            elif body.operation == "append":
+                new = base + body.text
+            elif not base:
+                continue  # remove/find_replace skip empty prompts
+            elif body.use_regex:
+                repl = "" if body.operation == "remove" else body.replacement
+                new = pattern.sub(repl, base)
+            else:
+                repl = "" if body.operation == "remove" else body.replacement
+                new = base.replace(body.text, repl)
+            out.append((row, base, new))
+        return out
+
+    # Regex on user input can backtrack catastrophically — bound it like caption bulk-edit.
+    try:
+        transformed = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(None, _transform), timeout=30.0
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(408, "Regex evaluation timed out")
+
+    affected = 0
+    for row, base, new in transformed:
+        if new == base:
+            continue  # no-op (e.g. find/replace with no match) — don't touch the row
+        vals = dict(row.values or {})
+        vals[prompt_alias] = new
+        row.values = vals
+        if row.status in ("completed", "failed"):
+            row.status = "pending"
+            row.error_msg = None
+            row.prompt_id = None
+        affected += 1
+    await db.commit()
+    return {"affected": affected, "skipped": len(rows) - affected}
+
+
 @router.post("/plans/{plan_id}/rows/reset")
 async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Depends(get_db)):
     await _get_plan(db, plan_id)
@@ -421,7 +686,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 return  # plan/dataset deleted after the job was enqueued
             workflow = plan_row.workflow_json or {}
             pinned = plan_row.pinned_params or []
-            seed_mode = plan_row.seed_mode
+            output_node_ids = plan_row.output_node_ids or []
 
             run_rows = (
                 await session.execute(
@@ -475,7 +740,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 await _emit(i, f"Generating {i + 1}/{total}", prompt_preview)
 
                 try:
-                    wf = patch_workflow(workflow, pinned, row.values or {}, seed_mode, i)
+                    wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     prompt_id = await client.submit(wf, client_id=job_id)
                     consecutive_connect_errors = 0
                     row.prompt_id = prompt_id
@@ -500,9 +765,15 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     err = check_history_error(entry)
                     if err:
                         raise ComfyRowError(err)
-                    image_refs = extract_output_images(entry)
+                    image_refs = extract_output_images(entry, output_node_ids)
                     if not image_refs:
-                        raise ComfyRowError("workflow produced no output images")
+                        raise ComfyRowError(
+                            f"selected output node(s) {', '.join(output_node_ids)} produced no "
+                            "images — review the workflow and the plan's output-node selection"
+                            if output_node_ids
+                            else "workflow produced no output images — add a SaveImage node, or "
+                            "select an output node (e.g. a PreviewImage) in Workflow & Pins"
+                        )
 
                     row_image_ids: list[str] = []
                     for ref in image_refs:

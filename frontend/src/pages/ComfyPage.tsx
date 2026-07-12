@@ -9,6 +9,9 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
 import ComfyRowsTable from "../components/comfy/ComfyRowsTable";
 import ComfyRunBar from "../components/comfy/ComfyRunBar";
+import ComfyDefaultsStrip from "../components/comfy/ComfyDefaultsStrip";
+import GeneratePromptsModal from "../components/comfy/GeneratePromptsModal";
+import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 
 function apiErrorDetail(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
@@ -34,6 +37,26 @@ export default function ComfyPage() {
   const [confirmDeleteRows, setConfirmDeleteRows] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const txtFilesRef = useRef<HTMLInputElement>(null);
+
+  /** Each .txt file is one prompt: newlines inside a file collapse to spaces,
+      and the prompt is appended as one line to the paste textarea for review. */
+  async function loadPromptFiles(files: FileList) {
+    const prompts: string[] = [];
+    for (const f of Array.from(files)) {
+      try {
+        const text = (await f.text()).replace(/\s+/g, " ").trim();
+        if (text) prompts.push(text);
+      } catch {
+        toast.error(`Could not read ${f.name}`);
+      }
+    }
+    if (prompts.length === 0) return;
+    setPasteText((prev) => (prev.trim() ? prev.replace(/\n$/, "") + "\n" : "") + prompts.join("\n"));
+    toast.success(`Loaded ${prompts.length} prompt${prompts.length !== 1 ? "s" : ""} from files`);
+  }
 
   // Reset local state when the dataset changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);
@@ -138,6 +161,7 @@ export default function ComfyPage() {
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       setShowPaste(false);
       setPasteText("");
+      setShowGenerate(false);
       toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""}`);
     },
     onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to add rows")),
@@ -185,6 +209,11 @@ export default function ComfyPage() {
   const pendingCount = rows.filter((r) => r.status === "pending").length;
   const failedCount = rows.filter((r) => r.status === "failed").length;
   const isRunning = runMutation.isPending || !!activeJobId;
+  const hasPromptPin = plan?.pinned_params.some((p) => p.is_prompt) ?? false;
+  const promptAlias = plan?.pinned_params.find((p) => p.is_prompt)?.alias;
+  const queuePrompts = promptAlias
+    ? rows.map((r) => r.values[promptAlias]).filter((v): v is string => typeof v === "string" && v.trim() !== "")
+    : [];
 
   function toggleRow(id: string) {
     setSelected((prev) => {
@@ -314,13 +343,29 @@ export default function ComfyPage() {
             jobProgress={jobProgress}
           />
 
+          <ComfyDefaultsStrip
+            plan={plan}
+            disabled={isRunning || updatePlanMutation.isPending}
+            onSavePins={(pins) => updatePlanMutation.mutate({ pinned_params: pins })}
+          />
+
           {/* Rows toolbar */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <button className="btn ghost sm" onClick={() => addRowMutation.mutate()} disabled={plan.pinned_params.length === 0}>+ Add row</button>
             <button className="btn ghost sm" onClick={() => setShowPaste(true)}
-              disabled={!plan.pinned_params.some((p) => p.is_prompt)}
-              title={plan.pinned_params.some((p) => p.is_prompt) ? "Add one row per line of prompt text" : "Mark a pinned parameter as the prompt first"}>
+              disabled={!hasPromptPin}
+              title={hasPromptPin ? "Add one row per line of prompt text" : "Mark a pinned parameter as the prompt first"}>
               Paste prompts…
+            </button>
+            <button className="btn ghost sm" onClick={() => setShowGenerate(true)}
+              disabled={!hasPromptPin}
+              title={hasPromptPin ? "Generate prompts with an LLM provider" : "Mark a pinned parameter as the prompt first"}>
+              ✨ Generate prompts…
+            </button>
+            <button className="btn ghost sm" onClick={() => setShowBulkEdit(true)}
+              disabled={!hasPromptPin || rows.length === 0}
+              title={hasPromptPin ? "Find & replace / prepend / append / remove across row prompts" : "Mark a pinned parameter as the prompt first"}>
+              Edit prompts…
             </button>
             <div style={{ flex: 1 }} />
             {failedCount > 0 && (
@@ -355,10 +400,21 @@ export default function ComfyPage() {
             className="panel" style={{ width: 560, maxWidth: "92vw" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="panel-h"><h3>Paste prompts</h3></div>
+            <div className="panel-h">
+              <h3>Paste prompts</h3>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost sm" onClick={() => txtFilesRef.current?.click()}>
+                Load .txt files…
+              </button>
+              <input
+                ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
+                onChange={(e) => { if (e.target.files?.length) loadPromptFiles(e.target.files); e.target.value = ""; }}
+              />
+            </div>
             <div className="panel-b">
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
-                One prompt per line — each becomes a row with that prompt; other parameters use the template values.
+                One prompt per line — each becomes a row with that prompt; other parameters use the template
+                values. “Load .txt files…” appends each selected file as one prompt line.
               </p>
               <textarea
                 className="input" autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value)}
@@ -378,6 +434,25 @@ export default function ComfyPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showGenerate && plan && (
+        <GeneratePromptsModal
+          planId={plan.id}
+          queuePrompts={queuePrompts}
+          adding={bulkAddMutation.isPending}
+          onAdd={(prompts) => bulkAddMutation.mutate(prompts)}
+          onClose={() => setShowGenerate(false)}
+        />
+      )}
+
+      {showBulkEdit && plan && (
+        <BulkEditRowsModal
+          plan={plan}
+          rowCount={rows.length}
+          selectedIds={[...selected]}
+          onClose={() => setShowBulkEdit(false)}
+        />
       )}
 
       {confirmDeletePlan && plan && (

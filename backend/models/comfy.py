@@ -22,10 +22,13 @@ class ComfyPlan(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # ComfyUI API-format workflow: {node_id: {class_type, inputs, ...}}
     workflow_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    # [{node_id: str, input: str, alias: str, is_prompt: bool}]
+    # [{node_id, input, alias, is_prompt, per_row, value, int_mode}] — per_row=False pins
+    # are run defaults (no queue column); value overrides the template for all rows;
+    # int_mode (integer params) = fixed | random | increment when a row has no value.
     pinned_params: Mapped[list] = mapped_column(JSON, default=list)
-    # Applied to a pin aliased "seed" when a row leaves it blank: fixed | random | increment
-    seed_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="fixed", default="fixed")
+    # Import images from these workflow nodes' history outputs (any type, incl. temp
+    # previews) instead of the default "all type=output images" behavior. [] = auto.
+    output_node_ids: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

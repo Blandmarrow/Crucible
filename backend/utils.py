@@ -23,6 +23,21 @@ def count_caption_tokens(text: str | None) -> int:
 ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
 
 
+def sanitize_abs_path(path: str) -> Path:
+    """Validate a user-supplied filesystem path string and return a Path.
+
+    Rejects null bytes and relative paths with HTTP 400. Use in every router
+    that accepts an arbitrary path from the client (file browser, ComfyUI
+    workflow folder scan); never re-inline this check.
+    """
+    if "\x00" in path:
+        raise HTTPException(400, "Invalid path")
+    p = Path(path)
+    if not p.is_absolute():
+        raise HTTPException(400, "Path must be absolute")
+    return p
+
+
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments."""
     parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]

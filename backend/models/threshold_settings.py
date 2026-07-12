@@ -18,3 +18,4 @@ class ThresholdSettings(Base):
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="'off'")
     auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")

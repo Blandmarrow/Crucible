@@ -18,6 +18,13 @@ function apiErrorDetail(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
 }
 
+/** Hooks can't run in loops — render one of these per active run to keep a
+ *  dedicated SSE subscription per job. */
+function JobSSESubscriber({ jobId }: { jobId: string }) {
+  useJobSSE(jobId);
+  return null;
+}
+
 export default function ComfyPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
@@ -27,7 +34,11 @@ export default function ComfyPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [subfolder, setSubfolder] = useState("");
   const [setCaption, setSetCaption] = useState(true);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  // Every in-flight run: jobId → the plan it was launched against (captured at
+  // mutate time). Multiple plans may run at once; each job's SSE events and
+  // completion invalidation must target its own plan, not whatever plan is
+  // currently selected.
+  const [activeRuns, setActiveRuns] = useState<Map<string, string>>(new Map());
 
   // Modals / inline forms
   const [showCreate, setShowCreate] = useState(false);
@@ -68,7 +79,7 @@ export default function ComfyPage() {
     setPlanId(null);
     setSelected(new Set());
     setSubfolder("");
-    setActiveJobId(null);
+    setActiveRuns(new Map());
   }, [datasetId]);
 
   const { data: plans = [] } = useQuery({
@@ -91,26 +102,32 @@ export default function ComfyPage() {
     enabled: !!effectivePlanId,
   });
 
-  useJobSSE(activeJobId);
-  const jobProgress = useJobStore((s) => s.activeJobs.get(activeJobId ?? ""));
+  const activeJobs = useJobStore((s) => s.activeJobs);
 
   useEffect(() => {
-    if (!jobProgress) return;
-    if (jobProgress.status === "running") {
-      // Refresh row statuses as the run progresses (cheap list query, ~1 refetch/row).
-      qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
+    for (const [jobId, planId] of activeRuns) {
+      const progress = activeJobs.get(jobId);
+      if (!progress) continue;
+      if (progress.status === "running") {
+        // Refresh row statuses as the run progresses (cheap list query, ~1 refetch/row).
+        qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
+      }
+      if (["completed", "failed", "cancelled"].includes(progress.status)) {
+        qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
+        qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+        qc.invalidateQueries({ queryKey: ["images", datasetId] });
+        qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+        qc.invalidateQueries({ queryKey: ["datasets"] });
+        if (progress.status === "completed") toast.success("Generation run finished");
+        else if (progress.status === "failed") toast.error("Generation run failed — see row errors / Logs");
+        setActiveRuns((prev) => {
+          const next = new Map(prev);
+          next.delete(jobId);
+          return next;
+        });
+      }
     }
-    if (["completed", "failed", "cancelled"].includes(jobProgress.status)) {
-      qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
-      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      if (jobProgress.status === "completed") toast.success("Generation run finished");
-      else if (jobProgress.status === "failed") toast.error("Generation run failed — see row errors / Logs");
-      setActiveJobId(null);
-    }
-  }, [jobProgress?.status, jobProgress?.done, effectivePlanId, datasetId, qc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeJobs, activeRuns, datasetId, qc]);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
@@ -191,17 +208,19 @@ export default function ComfyPage() {
   });
 
   const runMutation = useMutation({
-    mutationFn: (rowIds?: string[]) =>
+    // planId travels through the variables so it's captured at mutate time —
+    // switching the plan select while the POST is in flight must not retag the run.
+    mutationFn: (vars: { planId: string; rowIds?: string[] }) =>
       comfyApi.run({
-        plan_id: effectivePlanId!,
-        row_ids: rowIds,
+        plan_id: vars.planId,
+        row_ids: vars.rowIds,
         subfolder,
         set_caption: setCaption,
       }),
-    onSuccess: (data) => {
-      setActiveJobId(data.job_id);
+    onSuccess: (data, vars) => {
+      setActiveRuns((prev) => new Map(prev).set(data.job_id, vars.planId));
       toast.success(`Generation started — ${data.total} row${data.total !== 1 ? "s" : ""}`);
-      qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", vars.planId] });
     },
     onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to start generation")),
   });
@@ -210,7 +229,12 @@ export default function ComfyPage() {
 
   const pendingCount = rows.filter((r) => r.status === "pending").length;
   const failedCount = rows.filter((r) => r.status === "failed").length;
-  const isRunning = runMutation.isPending || !!activeJobId;
+  // Only gate the run bar when the *currently viewed* plan has a run in flight; a
+  // different plan selected mid-run must stay fully interactive.
+  const viewingJobId =
+    [...activeRuns.entries()].find(([, pid]) => pid === effectivePlanId)?.[0] ?? null;
+  const jobProgress = viewingJobId ? activeJobs.get(viewingJobId) : undefined;
+  const isRunning = runMutation.isPending || !!viewingJobId;
   const hasPromptPin = plan?.pinned_params.some((p) => p.is_prompt) ?? false;
   const promptAlias = plan?.pinned_params.find((p) => p.is_prompt)?.alias;
   const queuePrompts = promptAlias
@@ -235,6 +259,9 @@ export default function ComfyPage() {
 
   return (
     <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
+      {[...activeRuns.keys()].map((jobId) => (
+        <JobSSESubscriber key={jobId} jobId={jobId} />
+      ))}
       <div className="page-h">
         <div>
           <h1>ComfyUI generation</h1>
@@ -340,9 +367,9 @@ export default function ComfyPage() {
             onSubfolderChange={setSubfolder}
             setCaption={setCaption}
             onSetCaptionChange={setSetCaption}
-            onRunPending={() => runMutation.mutate(undefined)}
-            onRunSelected={() => runMutation.mutate([...selected])}
-            onRunAll={() => runMutation.mutate(rows.map((r) => r.id))}
+            onRunPending={() => runMutation.mutate({ planId: effectivePlanId! })}
+            onRunSelected={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: [...selected] })}
+            onRunAll={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: rows.map((r) => r.id) })}
             isRunning={isRunning}
             jobProgress={jobProgress}
           />

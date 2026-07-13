@@ -1,5 +1,21 @@
 import client from "./client";
 
+/** Coerce a raw cell/pin input to the value stored in a row/pin.
+ *
+ * Non-numeric fields keep the raw string. Numeric fields become a real number
+ * ONLY when it round-trips exactly and safely; large or high-precision integers
+ * (e.g. ComfyUI seeds beyond 2^53) are kept as the raw string so no digits are
+ * lost — the backend `_coerce` converts a numeric string to the template's type
+ * losslessly (Python `int()`/`float()`).
+ */
+export function coerceCellValue(raw: string, numeric: boolean): string | number {
+  if (!numeric) return raw;
+  const trimmed = raw.trim();
+  const n = Number(trimmed);
+  if (trimmed !== "" && Number.isFinite(n) && String(n) === trimmed) return n;
+  return raw;
+}
+
 export interface PinnedParam {
   node_id: string;
   input: string;

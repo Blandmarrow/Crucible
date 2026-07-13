@@ -44,7 +44,11 @@ running the backend.
 (`POST /prompt`, `GET /history/{id}`, `GET /view`, `POST /interrupt` best-effort);
 `patch_workflow(workflow, pinned, row_values, row_index)` deep-copies the template and
 resolves each pin as: row value (coerced to the template value's JSON type) → `int_mode`
-roll (random/increment) → run default `value` → template; `effective_prompt` follows the
+roll (random/increment) → run default `value` → template. Coercion is
+backend-authoritative: the frontend's `coerceCellValue` deliberately keeps big or
+non-round-tripping numerics (seeds > 2^53, `'1e5'`, `'1.0'`) as strings, and `_coerce` /
+the increment base both accept them via `_lenient_int` (`int()` → `int(float())`
+fallback; garbage still raises `ComfyRowError`); `effective_prompt` follows the
 same row → default → template chain; `extract_output_images(entry, output_node_ids=None)` —
 default/empty: all `type == "output"` images (skips `temp` previews; a workflow with only a
 PreviewImage node and no output-node selection fails its rows with a "add a SaveImage node or
@@ -113,6 +117,13 @@ Failure/cancel semantics:
 
 - Per-row failures (`ComfyRowError`, httpx errors, OSError) mark the row `failed` with a
   readable message (400 `node_errors` are flattened by `_format_node_errors`) and continue.
+  **Per-row atomicity**: `row_files`/`row_images` track every file + Image the row produces
+  — files are tracked *before* they are written (a corrupt download can fail inside
+  `_write_and_register` after the file is on disk) — and the failure handler unlinks the
+  files and deletes the Image rows, so a partly-imported row leaves no orphans. A hard
+  `CancelledError` (server shutdown; normal cancel is cooperative and never reaches here
+  with files written) runs the same cleanup best-effort and resets the row to `pending`
+  before re-raising.
 - **3 consecutive connect errors abort the run** with a job-level error; untouched rows stay
   `pending`.
 - Cancel (`DELETE /jobs/{id}`) is cooperative: checked before each row and inside the poll
@@ -164,11 +175,17 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
 - **`ComfyRunBar`** — subfolder select (`["subfolders", datasetId]`), "Prompt as caption"
   toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
   status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
-  which runs explicit `row_ids` regardless of status) → `setActiveJobId` + `useJobSSE`; progress
-  bar from `jobStore`. While a run is live the page invalidates `["comfy","rows",planId]` on each
-  progress event so row statuses update in place; on terminal status it also invalidates
-  `["images", datasetId]`, `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and
-  `["datasets"]`. **Live gallery refresh during a run is driven by TopBar**, not this page:
+  which runs explicit `row_ids` regardless of status). The page tracks runs in an
+  `activeRuns: Map<jobId, planId>` (planId captured at **mutate** time, so switching the plan
+  select mid-POST can't retag a run); one `JobSSESubscriber` component per entry keeps a
+  dedicated `useJobSSE` subscription, and the run bar / `isRunning` gating applies only to the
+  plan being viewed — other plans stay interactive and can start their own concurrent runs
+  (the backend 409 is per-plan). While a run is live the page invalidates
+  `["comfy","rows",planId]` (that run's plan, not the viewed one) on each progress event so
+  row statuses update in place; on terminal status it also invalidates `["images", datasetId]`,
+  `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and `["datasets"]`, fires the
+  completion/failure toast, and drops the run from the map — every tracked run gets its
+  invalidations and toast even if a different plan is selected when it finishes. **Live gallery refresh during a run is driven by TopBar**, not this page:
   `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
   `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
   gallery updates per-row as images import, regardless of which pane is showing it.

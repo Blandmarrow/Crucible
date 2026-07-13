@@ -312,20 +312,32 @@ async def delete_version(
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
 
-    # Prevent deleting the only version on a branch
+    # Prevent deleting the only version on a branch; otherwise move the branch head to
+    # the deleted version's PARENT when it lives on the same branch (git-like: head
+    # returns to where it came from — after restore→delete-head this correctly skips
+    # the just-created pre_restore auto-snapshot, which is always the newest by
+    # created_at). Fall back to the newest remaining version on the branch when the
+    # parent is NULL (broken chain) or points at another branch (branch-init snapshots).
     if ver.branch_id is not None:
         branch = await db.get(DatasetBranch, ver.branch_id)
         if branch and branch.head_version_id == version_id:
-            # Check if there are other versions on this branch
-            other = await db.execute(
+            newest_other = await db.execute(
                 select(DatasetVersion.id).where(
                     DatasetVersion.branch_id == ver.branch_id,
                     DatasetVersion.id != version_id,
+                ).order_by(
+                    DatasetVersion.created_at.desc(), DatasetVersion.id
                 ).limit(1)
             )
-            if other.first() is None:
+            fallback = newest_other.scalar_one_or_none()
+            if fallback is None:
                 raise HTTPException(400, "Cannot delete the only version on a branch")
-            branch.head_version_id = ver.parent_id
+            new_head = None
+            if ver.parent_id:
+                parent = await db.get(DatasetVersion, ver.parent_id)
+                if parent is not None and parent.branch_id == ver.branch_id:
+                    new_head = parent.id
+            branch.head_version_id = new_head or fallback
 
     await db.delete(ver)
     await db.commit()

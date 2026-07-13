@@ -74,9 +74,6 @@ export default function ComfyRunBar({
           <div style={{ height: 5, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${jobProgress.percent ?? 0}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", transition: "width .4s" }} />
           </div>
-          {jobProgress.status === "completed" && (
-            <p style={{ color: "var(--good)", fontSize: 12, marginTop: 6 }}>✓ Generation run finished</p>
-          )}
         </div>
       )}
     </div>

@@ -3,11 +3,37 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Coroutine
 
+from sqlalchemy import update
+
 from backend.database import AsyncSessionLocal
 from backend.models import BackgroundJob
 from backend.workers.progress import broadcaster
 
 logger = logging.getLogger(__name__)
+
+
+async def mark_interrupted_jobs() -> int:
+    """Fail any job rows left 'running'/'pending' by a previous process.
+
+    The queue lives in memory, so a shutdown/restart orphans those rows —
+    nothing will ever resume them, and they render as stuck-forever in the UI.
+    Called once at startup, before the worker starts. Returns the row count.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(BackgroundJob)
+            .where(BackgroundJob.status.in_(("running", "pending")))
+            .values(
+                status="failed",
+                error_msg="Interrupted by server shutdown or restart",
+                finished_at=datetime.utcnow(),
+            )
+        )
+        await db.commit()
+    count = result.rowcount or 0
+    if count:
+        logger.info("Marked %d interrupted job(s) from a previous run as failed", count)
+    return count
 
 
 class JobQueue:

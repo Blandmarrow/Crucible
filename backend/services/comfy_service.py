@@ -102,16 +102,27 @@ def _format_node_errors(resp: httpx.Response) -> str:
     return "; ".join(p for p in parts if p) or resp.text[:500]
 
 
+def _lenient_int(value) -> int:
+    """int() with a float fallback so numeric strings the frontend intentionally
+    keeps as strings ('1e5', '1.0', '.5' — see coerceCellValue in api/comfy.ts)
+    still coerce; garbage still raises ValueError/TypeError."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return int(float(value))
+
+
 def _coerce(value, template_val):
-    """Coerce a row value to the template value's JSON type (safety net —
-    the frontend already sends native types based on the template)."""
+    """Coerce a row value to the template value's JSON type. The authority for
+    typing: the frontend deliberately sends numeric strings when converting to
+    a JS number would lose precision (e.g. seeds beyond 2^53)."""
     try:
         if isinstance(template_val, bool):
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")
             return bool(value)
         if isinstance(template_val, int):
-            return int(value)
+            return _lenient_int(value)
         if isinstance(template_val, float):
             return float(value)
     except (ValueError, TypeError) as e:
@@ -217,9 +228,14 @@ def patch_workflow(
         if int_mode == "random":
             node["inputs"][input_name] = random.randint(0, 2**48)
             continue
-        if int_mode == "increment" and isinstance(base_val, (int, float)):
-            node["inputs"][input_name] = int(base_val) + row_index
-            continue
+        if int_mode == "increment":
+            # base_val may be a numeric string (big seeds are kept as strings by
+            # the frontend to avoid 2^53 precision loss) — coerce before adding.
+            try:
+                node["inputs"][input_name] = _lenient_int(base_val) + row_index
+                continue
+            except (ValueError, TypeError):
+                pass  # non-numeric base: fall through to default/template as before
         if default_val not in (None, ""):
             node["inputs"][input_name] = _coerce(default_val, template_val)
     return wf

@@ -37,13 +37,14 @@ from backend.database import init_db
 if settings.hf_token:
     os.environ.setdefault("HF_TOKEN", settings.hf_token)
 from backend.routers import booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, mark_interrupted_jobs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
+    await mark_interrupted_jobs()
     await job_queue.start()
     yield
     await job_queue.stop()

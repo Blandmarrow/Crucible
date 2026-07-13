@@ -80,7 +80,7 @@ def upgrade() -> None:
     op.create_index('ix_version_image_states_image_id', 'version_image_states', ['image_id'])
 
     op.add_column('datasets', sa.Column('current_branch_id', sa.String(36), nullable=True))
-    op.add_column('threshold_settings', sa.Column('versioning_mode', sa.String(16), nullable=False, server_default="'off'"))
+    op.add_column('threshold_settings', sa.Column('versioning_mode', sa.String(16), nullable=False, server_default="off"))
 
 
 def downgrade() -> None:

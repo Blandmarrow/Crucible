@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { comfyApi, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
+import { comfyApi, coerceCellValue, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 
 interface Props {
@@ -152,7 +152,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     if (raw === "") {
       delete values[alias];
     } else {
-      values[alias] = numericAlias.get(alias) && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+      values[alias] = coerceCellValue(raw, !!numericAlias.get(alias));
     }
     updateMutation.mutate({ rowId: row.id, values });
   }
@@ -188,9 +188,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     if (!bulkPin) return;
     const raw = bulkValue.trim();
     if (!clear && raw === "") return;
-    const value = clear
-      ? null
-      : numericAlias.get(bulkPin.alias) && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+    const value = clear ? null : coerceCellValue(raw, !!numericAlias.get(bulkPin.alias));
     setAllMutation.mutate({ alias: bulkPin.alias, value });
   }
 

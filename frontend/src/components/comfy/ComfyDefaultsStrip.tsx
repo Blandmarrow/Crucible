@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { coerceCellValue } from "../../api/comfy";
 import type { ComfyPlan, PinnedParam } from "../../api/comfy";
 
 interface Props {
@@ -31,8 +32,8 @@ export default function ComfyDefaultsStrip({ plan, disabled, onSavePins }: Props
   function save(clear: boolean) {
     if (!editing) return;
     const tv = templateValue(plan, editing);
-    let value: PinnedParam["value"] = clear || draft.trim() === "" ? null : draft;
-    if (value !== null && typeof tv === "number" && !Number.isNaN(Number(draft))) value = Number(draft);
+    const value: PinnedParam["value"] =
+      clear || draft.trim() === "" ? null : coerceCellValue(draft, typeof tv === "number");
     onSavePins(plan.pinned_params.map((p) =>
       p.node_id === editing.node_id && p.input === editing.input ? { ...p, value } : p
     ));

@@ -340,7 +340,7 @@ export default function SettingsPage() {
                 <button
                   className="btn primary"
                   onClick={() => mutation.mutate({ comfyui_url: form.comfyui_url.trim() })}
-                  disabled={!thresholds || form.comfyui_url === thresholds.comfyui_url}
+                  disabled={!thresholds || form.comfyui_url.trim() === thresholds.comfyui_url}
                 >
                   Save
                 </button>
@@ -371,7 +371,7 @@ export default function SettingsPage() {
                 <button
                   className="btn primary"
                   onClick={() => mutation.mutate({ comfy_workflow_dir: form.comfy_workflow_dir.trim() })}
-                  disabled={!thresholds || form.comfy_workflow_dir === thresholds.comfy_workflow_dir}
+                  disabled={!thresholds || form.comfy_workflow_dir.trim() === thresholds.comfy_workflow_dir}
                 >
                   Save
                 </button>

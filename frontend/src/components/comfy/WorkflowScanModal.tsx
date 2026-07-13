@@ -31,7 +31,10 @@ export default function WorkflowScanModal({ onLoad, onClose }: Props) {
   const { data, isFetching, error } = useQuery({
     queryKey: ["comfy", "workflow-files", dir],
     queryFn: () => comfyApi.listWorkflowFiles(dir || undefined),
-    enabled: thresholds !== undefined && !!dir.trim(),
+    // `dir` already folds in the settings fallback, so following the default stays
+    // disabled (empty) until thresholds load, while a manual pick scans immediately
+    // — don't block a chosen folder on the settings query.
+    enabled: !!dir.trim(),
     retry: false,
   });
 

@@ -27,11 +27,15 @@ export interface DiffImageEntry {
   caption: string;
 }
 
+/** Heavy JSON fields (generation_metadata, dino_layer_scores) arrive as a
+ *  compact `{ changed: true }` marker instead of full from/to values. */
+export type FieldChange = { from: unknown; to: unknown } | { changed: true };
+
 export interface ModifiedImageDiff {
   image_id: string | null;
   filename: string;
   subfolder: string;
-  changes: Record<string, { from: unknown; to: unknown }>;
+  changes: Record<string, FieldChange>;
 }
 
 export interface VersionDiff {

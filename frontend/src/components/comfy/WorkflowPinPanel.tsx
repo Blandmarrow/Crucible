@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { coerceCellValue } from "../../api/comfy";
 import type { ComfyPlan, PinnedParam } from "../../api/comfy";
 import WorkflowScanModal from "./WorkflowScanModal";
 
@@ -139,8 +140,7 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
   function commitPinValue(idx: number, raw: string) {
     const pin = pins[idx];
     const tv = templateVal(pin);
-    let value: PinnedParam["value"] = raw === "" ? null : raw;
-    if (value !== null && typeof tv === "number" && !Number.isNaN(Number(raw))) value = Number(raw);
+    const value: PinnedParam["value"] = raw === "" ? null : coerceCellValue(raw, typeof tv === "number");
     patchPin(idx, { value });
   }
 
@@ -349,15 +349,29 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
                             />
                             <span className="mono" style={{ fontSize: 10, color: "var(--fg-dim)" }}>{pin.input}</span>
                           </div>
-                          <input
-                            className="input mono"
-                            style={{ flex: 1, fontSize: 11.5, height: 26, minWidth: 120 }}
-                            type={typeof tv === "number" ? "number" : "text"}
-                            value={pin.value === null || pin.value === undefined ? "" : String(pin.value)}
-                            placeholder={tv === undefined ? "template" : `template: ${String(tv)}`}
-                            title="Run default — applies to every row that doesn't set its own value. Blank = template value."
-                            onChange={(e) => commitPinValue(idx, e.target.value)}
-                          />
+                          {typeof tv === "boolean" ? (
+                            <select
+                              className="select"
+                              style={{ flex: 1, fontSize: 11.5, height: 26, minWidth: 120 }}
+                              value={pin.value === true ? "true" : pin.value === false ? "false" : ""}
+                              title="Run default — applies to every row that doesn't set its own value. Template = the workflow's own value."
+                              onChange={(e) => patchPin(idx, { value: e.target.value === "" ? null : e.target.value === "true" })}
+                            >
+                              <option value="">template: {String(tv)}</option>
+                              <option value="true">true</option>
+                              <option value="false">false</option>
+                            </select>
+                          ) : (
+                            <input
+                              className="input mono"
+                              style={{ flex: 1, fontSize: 11.5, height: 26, minWidth: 120 }}
+                              type={typeof tv === "number" ? "number" : "text"}
+                              value={pin.value === null || pin.value === undefined ? "" : String(pin.value)}
+                              placeholder={tv === undefined ? "template" : `template: ${String(tv)}`}
+                              title="Run default — applies to every row that doesn't set its own value. Blank = template value."
+                              onChange={(e) => commitPinValue(idx, e.target.value)}
+                            />
+                          )}
                           {isInt && !pin.is_prompt && (
                             <select
                               className="select" style={{ height: 26, fontSize: 11 }}

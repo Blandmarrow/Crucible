@@ -74,12 +74,26 @@ export default function GeneratePromptsModal({ planId, queuePrompts, onAdd, addi
     return res.prompts;
   }
 
+  /** Drop incoming prompts that (case-insensitively) already appear in `have`, so a
+   *  repetitive model doesn't inflate the count or add duplicate rows. */
+  function dedupeAgainst(have: string[], incoming: string[]): string[] {
+    const seen = new Set(have.map((l) => l.trim().toLowerCase()));
+    const out: string[] = [];
+    for (const p of incoming) {
+      const key = p.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
+    return out;
+  }
+
   async function handleBatch() {
     if (!effectiveProviderId || !instruction.trim()) return;
     setBusy("batch");
     try {
-      const prompts = await generateBatch(lines);
-      if (prompts.length === 0) toast.error("The model returned no usable prompts — try rephrasing the instruction");
+      const prompts = dedupeAgainst(lines, await generateBatch(lines));
+      if (prompts.length === 0) toast.error("The model returned no new prompts — try rephrasing the instruction");
       setResultText((prev) => (prev.trim() ? prev.replace(/\n$/, "") + "\n" : "") + prompts.join("\n"));
     } catch (err) {
       toast.error(apiError(err));
@@ -95,16 +109,22 @@ export default function GeneratePromptsModal({ planId, queuePrompts, onAdd, addi
     let current = [...lines];
     let text = resultText;
     const maxCalls = 12; // hard stop against a model that returns nothing useful
+    let call = 0;
     try {
-      for (let call = 0; current.length < untilN && call < maxCalls && !stopRef.current; call++) {
-        const prompts = await generateBatch(current);
+      for (; current.length < untilN && call < maxCalls && !stopRef.current; call++) {
+        const prompts = dedupeAgainst(current, await generateBatch(current));
         if (prompts.length === 0) {
-          toast.error("The model returned no usable prompts — stopping");
+          toast.error("The model returned no new prompts — stopping");
           break;
         }
         current = [...current, ...prompts];
         text = (text.trim() ? text.replace(/\n$/, "") + "\n" : "") + prompts.join("\n");
         setResultText(text);
+      }
+      // Reached the call cap without hitting the target and without a user stop or
+      // empty batch — tell the user rather than stopping silently short of N.
+      if (current.length < untilN && call >= maxCalls && !stopRef.current) {
+        toast(`Stopped at ${current.length} prompts (call limit) — click "Generate until" again to continue`);
       }
     } catch (err) {
       toast.error(apiError(err));

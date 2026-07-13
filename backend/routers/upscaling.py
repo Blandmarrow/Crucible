@@ -99,6 +99,16 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                # Emit BEFORE the upscale runs: on CPU a single image can take
+                # minutes, and without this a small job sits at "Starting…" the
+                # whole time, looking hung.
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                    "status": "running", "done": i, "total": len(images),
+                    "percent": round(i / len(images) * 100, 1),
+                    "current_item": img.filename,
+                    "message": f"Upscaling {img.filename}…",
+                })
                 src_path = Path(img.file_path)
                 dest_path_str: str
 

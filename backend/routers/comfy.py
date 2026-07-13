@@ -135,7 +135,6 @@ class RowsBulkEditRequest(BaseModel):
 class RunRequest(BaseModel):
     plan_id: str
     row_ids: list[str] | None = None
-    only_pending: bool = True
     subfolder: str = ""
     set_caption: bool = True
     label: str | None = None
@@ -764,6 +763,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 await session.commit()
                 await _emit(i, f"Generating {i + 1}/{total}", prompt_preview)
 
+                # Populated as the row's outputs are imported; used to roll back files +
+                # Image rows if the row fails partway through (see the except handler).
+                row_images: list[Image] = []
+                row_files: list[Path] = []
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     prompt_id = await client.submit(wf, client_id=job_id)
@@ -800,6 +803,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             "select an output node (e.g. a PreviewImage) in Workflow & Pins"
                         )
 
+                    # Per-row atomicity: row_files / row_images (declared above) track every
+                    # file + Image created for this row so a failure partway through a
+                    # multi-output row leaves no stray files on disk and no orphan Image rows
+                    # (which would otherwise surface in the gallery under a "failed" row).
                     row_image_ids: list[str] = []
                     for ref in image_refs:
                         data = await client.fetch_image(
@@ -812,6 +819,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         )
                         dest = images_dir / new_name
                         thumb_path = thumbnail_path_for(dest)
+                        # Track BEFORE writing: _write_and_register can raise after
+                        # dest is on disk (corrupt bytes → PIL error during register),
+                        # and unlink(missing_ok=True) makes early tracking harmless.
+                        row_files.extend((dest, Path(thumb_path)))
                         info, gen_meta = await loop.run_in_executor(
                             None, _write_and_register, data, dest, thumb_path
                         )
@@ -831,9 +842,11 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                                 img.caption_text = caption
                                 img.captioned_by = "comfyui"
                                 img.captioned_at = datetime.utcnow()
+                                row_files.append(dest.with_suffix(".txt"))
                                 _write_txt_sidecar(str(dest), caption)
                         session.add(img)
                         await session.flush()
+                        row_images.append(img)
                         row_image_ids.append(img.id)
 
                     row.image_id = row_image_ids[0]
@@ -842,8 +855,39 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     row.error_msg = None
                     created_image_ids.extend(row_image_ids)
                 except asyncio.CancelledError:
+                    # Hard task cancellation (server shutdown) mid-import: remove the
+                    # files already produced for this row (sync — guaranteed even if
+                    # the loop refuses further awaits), then best-effort DB cleanup so
+                    # the row doesn't stay committed as "running" with orphan images.
+                    # The cooperative-cancel path above commits "pending" before any
+                    # files are written, so this is idempotent with it.
+                    for f in row_files:
+                        try:
+                            f.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    try:
+                        for img_obj in row_images:
+                            await session.delete(img_obj)
+                        row.image_id = None
+                        row.image_ids = []
+                        row.status = "pending"
+                        row.error_msg = None
+                        await session.commit()
+                    except Exception:
+                        pass  # best-effort; a second CancelledError propagates below
                     raise
                 except (ComfyRowError, httpx.HTTPError, OSError) as e:
+                    # Discard any images/files this row produced before it failed.
+                    for img_obj in row_images:
+                        await session.delete(img_obj)
+                    for f in row_files:
+                        try:
+                            f.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    row.image_id = None
+                    row.image_ids = []
                     row.status = "failed"
                     row.error_msg = str(e)[:2000]
                     failed_row_ids.append(row.id)

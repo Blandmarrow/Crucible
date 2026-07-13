@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { versioningApi } from "../../api/versioning";
-import type { Version } from "../../types";
+import type { FieldChange, Version } from "../../types";
 
 interface Props {
   datasetId: string;
@@ -48,7 +48,16 @@ function formatProcessingEntry(e: ProcessingEntry): string {
 
 const changeRowStyle = { fontSize: 11, color: "var(--fg-mute)", paddingLeft: 12, paddingTop: 2 };
 
-function ChangeRow({ field, change }: { field: string; change: { from: unknown; to: unknown } }) {
+function ChangeRow({ field, change }: { field: string; change: FieldChange }) {
+  if ("changed" in change) {
+    // Compact marker for heavy JSON fields — the backend never sends the values.
+    return (
+      <div style={changeRowStyle}>
+        <span style={{ color: "var(--fg)" }}>{field}</span>: changed
+      </div>
+    );
+  }
+
   if (field === "processing_history") {
     const from = (change.from as ProcessingEntry[] | null) ?? [];
     const to = (change.to as ProcessingEntry[] | null) ?? [];

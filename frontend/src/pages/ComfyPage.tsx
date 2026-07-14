@@ -12,7 +12,8 @@ import ComfyRunBar from "../components/comfy/ComfyRunBar";
 import ComfyDefaultsStrip from "../components/comfy/ComfyDefaultsStrip";
 import GeneratePromptsModal from "../components/comfy/GeneratePromptsModal";
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
-import ImportPromptsModal from "../components/comfy/ImportPromptsModal";
+import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
+import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 
 function apiErrorDetail(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
@@ -51,12 +52,13 @@ export default function ComfyPage() {
   const [pasteText, setPasteText] = useState("");
   const [showGenerate, setShowGenerate] = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
   const txtFilesRef = useRef<HTMLInputElement>(null);
 
-  /** Each .txt file is one prompt: newlines inside a file collapse to spaces,
-      and the prompt is appended as one line to the paste textarea for review. */
-  async function loadPromptFiles(files: FileList) {
+  /** Each .txt file is one prompt (newlines inside a file collapse to spaces);
+      every non-empty file becomes a row directly — no review modal. */
+  async function importPromptFiles(files: FileList) {
     const prompts: string[] = [];
     for (const f of Array.from(files)) {
       try {
@@ -66,9 +68,11 @@ export default function ComfyPage() {
         toast.error(`Could not read ${f.name}`);
       }
     }
-    if (prompts.length === 0) return;
-    setPasteText((prev) => (prev.trim() ? prev.replace(/\n$/, "") + "\n" : "") + prompts.join("\n"));
-    toast.success(`Loaded ${prompts.length} prompt${prompts.length !== 1 ? "s" : ""} from files`);
+    if (prompts.length === 0) {
+      toast.error("No prompt text found in the selected files");
+      return;
+    }
+    bulkAddMutation.mutate({ lines: prompts, source: "files" });
   }
 
   // Reset local state when the dataset changes without a remount (pane mode).
@@ -174,13 +178,18 @@ export default function ComfyPage() {
   });
 
   const bulkAddMutation = useMutation({
-    mutationFn: (lines: string[]) => comfyApi.bulkAddRows(effectivePlanId!, lines),
-    onSuccess: (data) => {
+    // `source` names the UI that initiated the add so onSuccess only closes/clears
+    // that UI — e.g. Import .txt must not wipe an in-progress paste draft.
+    mutationFn: (vars: { lines: string[]; source: "paste" | "generate" | "files" }) =>
+      comfyApi.bulkAddRows(effectivePlanId!, vars.lines),
+    onSuccess: (data, { source }) => {
       qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
-      setShowPaste(false);
-      setPasteText("");
-      setShowGenerate(false);
+      if (source === "paste") {
+        setShowPaste(false);
+        setPasteText("");
+      }
+      if (source === "generate") setShowGenerate(false);
       toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""}`);
     },
     onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to add rows")),
@@ -388,6 +397,15 @@ export default function ComfyPage() {
               title={hasPromptPin ? "Add one row per line of prompt text" : "Mark a pinned parameter as the prompt first"}>
               Paste prompts…
             </button>
+            <button className="btn ghost sm" onClick={() => txtFilesRef.current?.click()}
+              disabled={!hasPromptPin || bulkAddMutation.isPending}
+              title={hasPromptPin ? "Add one row per selected .txt file" : "Mark a pinned parameter as the prompt first"}>
+              Import .txt
+            </button>
+            <input
+              ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files?.length) importPromptFiles(e.target.files); e.target.value = ""; }}
+            />
             <button className="btn ghost sm" onClick={() => setShowGenerate(true)}
               disabled={!hasPromptPin}
               title={hasPromptPin ? "Generate prompts with an LLM provider" : "Mark a pinned parameter as the prompt first"}>
@@ -398,12 +416,17 @@ export default function ComfyPage() {
               title={hasPromptPin ? "Find & replace / prepend / append / remove across row prompts" : "Mark a pinned parameter as the prompt first"}>
               Edit prompts…
             </button>
-            <button className="btn ghost sm" onClick={() => setShowImport(true)}
+            <button className="btn ghost sm" onClick={() => setShowLibrary(true)}
               disabled={!hasPromptPin}
-              title={hasPromptPin ? "Reuse prompts from another dataset's plan" : "Mark a pinned parameter as the prompt first"}>
-              Import prompts…
+              title={hasPromptPin ? "Browse the prompt library or reuse prompts from another plan" : "Mark a pinned parameter as the prompt first"}>
+              Library…
             </button>
             <div style={{ flex: 1 }} />
+            <button className="btn ghost sm" onClick={() => setShowSaveToLibrary(true)}
+              disabled={!hasPromptPin || selected.size === 0}
+              title={hasPromptPin ? "Save the selected rows' prompts to the prompt library" : "Mark a pinned parameter as the prompt first"}>
+              Save to library ({selected.size})
+            </button>
             {failedCount > 0 && (
               <button className="btn ghost sm" onClick={() => retryFailedMutation.mutate()}>
                 Reset failed ({failedCount})
@@ -438,19 +461,11 @@ export default function ComfyPage() {
           >
             <div className="panel-h">
               <h3>Paste prompts</h3>
-              <div style={{ flex: 1 }} />
-              <button className="btn ghost sm" onClick={() => txtFilesRef.current?.click()}>
-                Load .txt files…
-              </button>
-              <input
-                ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
-                onChange={(e) => { if (e.target.files?.length) loadPromptFiles(e.target.files); e.target.value = ""; }}
-              />
             </div>
             <div className="panel-b">
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
                 One prompt per line — each becomes a row with that prompt; other parameters use the template
-                values. “Load .txt files…” appends each selected file as one prompt line.
+                values.
               </p>
               <textarea
                 className="input" autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value)}
@@ -462,7 +477,7 @@ export default function ComfyPage() {
                 <button
                   className="btn primary"
                   disabled={!pasteText.trim() || bulkAddMutation.isPending}
-                  onClick={() => bulkAddMutation.mutate(pasteText.split("\n"))}
+                  onClick={() => bulkAddMutation.mutate({ lines: pasteText.split("\n"), source: "paste" })}
                 >
                   Add {pasteText.split("\n").filter((l) => l.trim()).length} rows
                 </button>
@@ -477,7 +492,7 @@ export default function ComfyPage() {
           planId={plan.id}
           queuePrompts={queuePrompts}
           adding={bulkAddMutation.isPending}
-          onAdd={(prompts) => bulkAddMutation.mutate(prompts)}
+          onAdd={(prompts) => bulkAddMutation.mutate({ lines: prompts, source: "generate" })}
           onClose={() => setShowGenerate(false)}
         />
       )}
@@ -491,12 +506,20 @@ export default function ComfyPage() {
         />
       )}
 
-      {showImport && plan && (
-        <ImportPromptsModal
+      {showLibrary && plan && (
+        <PromptLibraryModal
           targetPlanId={plan.id}
           targetDatasetId={datasetId}
           onImported={() => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] })}
-          onClose={() => setShowImport(false)}
+          onClose={() => setShowLibrary(false)}
+        />
+      )}
+
+      {showSaveToLibrary && plan && (
+        <SaveToLibraryModal
+          planId={plan.id}
+          rowIds={[...selected]}
+          onClose={() => setShowSaveToLibrary(false)}
         />
       )}
 

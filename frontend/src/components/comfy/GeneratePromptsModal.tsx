@@ -108,7 +108,10 @@ export default function GeneratePromptsModal({ planId, queuePrompts, onAdd, addi
     stopRef.current = false;
     let current = [...lines];
     let text = resultText;
-    const maxCalls = 12; // hard stop against a model that returns nothing useful
+    // Each iteration is a paid LLM call and duplicates are dropped client-side, so a
+    // model trickling near-duplicates must not loop unbounded. 3× the ideal call count
+    // tolerates heavy duplicate wastage while still stopping a stuck model.
+    const maxCalls = Math.max(12, Math.ceil((untilN - current.length) / batchSize) * 3);
     let call = 0;
     try {
       for (; current.length < untilN && call < maxCalls && !stopRef.current; call++) {

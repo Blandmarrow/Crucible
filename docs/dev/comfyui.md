@@ -83,12 +83,24 @@ floored at 8192 (the provider's captioning-tuned value truncates thinking models
 mid-reasoning; a zero-prompt `finish_reason=="length"` raises a "raise max tokens" hint).
 `parse_prompts` (unit of truth for splitting) strips closed AND unclosed `<think>` blocks,
 then prefers JSON (bare array or `{"prompts": []}`), falling back to line splitting with
-list-marker/commentary stripping. The client loops batches for "generate until N".
+list-marker/commentary stripping. The client loops batches for "generate until N"
+(call cap scales with the target: `max(12, ceil(remaining/batch) × 3)` — a guard against a
+model trickling near-duplicates forever, since duplicates are dropped client-side).
 `POST /comfy/plans/{id}/rows/bulk-edit` (`{operation: prepend|append|remove|find_replace,
 text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on the prompt
 column: base = effective prompt (row → default → template), result written into row values
 (changed completed/failed rows reset to pending), regex bounded by the same 30 s executor
 timeout (408).
+
+Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
+prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no
+dataset/plan FK, so prompts are reusable everywhere without duplicating plans.
+`GET /comfy/library` (all prompts, ordered category → created_at; client groups),
+`POST /comfy/library` (`{category, prompts[]}` — blanks dropped, case/whitespace-insensitive
+dedupe against the target category → `{created, skipped}`), `POST /comfy/library/move`
+(`{ids, category}` re-categorize; upholds the same per-category uniqueness — a moved
+prompt whose text already exists in the target is deleted instead → `{moved, merged}`),
+`POST /comfy/library/delete` (`{ids}`).
 
 Workflow folder scan: `GET /comfy/workflow-files?dir=…` (dir falls back to
 `comfy_workflow_dir`) recursively lists `.json` files (cap 500, >5 MB skipped as invalid) with
@@ -154,9 +166,12 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
   toggles and a search box filtering by id/class_type/title/input name/value. Saves via
   `PATCH /comfy/plans/{id}`.
 - **`WorkflowScanModal`** — lists `GET /comfy/workflow-files` for the settings folder (or a
-  per-scan override via `DirPickerModal`), format badge per file, Load (API-format only) →
-  fetches `workflow-file` and feeds the JSON through the panel's normal paste/validate flow
-  (still needs Save).
+  per-scan override via `DirPickerModal`), format badge per file. Load fetches
+  `workflow-file` and feeds the JSON through the panel's normal paste/validate flow (still
+  needs Save). The Load button is always visible but disabled for non-API files (tooltip
+  explains why); when a scan finds no API-format file at all, an explanation line tells the
+  user that normal ComfyUI saves are UI-format and to use *Workflow → Export (API)* —
+  ComfyUI workflow folders typically contain only UI-format saves.
 - **`ComfyDefaultsStrip`** — chips above the rows table for run-default pins (`per_row=False`):
   `#node · alias — value` with a click-to-edit modal that PATCHes the plan's `pinned_params`.
   Hidden when every pin is per-row.
@@ -189,25 +204,33 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
   `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
   `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
   gallery updates per-row as images import, regardless of which pane is showing it.
-- **`ImportPromptsModal`** (Rows toolbar *Import prompts…*, disabled until a pin is marked as
-  prompt) — reuse prompts across plans/datasets: pick any dataset → one of its plans (self
-  excluded) → checkbox-list its prompts (`GET /comfy/plans/{id}/prompts`) → *Copy* (adds them to
-  the current plan via `rows/bulk`) or *Move* (also `rows/delete`s them from the source). Only
-  prompt **text** carries over (lands in the current plan's prompt column; other params use this
-  plan's defaults/template).
+- **`PromptLibraryModal`** (Rows toolbar *Library…*, disabled until a pin is marked as
+  prompt) — two tabs. **Library**: the global prompt library (`GET /comfy/library`), category
+  sidebar (derived client-side, "All" + per-category counts), checkbox prompt list; *Add n to
+  plan* → `rows/bulk`, *Move to…* (existing category or new) → `library/move`, *Delete* →
+  `library/delete` behind `ConfirmDialog`. **Other plans**: reuse prompts across
+  plans/datasets — pick any dataset → one of its plans (self excluded) → checkbox-list its
+  prompts (`GET /comfy/plans/{id}/prompts`) → *Copy* (adds them to the current plan via
+  `rows/bulk`) or *Move* (also `rows/delete`s them from the source). Both tabs carry only
+  prompt **text** (lands in the current plan's prompt column; other params use this plan's
+  defaults/template). Query key `["comfy","library"]`.
+- **`SaveToLibraryModal`** (Rows toolbar *Save to library (n)*, needs a selection) — category
+  input with a `<datalist>` of existing categories; saves the selected rows' **effective**
+  prompts (via `GET /comfy/plans/{id}/prompts`, backend-authoritative) through
+  `POST /comfy/library`; toast reports created/skipped-duplicates.
 - Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
-  disabled until a pin is marked as prompt; a *Load .txt files…* button appends browser-picked
-  files to the textarea, **one file = one prompt**, inner newlines collapsed to spaces),
+  disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
+  **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
   *✨ Generate prompts…* (`GeneratePromptsModal`: provider select + `ModelPicker`; two text
   fields — standing *Instructions* (HOW prompts are written → `system_instructions`, persisted
   per plan in localStorage via `loadPersisted`, along with provider/model/batch/temperature)
   and the per-call *Request* (WHAT to generate); *Generate N more* = one batch call appending
-  to a review textarea, *Generate
-  until N* loops batches client-side with a Stop button, max 12 calls; every call sends queue
+  to a review textarea, *Generate until N* loops batches client-side with a Stop button and a
+  target-scaled call cap (see backend section); every call sends queue
   prompts + current textarea lines as diverge-from context; *Add N rows* → `rows/bulk`),
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
-  scope all/selected → `rows/bulk-edit`), *Reset failed (n)*, *Delete selected (n)*
-  (`ConfirmDialog`).
+  scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*, *Reset failed
+  (n)*, *Delete selected (n)* (`ConfirmDialog`).
 
 ### Gotchas
 

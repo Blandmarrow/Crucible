@@ -75,6 +75,13 @@ export interface ComfyRunParams {
   label?: string;
 }
 
+export interface LibraryPrompt {
+  id: string;
+  category: string;
+  text: string;
+  created_at: string;
+}
+
 export interface WorkflowFile {
   name: string;
   path: string;
@@ -125,6 +132,17 @@ export const comfyApi = {
     text: string; replacement?: string; use_regex?: boolean; row_ids?: string[];
   }) =>
     client.post<{ affected: number; skipped: number }>(`/comfy/plans/${planId}/rows/bulk-edit`, body).then((r) => r.data),
+
+  /** Global prompt library (not dataset-scoped), grouped by free-text category. */
+  libraryList: () =>
+    client.get<{ prompts: LibraryPrompt[] }>("/comfy/library").then((r) => r.data.prompts),
+  libraryAdd: (category: string, prompts: string[]) =>
+    client.post<{ created: number; skipped: number }>("/comfy/library", { category, prompts }).then((r) => r.data),
+  /** Prompts whose text already exists in the target category are deleted (merged). */
+  libraryMove: (ids: string[], category: string) =>
+    client.post<{ moved: number; merged: number }>("/comfy/library/move", { ids, category }).then((r) => r.data),
+  libraryDelete: (ids: string[]) =>
+    client.post<{ deleted: number }>("/comfy/library/delete", { ids }).then((r) => r.data),
 
   listWorkflowFiles: (dir?: string) =>
     client.get<{ dir: string; files: WorkflowFile[] }>("/comfy/workflow-files", { params: dir ? { dir } : {} }).then((r) => r.data),

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob, Dataset, Image
-from backend.models.comfy import ComfyPlan, ComfyRow
+from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
@@ -105,6 +105,20 @@ class SetValueRequest(BaseModel):
     alias: str
     # None / "" clears the override on every row (back to the template value).
     value: str | int | float | bool | None = None
+
+
+class LibraryAddRequest(BaseModel):
+    category: str = Field(max_length=100)
+    prompts: list[str]
+
+
+class LibraryMoveRequest(BaseModel):
+    ids: list[str]
+    category: str = Field(max_length=100)
+
+
+class LibraryIdsRequest(BaseModel):
+    ids: list[str]
 
 
 class GeneratePromptsRequest(BaseModel):
@@ -283,6 +297,112 @@ async def load_workflow_file(path: str):
     if fmt != "api":
         raise HTTPException(400, "Not an API-format workflow ({node_id: {class_type, inputs}})")
     return {"workflow": parsed}
+
+
+# ── Prompt library ────────────────────────────────────────────────────────────
+# Global (no dataset/plan FK): saved prompt texts grouped by free-text category,
+# reusable across plans and datasets.
+
+def _dedupe_key(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+@router.get("/library")
+async def list_library_prompts(db: AsyncSession = Depends(get_db)):
+    prompts = (
+        await db.execute(
+            select(ComfyLibraryPrompt).order_by(
+                ComfyLibraryPrompt.category, ComfyLibraryPrompt.created_at
+            )
+        )
+    ).scalars().all()
+    return {
+        # created_at is naive UTC (repo-wide convention) — currently ordering-only;
+        # if it is ever displayed, treat it as UTC at the display point.
+        "prompts": [
+            {"id": p.id, "category": p.category, "text": p.text, "created_at": p.created_at.isoformat()}
+            for p in prompts
+        ]
+    }
+
+
+@router.post("/library")
+async def add_library_prompts(body: LibraryAddRequest, db: AsyncSession = Depends(get_db)):
+    """Add prompts to a category; case/whitespace-insensitive duplicates are skipped."""
+    category = body.category.strip()
+    if not category:
+        raise HTTPException(400, "Category must not be empty")
+    existing = (
+        await db.execute(
+            select(ComfyLibraryPrompt.text).where(ComfyLibraryPrompt.category == category)
+        )
+    ).scalars().all()
+    seen = {_dedupe_key(t) for t in existing}
+    created = skipped = 0
+    for raw in body.prompts:
+        text = raw.strip()
+        if not text:
+            continue
+        key = _dedupe_key(text)
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        db.add(ComfyLibraryPrompt(category=category, text=text))
+        created += 1
+    await db.commit()
+    return {"created": created, "skipped": skipped}
+
+
+@router.post("/library/move")
+async def move_library_prompts(body: LibraryMoveRequest, db: AsyncSession = Depends(get_db)):
+    """Re-categorize prompts, upholding the same per-category uniqueness as the add
+    path: a moved prompt whose text already exists in the target category (or arrives
+    twice in one batch) is deleted instead — merged, since it exists there either way."""
+    category = body.category.strip()
+    if not category:
+        raise HTTPException(400, "Category must not be empty")
+    prompts = (
+        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
+    ).scalars().all()
+    target_texts = (
+        await db.execute(
+            select(ComfyLibraryPrompt.text).where(
+                ComfyLibraryPrompt.category == category,
+                ComfyLibraryPrompt.id.notin_(body.ids),
+            )
+        )
+    ).scalars().all()
+    seen = {_dedupe_key(t) for t in target_texts}
+    # Selected prompts already in the target stay put and occupy their keys.
+    for p in prompts:
+        if p.category == category:
+            seen.add(_dedupe_key(p.text))
+    moved = merged = 0
+    for p in prompts:
+        if p.category == category:
+            continue
+        key = _dedupe_key(p.text)
+        if key in seen:
+            await db.delete(p)
+            merged += 1
+        else:
+            p.category = category
+            seen.add(key)
+            moved += 1
+    await db.commit()
+    return {"moved": moved, "merged": merged}
+
+
+@router.post("/library/delete")
+async def delete_library_prompts(body: LibraryIdsRequest, db: AsyncSession = Depends(get_db)):
+    prompts = (
+        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
+    ).scalars().all()
+    for p in prompts:
+        await db.delete(p)
+    await db.commit()
+    return {"deleted": len(prompts)}
 
 
 # ── Plan CRUD ─────────────────────────────────────────────────────────────────

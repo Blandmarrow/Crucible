@@ -12,8 +12,8 @@ interface Props {
 
 const FORMAT_BADGE: Record<WorkflowFile["format"], { cls: string; label: string; hint?: string }> = {
   api: { cls: "badge dot good", label: "API" },
-  ui: { cls: "badge dot", label: "UI", hint: 'UI-format editor export — use "Workflow → Export (API)" in ComfyUI' },
-  invalid: { cls: "badge dot bad", label: "not a workflow" },
+  ui: { cls: "badge dot", label: "UI", hint: 'UI-format save — use "Workflow → Export (API)" in ComfyUI and save that file' },
+  invalid: { cls: "badge dot bad", label: "not a workflow", hint: "Not a workflow JSON" },
 };
 
 /** Lists workflow .json files in a server-side folder; API-format ones are loadable. */
@@ -80,30 +80,40 @@ export default function WorkflowScanModal({ onLoad, onClose }: Props) {
           )}
 
           {data && data.files.length > 0 && (
-            <div style={{ maxHeight: "50vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
-              {data.files.map((f) => {
-                const badge = FORMAT_BADGE[f.format];
-                return (
-                  <div key={f.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", borderBottom: "1px solid var(--line-2)", fontSize: 12 }}>
-                    <span className="mono" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.path}>
-                      {f.name}
-                    </span>
-                    <span style={{ color: "var(--fg-dim)", whiteSpace: "nowrap" }}>
-                      {new Date(f.modified_at).toLocaleDateString()}
-                    </span>
-                    <span className={badge.cls} title={badge.hint}>{badge.label}</span>
-                    <button
-                      className="btn primary sm"
-                      style={{ fontSize: 11, padding: "1px 10px", visibility: f.format === "api" ? "visible" : "hidden" }}
-                      disabled={loadingPath !== null}
-                      onClick={() => loadFile(f)}
-                    >
-                      {loadingPath === f.path ? "Loading…" : "Load"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              <div style={{ maxHeight: "50vh", overflowY: "auto", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
+                {data.files.map((f) => {
+                  const badge = FORMAT_BADGE[f.format];
+                  return (
+                    <div key={f.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", borderBottom: "1px solid var(--line-2)", fontSize: 12 }}>
+                      <span className="mono" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.path}>
+                        {f.name}
+                      </span>
+                      <span style={{ color: "var(--fg-dim)", whiteSpace: "nowrap" }}>
+                        {new Date(f.modified_at).toLocaleDateString()}
+                      </span>
+                      <span className={badge.cls} title={badge.hint}>{badge.label}</span>
+                      <button
+                        className="btn primary sm"
+                        style={{ fontSize: 11, padding: "1px 10px" }}
+                        disabled={loadingPath !== null || f.format !== "api"}
+                        title={f.format === "api" ? undefined : badge.hint}
+                        onClick={() => loadFile(f)}
+                      >
+                        {loadingPath === f.path ? "Loading…" : "Load"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {!data.files.some((f) => f.format === "api") && (
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "8px 0 0" }}>
+                  None of these files can be loaded: workflows saved normally by ComfyUI are UI-format
+                  (editor layout) and can't be executed via its HTTP API. In ComfyUI, open the workflow
+                  and use <b>Workflow → Export (API)</b> to save a loadable copy into this folder.
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>

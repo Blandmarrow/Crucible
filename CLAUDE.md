@@ -97,6 +97,19 @@ file into every conversation, defeating the purpose of this split. Use plain rel
 | `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~65 |
 | `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, LLM prompt generation, or the `comfy_generate` job | ~225 |
 | `docs/dev/comfyui-sync-roadmap.md` | Workflow sync roadmap (planned): `ComfyUI-CrucibleBridge` custom node package, "Sync from canvas" button, history-pull fallback, ComfyUI API constraints | Implementing workflow sync, the bridge extension, or a "pull workflow from ComfyUI" feature | ~55 |
+| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~30 |
+
+### Code review & bug investigation
+
+When reviewing code (any `/code-review` run or ad-hoc review request) or investigating a bug:
+
+- Always read `docs/dev/postmortems.md` first. Pull a specific detail file from
+  `docs/dev/postmortems/` only when the code under review touches that entry's area.
+- Treat LIVE and MITIGATED entries as an active checklist for their code class;
+  ignore STRUCTURAL entries (kept for history only).
+- These are known failure modes to check against, but do not let them narrow the
+  review. New code can fail in new ways — check for novel issues too, not only
+  documented ones.
 
 ## Maintaining this documentation
 

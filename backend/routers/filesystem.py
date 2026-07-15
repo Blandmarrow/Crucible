@@ -16,20 +16,11 @@ from backend.config import settings
 from backend.database import get_db
 from backend.models import Dataset, Image
 from backend.services.image_service import extract_generation_metadata, get_image_info
+from backend.utils import sanitize_abs_path
 
 router = APIRouter(prefix="/filesystem", tags=["filesystem"])
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".avif"}
-
-
-def _sanitize_path(path: str) -> Path:
-    """Validate path string and return a Path object. Rejects null bytes."""
-    if "\x00" in path:
-        raise HTTPException(400, "Invalid path")
-    p = Path(path)
-    if not p.is_absolute():
-        raise HTTPException(400, "Path must be absolute")
-    return p
 
 
 async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset | None:
@@ -66,7 +57,7 @@ async def list_roots():
 
 @router.get("/list")
 async def list_directory(path: str = Query(...)):
-    p = _sanitize_path(path)
+    p = sanitize_abs_path(path)
     if not p.exists():
         raise HTTPException(404, "Path not found")
     if not p.is_dir():
@@ -106,7 +97,7 @@ async def list_directory(path: str = Query(...)):
 
 @router.get("/preview")
 async def preview_image(path: str = Query(...)):
-    p = _sanitize_path(path)
+    p = sanitize_abs_path(path)
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "File not found")
     if p.suffix.lower() not in IMAGE_EXTENSIONS:
@@ -119,7 +110,7 @@ async def preview_image(path: str = Query(...)):
 
 @router.get("/image-meta")
 async def image_meta(path: str = Query(...)):
-    p = _sanitize_path(path)
+    p = sanitize_abs_path(path)
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "File not found")
     if p.suffix.lower() not in IMAGE_EXTENSIONS:
@@ -139,8 +130,8 @@ class MoveRequest(BaseModel):
 
 @router.post("/move")
 async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
-    src = _sanitize_path(req.src)
-    dst_dir = _sanitize_path(req.dst_dir)
+    src = sanitize_abs_path(req.src)
+    dst_dir = sanitize_abs_path(req.dst_dir)
 
     if not src.exists():
         raise HTTPException(404, "Source not found")
@@ -194,7 +185,7 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     if "/" in req.new_name or "\\" in req.new_name or "\x00" in req.new_name:
         raise HTTPException(400, "new_name must not contain path separators")
 
-    p = _sanitize_path(req.path)
+    p = sanitize_abs_path(req.path)
     if not p.exists():
         raise HTTPException(404, "Path not found")
 
@@ -227,7 +218,7 @@ class DeleteRequest(BaseModel):
 
 @router.post("/delete")
 async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
-    p = _sanitize_path(req.path)
+    p = sanitize_abs_path(req.path)
     if not p.exists():
         raise HTTPException(404, "Path not found")
 
@@ -270,7 +261,7 @@ async def make_directory(req: MkdirRequest):
     if "/" in req.name or "\\" in req.name or "\x00" in req.name:
         raise HTTPException(400, "name must not contain path separators")
 
-    parent = _sanitize_path(req.parent)
+    parent = sanitize_abs_path(req.parent)
     if not parent.is_dir():
         raise HTTPException(400, "Parent is not a directory")
 

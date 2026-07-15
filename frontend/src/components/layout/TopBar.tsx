@@ -10,8 +10,10 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import { usePaneStore } from "../../stores/paneStore";
 import { Columns2, RefreshCw } from "lucide-react";
 
-const CAPTION_JOB_TYPES = new Set(["caption", "caption_pipeline"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline"]);
+// Jobs that import/produce images incrementally — refresh the gallery each time
+// the done-count advances, not only on completion (#39, ComfyUI queue).
+const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -21,6 +23,7 @@ const PAGE_LABELS: Record<string, string> = {
   stats: "Stats",
   export: "Export",
   image: "Image detail",
+  comfy: "ComfyUI",
 };
 
 function Breadcrumbs() {
@@ -115,10 +118,11 @@ export default function TopBar() {
           }
         }
       }
-      // Per-image live updates while a caption job is running (#39)
+      // Live gallery updates while a captioning or ComfyUI-generate job runs — the
+      // gallery would otherwise not refresh until the job completes (#39).
       if (
         progress.status === "running" &&
-        CAPTION_JOB_TYPES.has(progress.job_type) &&
+        LIVE_IMAGE_JOB_TYPES.has(progress.job_type) &&
         progress.dataset_id
       ) {
         const prevDone = captionDoneRef.current.get(jobId) ?? -1;
@@ -126,6 +130,9 @@ export default function TopBar() {
         if (currentDone > prevDone) {
           captionDoneRef.current.set(jobId, currentDone);
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          if (progress.job_type === "comfy_generate") {
+            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+          }
           if (progress.image_id) {
             qc.invalidateQueries({ queryKey: ["caption", progress.image_id] });
           }
@@ -199,6 +206,20 @@ export default function TopBar() {
             {(runningJob.percent ?? 0) >= 0 && (
               <span className="pp-num mono">{runningJob.done ?? 0} / {runningJob.total ?? 0}</span>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                jobsApi.cancel(runningJob.job_id);
+              }}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "var(--fg-dim)", padding: 0, lineHeight: 1, fontSize: 13,
+              }}
+              title="Cancel the running job"
+            >
+              ×
+            </button>
           </div>
         )}
         {pendingJobs.length > 0 && (
@@ -206,7 +227,7 @@ export default function TopBar() {
             <span className="badge dot" style={{ color: "var(--fg-dim)" }}>
               {pendingJobs.length} queued
             </span>
-            {pendingJobs.map((j) => (
+            {pendingJobs.slice(0, 3).map((j) => (
               <span
                 key={j.job_id}
                 style={{
@@ -234,6 +255,32 @@ export default function TopBar() {
                 </button>
               </span>
             ))}
+            {pendingJobs.length > 3 && (
+              <span
+                style={{ fontSize: 11, color: "var(--fg-dim)", padding: "2px 4px", cursor: "default" }}
+                title={pendingJobs.slice(3).map((j) => j.label || j.job_type).join("\n")}
+              >
+                +{pendingJobs.length - 3} more
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn ghost sm"
+              style={{ fontSize: 11, padding: "1px 8px" }}
+              title="Cancel every queued job and the currently running one"
+              onClick={() => {
+                for (const j of pendingJobs) {
+                  useJobStore.getState().updateJob(j.job_id, { status: "cancelled" });
+                  jobsApi.cancel(j.job_id);
+                }
+                if (runningJob) {
+                  useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                  jobsApi.cancel(runningJob.job_id);
+                }
+              }}
+            >
+              Cancel all
+            </button>
           </div>
         )}
         {!runningJob && !uploadProgress && pendingJobs.length === 0 && (

@@ -52,12 +52,14 @@ This file covers conventions that apply across the whole codebase: commands, the
 `backend/utils.py` — thin module for helpers shared across multiple routers. Currently contains:
 
 - `normalize_subfolder(s: str) -> str` — strips leading/trailing slashes and `.` segments, rejects `..` with HTTP 400. Import this; never copy the logic inline or re-import it from a router.
+- `sanitize_abs_path(path: str) -> Path` — validates a client-supplied filesystem path (rejects null bytes and relative paths with HTTP 400). Use in every router that accepts an arbitrary path (`filesystem`, `comfy` workflow scan); never re-inline the check.
 - `slugify_filename(name: str) -> str` — lowercases, removes non-word characters, collapses whitespace/underscores/hyphens to `_`, strips leading/trailing `_-`, truncates to 200 chars. Returns `"image"` if the result is empty.
 - `unique_filename(directory: Path, stem: str, suffix: str, db_names: set, disk_exclude: set[str] | None = None) -> str` — returns a filename not on disk and not in `db_names`. Tries `{stem}{suffix}` first, then `{stem}_001{suffix}`, `_002`, … Both checks are required: `db_names` covers in-flight batch collisions within the same request; the filesystem check covers files that exist but have no DB record. `disk_exclude` names files that exist on disk but should be treated as absent (files being renamed away in the same batch — used by bulk-rename renumbering so the counter restarts from `001` instead of skipping past the source files).
 - `unique_filename_with_thumb(images_dir, stem, suffix, db_names, occupied_thumb_stems, planned_thumb_stems) -> str` — like `unique_filename` but also avoids thumbnail-stem collisions. Thumbnails are always `.webp` keyed by image stem, so two images with different extensions but the same stem would share a thumbnail path. Call this instead of `unique_filename` in every code path that creates or renames an image file and associates a thumbnail with it. Mutates `db_names` (adds the chosen filename) and `planned_thumb_stems` (adds the chosen stem) so subsequent calls within the same batch stay consistent. Build `occupied_thumb_stems` from `thumb_dir.glob("*.webp")` once before the loop; do **not** exclude the stems of images being renamed/moved from this set — doing so re-introduces the within-batch clobber bug where one image's new thumbnail path matches another's current path.
 - `rename_with_sidecar(old_path: Path, new_path: Path) -> None` — renames a file and its `.txt` sidecar (if present) in one call. Use this everywhere a file rename happens; never copy the two-step pattern inline.
 - `copy_with_sidecar(old_path: Path, new_path: Path) -> None` — copies a file and its `.txt` sidecar (if present) using `shutil.copy2`. Use this in any copy path; mirrors `rename_with_sidecar` but leaves the source intact.
 - `read_caption_sidecar(image_path: Path | str) -> str | None` — reads the `.txt` caption sidecar next to an image (the read-side counterpart of `caption_service._write_txt_sidecar`). Returns the stripped text of `{stem}.txt` if present and non-empty, else `None`. Use everywhere a sidecar caption is read (folder import, rescan/sync, standalone caption import); never inline the `.with_suffix(".txt")` logic. See `docs/dev/gallery-and-images.md` (§ Importing captions & folder rescan).
+- `compile_user_regex(pattern: str)` / `regex_sub_deadline(compiled, repl, text, deadline: float)` / `REGEX_TIMEOUT_SECONDS` / `regex_error` — the only sanctioned way to run a **client-supplied** regex. `compile_user_regex` raises `regex_error` (map to HTTP 400); `regex_sub_deadline` substitutes under an absolute `time.monotonic()` deadline and raises `TimeoutError` (map to HTTP 408) so one budget covers a whole batch instead of N × timeout. See the Key invariant below for why stdlib `re` is unusable here. Used by the `comfy` rows bulk-edit and both `caption_service` regex paths.
 - `ALLOWED_FLAG_KEYS: frozenset` — the canonical set of valid quality flag names (`is_blurry`, `is_noisy`, `is_uniform`, `has_watermark`, `is_duplicate`, `is_nsfw`, `has_ai_artifacts`). Import this wherever flag names must be validated or used in SQL filters; never redefine the set locally.
 - `normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]` — normalises a file suffix to a PIL format name (`JPG`→`JPEG`, unsupported→`PNG`). Returns `(fmt, out_path)` — `out_path` may be updated when the format falls back to PNG (extension changes). Use in any image-save path; do not inline the JPG/PNG fallback logic again.
 - `image_save_kwargs(fmt: str) -> dict` — returns PIL `save()` kwargs for the given format (JPEG → `{quality: 95, subsampling: 0}`; others → `{}`). Use alongside `normalize_image_format`.
@@ -74,6 +76,7 @@ This file covers conventions that apply across the whole codebase: commands, the
 - **Close PIL Images after preprocessing.** In all ML inference paths (`aesthetic_scorer.py`, `dino_scorer.py`, all captioners) call `img.close()` immediately after the image has been passed to the model's preprocessor/processor — before the GPU inference runs. In `export_service.py::_write_image()` use a `try/finally` block. This frees the decoded pixel buffer (potentially several MB per image) during slow inference and prevents accumulation across large batches.
 - **Absolute DB path.** `config.py` derives the database URL from `Path(__file__).parent.parent` so it resolves correctly regardless of the working directory when uvicorn is launched.
 - **Path traversal guard.** `_safe_path()` in `routers/images.py` validates that resolved file paths stay within `settings.datasets_dir`.
+- **Never run a client-supplied regex through stdlib `re`.** Use `compile_user_regex` + `regex_sub_deadline` from `backend/utils.py` (the `regex` package). `re`'s matching loop is C code that never releases the GIL and cannot be interrupted, so a catastrophic pattern freezes the entire process — and the obvious guard does not work: wrapping it in `run_in_executor` + `asyncio.wait_for` can never fire, because the event loop can't be scheduled to fire it, and Python cannot kill the thread. Verified: `(a|a)*$` against 30 `a`s takes `re` **105 s** at 100% GIL, versus a clean `TimeoutError` from `regex` with the loop still live. Hardcoded patterns and `re.escape`'d literals (`slugify_filename`, `subsume_tags`) are fine on `re` — they can't backtrack. A comment claiming a thread + `wait_for` bounds a regex is the bug, not the fix.
 - **Never mutate a loaded JSON column in place.** For JSON columns like `Image.quality_flags`, copy before mutating: `flags = dict(img.quality_flags or {})`, edit `flags`, then reassign `img.quality_flags = flags`. SQLAlchemy's default change detection compares by equality, so mutating and reassigning the *same* dict object looks unchanged and the UPDATE is silently skipped. The correct pattern lives in `services/caption_service.py`.
 
 ## Documentation Map
@@ -90,10 +93,25 @@ file into every conversation, defeating the purpose of this split. Use plain rel
 | `docs/dev/captioning.md` | Captioning post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config and ModelPicker | Working on `CaptioningPage`, the caption job pipeline, or LLM provider integration | ~55 |
 | `docs/dev/export-and-bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count, dataset export (kohya/ai-toolkit/plain, filters, resize, metadata stripping) | Working on `ExportPage`, `BulkEditPage`, or any `bulk-*` endpoint | ~75 |
 | `docs/dev/tag-consolidation.md` | Dataset-wide semantic tag consolidation: MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, `TagConsolidatePage` preview/confirm UI | Working on `TagConsolidatePage`, the `tag-consolidation` router, `tag_embedder`, or per-image `dedupe_tags` | ~100 |
-| `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store, diff, restore, COW injection points | Working on `VersionsPage`, branch/snapshot logic, or any code path that overwrites/deletes image files in place | ~95 |
+| `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store, diff, restore, COW injection points | Working on `VersionsPage`, branch/snapshot logic, or any code path that overwrites/deletes image files in place | ~100 |
 | `docs/dev/dashboard-pages.md` | Datasets page (categories, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~230 |
 | `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console | ~120 |
-| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~65 |
+| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~70 |
+| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, LLM prompt generation, or the `comfy_generate` job | ~250 |
+| `docs/dev/comfyui-sync.md` | Workflow sync: "Sync from canvas" button, `GET /comfy/canvas-workflow`, `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop on sync, ComfyUI API constraints | Working on workflow sync, the sync button, the bridge extension, `canvas-workflow`, or pulling workflows from ComfyUI | ~85 |
+| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~15 |
+
+### Code review & bug investigation
+
+When reviewing code (any `/code-review` run or ad-hoc review request) or investigating a bug:
+
+- Always read `docs/dev/postmortems.md` first. Pull a specific detail file from
+  `docs/dev/postmortems/` only when the code under review touches that entry's area.
+- Treat LIVE and MITIGATED entries as an active checklist for their code class;
+  ignore STRUCTURAL entries (kept for history only).
+- These are known failure modes to check against, but do not let them narrow the
+  review. New code can fail in new ways — check for novel issues too, not only
+  documented ones.
 
 ## Maintaining this documentation
 
@@ -129,6 +147,16 @@ you learn new things during a session:
 - **`docs/*.md` vs `docs/dev/*.md`**: `docs/*.md` (flat, no `dev/`) is end-user
   documentation referenced from `README.md` — different audience, do not confuse
   the two.
+- **User-facing features need user-facing docs.** `docs/dev/` explains a subsystem
+  to whoever maintains it; it never counts as documenting the feature. When a change
+  adds or alters something a user can see — a page, a sidebar item, a settings tab,
+  a setup step — update `README.md` and the relevant `docs/*.md` **in the same
+  change**, not just `docs/dev/`. A whole subsystem (its own page + settings) earns
+  its own `docs/<topic>.md` plus a README Docs-table row (see `docs/comfyui.md`);
+  a smaller capability is a section in `docs/features.md`. README's Workflow chain,
+  Prerequisites, and Docs table are part of the change when the feature affects
+  them. `scripts/check_docs.py` link-checks these files but cannot tell that a
+  feature is missing from them — that is on you.
 
 ### Proposing skills
 

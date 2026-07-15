@@ -604,9 +604,9 @@ export default function CaptioningPage() {
   });
 
   const cancelMutation = useMutation({
+    // jobsApi.cancel never rejects (fire-and-forget), so no onError branch.
     mutationFn: () => jobsApi.cancel(effectiveJobId!),
     onSuccess: () => toast.success("Captioning stopped"),
-    onError: () => toast.error("Failed to stop captioning"),
   });
 
   const detectMutation = useMutation({

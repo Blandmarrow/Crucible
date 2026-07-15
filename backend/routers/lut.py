@@ -92,6 +92,13 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_lut",
+                    "status": "running", "done": i, "total": len(images),
+                    "percent": round(i / len(images) * 100, 1),
+                    "current_item": img.filename,
+                    "message": f"Applying LUT to {img.filename}…",
+                })
 
                 src_path = Path(img.file_path)
                 dest_path_str: str

@@ -70,6 +70,13 @@ const IcoVersions = () => (
     <path d="M8 4.5v4M8 8.5L3 11.5M8 8.5L13 11.5"/>
   </svg>
 );
+const IcoComfy = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <rect x="2" y="3" width="5" height="4" rx="1"/>
+    <rect x="9" y="9" width="5" height="4" rx="1"/>
+    <path d="M7 5h3.5A1.5 1.5 0 0 1 12 6.5V9M9 11H5.5A1.5 1.5 0 0 1 4 9.5V7"/>
+  </svg>
+);
 const IcoFileBrowser = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <path d="M2.5 4.5h4l1.5 1.5h5.5v8h-11v-9.5z"/>
@@ -298,6 +305,7 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
             <NavItem to={`/datasets/${datasetId}/consolidate`} icon={<IcoConsolidate />} label="Consolidate Tags" />
             <NavItem to={`/datasets/${datasetId}/versions`} icon={<IcoVersions />} label="Versions" />
+            <NavItem to={`/datasets/${datasetId}/comfy`} icon={<IcoComfy />} label="ComfyUI" />
             <NavItem to={`/datasets/${datasetId}/export`} icon={<IcoExport />} label="Export" />
           </>
         )}

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { settingsApi, type Thresholds } from "../api/settings";
+import { comfyApi } from "../api/comfy";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
 import { captioningApi } from "../api/captioning";
 import {
@@ -16,6 +17,7 @@ import { clearPersisted } from "../utils/persistentState";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 
 type ModelOption = { id: string; label: string; group: string };
@@ -48,6 +50,8 @@ const DEFAULTS: Thresholds = {
   gdino_threshold: 0.35,
   versioning_mode: "off",
   auto_rescan_on_open: false,
+  comfyui_url: "",
+  comfy_workflow_dir: "",
 };
 
 interface ThresholdField {
@@ -210,7 +214,23 @@ export default function SettingsPage() {
       form.versioning_mode !== thresholds.versioning_mode ||
       form.auto_rescan_on_open !== thresholds.auto_rescan_on_open);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers" | "comfyui">("gallery");
+
+  // ComfyUI connection test
+  const [pingResult, setPingResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [pinging, setPinging] = useState(false);
+  const [showWorkflowDirPicker, setShowWorkflowDirPicker] = useState(false);
+  async function testComfyConnection() {
+    setPinging(true);
+    setPingResult(null);
+    try {
+      setPingResult(await comfyApi.ping(form.comfyui_url || undefined));
+    } catch {
+      setPingResult({ ok: false, error: "Request failed" });
+    } finally {
+      setPinging(false);
+    }
+  }
 
   // Captioning models (loaded lazily when tab is first opened)
   const { data: captioningModels } = useQuery({
@@ -293,7 +313,83 @@ export default function SettingsPage() {
         <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
         <button className={`tab${activeTab === "providers" ? " active" : ""}`} onClick={() => setActiveTab("providers")}>LLM Providers</button>
+        <button className={`tab${activeTab === "comfyui" ? " active" : ""}`} onClick={() => setActiveTab("comfyui")}>ComfyUI</button>
       </div>
+
+      {activeTab === "comfyui" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Server URL</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Base URL of your ComfyUI server (default port 8188). Used by the per-dataset ComfyUI
+                generation page to queue workflows and import the results.
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="http://127.0.0.1:8188"
+                  value={form.comfyui_url}
+                  onChange={(e) => { setForm({ ...form, comfyui_url: e.target.value }); setPingResult(null); }}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn ghost" onClick={testComfyConnection} disabled={pinging}>
+                  {pinging ? "Testing…" : "Test connection"}
+                </button>
+                <button
+                  className="btn primary"
+                  onClick={() => mutation.mutate({ comfyui_url: form.comfyui_url.trim() })}
+                  disabled={!thresholds || form.comfyui_url.trim() === thresholds.comfyui_url}
+                >
+                  Save
+                </button>
+              </div>
+              {pingResult && (
+                <p style={{ fontSize: 12, marginTop: 8, color: pingResult.ok ? "var(--good)" : "var(--bad)" }}>
+                  {pingResult.ok ? "✓ Connected to ComfyUI" : `✗ ${pingResult.error ?? "Connection failed"}`}
+                </p>
+              )}
+            </div>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Workflow folder</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Default folder scanned for exported API-format workflow .json files by the
+                &ldquo;Scan folder&rdquo; button on the ComfyUI page. Must be a path on the machine
+                running Crucible.
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="e.g. C:\ComfyUI\user\default\workflows\api"
+                  value={form.comfy_workflow_dir}
+                  onChange={(e) => setForm({ ...form, comfy_workflow_dir: e.target.value })}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn ghost" onClick={() => setShowWorkflowDirPicker(true)}>Browse…</button>
+                <button
+                  className="btn primary"
+                  onClick={() => mutation.mutate({ comfy_workflow_dir: form.comfy_workflow_dir.trim() })}
+                  disabled={!thresholds || form.comfy_workflow_dir.trim() === thresholds.comfy_workflow_dir}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showWorkflowDirPicker && (
+        <DirPickerModal
+          title="Select workflow folder"
+          confirmLabel="Use folder"
+          initialPath={form.comfy_workflow_dir}
+          onConfirm={(path) => { setForm({ ...form, comfy_workflow_dir: path }); setShowWorkflowDirPicker(false); }}
+          onCancel={() => setShowWorkflowDirPicker(false)}
+        />
+      )}
 
       {activeTab === "gallery" && (
         <div className="panel">

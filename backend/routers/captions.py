@@ -1,4 +1,3 @@
-import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +51,7 @@ async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSessi
         count = await find_replace_captions(
             db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
     await refresh_stats(db, dataset_id)
     return {"updated": count}
@@ -72,7 +71,7 @@ async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = D
             quality_flags=body.quality_flags,
             subfolder=body.subfolder,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
     await refresh_stats(db, dataset_id)
     return result

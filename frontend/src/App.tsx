@@ -18,6 +18,7 @@ import BooruPage from "./pages/BooruPage";
 import FileBrowserPage from "./pages/FileBrowserPage";
 import SettingsPage from "./pages/SettingsPage";
 import VersionsPage from "./pages/VersionsPage";
+import ComfyPage from "./pages/ComfyPage";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
@@ -79,6 +80,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/bulk-edit" element={<ErrorBoundary><BulkEditPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/comfy" element={<ErrorBoundary><ComfyPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />

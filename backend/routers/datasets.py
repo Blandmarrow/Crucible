@@ -226,6 +226,21 @@ async def rescan_folder(dataset_id: str, body: DatasetRescanRequest, db: AsyncSe
     if not ds:
         raise HTTPException(404, "Dataset not found")
 
+    # Dedupe: a rescan for this dataset already waiting or running covers this
+    # request too (auto-rescan-on-open can fire on every gallery mount while a
+    # long job holds the serial queue — without this, duplicates pile up).
+    existing = (await db.execute(
+        select(BackgroundJob.id)
+        .where(
+            BackgroundJob.job_type == "rescan",
+            BackgroundJob.dataset_id == dataset_id,
+            BackgroundJob.status.in_(("pending", "running")),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    if existing:
+        return {"job_id": existing}
+
     job = BackgroundJob(
         job_type="rescan",
         label=f"Rescan - {ds.name}",

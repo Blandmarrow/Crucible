@@ -59,8 +59,10 @@ Three endpoints in `backend/routers/images.py` share a common `_apply_bulk_filte
 |---|---|---|
 | Aesthetic ≥ N | `aesthetic_min: float` | Excludes images where `aesthetic_score` is NULL or below threshold |
 | Has caption | `captioned_only: bool` | Excludes images with no `caption_text` |
-| Per-flag checkboxes (Blurry / Noisy / Near-uniform / Watermarked / Duplicate) | `exclude_flags: str` (comma-separated flag names, e.g. `"is_blurry,has_watermark"`) | Excludes images where any of the named keys in `quality_flags` JSON is truthy |
+| Per-flag checkboxes (one per `FLAG_OPTIONS` entry — Blurry / Noisy / Near-uniform / Watermarked / Duplicate / NSFW / AI artifacts) | `exclude_flags: str` (comma-separated flag names, e.g. `"is_blurry,has_watermark"`) | Excludes images where any of the named keys in `quality_flags` JSON is truthy |
 | Style similarity ≥ N | `style_sim_min: float` | Excludes images where `style_similarity_score` is NULL or below threshold |
+
+`exclude_flags` is parsed by `_parse_flags()` in `routers/export.py`, which validates every name against `ALLOWED_FLAG_KEYS` and raises HTTP 400 on an unknown key (captioning validates the same set via a pydantic `field_validator`, so it answers 422 instead — the check is equivalent, the status differs). **Call `_parse_flags` in the request path, never inside the job coroutine**: the three POST handlers enqueue a job and return `{job_id}` before the coroutine runs, so an exception raised in there fails the job instead of reaching the client. Each handler parses once into a local and closes over it.
 
 Filter params are debounced 350 ms on the frontend; the preview query (`GET /export/preview/{dataset_id}`) reacts to changes and returns `{ will_export, total, excluded_low_aesthetic, excluded_uncaptioned, excluded_flagged, excluded_style_sim, sample_files }`.
 

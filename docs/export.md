@@ -12,7 +12,7 @@ Three fully implemented export formats, all with identical filter and processing
 
 - Minimum aesthetic score filter
 - Captioned-only filter
-- Per-flag exclusions (blurry, noisy, uniform, watermarked, duplicate)
+- Per-flag exclusions (blurry, noisy, near-uniform, watermarked, duplicate, NSFW, AI artifacts)
 - Minimum style similarity filter
 - Image format conversion (original / JPEG with quality setting)
 - Resize longest side (downscale only)

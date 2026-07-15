@@ -61,7 +61,7 @@ Available on the Captioning page and in the selection toolbar caption modal:
 
 - **Scope** — All images, Uncaptioned only, or Selected images
 - **Minimum aesthetic score** — skip images below this score (requires aesthetic scoring to have been run first)
-- **Exclude quality flags** — skip images flagged as blurry, noisy, near-uniform, watermarked, or duplicate
+- **Exclude quality flags** — skip images flagged as blurry, noisy, near-uniform, watermarked, duplicate, NSFW, or AI artifacts
 - **Subfolder** — scope the run to a specific subfolder (shown when subfolders exist)
 
 ## Caption Pipeline

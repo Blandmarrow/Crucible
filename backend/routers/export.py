@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob
+from backend.utils import ALLOWED_FLAG_KEYS
 from backend.services.export_service import (
     export_aitoolkit,
     export_kohya,
@@ -72,12 +73,23 @@ class PlainExportRequest(BaseModel):
 
 
 def _parse_flags(s: str) -> list[str]:
-    return [f.strip() for f in s.split(",") if f.strip()]
+    """Parse a comma-separated flag list, rejecting unknown names with HTTP 400.
+
+    Call this in the request path only. The export handlers enqueue a job and
+    return before the coroutine runs, so an HTTPException raised in there would
+    fail the job instead of reaching the client.
+    """
+    flags = [f.strip() for f in s.split(",") if f.strip()]
+    invalid = [f for f in flags if f not in ALLOWED_FLAG_KEYS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown flag keys: {invalid}")
+    return flags
 
 
 @router.post("/kohya")
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
+    exclude_flags = _parse_flags(body.exclude_flags)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -105,7 +117,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 body.resize_to,
                 body.aesthetic_min,
                 body.captioned_only,
-                _parse_flags(body.exclude_flags),
+                exclude_flags,
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,
@@ -126,6 +138,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
 @router.post("/aitoolkit")
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
+    exclude_flags = _parse_flags(body.exclude_flags)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -152,7 +165,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 body.resize_to,
                 body.aesthetic_min,
                 body.captioned_only,
-                _parse_flags(body.exclude_flags),
+                exclude_flags,
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,
@@ -173,6 +186,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
 @router.post("/plain")
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
+    exclude_flags = _parse_flags(body.exclude_flags)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -197,7 +211,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 body.resize_to,
                 body.aesthetic_min,
                 body.captioned_only,
-                _parse_flags(body.exclude_flags),
+                exclude_flags,
                 body.style_sim_min,
                 body.subfolders,
                 body.strip_metadata,

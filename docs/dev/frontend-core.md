@@ -35,7 +35,7 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 
 `frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
 
-`frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `BulkEditForm`, and `BulkEditPage`; do not redeclare locally.
+`frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `CaptioningPage`, `BulkEditForm`, and `BulkEditPage` — every exclude/skip-flag surface renders this list, so adding a flag here adds it everywhere; do not redeclare locally. The backend counterpart is `ALLOWED_FLAG_KEYS` in `backend/utils.py`, which must be kept in sync by hand.
 
 `frontend/src/constants/providerPresets.ts` — `PROVIDER_PRESETS: Record<string, string[]>` hardcoded model lists keyed by hostname substring (Gemini, Groq, OpenAI, Together.ai). `getPresetsForUrl(baseUrl: string): string[]` parses the URL and returns the matching preset list (or `[]` for unknown/local providers). Used by `ModelPicker` to show a dropdown without requiring a live fetch. Add new cloud provider entries here when preset model lists need updating.
 

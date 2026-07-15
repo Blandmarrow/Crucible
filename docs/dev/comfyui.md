@@ -102,6 +102,8 @@ dedupe against the target category → `{created, skipped}`), `POST /comfy/libra
 prompt whose text already exists in the target is deleted instead → `{moved, merged}`),
 `POST /comfy/library/delete` (`{ids}`).
 
+Workflow sync: `GET /comfy/canvas-workflow` pulls the current workflow from ComfyUI (bridge
+snapshot, else last-queued history entry) — `docs/dev/comfyui-sync.md`.
 Workflow folder scan: `GET /comfy/workflow-files?dir=…` (dir falls back to
 `comfy_workflow_dir`) recursively lists `.json` files (cap 500, >5 MB skipped as invalid) with
 a `format` sniff via `workflow_format`; `GET /comfy/workflow-file?path=…` returns the parsed
@@ -153,7 +155,8 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
   delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins*.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
-  (opens `WorkflowScanModal`); validates API-format client-side; warns (non-blocking) when no
+  (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
+  `SyncCanvasModal`, see `docs/dev/comfyui-sync.md`); validates API-format client-side; warns (non-blocking) when no
   node's `class_type` matches `/save/i` **and** no output node is selected, and when selected
   output nodes no longer exist in the workflow (runs then fail with a review-the-workflow row
   error — deliberate, no auto-heal). *Import images from*: toggle chips for Save/Preview-type
@@ -244,5 +247,4 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
 - A mock ComfyUI server for end-to-end testing (system_stats/prompt/history/view with
   PNG-embedded workflow chunks, FAIL400/FAILEXEC trigger prompts) exists in the session
   scratchpad pattern; recreate from this description if needed.
-- Planned workflow-sync feature (bridge extension, sync button, history-pull fallback):
-  see `docs/dev/comfyui-sync-roadmap.md`.
+- Workflow sync (bridge extension, sync button, history-pull): `docs/dev/comfyui-sync.md`.

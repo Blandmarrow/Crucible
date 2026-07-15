@@ -63,6 +63,29 @@ class ComfyClient:
             data = resp.json()
         return data.get(prompt_id)
 
+    async def bridge_snapshot(self) -> dict | None:
+        """GET /crucible/active_workflow (ComfyUI-CrucibleBridge extension).
+
+        Returns the parsed snapshot body, or None when the bridge is not
+        installed (route 404). Other HTTP errors raise.
+        """
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{self.base_url}/crucible/active_workflow")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+
+    async def last_history_entry(self) -> dict | None:
+        """GET /history?max_items=1 — the newest queued entry, or None if empty."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{self.base_url}/history", params={"max_items": 1})
+            resp.raise_for_status()
+            data = resp.json()
+        if not isinstance(data, dict) or not data:
+            return None
+        return next(iter(data.values()))
+
     async def fetch_image(self, filename: str, subfolder: str = "", type: str = "output") -> bytes:
         """GET /view — raw bytes of a generated image."""
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -147,6 +170,21 @@ def workflow_format(obj) -> str:
     ):
         return "api"
     return "invalid"
+
+
+def history_entry_workflow(entry: dict) -> dict | None:
+    """The API-format workflow embedded in a history entry, or None.
+
+    entry["prompt"] is [number, prompt_id, workflow, extra_data, outputs];
+    index 2 is the workflow exactly as Export (API) would produce it (bypassed/
+    muted nodes already resolved). Returns None when the shape is unexpected or
+    the payload is not API-format per workflow_format.
+    """
+    prompt = entry.get("prompt")
+    if not isinstance(prompt, (list, tuple)) or len(prompt) < 3:
+        return None
+    wf = prompt[2]
+    return wf if workflow_format(wf) == "api" else None
 
 
 def extract_output_images(history_entry: dict, output_node_ids: list | None = None) -> list[dict]:

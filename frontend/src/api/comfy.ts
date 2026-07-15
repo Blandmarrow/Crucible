@@ -90,6 +90,15 @@ export interface WorkflowFile {
   format: "api" | "ui" | "invalid";
 }
 
+export interface CanvasWorkflowResponse {
+  workflow: ComfyPlan["workflow_json"];
+  /** "bridge" = live canvas via CrucibleBridge; "history" = last-queued prompt fallback. */
+  source: "bridge" | "history";
+  name: string | null;
+  node_count: number;
+  age_seconds: number | null;
+}
+
 export const comfyApi = {
   ping: (url?: string) =>
     client.get<{ ok: boolean; error?: string }>("/comfy/ping", { params: url ? { url } : {} }).then((r) => r.data),
@@ -148,6 +157,9 @@ export const comfyApi = {
     client.get<{ dir: string; files: WorkflowFile[] }>("/comfy/workflow-files", { params: dir ? { dir } : {} }).then((r) => r.data),
   loadWorkflowFile: (path: string) =>
     client.get<{ workflow: ComfyPlan["workflow_json"] }>("/comfy/workflow-file", { params: { path } }).then((r) => r.data),
+  /** Current ComfyUI workflow: CrucibleBridge canvas snapshot, or last-queued history entry. */
+  canvasWorkflow: () =>
+    client.get<CanvasWorkflowResponse>("/comfy/canvas-workflow").then((r) => r.data),
 
   run: (params: ComfyRunParams) =>
     client.post<{ job_id: string; total: number }>("/comfy/run", params).then((r) => r.data),

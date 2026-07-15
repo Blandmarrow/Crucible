@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { coerceCellValue } from "../../api/comfy";
-import type { ComfyPlan, PinnedParam } from "../../api/comfy";
+import { coerceCellValue, comfyApi } from "../../api/comfy";
+import type { CanvasWorkflowResponse, ComfyPlan, PinnedParam } from "../../api/comfy";
+import SyncCanvasModal from "./SyncCanvasModal";
 import WorkflowScanModal from "./WorkflowScanModal";
 
 interface Props {
@@ -49,6 +50,8 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
   const [nodeFilter, setNodeFilter] = useState("");
   const [showScan, setShowScan] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncSnapshot, setSyncSnapshot] = useState<CanvasWorkflowResponse | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // The workflow being edited: freshly pasted text takes precedence over the saved one.
@@ -144,10 +147,15 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
     patchPin(idx, { value });
   }
 
+  function validateAliases(list: PinnedParam[]): boolean {
+    const aliases = list.map((p) => p.alias.trim());
+    if (aliases.some((a) => !a)) { toast.error("Every pinned parameter needs an alias"); return false; }
+    if (new Set(aliases).size !== aliases.length) { toast.error("Pinned aliases must be unique"); return false; }
+    return true;
+  }
+
   function handleSave() {
-    const aliases = pins.map((p) => p.alias.trim());
-    if (aliases.some((a) => !a)) { toast.error("Every pinned parameter needs an alias"); return; }
-    if (new Set(aliases).size !== aliases.length) { toast.error("Pinned aliases must be unique"); return; }
+    if (!validateAliases(pins)) return;
     const patch: Parameters<typeof onSave>[0] = { pinned_params: pins, output_node_ids: outputNodeIds };
     if (workflowText.trim()) {
       if (!workflow) { toast.error("Fix the workflow JSON before saving"); return; }
@@ -155,6 +163,39 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
     }
     onSave(patch);
     setWorkflowText("");
+  }
+
+  async function handleSync() {
+    setSyncing(true);
+    try {
+      setSyncSnapshot(await comfyApi.canvasWorkflow());
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ?? "Could not pull a workflow from ComfyUI");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  /** Same resolution check the backend's patch_workflow performs per pin. */
+  function pinResolves(pin: PinnedParam, wf: WorkflowJson): boolean {
+    return pin.node_id in wf && pin.input in (wf[pin.node_id].inputs ?? {});
+  }
+
+  // Commits immediately (one PATCH: new workflow + surviving pins + current
+  // panel state) — the sync dialog is the confirmation, no second Save step.
+  function applySync(snapshot: CanvasWorkflowResponse) {
+    const kept = pins.filter((p) => pinResolves(p, snapshot.workflow));
+    if (!validateAliases(kept)) return;
+    onSave({ workflow_json: snapshot.workflow, pinned_params: kept, output_node_ids: outputNodeIds });
+    setPins(kept);
+    setWorkflowText("");
+    setSyncSnapshot(null);
+    const dropped = pins.length - kept.length;
+    toast.success(
+      `Synced ${snapshot.name ?? (snapshot.source === "history" ? "last queued workflow" : "canvas")}` +
+      (dropped ? ` — ${dropped} pin${dropped > 1 ? "s" : ""} dropped` : "")
+    );
   }
 
   const hasSavedWorkflow = Object.keys(plan.workflow_json).length > 0;
@@ -224,6 +265,14 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
           {hasSavedWorkflow && !workflowText.trim() && (
             <span className="badge dot good">Workflow saved · {Object.keys(plan.workflow_json).length} nodes</span>
           )}
+          <button
+            className="btn ghost sm"
+            disabled={syncing}
+            title="Pull the workflow from ComfyUI: the open canvas (CrucibleBridge extension) or the last-queued prompt"
+            onClick={handleSync}
+          >
+            {syncing ? "Syncing…" : "Sync from canvas"}
+          </button>
           <button className="btn ghost sm" onClick={() => setShowScan(true)}>Scan folder…</button>
           <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>Load .json file</button>
           <input
@@ -485,6 +534,15 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
             })}
           </div>
         </div>
+      )}
+
+      {syncSnapshot && (
+        <SyncCanvasModal
+          snapshot={syncSnapshot}
+          droppedPins={pins.filter((p) => !pinResolves(p, syncSnapshot.workflow))}
+          onApply={() => applySync(syncSnapshot)}
+          onClose={() => setSyncSnapshot(null)}
+        />
       )}
 
       {showScan && (

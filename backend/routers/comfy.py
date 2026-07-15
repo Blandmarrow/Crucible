@@ -29,6 +29,7 @@ from backend.services.comfy_service import (
     check_history_error,
     effective_prompt,
     extract_output_images,
+    history_entry_workflow,
     patch_workflow,
     workflow_format,
 )
@@ -217,6 +218,56 @@ async def ping(url: str | None = None, db: AsyncSession = Depends(get_db)):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ── Workflow sync (pull from ComfyUI) ─────────────────────────────────────────
+
+@router.get("/canvas-workflow")
+async def canvas_workflow(db: AsyncSession = Depends(get_db)):
+    """Pull the current workflow from ComfyUI.
+
+    Tries the ComfyUI-CrucibleBridge snapshot (the live canvas, pushed by the
+    browser extension) first; falls back to the last-queued history entry when
+    the bridge is not installed or has no snapshot. See docs/dev/comfyui-sync.md.
+    """
+    thresholds = await get_thresholds(db)
+    base_url = (thresholds.comfyui_url or "").strip()
+    if not base_url:
+        raise HTTPException(400, "No ComfyUI URL configured — set it in Settings → ComfyUI")
+    client = ComfyClient(base_url)
+
+    try:
+        snap = await client.bridge_snapshot()
+        if snap:
+            wf = snap.get("workflow")
+            if workflow_format(wf) == "api":
+                return {
+                    "workflow": wf,
+                    "source": "bridge",
+                    "name": snap.get("name"),
+                    "node_count": len(wf),
+                    "age_seconds": snap.get("age_seconds"),
+                }
+            # Bridge installed but no (valid) snapshot yet → try history.
+        entry = await client.last_history_entry()
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"ComfyUI unreachable at {base_url}: {e}")
+
+    wf = history_entry_workflow(entry) if entry else None
+    if wf is not None:
+        return {
+            "workflow": wf,
+            "source": "history",
+            "name": None,
+            "node_count": len(wf),
+            "age_seconds": None,
+        }
+    raise HTTPException(
+        404,
+        "No workflow available from ComfyUI — install the ComfyUI-CrucibleBridge "
+        "extension (extras/ComfyUI-CrucibleBridge) and keep a ComfyUI browser tab "
+        "open, or queue the workflow once in ComfyUI and retry",
+    )
 
 
 # ── Workflow folder scan ──────────────────────────────────────────────────────

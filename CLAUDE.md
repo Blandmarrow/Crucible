@@ -94,10 +94,10 @@ file into every conversation, defeating the purpose of this split. Use plain rel
 | `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store, diff, restore, COW injection points | Working on `VersionsPage`, branch/snapshot logic, or any code path that overwrites/deletes image files in place | ~100 |
 | `docs/dev/dashboard-pages.md` | Datasets page (categories, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~230 |
 | `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console | ~120 |
-| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~65 |
-| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, LLM prompt generation, or the `comfy_generate` job | ~245 |
-| `docs/dev/comfyui-sync.md` | Workflow sync: "Sync from canvas" button, `GET /comfy/canvas-workflow`, `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop on sync, ComfyUI API constraints | Working on workflow sync, the sync button, the bridge extension, `canvas-workflow`, or pulling workflows from ComfyUI | ~90 |
-| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~30 |
+| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~70 |
+| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, LLM prompt generation, or the `comfy_generate` job | ~250 |
+| `docs/dev/comfyui-sync.md` | Workflow sync: "Sync from canvas" button, `GET /comfy/canvas-workflow`, `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop on sync, ComfyUI API constraints | Working on workflow sync, the sync button, the bridge extension, `canvas-workflow`, or pulling workflows from ComfyUI | ~85 |
+| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~15 |
 
 ### Code review & bug investigation
 
@@ -145,6 +145,16 @@ you learn new things during a session:
 - **`docs/*.md` vs `docs/dev/*.md`**: `docs/*.md` (flat, no `dev/`) is end-user
   documentation referenced from `README.md` — different audience, do not confuse
   the two.
+- **User-facing features need user-facing docs.** `docs/dev/` explains a subsystem
+  to whoever maintains it; it never counts as documenting the feature. When a change
+  adds or alters something a user can see — a page, a sidebar item, a settings tab,
+  a setup step — update `README.md` and the relevant `docs/*.md` **in the same
+  change**, not just `docs/dev/`. A whole subsystem (its own page + settings) earns
+  its own `docs/<topic>.md` plus a README Docs-table row (see `docs/comfyui.md`);
+  a smaller capability is a section in `docs/features.md`. README's Workflow chain,
+  Prerequisites, and Docs table are part of the change when the feature affects
+  them. `scripts/check_docs.py` link-checks these files but cannot tell that a
+  feature is missing from them — that is on you.
 
 ### Proposing skills
 

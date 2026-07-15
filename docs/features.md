@@ -145,7 +145,7 @@ A three-panel filesystem explorer built into the app:
 
 ## Settings
 
-Route: `/settings` — accessible from the sidebar. Settings are grouped into six tabs.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into seven tabs.
 
 **Gallery** — browser-local preferences, each taking effect immediately:
 - Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
@@ -185,6 +185,10 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into si
 - Default model — selected from a hardcoded preset list for well-known cloud APIs (Gemini, Groq, OpenAI, Together.ai), or fetched live from local servers (LM Studio, llama.cpp) via a refresh button, or typed freely
 - Max image resolution (128–4096 px) — images are JPEG-encoded at this size before being sent
 - Max tokens — controls the length of generated captions (64–32768)
+
+**ComfyUI** — server-side settings for the ComfyUI generation page, shared across all datasets (each requires Save; see [ComfyUI Generation](comfyui.md)):
+- Server URL — base URL of your ComfyUI server (default port 8188). **Test connection** checks reachability before saving. The server is contacted by the Crucible backend, so it must be reachable from the machine running Crucible
+- Workflow folder — default folder scanned by the **Scan folder…** button on the ComfyUI page, with a **Browse…** picker; a path on the machine running Crucible
 
 ## Booru Tag Lookup
 

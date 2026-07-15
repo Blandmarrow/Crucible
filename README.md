@@ -2,7 +2,7 @@
 
 Crucible is a local dataset engineering platform for AI image training. Instead of juggling folders, captioning scripts, scoring tools, duplicate finders, and export scripts, it brings the entire dataset workflow into one application.
 
-**Import → Organize → Caption → Score & Curate → Refine → Version → Export**
+**Import or Generate → Organize → Caption → Score & Curate → Refine → Version → Export**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -16,9 +16,9 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 ## Workflow
 
-Every step from a raw folder of images to a training-ready export, in order:
+Every step from raw images to a training-ready export, in order:
 
-1. **Import** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/features.md#datasets--gallery)
+1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/features.md#datasets--gallery) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md)
 2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
@@ -34,6 +34,10 @@ Every step from a raw folder of images to a training-ready export, in order:
 - **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/features.md#datasets--gallery)
 - **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
+
+### Image generation
+- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
+- **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfyui.md)
 
 ### Captioning
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
@@ -76,6 +80,8 @@ All long-running operations run in a background job queue and stream real-time p
 
 Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM for most models; JoyCaption requires ~17 GB. The technical scorer and duplicate detector run on CPU only.
 
+Nothing else needs installing up front. The ComfyUI generation page is the one feature that talks to an outside program — it needs a running ComfyUI server (local or remote) reachable from the machine running Crucible, and only if you use that page → [details](docs/comfyui.md).
+
 ---
 
 ## Installation
@@ -99,6 +105,8 @@ chmod +x manage.sh && ./manage.sh setup
 Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
 During setup you are also prompted to install **SAM2** (Segment Anything Model 2, ~50 MB from GitHub) — required only for Grounded SAM2 segmentation; all other features work without it.
+
+**Optional: ComfyUI bridge** — if you use the ComfyUI generation page, the **CrucibleBridge** extension lets *Sync from canvas* pull the workflow you currently have open, instead of the last one you queued. It is a copy-a-folder install into ComfyUI's `custom_nodes/` and is entirely optional — see [extras/ComfyUI-CrucibleBridge/README.md](extras/ComfyUI-CrucibleBridge/README.md).
 
 <details>
 <summary><strong>Manual installation (if you prefer not to use the setup script)</strong></summary>
@@ -226,6 +234,7 @@ To shut down, click the power icon in the top-right of the app, or press `Ctrl+C
 | Topic | |
 |---|---|
 | Full feature reference | [docs/features.md](docs/features.md) |
+| ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |

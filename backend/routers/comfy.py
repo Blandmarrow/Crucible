@@ -35,7 +35,11 @@ from backend.services.comfy_service import (
 )
 from backend.services.threshold_service import get_thresholds
 from backend.utils import (
+    REGEX_TIMEOUT_SECONDS,
+    compile_user_regex,
     normalize_subfolder,
+    regex_error,
+    regex_sub_deadline,
     sanitize_abs_path,
     slugify_filename,
     thumbnail_path_for,
@@ -733,8 +737,6 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
     template); the result is written into the row's values, and changed
     completed/failed rows reset to pending. Returns {affected, skipped}.
     """
-    import re as _re
-
     if body.operation not in BULK_EDIT_OPS:
         raise HTTPException(400, f"operation must be one of {BULK_EDIT_OPS}")
     plan = await _get_plan(db, plan_id)
@@ -751,13 +753,15 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
 
     if body.use_regex:
         try:
-            pattern = _re.compile(body.text)
-        except _re.error as e:
+            pattern = compile_user_regex(body.text)
+        except regex_error as e:
             raise HTTPException(400, f"Invalid regex: {e}")
 
     bases = [(row, effective_prompt(workflow, pinned, row.values or {}) or "") for row in rows]
 
     def _transform() -> list[tuple[ComfyRow, str, str]]:
+        # One deadline for the whole batch, enforced inside the regex engine.
+        deadline = time.monotonic() + REGEX_TIMEOUT_SECONDS
         out = []
         for row, base in bases:
             if body.operation == "prepend":
@@ -768,19 +772,18 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
                 continue  # remove/find_replace skip empty prompts
             elif body.use_regex:
                 repl = "" if body.operation == "remove" else body.replacement
-                new = pattern.sub(repl, base)
+                new = regex_sub_deadline(pattern, repl, base, deadline)
             else:
                 repl = "" if body.operation == "remove" else body.replacement
                 new = base.replace(body.text, repl)
             out.append((row, base, new))
         return out
 
-    # Regex on user input can backtrack catastrophically — bound it like caption bulk-edit.
+    # Offload so a long batch doesn't stall the event loop; `regex` releases the GIL
+    # during matching, so this genuinely runs concurrently and the deadline is real.
     try:
-        transformed = await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(None, _transform), timeout=30.0
-        )
-    except asyncio.TimeoutError:
+        transformed = await asyncio.get_running_loop().run_in_executor(None, _transform)
+    except TimeoutError:
         raise HTTPException(408, "Regex evaluation timed out")
 
     affected = 0

@@ -1,9 +1,43 @@
 import re
 import shutil
+import time
 from functools import lru_cache
 from pathlib import Path
 
+import regex as _regex
 from fastapi import HTTPException
+
+
+REGEX_TIMEOUT_SECONDS = 30.0
+
+# Alias so callers can `except backend.utils.regex_error` without importing `regex`.
+regex_error = _regex.error
+
+
+def compile_user_regex(pattern: str):
+    """Compile a client-supplied regex pattern. Raises `regex_error` if invalid.
+
+    Always use this — never stdlib `re` — for a pattern that comes from a client.
+    `re`'s matching loop is C code that never drops the GIL and cannot be
+    interrupted, so a catastrophic pattern freezes the whole process: wrapping it
+    in `run_in_executor` + `asyncio.wait_for` does nothing, because the event loop
+    can't get scheduled to fire the timeout. `regex` releases the GIL and honours
+    `timeout=`. Pair with `regex_sub_deadline` to bound a batch.
+    """
+    return _regex.compile(pattern)
+
+
+def regex_sub_deadline(compiled, repl: str, text: str, deadline: float) -> str:
+    """`compiled.sub(repl, text)` bounded by an absolute `time.monotonic()` deadline.
+
+    Raises TimeoutError once the deadline passes, so one budget covers a whole
+    batch rather than granting each item its own (which would let N items stretch
+    the worst case to N × timeout).
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("regex time budget exhausted")
+    return compiled.sub(repl, text, timeout=remaining)
 
 
 @lru_cache(maxsize=None)

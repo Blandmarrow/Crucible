@@ -18,6 +18,9 @@ numpy>=1.26
 huggingface-hub>=0.30,<1.0
 hf_xet>=1.0
 tiktoken>=0.7
+# Client-supplied regexes only: unlike stdlib `re`, it honours timeout= and
+# releases the GIL, so a catastrophic pattern can't hang the process.
+regex>=2023.12.25
 psutil>=5.9
 spandrel>=0.4
 spandrel_extra_arches>=0.1

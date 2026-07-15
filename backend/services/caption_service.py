@@ -1,11 +1,13 @@
 import asyncio
 import logging
-import re
+import time
 from datetime import datetime
+
+from backend.utils import compile_user_regex, regex_error, regex_sub_deadline
 
 logger = logging.getLogger(__name__)
 
-_REGEX_TIMEOUT = 30.0  # seconds; protects event loop from catastrophic backtracking
+_REGEX_TIMEOUT = 30.0  # seconds; total budget per batch, enforced by the regex engine
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,35 +101,34 @@ async def bulk_edit_captions(
     affected = 0
     skipped = 0
 
-    # Regex remove/find_replace: run matching in a thread so catastrophic backtracking
-    # doesn't block the event loop; asyncio.wait_for enforces a hard timeout.
+    # Regex remove/find_replace: `regex` bounds a catastrophic pattern from inside the
+    # engine and releases the GIL, so the thread offload is real concurrency.
     if use_regex and operation in ("remove", "find_replace"):
         try:
-            compiled = re.compile(text)
-        except re.error:
+            compiled = compile_user_regex(text)
+        except regex_error:
             return {"affected": 0, "skipped": len(images)}
 
         repl = "" if operation == "remove" else replacement
         items = [(img.id, img.caption_text or "") for img in images]
 
         def _apply_regex(batch: list[tuple[str, str]]) -> dict[str, str]:
+            deadline = time.monotonic() + _REGEX_TIMEOUT
             updates: dict[str, str] = {}
             for img_id, old_text in batch:
                 if not old_text:
                     continue
                 try:
-                    new_text = " ".join(compiled.sub(repl, old_text).split())
-                    if new_text != old_text:
-                        updates[img_id] = new_text
-                except re.error:
-                    pass
+                    subbed = regex_sub_deadline(compiled, repl, old_text, deadline)
+                except regex_error:
+                    continue
+                new_text = " ".join(subbed.split())
+                if new_text != old_text:
+                    updates[img_id] = new_text
             return updates
 
         loop = asyncio.get_running_loop()
-        new_texts = await asyncio.wait_for(
-            loop.run_in_executor(None, _apply_regex, items),
-            timeout=_REGEX_TIMEOUT,
-        )
+        new_texts = await loop.run_in_executor(None, _apply_regex, items)
 
         img_map = {img.id: img for img in images}
         for img_id, new_text in new_texts.items():
@@ -197,28 +198,26 @@ async def find_replace_captions(
 
     if use_regex:
         try:
-            compiled = re.compile(find)
-        except re.error:
+            compiled = compile_user_regex(find)
+        except regex_error:
             return 0
 
         items = [(img.id, img.caption_text or "") for img in images]
 
         def _apply_regex(batch: list[tuple[str, str]]) -> dict[str, str]:
+            deadline = time.monotonic() + _REGEX_TIMEOUT
             updates: dict[str, str] = {}
             for img_id, old_text in batch:
                 try:
-                    new_text = compiled.sub(replace, old_text)
-                    if new_text != old_text:
-                        updates[img_id] = new_text
-                except re.error:
-                    pass
+                    new_text = regex_sub_deadline(compiled, replace, old_text, deadline)
+                except regex_error:
+                    continue
+                if new_text != old_text:
+                    updates[img_id] = new_text
             return updates
 
         loop = asyncio.get_running_loop()
-        new_texts = await asyncio.wait_for(
-            loop.run_in_executor(None, _apply_regex, items),
-            timeout=_REGEX_TIMEOUT,
-        )
+        new_texts = await loop.run_in_executor(None, _apply_regex, items)
 
         img_map = {img.id: img for img in images}
         for img_id, new_text in new_texts.items():

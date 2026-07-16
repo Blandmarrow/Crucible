@@ -1,0 +1,4 @@
+# Test-only dependencies — installed by CI (.github/workflows/backend-tests.yml)
+# and by developers running the test suite; never by manage setup/update
+# (which installs requirements.txt).
+pytest>=8.0

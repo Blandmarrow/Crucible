@@ -228,7 +228,8 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             )
             phashes = [(r.id, r.phash) for r in result.all()]
 
-        # The O(N²) scan itself is uninterruptible; skip it entirely if cancelled.
+        # The dedup scan (either dispatch path) is uninterruptible once started;
+        # skip it entirely if cancelled.
         job_queue.raise_if_cancelled(job_id)
         fn = functools.partial(find_duplicates_sync, phashes, duplicate_threshold)
         groups = await asyncio.get_running_loop().run_in_executor(None, fn)

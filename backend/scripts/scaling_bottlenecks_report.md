@@ -12,6 +12,9 @@ SQLite handled 1M indexed rows fine; the failures are in how we *use* it. One pa
 thousand images unusable; the rest are linear-with-a-heavy-constant and fixable with
 indexes and query changes. **Migrating databases would fix none of these.**
 
+> **Update 2026-07-16:** finding 1 (dedup) is fixed — 1M images now dedup in
+> ~3.5 min measured, not ~3.4 h. See the addendum at the end of this file.
+
 ## Method
 
 - Measured the **service layer / pure functions directly** — no HTTP, no ML inference,
@@ -103,3 +106,32 @@ python -m backend.scripts.bench_scaling --sweep 500000,1000000 --only stats   # 
 Flags: `--only`, `--embed-cap`, `--embed-dim`, `--thumb-cap`, `--dup-prob`, `--keep-db`,
 `--db-path`. Use it to prove each fix flattens its curve (e.g. re-run `--only dedup` after
 the BK-tree change).
+
+## Addendum 2026-07-16 — Finding 1 (dedup) FIXED
+
+`find_duplicates_sync` now dispatches to an exact **pigeonhole multi-index chunk
+search** (4 chunk tables + multi-probe + popcount verification) instead of the
+all-pairs scan; brute force remains as the fallback (small N, short hashes,
+extreme thresholds, or probe volume not well under N) and as the golden-test
+reference. Output is byte-identical
+by construction — `backend/tests/test_find_duplicates.py` pins groups, roots,
+and member order against the frozen brute-force implementation (runs in CI).
+Same environment caveats as the original run.
+
+| N | dedup before | dedup after | speedup | peak RSS after |
+|---|---|---|---|---|
+| 100k | 120.9 s | **4.96 s** | 24× | 227 MB |
+| 250k | 762.8 s | **19.7 s** | 39× | 302 MB |
+| 1M | ~12 100 s\* (~3.4 h, projected) | **212.5 s (measured)** | ~57× | 721 MB |
+
+Growth is no longer quadratic but not perfectly linear either (2.5× N → 4.0×
+time): the index leaves a residual O(N²/2¹⁶) verification term (16-bit chunk
+buckets fill up ∝ N) plus O(N) probe overhead. If a future measurement at
+larger N makes even this too slow, the documented follow-ups are, in order: a
+CSR index layout (numpy argsort + bincount offset arrays instead of Python dict
+tables — measured ~7× faster index build and ~2× lower peak RSS at 1M,
+byte-identical buckets), then batch-vectorized candidate generation — not a
+different algorithm. At 1M the dedup pass now
+costs ~3.5 min inside a quality-scoring job whose per-image ML inference
+dominates by orders of magnitude, so finding 1 is closed and the next
+bottlenecks are findings 2 (pagination indexes) and 3 (stats aggregation).

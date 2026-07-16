@@ -1,0 +1,33 @@
+name: backend-tests
+
+# Runs the backend test suite (backend/tests/). Deliberately installs only the
+# minimal deps the tests need (numpy, pillow, pytest) — technical_scorer imports
+# cv2 lazily inside score_technical_sync, and no ML/DB packages are imported by
+# the tests. Keep it that way: if a new test needs torch-sized dependencies,
+# reconsider the test design before growing this install step.
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install test dependencies
+        run: pip install numpy pillow -r backend/requirements-dev.txt
+      - name: Run backend tests
+        run: python -m pytest backend/tests/ -q

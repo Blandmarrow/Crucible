@@ -29,35 +29,21 @@ import os
 import random
 import resource
 import shutil
-import sys
 import tempfile
 import time
-import types
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+from sqlalchemy import event, insert, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-# ---------------------------------------------------------------------------
-# cv2 shim: backend.ml.technical_scorer does `import cv2` at module top, but
-# find_duplicates_sync itself only uses numpy. In headless environments cv2
-# can fail to import (missing libGL). Stub it so we can reuse the *real*
-# find_duplicates_sync without editing production code. No-op if cv2 imports.
-# ---------------------------------------------------------------------------
-try:  # pragma: no cover - environment dependent
-    import cv2  # noqa: F401
-except Exception:
-    sys.modules["cv2"] = types.ModuleType("cv2")
-
-from sqlalchemy import event, insert, select  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
-
-from backend.database import Base  # noqa: E402
-from backend.ml.similarity_scorer import compute_style_similarity  # noqa: E402
-from backend.ml.technical_scorer import DUPLICATE_THRESHOLD, find_duplicates_sync  # noqa: E402
-from backend.models.dataset import Dataset  # noqa: E402
-from backend.models.image import Image  # noqa: E402
-from backend.services.dataset_service import get_dataset_stats, get_score_values  # noqa: E402
+from backend.database import Base
+from backend.ml.similarity_scorer import compute_style_similarity
+from backend.ml.technical_scorer import DUPLICATE_THRESHOLD, find_duplicates_sync
+from backend.models.dataset import Dataset
+from backend.models.image import Image
+from backend.services.dataset_service import get_dataset_stats, get_score_values
 
 DATASET_ID = "bench0001-0000-0000-0000-000000000000"
 ID_PREFIX = "bench001"  # zero-padded row ids sort lexicographically == numerically

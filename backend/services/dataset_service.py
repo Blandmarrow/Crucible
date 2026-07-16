@@ -23,6 +23,68 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff
 _MAX_FAILED_DETAILS = 50
 
 
+def remove_dataset_dir(folder: Path) -> None:
+    """Recursively remove a dataset's on-disk folder, logging (not swallowing) any failure.
+
+    Unlike ``shutil.rmtree(..., ignore_errors=True)``, partial/failed removals are surfaced
+    as warnings so an orphaned directory left behind by a locked file or permission mismatch
+    is visible in the logs instead of silently persisting. Use this everywhere a dataset
+    folder is deleted (the delete endpoint and the startup orphan sweep).
+    """
+    if not folder.exists():
+        return
+
+    failures: list[str] = []
+
+    def _onerror(func, path, exc_info):  # signature covers both onexc (3.12+) and onerror
+        exc = exc_info[1] if isinstance(exc_info, tuple) else exc_info
+        failures.append(f"{path}: {exc}")
+
+    # Python 3.12 renamed the callback kwarg from onerror to onexc; pass whichever exists.
+    try:
+        shutil.rmtree(folder, onexc=_onerror)  # type: ignore[call-arg]
+    except TypeError:
+        shutil.rmtree(folder, onerror=_onerror)
+
+    if failures:
+        logger.warning(
+            "Failed to fully remove dataset folder %s (%d error(s)): %s",
+            folder, len(failures), "; ".join(failures[:10]),
+        )
+
+
+async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
+    """Remove child directories of datasets_dir that no dataset row references.
+
+    Dataset deletion removes the DB row and then the folder, but a folder can be left
+    behind if the row disappeared by another route (DB reset/migration/swap) so the
+    delete endpoint never ran for it. This reconciles disk against the DB at startup.
+    Returns the names of the folders removed.
+    """
+    datasets_dir = settings.datasets_dir
+    if not datasets_dir.exists():
+        return []
+
+    result = await db.execute(select(Dataset.folder_path))
+    known = {Path(p).resolve() for (p,) in result.all()}
+
+    removed: list[str] = []
+    for child in datasets_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if child.resolve() in known:
+            continue
+        remove_dataset_dir(child)
+        removed.append(child.name)
+
+    if removed:
+        logger.warning(
+            "Removed %d orphan dataset folder(s) with no DB row: %s",
+            len(removed), ", ".join(removed),
+        )
+    return removed
+
+
 def _ingest_file_sync(
     src_file: Path,
     dest_file: Path,

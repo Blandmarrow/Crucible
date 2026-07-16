@@ -45,9 +45,22 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
     await mark_interrupted_jobs()
+    await _sweep_orphan_dataset_folders()
     await job_queue.start()
     yield
     await job_queue.stop()
+
+
+async def _sweep_orphan_dataset_folders() -> None:
+    """Reconcile data/datasets/ against the DB at startup, removing folders with no row."""
+    from backend.database import AsyncSessionLocal
+    from backend.services.dataset_service import sweep_orphan_dataset_folders
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await sweep_orphan_dataset_folders(session)
+    except Exception:
+        logging.getLogger(__name__).exception("Orphan dataset-folder sweep failed")
 
 
 app = FastAPI(

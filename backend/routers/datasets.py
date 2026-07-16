@@ -22,6 +22,7 @@ from backend.services.dataset_service import (
     import_images_from_folder,
     list_subfolders,
     refresh_stats,
+    remove_dataset_dir,
     rename_dataset,
     rescan_dataset,
 )
@@ -133,9 +134,7 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     folder = Path(ds.folder_path)
     await db.delete(ds)
     await db.commit()
-    if folder.exists():
-        import shutil
-        shutil.rmtree(folder, ignore_errors=True)
+    remove_dataset_dir(folder)
 
 
 @router.post("/{dataset_id}/duplicate")

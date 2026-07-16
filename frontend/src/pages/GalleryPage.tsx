@@ -452,6 +452,7 @@ export default function GalleryPage() {
     // Final refresh to ensure the gallery is fully up-to-date
     await refetch();
     qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
     const succeeded = fileArray.length - errors;
     if (succeeded > 0) toast.success(`Uploaded ${succeeded} image(s)`);
@@ -510,6 +511,8 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
       if (activeSubfolder === pendingMoveSubfolder?.path || activeSubfolder?.startsWith(pendingMoveSubfolder!.path + "/")) { setActiveSubfolder(undefined); resetPage(); }
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
       setPendingMoveSubfolder(null);
@@ -528,6 +531,7 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
       toast.success(`Copied ${data.copied} image${data.copied !== 1 ? "s" : ""} to dataset`);
       setPendingCopySubfolder(null);
     },

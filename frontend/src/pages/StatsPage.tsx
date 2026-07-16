@@ -624,6 +624,7 @@ function BucketPanel({
     queryClient.invalidateQueries({ queryKey: ["score-values", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    queryClient.invalidateQueries({ queryKey: ["dataset", datasetId] });
     setConfirmDeleteId(null);
     if (previewIdx !== null && deletedIdx !== -1) {
       if (next.length === 0) setPreviewIdx(null);

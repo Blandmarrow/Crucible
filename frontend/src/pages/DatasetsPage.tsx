@@ -262,6 +262,7 @@ export default function DatasetsPage() {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       if (importJobProgress.dataset_id) {
         qc.invalidateQueries({ queryKey: ["images", importJobProgress.dataset_id] });
+        qc.invalidateQueries({ queryKey: ["dataset", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["dataset-stats", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["tag-stats", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
@@ -276,6 +277,7 @@ export default function DatasetsPage() {
 
   const invalidateDatasetCaches = useCallback((datasetId: string) => {
     qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     qc.invalidateQueries({ queryKey: ["images", datasetId] });
     qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
     qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });

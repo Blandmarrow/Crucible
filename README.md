@@ -243,4 +243,3 @@ To shut down, click the power icon in the top-right of the app, or press `Ctrl+C
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
 | Export | [docs/export.md](docs/export.md) |
-| Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |

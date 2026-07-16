@@ -210,6 +210,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
@@ -246,6 +247,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
@@ -268,6 +271,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["tag-stats", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["score-values", data.target_dataset_id] });

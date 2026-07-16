@@ -122,6 +122,7 @@ export default function ComfyPage() {
         qc.invalidateQueries({ queryKey: ["images", datasetId] });
         qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
         qc.invalidateQueries({ queryKey: ["datasets"] });
+        qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
         if (progress.status === "completed") toast.success("Generation run finished");
         else if (progress.status === "failed") toast.error("Generation run failed — see row errors / Logs");
         setActiveRuns((prev) => {

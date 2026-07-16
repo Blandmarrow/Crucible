@@ -105,6 +105,11 @@ export default function TopBar() {
         captionDoneRef.current.delete(jobId);
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          // Dataset summary counts (image_count / captioned_count) live on the
+          // singular ["dataset", id] query; refresh it whenever images change so
+          // the sidebar and gallery "All" counter stay live (e.g. comfy_generate
+          // adds images, caption jobs change captioned_count).
+          qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
           qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
           qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
           qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
@@ -117,6 +122,7 @@ export default function TopBar() {
           qc.invalidateQueries({ queryKey: ["datasets"] });
           if (progress.job_type === "import" && progress.dataset_id) {
             qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });

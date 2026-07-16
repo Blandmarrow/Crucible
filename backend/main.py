@@ -116,12 +116,23 @@ if frontend_dist.exists():
     # Mount static assets (JS/CSS/images) at their exact paths
     app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
 
+    # The built SPA has exactly one class of cacheable file: the content-hashed
+    # /assets/* bundles (served by the StaticFiles mount above), whose filenames
+    # change whenever their contents do. Everything served below by literal path
+    # keeps a *stable* URL across rebuilds — index.html plus the unhashed root
+    # files it references (favicon.svg, favicon-32.png, apple-touch-icon.png, …).
+    # Those must be revalidated, or a logo/markup change only appears after a
+    # manual browser cache clear. no-cache makes the browser revalidate (a cheap
+    # 304 when unchanged); it does not disable caching.
+    _NO_CACHE = {"Cache-Control": "no-cache"}
+
     # Catch-all: serve index.html for any unmatched path so React Router handles
     # client-side navigation on hard refresh / direct URL access.
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        # If it's a real file in dist (e.g. favicon.ico, manifest.json), serve it directly
+        # Real file in dist (favicon.svg, apple-touch-icon.png, …) → serve it.
         candidate = frontend_dist / full_path
         if candidate.is_file():
-            return FileResponse(str(candidate))
-        return FileResponse(str(frontend_dist / "index.html"))
+            return FileResponse(str(candidate), headers=_NO_CACHE)
+        # Otherwise hand off to the SPA so React Router owns the route.
+        return FileResponse(str(frontend_dist / "index.html"), headers=_NO_CACHE)

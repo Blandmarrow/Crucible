@@ -506,7 +506,7 @@ cmd_update() {
     echo "=== Crucible - Update ==="
     echo ""
 
-    echo "[1/4] Pulling latest changes..."
+    echo "[1/5] Pulling latest changes..."
     if ! command -v git &>/dev/null; then
         echo "  git not found - skipping pull. Update the files manually if needed."
     else

@@ -79,7 +79,7 @@ All four stat endpoints accept `subfolder: str | None = Query(None)`. `activeSub
 | `file_size_summary` | `{min_mb, median_mb, p95_mb, max_mb}` |
 | `aspect_ratio_fine` | 8 common AR buckets |
 | `caption_length_distribution` | 6-bucket word count |
-| `caption_token_distribution` | 6-bucket GPT-2 BPE token count (edges: 1, 20, 40, 60, 77); computed via `tiktoken`; the 77+ bucket flags CLIP-truncated captions |
+| `caption_token_distribution` | 6-bucket GPT-2 BPE token count (edges: 1, 20, 40, 60, 77) read from the persisted `Image.caption_token_count` column (no `tiktoken` in the request path — see the token-count note above); the 77+ bucket flags CLIP-truncated captions |
 | `style_similarity_distribution` | 10 equal bins, 0–1 |
 | `quality_flag_counts` | `{blurry, noisy, uniform, watermarked, duplicate, nsfw, ai_artifacts}` |
 | `score_coverage` | Per-score type computed count |
@@ -114,13 +114,13 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |
 | `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` |
 | `caption_words_min` / `caption_words_max` | `int` | Word count range — SQL approximation via `length(trim(text)) - length(replace(trim(text), ' ', '')) + 1`; `min` is inclusive, `max` is exclusive |
-| `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range; computed in Python (tiktoken) after SQL filters; capped at 5 000 rows pre-filter; `caption_tokens_max=1` with no min uses fast SQL `trim(caption_text) = ''` |
+| `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range — **pure SQL** over the persisted `func.coalesce(Image.caption_token_count, 0)` column (`min` inclusive, `max` exclusive), so ordinary `ORDER BY`/`OFFSET`/`LIMIT` paging applies; no `tiktoken` in the request path. See `docs/dev/gallery-and-images.md` § Gallery filters |
 
 **ImageLightbox**: Clicking a thumbnail in `BucketPanel` opens a full-resolution lightbox with prev/next navigation, metadata footer, a "View Details →" link to `/datasets/:datasetId/image/:imageId`, and a two-step **Delete** button. Deleting an image removes it from the panel's TanStack Query cache via `queryClient.setQueryData` (no refetch) and invalidates `dataset-stats`, `tag-stats`, `score-values`, and `tag-cooccurrence` queries. A per-thumbnail ×-on-hover delete button with an inline confirm overlay provides the same action from the grid.
 
 ### Settings page
 
-`frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all five quality flag thresholds as editable number inputs.
+`frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all seven scoring thresholds — the six quality-flag thresholds plus the Grounding DINO box-confidence threshold — as editable number inputs.
 
 **Backend**: `backend/routers/settings.py`, prefix `/settings`. Two endpoints:
 
@@ -157,7 +157,7 @@ Constants defined in `docs/dev/frontend-core.md` § Frontend constants.
 - Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
 - **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/gallery-and-images.md` § Importing captions & folder rescan.
 
-**Quality Thresholds tab** — five editable number inputs (blur, noise, uniformity, watermark, duplicate thresholds). Requires Save; changes apply to the next scoring run only.
+**Quality Thresholds tab** — seven editable number inputs from the `FIELDS` array: blur, noise, uniformity, duplicate, watermark, NSFW, and DINO box confidence (`gdino_threshold`). Requires Save; the flag thresholds apply to the next scoring run, `gdino_threshold` to the next SAM2 detection run.
 
 **Versioning tab** — version control mode radio (`off | manual | auto`) plus branch snapshot behavior radio. Requires Save for the version control mode; branch snapshot behavior is immediate (localStorage).
 

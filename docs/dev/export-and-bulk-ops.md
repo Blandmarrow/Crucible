@@ -13,7 +13,7 @@ This file covers bulk caption editing, bulk image rename/delete/count/reorder, a
 | `operation` | required | `"prepend"` / `"append"` / `"remove"` / `"find_replace"` |
 | `text` | required | Text to add (prepend/append) or text to find (remove/find_replace) |
 | `replacement` | `""` | Replacement string for `find_replace` |
-| `use_regex` | `false` | Treat `text` (and `replacement`) as a Python regex; invalid patterns skip the image. Regex matching runs in a thread executor with a 30-second `asyncio.wait_for` timeout to prevent catastrophic backtracking from blocking the event loop; returns 408 on timeout. |
+| `use_regex` | `false` | Treat `text` (and `replacement`) as a regex, compiled via `compile_user_regex` (the `regex` package — never stdlib `re`); an invalid pattern skips the whole batch. Matching is offloaded to a thread executor (real concurrency — `regex` releases the GIL) under a single 30-second time budget for the *entire batch*, enforced inside the engine via `regex_sub_deadline` (a `time.monotonic()` deadline, **not** `asyncio.wait_for`); returns 408 on timeout. See CLAUDE.md § Key invariants for why stdlib `re` + `wait_for` cannot bound a catastrophic pattern. |
 | `image_ids` | `null` | If set, restrict to these image IDs |
 | `quality_flags` | `null` | If set, additionally **exclude** images where any of these flags is `True` (AND IS NOT TRUE per flag); validated against `ALLOWED_FLAG_KEYS` from `utils.py` |
 | `subfolder` | `null` | If set, restrict to images in this subfolder (ignored when `image_ids` is provided) |

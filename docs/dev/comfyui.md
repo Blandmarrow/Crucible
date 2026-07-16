@@ -89,8 +89,8 @@ model trickling near-duplicates forever, since duplicates are dropped client-sid
 `POST /comfy/plans/{id}/rows/bulk-edit` (`{operation: prepend|append|remove|find_replace,
 text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on the prompt
 column: base = effective prompt (row → default → template), result written into row values
-(changed completed/failed rows reset to pending), regex bounded by the same 30 s executor
-timeout (408).
+(changed completed/failed rows reset to pending), regex bounded like caption bulk-edit — one
+30 s batch deadline enforced inside the `regex` engine via `regex_sub_deadline` (408 on timeout).
 
 Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
 prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no

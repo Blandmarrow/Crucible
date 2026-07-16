@@ -436,7 +436,7 @@ function Cmd-Update {
     Write-Host "=== Crucible - Update ===" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "[1/4] Pulling latest changes..." -ForegroundColor Yellow
+    Write-Host "[1/5] Pulling latest changes..." -ForegroundColor Yellow
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "  git not found - skipping pull. Update the files manually if needed." -ForegroundColor DarkGray
     } else {

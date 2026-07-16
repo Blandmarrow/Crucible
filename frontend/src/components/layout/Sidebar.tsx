@@ -5,6 +5,7 @@ import { versioningApi } from "../../api/versioning";
 import { useGpuStats } from "../../hooks/useGpuStats";
 import { useCpuRamStats } from "../../hooks/useCpuRamStats";
 import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
+import CrucibleMark from "../common/CrucibleMark";
 import { useErrorConsoleStore } from "../../stores/errorConsoleStore";
 
 /* ── SVG icons matching the design spec ── */
@@ -248,11 +249,9 @@ export default function Sidebar() {
         padding: "14px 16px", display: "flex", alignItems: "center", gap: 10,
         borderBottom: "1px solid var(--line)", height: 49, flexShrink: 0,
       }}>
-        <div style={{
-          width: 22, height: 22, borderRadius: 5, flexShrink: 0,
-          background: "radial-gradient(circle at 30% 30%, var(--accent-2), var(--accent) 60%, var(--accent-deep) 110%)",
-          boxShadow: "0 0 0 1px var(--line-2)",
-        }} />
+        <div style={{ flexShrink: 0, display: "flex" }}>
+          <CrucibleMark size={22} />
+        </div>
         <div>
           <div style={{ fontWeight: 600, letterSpacing: "-0.01em", fontSize: 14 }}>Crucible</div>
           <div style={{ color: "var(--fg-dim)", fontSize: 11, marginTop: 1, letterSpacing: ".02em", fontFamily: "Geist Mono, monospace" }}>

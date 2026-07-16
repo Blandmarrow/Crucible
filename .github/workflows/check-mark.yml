@@ -1,0 +1,36 @@
+name: check-mark
+
+# Runs the brand-mark drift check (scripts/check_mark.py). Fails the build when
+# the CrucibleMark component, the docs/images/ exports, and the frontend/public/
+# favicons fall out of sync. Stdlib-only, no deps. frontend/dist is gitignored,
+# so the built-CSS check is skipped in CI — the copy/shape/anim checks still run.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/components/common/CrucibleMark.tsx"
+      - "frontend/src/index.css"
+      - "docs/images/**"
+      - "frontend/public/**"
+      - "scripts/check_mark.py"
+      - ".github/workflows/check-mark.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/src/components/common/CrucibleMark.tsx"
+      - "frontend/src/index.css"
+      - "docs/images/**"
+      - "frontend/public/**"
+      - "scripts/check_mark.py"
+      - ".github/workflows/check-mark.yml"
+
+jobs:
+  check-mark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run brand-mark drift check
+        run: python scripts/check_mark.py

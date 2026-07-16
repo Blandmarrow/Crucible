@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/crucible-mark.svg" alt="" width="72" />
+</p>
+
 # Crucible
 
 Crucible is a local dataset engineering platform for AI image training. Instead of juggling folders, captioning scripts, scoring tools, duplicate finders, and export scripts, it brings the entire dataset workflow into one application.

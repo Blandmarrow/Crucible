@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crucible — Animated Mark</title>
+<link rel="icon" href="crucible-icon.svg">
+<style>
+  html,body{height:100%;margin:0}
+  body{background:#07090b;display:flex;align-items:center;justify-content:center;font-family:'Geist',ui-sans-serif,system-ui,sans-serif}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:34px}
+  .wm{color:#e6edec;font-size:34px;font-weight:600;letter-spacing:-0.03em}
+  .anim-c{transform-box:fill-box;transform-origin:center}
+
+@keyframes c8-keepA { 0%{opacity:.4} 5%{opacity:1} 11%{opacity:.4} 18%{opacity:.95} 25%{opacity:.45} 33%{opacity:1} 40%{opacity:.5} 45%{opacity:1} 88%{opacity:1} 100%{opacity:.4} }
+@keyframes c8-keepB { 0%{opacity:.9} 7%{opacity:.4} 14%{opacity:1} 22%{opacity:.45} 30%{opacity:.9} 38%{opacity:.4} 45%{opacity:1} 88%{opacity:1} 100%{opacity:.9} }
+@keyframes c10-dropA { 0%{transform:scale(1);opacity:.6} 2.5%{opacity:1} 5.5%{opacity:.4} 9%{opacity:.9} 12.5%{opacity:.45} 16.5%{opacity:.85} 20%{transform:scale(1);opacity:.4} 22.5%{transform:scale(.3);opacity:.55} 33%{transform:scale(.3);opacity:.78} 40%{transform:scale(.3);opacity:.5} 44%{transform:scale(.3);opacity:.72} 50%{transform:scale(1);opacity:.6} 52.5%{opacity:1} 55.5%{opacity:.4} 59%{opacity:.9} 62.5%{opacity:.45} 66.5%{opacity:.85} 70%{transform:scale(1);opacity:.4} 72.5%{transform:scale(1);opacity:.06} 94%{transform:scale(1);opacity:.06} 100%{transform:scale(1);opacity:.6} }
+@keyframes c10-dropB { 0%{transform:scale(1);opacity:.9} 3%{opacity:.4} 7%{opacity:.95} 11%{opacity:.4} 15%{opacity:.9} 19%{opacity:.45} 20%{transform:scale(1)} 22.5%{transform:scale(.3);opacity:.55} 33%{transform:scale(.3);opacity:.78} 40%{transform:scale(.3);opacity:.5} 44%{transform:scale(.3);opacity:.72} 50%{transform:scale(1);opacity:.9} 53%{opacity:.4} 57%{opacity:.95} 61%{opacity:.4} 65%{opacity:.9} 69%{opacity:.45} 70%{transform:scale(1)} 72.5%{transform:scale(1);opacity:.06} 94%{transform:scale(1);opacity:.06} 100%{transform:scale(1);opacity:.9} }
+
+</style>
+</head>
+<body>
+  <div class="stage">
+    <svg width="300" height="300" viewBox="0 0 64 64" fill="none"><g style="animation:c8-keepA 4.6s ease-in-out infinite"><rect x="8" y="8" width="8" height="8" rx="2" fill="#10b981"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="18" y="8" width="8" height="8" rx="2" fill="#10b981"/></g><g style="animation:c8-keepA 4.6s ease-in-out infinite"><rect x="28" y="8" width="8" height="8" rx="2" fill="#34d399"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="38" y="8" width="8" height="8" rx="2" fill="#34d399"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="48" y="8" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="8" y="18" width="8" height="8" rx="2" fill="#10b981"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="18" y="18" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="28" y="18" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="38" y="18" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="48" y="18" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g style="animation:c8-keepA 4.6s ease-in-out infinite"><rect x="8" y="28" width="8" height="8" rx="2" fill="#10b981"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="18" y="28" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="28" y="28" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="38" y="28" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="48" y="28" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="8" y="38" width="8" height="8" rx="2" fill="#10b981"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="18" y="38" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="28" y="38" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="38" y="38" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g class="anim-c" style="animation:c10-dropB 9.2s ease-in-out infinite"><rect x="48" y="38" width="8" height="8" rx="2" fill="#0f6e4e"/></g><g style="animation:c8-keepA 4.6s ease-in-out infinite"><rect x="8" y="48" width="8" height="8" rx="2" fill="#10b981"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="18" y="48" width="8" height="8" rx="2" fill="#10b981"/></g><g style="animation:c8-keepA 4.6s ease-in-out infinite"><rect x="28" y="48" width="8" height="8" rx="2" fill="#34d399"/></g><g style="animation:c8-keepB 4.6s ease-in-out infinite"><rect x="38" y="48" width="8" height="8" rx="2" fill="#34d399"/></g><g class="anim-c" style="animation:c10-dropA 9.2s ease-in-out infinite"><rect x="48" y="48" width="8" height="8" rx="2" fill="#0f6e4e"/></g></svg>
+    <div class="wm">Crucible</div>
+  </div>
+</body>
+</html>

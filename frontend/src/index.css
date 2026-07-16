@@ -19,6 +19,9 @@
     --accent: #10b981;
     --accent-2: #34d399;
     --accent-deep: #064e3b;
+    /* Unresolved grid cells in the Crucible mark: reads as a populated cell
+       against --bg, but recedes behind --accent so the C can emerge from it. */
+    --accent-dim: #0f6e4e;
     --accent-glow: rgba(16,185,129,.15);
 
     --warn: #d29a3a;
@@ -399,4 +402,56 @@
     opacity: 0; transition: opacity .1s;
   }
   .subfolder-row:hover .subfolder-add-child-btn { opacity: 1; }
+
+  /* ── Crucible mark (animated) ──
+     One 9.2s cycle: the grid flickers as if sampling, the non-C cells shrink
+     to dots and return, then vanish — leaving the resolved C. The keep/drop
+     A and B variants are offset so cells fire independently.
+     transform-box: fill-box makes scale() pivot on each cell, not the SVG. */
+  .cm-keep-a, .cm-keep-b, .cm-drop-a, .cm-drop-b {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .cm-keep-a { animation: cm-keep-a 4.6s ease-in-out infinite; }
+  .cm-keep-b { animation: cm-keep-b 4.6s ease-in-out infinite; }
+  .cm-drop-a { animation: cm-drop-a 9.2s ease-in-out infinite; }
+  .cm-drop-b { animation: cm-drop-b 9.2s ease-in-out infinite; }
+
+  @keyframes cm-keep-a {
+    0% { opacity: .4 } 5% { opacity: 1 } 11% { opacity: .4 } 18% { opacity: .95 }
+    25% { opacity: .45 } 33% { opacity: 1 } 40% { opacity: .5 } 45% { opacity: 1 }
+    88% { opacity: 1 } 100% { opacity: .4 }
+  }
+  @keyframes cm-keep-b {
+    0% { opacity: .9 } 7% { opacity: .4 } 14% { opacity: 1 } 22% { opacity: .45 }
+    30% { opacity: .9 } 38% { opacity: .4 } 45% { opacity: 1 }
+    88% { opacity: 1 } 100% { opacity: .9 }
+  }
+  @keyframes cm-drop-a {
+    0% { transform: scale(1); opacity: .6 } 2.5% { opacity: 1 } 5.5% { opacity: .4 }
+    9% { opacity: .9 } 12.5% { opacity: .45 } 16.5% { opacity: .85 }
+    20% { transform: scale(1); opacity: .4 } 22.5% { transform: scale(.3); opacity: .55 }
+    33% { transform: scale(.3); opacity: .78 } 40% { transform: scale(.3); opacity: .5 }
+    44% { transform: scale(.3); opacity: .72 } 50% { transform: scale(1); opacity: .6 }
+    52.5% { opacity: 1 } 55.5% { opacity: .4 } 59% { opacity: .9 } 62.5% { opacity: .45 }
+    66.5% { opacity: .85 } 70% { transform: scale(1); opacity: .4 }
+    72.5% { transform: scale(1); opacity: .06 } 94% { transform: scale(1); opacity: .06 }
+    100% { transform: scale(1); opacity: .6 }
+  }
+  @keyframes cm-drop-b {
+    0% { transform: scale(1); opacity: .9 } 3% { opacity: .4 } 7% { opacity: .95 }
+    11% { opacity: .4 } 15% { opacity: .9 } 19% { opacity: .45 } 20% { transform: scale(1) }
+    22.5% { transform: scale(.3); opacity: .55 } 33% { transform: scale(.3); opacity: .78 }
+    40% { transform: scale(.3); opacity: .5 } 44% { transform: scale(.3); opacity: .72 }
+    50% { transform: scale(1); opacity: .9 } 53% { opacity: .4 } 57% { opacity: .95 }
+    61% { opacity: .4 } 65% { opacity: .9 } 69% { opacity: .45 } 70% { transform: scale(1) }
+    72.5% { transform: scale(1); opacity: .06 } 94% { transform: scale(1); opacity: .06 }
+    100% { transform: scale(1); opacity: .9 }
+  }
+
+  /* Resolve to the static mark rather than freezing mid-cycle. */
+  @media (prefers-reduced-motion: reduce) {
+    .cm-keep-a, .cm-keep-b { animation: none; opacity: 1; }
+    .cm-drop-a, .cm-drop-b { animation: none; opacity: .09; }
+  }
 }

@@ -7,11 +7,16 @@ import { useJobStore } from "../../store/jobStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
+import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../stores/paneStore";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
 // the done-count advances, not only on completion (#39, ComfyUI queue).
+// How long a restart may take before the overlay offers a manual way out. The
+// server is still polled after this — it only changes what the overlay says.
+const RESTART_SLOW_MS = 25_000;
+
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
 const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
@@ -85,6 +90,7 @@ export default function TopBar() {
   const [shuttingDown, setShuttingDown] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [restartSlow, setRestartSlow] = useState(false);
   const { enabled: paneEnabled, toggleEnabled: togglePane } = usePaneStore();
 
   // Page-level job watchers (e.g. in ImageDetailPage) stop when the component
@@ -150,27 +156,46 @@ export default function TopBar() {
   async function handleRestart() {
     setShowRestartConfirm(false);
     setRestarting(true);
+    setRestartSlow(false);
     let oldStartTime: number | null = null;
+    // Set once a probe fails or the server is unreachable — proof the old
+    // process has actually gone down. Only used when we never learned the old
+    // start_time (the pre-restart probe below failed): without it, the first
+    // 200 we see is most likely the *old* process still shutting down, and
+    // reloading into that lands the page on a dying backend.
+    let sawDown = false;
     try {
       const res = await fetch("/api/v1/health", { cache: "no-store" });
       if (res.ok) oldStartTime = (await res.json()).start_time ?? null;
     } catch { /* ignore */ }
     await fetch("/api/v1/restart", { method: "POST" }).catch(() => {});
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      await new Promise<void>(r => setTimeout(r, 1000));
+
+    // Poll until the server reports a *different* start_time (a new process,
+    // not the dying old one). Deliberately no deadline: a cold start importing
+    // torch can take minutes, and a server not running under the manage-script
+    // restart loop needs a manual relaunch. A fixed cutoff that stops polling
+    // strands the page here permanently even once the server is back — so
+    // instead we keep watching and surface a manual escape hatch below.
+    const slowAt = Date.now() + RESTART_SLOW_MS;
+    for (;;) {
+      await new Promise<void>((r) => setTimeout(r, 1000));
       try {
         const res = await fetch("/api/v1/health", { cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
-          if (oldStartTime === null || data.start_time !== oldStartTime) {
+          // Known old start_time → reload when it changes. Unknown → wait until
+          // we've seen the server go down first, so we don't reload into the
+          // old process before it exits.
+          if (oldStartTime !== null ? data.start_time !== oldStartTime : sawDown) {
             window.location.reload();
             return;
           }
+        } else {
+          sawDown = true;
         }
-      } catch { /* not up yet */ }
+      } catch { sawDown = true; /* not up yet */ }
+      if (Date.now() > slowAt) setRestartSlow(true);
     }
-    setRestarting(false);
   }
 
   return (
@@ -350,6 +375,45 @@ export default function TopBar() {
           onConfirm={handleRestart}
           onCancel={() => setShowRestartConfirm(false)}
         />
+      )}
+      {restarting && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 10000,
+          background: "var(--bg)",
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 28,
+        }}>
+          <CrucibleMark size={132} animated />
+          <div style={{ textAlign: "center", maxWidth: 380 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
+              Restarting…
+            </div>
+            <div style={{
+              marginTop: 6, fontSize: 12, color: "var(--fg-dim)",
+              fontFamily: "Geist Mono, monospace",
+            }}>
+              waiting for the server to come back
+            </div>
+            {restartSlow && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{ fontSize: 12.5, color: "var(--fg-mute)", lineHeight: 1.5 }}>
+                  This is taking longer than usual. Still watching for the server —
+                  the page reloads by itself the moment it answers. If it never does,
+                  check the terminal: the server only comes back on its own when it
+                  was started with <span className="mono">manage</span>.
+                </div>
+                <button
+                  type="button"
+                  className="btn sm"
+                  style={{ marginTop: 12 }}
+                  onClick={() => window.location.reload()}
+                >
+                  Reload now
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   );

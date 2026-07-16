@@ -15,7 +15,7 @@ export function showImportSummaryToast(jobId: string): void {
       const added = r.added ?? 0;
       const failed = r.failed_count ?? 0;
       if (failed > 0) {
-        toast(`Imported ${added} · ${failed} failed (see server log)`, { icon: "⚠️" });
+        toast(`Imported ${added} · ${failed} failed (see server log)`);
       } else {
         toast.success(`Imported ${added} image${added !== 1 ? "s" : ""}`);
       }

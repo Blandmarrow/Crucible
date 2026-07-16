@@ -198,7 +198,7 @@ export default function SettingsPage() {
       changed.auto_rescan_on_open = form.auto_rescan_on_open;
     }
     if (Object.keys(changed).length === 0) {
-      toast("No changes to save", { icon: "ℹ️" });
+      toast("No changes to save");
       return;
     }
     mutation.mutate(changed);

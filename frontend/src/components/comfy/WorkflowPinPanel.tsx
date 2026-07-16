@@ -39,7 +39,7 @@ function nodeLabel(wf: WorkflowJson, nodeId: string): string {
 
 const INT_MODE_LABEL: Record<string, string> = {
   fixed: "Fixed",
-  random: "🎲 Random per row",
+  random: "Random per row",
   increment: "+1 Increment per row",
 };
 

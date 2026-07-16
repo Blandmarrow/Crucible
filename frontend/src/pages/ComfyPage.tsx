@@ -409,7 +409,7 @@ export default function ComfyPage() {
             <button className="btn ghost sm" onClick={() => setShowGenerate(true)}
               disabled={!hasPromptPin}
               title={hasPromptPin ? "Generate prompts with an LLM provider" : "Mark a pinned parameter as the prompt first"}>
-              ✨ Generate prompts…
+              Generate prompts…
             </button>
             <button className="btn ghost sm" onClick={() => setShowBulkEdit(true)}
               disabled={!hasPromptPin || rows.length === 0}

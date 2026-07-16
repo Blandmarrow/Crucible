@@ -27,7 +27,7 @@ function templateValue(plan: ComfyPlan, pin: PinnedParam): unknown {
 
 /** What a blank cell falls back to: run default, else template (or an int-mode roll). */
 function fallbackLabel(plan: ComfyPlan, pin: PinnedParam): string {
-  if (pin.int_mode === "random") return "🎲 random";
+  if (pin.int_mode === "random") return "random";
   if (pin.int_mode === "increment") return "auto +n";
   if (pin.value !== null && pin.value !== undefined && pin.value !== "") return String(pin.value);
   const tv = templateValue(plan, pin);

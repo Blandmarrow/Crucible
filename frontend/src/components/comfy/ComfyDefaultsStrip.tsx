@@ -14,7 +14,7 @@ function templateValue(plan: ComfyPlan, pin: PinnedParam): unknown {
 }
 
 function displayValue(plan: ComfyPlan, pin: PinnedParam): string {
-  if (pin.int_mode === "random") return "🎲 random per row";
+  if (pin.int_mode === "random") return "random per row";
   if (pin.int_mode === "increment") return "+1 increment per row";
   if (pin.value !== null && pin.value !== undefined && pin.value !== "") return String(pin.value);
   const tv = templateValue(plan, pin);

@@ -12,7 +12,7 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Node](https://img.shields.io/badge/node-18%2B-green)
 
-![alt text](docs/images/image-3.png)
+!(docs/images/CrucibleMainImage.PNG)
 
 ▶ [Watch the showcase on YouTube](https://www.youtube.com/watch?v=Ig4j5ijovCI)
 

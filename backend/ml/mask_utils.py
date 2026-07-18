@@ -62,6 +62,93 @@ def rasterize_detections(
     return canvas
 
 
+def detection_crop_rect(
+    bboxes: list[list[float]],
+    img_w: int,
+    img_h: int,
+    mode: str = "union",
+    padding_pct: float = 0.0,
+    target_ar: float | None = None,
+) -> tuple[int, int, int, int] | None:
+    """Compute a pixel-space crop rect (x, y, w, h) from normalized detection bboxes.
+
+    ``bboxes`` are normalized ``[x1, y1, x2, y2]`` lists (already filtered to the
+    labels of interest). ``mode`` picks the subject box: ``"union"`` is the
+    envelope of all boxes, ``"largest"`` the single largest-area box. The box is
+    then padded by ``padding_pct`` percent of its own extent per side and, when
+    ``target_ar`` (width/height) is given, grown — never shrunk — toward that
+    aspect ratio, clamped to the image. If the padded subject cannot fit inside
+    any legal rect of the target ratio, the exact ratio is sacrificed rather
+    than cutting the subject. Returns None when no usable bbox survives
+    sanitizing or the result would be degenerate (< 1 px on a side).
+    """
+    boxes = []
+    for b in bboxes:
+        if not b or len(b) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(v) for v in b)
+        except (TypeError, ValueError):
+            continue
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+        boxes.append([
+            min(max(x1, 0.0), 1.0), min(max(y1, 0.0), 1.0),
+            min(max(x2, 0.0), 1.0), min(max(y2, 0.0), 1.0),
+        ])
+    if not boxes:
+        return None
+
+    if mode == "largest":
+        x1, y1, x2, y2 = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+    else:
+        x1 = min(b[0] for b in boxes)
+        y1 = min(b[1] for b in boxes)
+        x2 = max(b[2] for b in boxes)
+        y2 = max(b[3] for b in boxes)
+
+    pad_x = (x2 - x1) * padding_pct / 100.0
+    pad_y = (y2 - y1) * padding_pct / 100.0
+    x1 = max(x1 - pad_x, 0.0)
+    y1 = max(y1 - pad_y, 0.0)
+    x2 = min(x2 + pad_x, 1.0)
+    y2 = min(y2 + pad_y, 1.0)
+
+    min_w = min((x2 - x1) * img_w, float(img_w))
+    min_h = min((y2 - y1) * img_h, float(img_h))
+    cx = (x1 + x2) / 2.0 * img_w
+    cy = (y1 + y2) / 2.0 * img_h
+
+    if target_ar is not None:
+        # Grow-only snap: smallest rect at target_ar containing the subject,
+        # scaled to fit the image; then restore either subject minimum the
+        # scaling violated (that is the best-effort break point — exact AR is
+        # unreachable without cutting the subject).
+        base_w = max(min_w, 1.0)
+        base_h = max(min_h, 1.0)
+        w0 = max(base_w, base_h * target_ar)
+        h0 = w0 / target_ar
+        s = min(1.0, img_w / w0, img_h / h0)
+        w = min(max(w0 * s, min_w), float(img_w))
+        h = min(max(h0 * s, min_h), float(img_h))
+    else:
+        w, h = min_w, min_h
+
+    x = min(max(cx - w / 2.0, 0.0), img_w - w)
+    y = min(max(cy - h / 2.0, 0.0), img_h - h)
+
+    xi, yi, wi, hi = round(x), round(y), round(w), round(h)
+    xi = min(max(xi, 0), img_w - 1)
+    yi = min(max(yi, 0), img_h - 1)
+    wi = min(wi, img_w - xi)
+    hi = min(hi, img_h - yi)
+    if wi < 1 or hi < 1:
+        return None
+    return (xi, yi, wi, hi)
+
+
 def bbox_from_mask(mask: np.ndarray, img_w: int, img_h: int) -> list[float]:
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)

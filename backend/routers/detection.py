@@ -1,17 +1,28 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.ml.mask_utils import detection_crop_rect
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.detection import Detection
-from backend.schemas.detection import DetectionJobRequest, DetectionOut
+from backend.schemas.detection import DetectionCropRequest, DetectionJobRequest, DetectionOut
+from backend.services import version_service
+from backend.services.image_service import crop_image_to_dest, generate_thumbnail
+from backend.utils import (
+    ALLOWED_FLAG_KEYS,
+    normalize_subfolder,
+    slugify_filename,
+    thumbnail_path_for,
+    unique_filename_with_thumb,
+)
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/detection", tags=["detection"])
@@ -358,3 +369,212 @@ async def get_dataset_labels(dataset_id: str, db: AsyncSession = Depends(get_db)
         .order_by(image_count.desc(), Detection.label.asc())
     )
     return [{"label": r.label, "image_count": r.image_count} for r in result.all()]
+
+
+async def _fetch_bboxes_by_image(
+    db: AsyncSession, image_ids: list[str], labels: list[str] | None
+) -> dict[str, list[list[float]]]:
+    """Batch-fetch detection bboxes keyed by image id, chunked to keep IN() bounded."""
+    by_image: dict[str, list[list[float]]] = {}
+    for start in range(0, len(image_ids), 10_000):
+        chunk = image_ids[start:start + 10_000]
+        query = select(Detection.image_id, Detection.bbox).where(Detection.image_id.in_(chunk))
+        if labels:
+            query = query.where(Detection.label.in_(labels))
+        result = await db.execute(query)
+        for row in result.all():
+            by_image.setdefault(row.image_id, []).append(row.bbox)
+    return by_image
+
+
+@router.post("/crop")
+async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depends(get_db)):
+    # Resolve image list (same triple as batch upscale: ids > dataset+subfolder+flags)
+    if body.image_ids is not None:
+        result = await db.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
+        image_ids = [r[0] for r in result.all()]
+    else:
+        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
+        if body.subfolder is not None:
+            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
+        if body.quality_flags:
+            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
+            if valid_flags:
+                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+        result = await db.execute(q)
+        image_ids = [r[0] for r in result.all()]
+
+    by_image = await _fetch_bboxes_by_image(db, image_ids, body.labels)
+    matched_ids = [i for i in image_ids if i in by_image]
+    skipped = len(image_ids) - len(matched_ids)
+    total = len(matched_ids)
+
+    auto_label = f"Crop to detection — {total} image{'s' if total != 1 else ''}"
+    job = BackgroundJob(
+        job_type="crop_to_detection",
+        label=body.label or auto_label,
+        dataset_id=body.dataset_id,
+        total_items=total,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    cfg = body.model_dump()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Image).where(Image.id.in_(matched_ids)))
+            images = result.scalars().all()
+            bboxes_by_image = await _fetch_bboxes_by_image(session, matched_ids, cfg["labels"])
+            loop = asyncio.get_running_loop()
+
+            replace = cfg["replace"]
+            counts = {"cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0, "failed": 0}
+
+            # Pre-build occupied thumbnail stems for the non-replace path so that
+            # images with different extensions but the same derived stem don't
+            # share a thumbnail. planned_thumb_stems accumulates across iterations.
+            occupied_thumb_stems: set[str] = set()
+            planned_thumb_stems: set[str] = set()
+            if not replace and images:
+                dest_thumb_dir = Path(images[0].file_path).parent.parent / "thumbnails"
+                if dest_thumb_dir.exists():
+                    occupied_thumb_stems = {p.stem for p in dest_thumb_dir.glob("*.webp")}
+
+            last_image_id: str | None = None
+            cancelled = False
+            for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
+                    "status": "running", "done": i, "total": len(images),
+                    "percent": round(i / len(images) * 100, 1),
+                    "current_item": img.filename,
+                    "message": f"Cropping {img.filename}…",
+                })
+
+                rect = detection_crop_rect(
+                    bboxes_by_image.get(img.id, []), img.width, img.height,
+                    mode=cfg["mode"], padding_pct=cfg["padding_pct"], target_ar=cfg["target_ar"],
+                )
+                if rect is None:
+                    counts["skipped_no_detection"] += 1
+                    continue
+                if rect == (0, 0, img.width, img.height):
+                    # Full-image rect: writing would only re-encode the file
+                    counts["skipped_noop"] += 1
+                    continue
+
+                src_path = Path(img.file_path)
+
+                if replace:
+                    await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                    tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+                    try:
+                        info = await loop.run_in_executor(
+                            None, crop_image_to_dest, str(src_path), str(tmp_path), *rect,
+                        )
+                        tmp_path.replace(src_path)
+                    except Exception as exc:
+                        logger.error("Detection crop failed for %s: %s", img.filename, exc)
+                        tmp_path.unlink(missing_ok=True)
+                        counts["failed"] += 1
+                        await broadcaster.emit(job_id, {
+                            "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
+                            "status": "running", "done": i + 1, "total": len(images),
+                            "percent": round((i + 1) / len(images) * 100, 1),
+                            "current_item": img.filename,
+                            "message": f"Failed: {exc}",
+                        })
+                        continue
+                    if img.thumbnail_path:
+                        await loop.run_in_executor(None, generate_thumbnail, str(src_path), img.thumbnail_path)
+                    now = datetime.now(timezone.utc)
+                    img.width = info["width"]
+                    img.height = info["height"]
+                    img.file_size_bytes = info["file_size_bytes"]
+                    img.format = info["format"]
+                    img.phash = info["phash"]
+                    img.updated_at = now
+                    img.processing_history = (img.processing_history or []) + [{
+                        "op": "crop_to_detection",
+                        "mode": cfg["mode"],
+                        "labels": cfg["labels"],
+                        "padding_pct": cfg["padding_pct"],
+                        "target_ar": cfg["target_ar"],
+                        "at": now.isoformat(),
+                    }]
+                    last_image_id = img.id
+                else:
+                    dest_images = src_path.parent
+                    dest_stem = slugify_filename(src_path.stem + "_crop")
+                    existing = await session.execute(
+                        select(Image.filename).where(
+                            Image.dataset_id == img.dataset_id,
+                            Image.filename.like(f"{dest_stem}%"),
+                        )
+                    )
+                    db_names: set[str] = {r[0] for r in existing.all()}
+                    new_filename = unique_filename_with_thumb(
+                        dest_images, dest_stem, src_path.suffix, db_names,
+                        occupied_thumb_stems, planned_thumb_stems,
+                    )
+                    dest_path_str = str(dest_images / new_filename)
+                    try:
+                        info = await loop.run_in_executor(
+                            None, crop_image_to_dest, str(src_path), dest_path_str, *rect,
+                        )
+                    except Exception as exc:
+                        logger.error("Detection crop failed for %s: %s", img.filename, exc)
+                        counts["failed"] += 1
+                        await broadcaster.emit(job_id, {
+                            "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
+                            "status": "running", "done": i + 1, "total": len(images),
+                            "percent": round((i + 1) / len(images) * 100, 1),
+                            "current_item": img.filename,
+                            "message": f"Failed: {exc}",
+                        })
+                        continue
+                    thumb_path = thumbnail_path_for(dest_path_str)
+                    await loop.run_in_executor(None, generate_thumbnail, dest_path_str, thumb_path)
+                    new_img = Image(
+                        dataset_id=img.dataset_id,
+                        filename=new_filename,
+                        original_filename=img.original_filename,
+                        subfolder=img.subfolder,
+                        file_path=dest_path_str,
+                        thumbnail_path=thumb_path,
+                        width=info["width"],
+                        height=info["height"],
+                        file_size_bytes=info["file_size_bytes"],
+                        format=info["format"],
+                        phash=info["phash"],
+                    )
+                    session.add(new_img)
+                    await session.flush()
+                    last_image_id = new_img.id
+
+                counts["cropped"] += 1
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
+                    "status": "running", "done": i + 1, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename,
+                    "image_id": last_image_id,
+                })
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": total, "skipped": skipped}

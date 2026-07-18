@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from backend.schemas import UtcDatetime
 
@@ -28,3 +30,16 @@ class DetectionJobRequest(BaseModel):
     min_prob: float = 0.5          # NudeNet: minimum detection confidence (0-1)
     point_prompts: list[list[float]] | None = None   # SAM2 points mode: [[x,y], ...] normalized 0-1
     point_labels: list[int] | None = None            # SAM2 points mode: 1=foreground, 0=background
+
+
+class DetectionCropRequest(BaseModel):
+    dataset_id: str
+    image_ids: list[str] | None = None       # None = dataset scope
+    subfolder: str | None = None
+    quality_flags: list[str] | None = None   # exclude images with these flags set
+    labels: list[str] | None = None          # detection labels to crop to; None/[] = all
+    mode: Literal["union", "largest"] = "union"
+    padding_pct: float = Field(0.0, ge=0.0, le=100.0)
+    target_ar: float | None = Field(None, gt=0.0)    # width/height; grow-only snap
+    replace: bool = False
+    label: str | None = None                 # job-label override (NOT a detection label)

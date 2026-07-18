@@ -68,6 +68,19 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 
 The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results.
 
+### Crop to detected subject
+
+Batch-crop images to their detections — useful for turning full scenes into tight subject crops before training:
+
+- **Detection labels** — chips select which labels drive the crop (none selected = all labels); images without a matching detection are skipped and reported
+- **Crop box** — *Union of all matches* (one box covering every matching detection) or *Largest match* (the single biggest detection)
+- **Padding %** — expands the box by a percentage of its own size on each side
+- **Aspect ratio** — optional grow-only snap: the crop expands (never shrinks) toward the chosen ratio, clamped to the image; if the subject can't fit any rect of that ratio, the ratio bends rather than cutting the subject
+- Same **Replace** / **New file** (`{stem}_crop{ext}`) output modes as upscaling
+- A completion toast reports how many images were cropped, skipped (no detections), unchanged (detection already spans the full image), or failed
+
+Available from: the **Crop** button in SelectionToolbar, the **Crop to Subject** tab on the Bulk Edit page, and the **Crop to Subject** button in the Image Detail page toolbar next to Crop/Upscale/LUT (single image; shown only when the image has detections, and its label chips show only that image's labels). Note that cropping changes the image geometry — re-run detection afterwards if you need up-to-date boxes/masks on the cropped images.
+
 ## Image Processing
 
 ### Upscaling
@@ -98,7 +111,7 @@ Available from: the **LUT** button in the ImageDetailPage toolbar (mutually excl
 
 Select any images in the gallery (checkbox click), **shift+click** a checkbox to extend the selection as a contiguous range (re-shift-clicking replaces the previous range without affecting independently-selected images outside it), or use **Space** while viewing an image in the detail view. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
 
-Bulk score, upscale, LUT, detect, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
+Bulk score, upscale, LUT, detect, detection-crop, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
@@ -106,6 +119,7 @@ Bulk score, upscale, LUT, detect, and rename operations all support a **quality 
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
 - **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 / SAM 3 text-prompt segmentation on the selection
+- **Crop to detected subject** — batch-crop selected images to their detection boxes with padding and aspect-ratio snap → [details](#crop-to-detected-subject)
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection

@@ -18,7 +18,7 @@ import { Columns2, RefreshCw } from "lucide-react";
 const RESTART_SLOW_MS = 25_000;
 
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {

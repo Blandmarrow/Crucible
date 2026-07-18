@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -26,6 +26,8 @@ import { type ProviderOut } from "../api/providers";
 import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { ASPECT_PRESETS } from "../constants/aspectRatios";
+import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import { getGalleryPageSize } from "../constants/storage";
 import { encode } from "gpt-tokenizer";
 
@@ -169,6 +171,7 @@ export default function ImageDetailPage() {
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
   const [showDetectPanel, setShowDetectPanel] = useState(true);
   const [showDetectModal, setShowDetectModal] = useState(false);
+  const [showCropDetect, setShowCropDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
   const [detectPrompt, setDetectPrompt] = useState("");
@@ -842,6 +845,15 @@ export default function ImageDetailPage() {
           >
             <Crop size={14} /> {cropMode ? "Cancel Crop" : "Crop"}
           </button>
+          {(image?.detections?.length ?? 0) > 0 && !cropMode && (
+            <button
+              className="btn-sm btn-ghost flex items-center gap-1.5"
+              onClick={() => setShowCropDetect(true)}
+              title="Crop this image to its detected subjects"
+            >
+              <Focus size={14} /> Crop to Subject
+            </button>
+          )}
           <button
             className={`btn-sm flex items-center gap-1.5 ${upscaleMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); setLutMode(false); }}
@@ -866,11 +878,9 @@ export default function ImageDetailPage() {
                 onChange={(e) => { setAspect(e.target.value ? Number(e.target.value) : undefined); resetCrop(); }}
               >
                 <option value="">Free</option>
-                <option value={1}>1:1</option>
-                <option value={4/3}>4:3</option>
-                <option value={16/9}>16:9</option>
-                <option value={3/2}>3:2</option>
-                <option value={9/16}>9:16</option>
+                {ASPECT_PRESETS.map(({ label, value }) => (
+                  <option key={label} value={value}>{label}</option>
+                ))}
               </select>
               <input
                 type="range"
@@ -1856,6 +1866,34 @@ export default function ImageDetailPage() {
                 <ScanSearch size={14} /> {detectJobId ? "Running…" : "Run Detection"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Crop-to-detection modal */}
+      {showCropDetect && datasetId && imageId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Crop size={15} /> Crop to Detection
+            </h4>
+            <CropToDetectionForm
+              datasetId={datasetId}
+              imageIds={[imageId]}
+              availableLabels={Object.entries(
+                (image?.detections ?? []).reduce((acc, d) => {
+                  acc[d.label] = (acc[d.label] ?? 0) + 1;
+                  return acc;
+                }, {} as Record<string, number>)
+              )
+                .sort((a, b) => b[1] - a[1])
+                .map(([label, count]) => ({ label, count }))}
+              onSuccess={() => {
+                qc.invalidateQueries({ queryKey: ["image", imageId] });
+                setShowCropDetect(false);
+              }}
+              onCancel={() => setShowCropDetect(false)}
+            />
           </div>
         </div>
       )}

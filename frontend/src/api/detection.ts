@@ -28,4 +28,20 @@ export const detectionApi = {
     client
       .get<{ label: string; image_count: number }[]>(`/detection/labels/${dataset_id}`)
       .then((r) => r.data),
+
+  cropToDetection: (params: {
+    dataset_id: string;
+    image_ids?: string[];
+    subfolder?: string;
+    quality_flags?: string[];
+    labels?: string[];
+    mode: "union" | "largest";
+    padding_pct: number;
+    target_ar?: number | null;
+    replace: boolean;
+    label?: string;
+  }) =>
+    client
+      .post<{ job_id: string; total: number; skipped: number }>("/detection/crop", params)
+      .then((r) => r.data),
 };

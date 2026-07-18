@@ -52,6 +52,7 @@ Every step from raw images to a training-ready export, in order:
 
 ### Object detection
 - **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation → [details](docs/features.md#object-detection)
+- **Crop to detected subject** — batch-crop images to their detection boxes (union or largest, padding %, aspect-ratio snap) → [details](docs/features.md#crop-to-detected-subject)
 
 ### Editing & processing
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)

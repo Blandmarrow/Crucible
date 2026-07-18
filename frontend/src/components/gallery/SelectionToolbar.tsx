@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
+import CropToDetectionForm from "../crop/CropToDetectionForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
@@ -83,6 +84,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
+  const [showCropDetect, setShowCropDetect] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -392,7 +394,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showMoveSubfolder || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showMoveSubfolder || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -454,6 +456,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowDetect(true)}>
           <ScanSearch size={14} /> Detect
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
+          <Crop size={14} /> Crop
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
@@ -971,6 +976,24 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               imageIds={ids}
               onSuccess={() => setShowUpscale(false)}
               onCancel={() => setShowUpscale(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Crop-to-detection modal */}
+      {showCropDetect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Crop size={15} /> Crop to Detection — {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+            {datasetBreakdown}
+            <CropToDetectionForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => setShowCropDetect(false)}
+              onCancel={() => setShowCropDetect(false)}
             />
           </div>
         </div>

@@ -129,12 +129,26 @@ normalized polygons.
 - [x] Respect export resize — `_write_image` returns final dims; masks
       rasterized at exactly those dimensions (EXIF-orientation-aware fast path)
 
-## Iteration 3 — Detection-driven cropping  `[ ]`
+## Iteration 3 — Detection-driven cropping  `[x]`
 
-- [ ] Batch "crop to detected subject" op: bbox (union or largest per label) +
-      padding % + aspect-ratio snap, reusing the existing crop service path
-- [ ] COW protection (`protect_file_before_overwrite`) for replace-mode crops
-- [ ] `SelectionToolbar` + `BulkEditPage` surfaces
+### Decisions (agreed 2026-07-18)
+
+- **Both output modes**, mirroring batch upscale: Replace (in-place, COW-protected)
+  and New file (`{stem}_crop{ext}`, new Image row).
+- **"Largest" = single largest-area detection** overall (not largest-per-label).
+- **Grow-only aspect snap**: the crop expands toward the target ratio, clamped to
+  the image; if no rect of that ratio can contain the padded subject, the ratio
+  bends rather than cutting the subject (`detection_crop_rect` in `mask_utils.py`,
+  unit-tested).
+
+- [x] Batch "crop to detected subject" op: bbox (union or largest) + padding % +
+      aspect-ratio snap, reusing `crop_image_to_dest` (`POST /detection/crop`,
+      job type `crop_to_detection`, counts in `result_data`)
+- [x] COW protection (`protect_file_before_overwrite`) for replace-mode crops
+- [x] `SelectionToolbar` (Crop modal) + `BulkEditPage` ("Crop to Subject" tab)
+      + `ImageDetailPage` DETECTIONS panel ("Crop to Subject", single-image,
+      per-image label chips) surfaces via shared `CropToDetectionForm`; label
+      chips from `GET /detection/labels/{dataset_id}`
 
 ## Iteration 4 — Mask refinement & detection management  `[ ]`
 
@@ -143,6 +157,12 @@ normalized polygons.
 - [ ] Point-edit an existing SAM mask (add fg/bg points to refine rather than re-run
       from scratch)
 - [ ] Merge/union masks across detections
+- [ ] Prefill the ImageDetailPage interactive crop tool from detections: compute
+      the detection rect (union/largest + padding, reusing `detection_crop_rect`
+      semantics) and seed `react-easy-crop` with it
+      (`initialCroppedAreaPixels` on entering crop mode) so the user can
+      visually preview/adjust before applying — complements the Iteration 3
+      "Crop to Subject" modal, which applies without preview
 
 ## Iteration 5 — Watermark locate & remove (candidate)  `[ ]`
 

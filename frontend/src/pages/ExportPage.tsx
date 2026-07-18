@@ -69,6 +69,7 @@ interface ExportFilters {
   subfolderFilterActive: boolean;
   selectedSubfolders: string[];
   maskLabels: string[];
+  maskExcludeLabels: string[];
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -81,6 +82,7 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   subfolderFilterActive: false,
   selectedSubfolders: [],
   maskLabels: [],
+  maskExcludeLabels: [],
 };
 
 export default function ExportPage() {
@@ -116,6 +118,8 @@ export default function ExportPage() {
   const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set(filters.selectedSubfolders));
   // Selected detection labels for mask export; empty = all labels.
   const [maskLabels, setMaskLabels] = useState<Set<string>>(new Set(filters.maskLabels));
+  // Labels whose regions are always painted black (overrides the include selection).
+  const [maskExcludeLabels, setMaskExcludeLabels] = useState<Set<string>>(new Set(filters.maskExcludeLabels));
 
   const [stripMetadata, setStripMetadata] = useState(workflow.stripMetadata);
   const [captionsOnly, setCaptionsOnly] = useState(workflow.captionsOnly);
@@ -146,6 +150,7 @@ export default function ExportPage() {
     subfolders: null as string[] | null,
     export_masks: false,
     mask_labels: null as string[] | null,
+    mask_exclude_labels: null as string[] | null,
     mask_missing: "white" as MaskMissing,
   });
 
@@ -159,6 +164,7 @@ export default function ExportPage() {
         subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
         export_masks: exportMasks && !captionsOnly,
         mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
+        mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
         mask_missing: maskMissing,
       });
       if (datasetId) {
@@ -169,11 +175,12 @@ export default function ExportPage() {
           subfolderFilterActive,
           selectedSubfolders: [...selectedSubfolders],
           maskLabels: [...maskLabels],
+          maskExcludeLabels: [...maskExcludeLabels],
         });
       }
     }, 350);
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskMissing]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing]);
 
   // Persist the "workflow" config (format/output settings) — global, debounced.
   useEffect(() => {
@@ -204,6 +211,7 @@ export default function ExportPage() {
     setSubfolderFilterActive(next.subfolderFilterActive);
     setSelectedSubfolders(new Set(next.selectedSubfolders));
     setMaskLabels(new Set(next.maskLabels));
+    setMaskExcludeLabels(new Set(next.maskExcludeLabels));
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -224,6 +232,7 @@ export default function ExportPage() {
     captions_only: captionsOnly,
     export_masks: !captionsOnly && exportMasks,
     mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
+    mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
     mask_invert: maskInvert,
     mask_missing: maskMissing,
   });
@@ -266,6 +275,12 @@ export default function ExportPage() {
     return next;
   });
 
+  const toggleMaskExcludeLabel = (label: string) => setMaskExcludeLabels((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label); else next.add(label);
+    return next;
+  });
+
   function handleResetToDefaults() {
     clearPersisted(EXPORT_WORKFLOW_KEY);
     if (datasetId) clearPersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId));
@@ -294,6 +309,7 @@ export default function ExportPage() {
     setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
     setSelectedSubfolders(new Set(EXPORT_FILTERS_DEFAULTS.selectedSubfolders));
     setMaskLabels(new Set(EXPORT_FILTERS_DEFAULTS.maskLabels));
+    setMaskExcludeLabels(new Set(EXPORT_FILTERS_DEFAULTS.maskExcludeLabels));
 
     toast.success("Configuration reset to defaults");
   }
@@ -586,6 +602,29 @@ export default function ExportPage() {
                         </div>
                       )}
                     </div>
+                    {detectionLabels.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 12.5, color: "var(--fg-mute)", marginBottom: 5 }}>
+                          Exclude from mask
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--fg-dim)", marginBottom: 5 }}>
+                          Regions with these labels are always painted black — overrides the selection above.
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {detectionLabels.map(({ label, image_count }) => (
+                            <button
+                              key={label}
+                              className={`btn sm${maskExcludeLabels.has(label) ? " primary" : ""}`}
+                              onClick={() => toggleMaskExcludeLabel(label)}
+                              title={`${image_count} image${image_count === 1 ? "" : "s"}`}
+                            >
+                              {label}
+                              <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 4 }}>{image_count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <label className="row-flex" style={{ gap: 8 }}>
                       <input type="checkbox" className="checkbox" checked={maskInvert} onChange={(e) => setMaskInvert(e.target.checked)} />
                       <span style={{ fontSize: 12.5 }}>Invert — train the background, mask out detections</span>

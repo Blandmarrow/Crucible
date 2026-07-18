@@ -115,42 +115,58 @@ def _write_sidecar(dest_dir: Path, stem: str, caption: str, caption_format: str)
 
 def _write_mask(
     mask_path: Path,
-    detections: list[tuple[str | None, list[float] | None]],
+    include: list[tuple[str | None, list[float] | None]],
+    exclude: list[tuple[str | None, list[float] | None]],
     size: tuple[int, int],
     invert: bool,
 ) -> None:
     """Write the grayscale loss mask for one exported image.
 
-    No detections → full-white mask (the image trains unmasked), regardless of
-    ``invert`` — an all-black mask would zero the image's loss entirely.
+    Thin wrapper over :func:`compose_loss_mask`: the include detections define
+    the trainable region (full-white when empty, so the image trains unmasked),
+    and the excluded regions are punched black after any invert.
     """
-    from backend.ml.mask_utils import rasterize_detections
+    from backend.ml.mask_utils import compose_loss_mask
 
-    if detections:
-        mask = rasterize_detections(detections, size[0], size[1], invert)
-    else:
-        mask = PilImage.new("L", size, 255)
-    mask.save(mask_path, "PNG")
+    compose_loss_mask(include, exclude, size[0], size[1], invert).save(mask_path, "PNG")
 
 
 async def _fetch_detections_by_image(
     db: AsyncSession,
     image_ids: list[str],
     mask_labels: list[str] | None,
-) -> dict[str, list[tuple[str | None, list[float] | None]]]:
-    """Batch-fetch (mask_json, bbox) pairs keyed by image id, chunked to keep IN() bounded."""
-    by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
+    mask_exclude_labels: list[str] | None = None,
+) -> tuple[
+    dict[str, list[tuple[str | None, list[float] | None]]],
+    dict[str, list[tuple[str | None, list[float] | None]]],
+]:
+    """Batch-fetch (mask_json, bbox) pairs keyed by image id, split into
+    (include_by_image, exclude_by_image).
+
+    One query per 10k chunk. When ``mask_labels`` is set the WHERE filter is
+    ``label IN (include ∪ exclude)``; when it is None no label filter is applied
+    (every detection is a potential include) and only ``mask_exclude_labels``
+    are peeled off into the exclude map. Exclusion wins: a row whose label is in
+    the exclude set goes to ``exclude_by_image`` and never to the include map.
+    """
+    exclude_set = set(mask_exclude_labels or [])
+    include_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
+    exclude_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
     for start in range(0, len(image_ids), 10_000):
         chunk = image_ids[start:start + 10_000]
-        query = select(Detection.image_id, Detection.mask, Detection.bbox).where(
-            Detection.image_id.in_(chunk)
-        )
+        query = select(
+            Detection.image_id, Detection.label, Detection.mask, Detection.bbox
+        ).where(Detection.image_id.in_(chunk))
         if mask_labels:
-            query = query.where(Detection.label.in_(mask_labels))
+            query = query.where(Detection.label.in_(set(mask_labels) | exclude_set))
         result = await db.execute(query)
         for row in result.all():
-            by_image.setdefault(row.image_id, []).append((row.mask, row.bbox))
-    return by_image
+            geom = (row.mask, row.bbox)
+            if row.label in exclude_set:
+                exclude_by_image.setdefault(row.image_id, []).append(geom)
+            else:
+                include_by_image.setdefault(row.image_id, []).append(geom)
+    return include_by_image, exclude_by_image
 
 
 async def _run_export_loop(
@@ -174,6 +190,7 @@ async def _run_export_loop(
     captions_only: bool = False,
     mask_dir: Path | None = None,
     mask_labels: list[str] | None = None,
+    mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
 ) -> dict:
@@ -196,9 +213,10 @@ async def _run_export_loop(
 
     export_masks = mask_dir is not None and not captions_only
     detections_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
+    exclude_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
     if export_masks:
-        detections_by_image = await _fetch_detections_by_image(
-            db, [img.id for img in images], mask_labels
+        detections_by_image, exclude_by_image = await _fetch_detections_by_image(
+            db, [img.id for img in images], mask_labels, mask_exclude_labels
         )
 
     jsonl_entries: list[dict] = []
@@ -229,8 +247,9 @@ async def _run_export_loop(
             )
             if export_masks:
                 dets = detections_by_image.get(img.id) or []
+                excl = exclude_by_image.get(img.id) or []
                 await asyncio.get_event_loop().run_in_executor(
-                    None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, final_size, mask_invert
+                    None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, excl, final_size, mask_invert
                 )
                 masks_written += 1
                 if not dets:
@@ -299,6 +318,7 @@ async def export_kohya(
     captions_only: bool = False,
     export_masks: bool = False,
     mask_labels: list[str] | None = None,
+    mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
     job_id: str | None = None,
@@ -316,6 +336,7 @@ async def export_kohya(
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
         captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
@@ -351,6 +372,7 @@ async def export_aitoolkit(
     captions_only: bool = False,
     export_masks: bool = False,
     mask_labels: list[str] | None = None,
+    mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
     job_id: str | None = None,
@@ -368,6 +390,7 @@ async def export_aitoolkit(
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
         captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
@@ -401,6 +424,7 @@ async def export_plain(
     captions_only: bool = False,
     export_masks: bool = False,
     mask_labels: list[str] | None = None,
+    mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
     job_id: str | None = None,
@@ -420,6 +444,7 @@ async def export_plain(
         job_id, "export", None, accumulate_plain=True, subfolders=subfolders,
         strip_metadata=strip_metadata, captions_only=captions_only,
         mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
@@ -445,6 +470,7 @@ async def preview_export(
     subfolders: list[str] | None = None,
     export_masks: bool = False,
     mask_labels: list[str] | None = None,
+    mask_exclude_labels: list[str] | None = None,
     mask_missing: str = "white",
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -458,8 +484,13 @@ async def preview_export(
     result = await db.execute(query)
     rows = result.all()
 
+    exclude_set = set(mask_exclude_labels or [])
     ids_with_detections: set[str] = set()
     if export_masks:
+        # Effective include: an image counts as "with detections" only if it has
+        # an include-label detection. Exclusion wins, so exclude-only images are
+        # "without detections" (mirrors _fetch_detections_by_image in the export).
+        run_det_query = True
         det_query = (
             select(Detection.image_id)
             .join(Image, Detection.image_id == Image.id)
@@ -467,9 +498,16 @@ async def preview_export(
             .distinct()
         )
         if mask_labels:
-            det_query = det_query.where(Detection.label.in_(mask_labels))
-        det_result = await db.execute(det_query)
-        ids_with_detections = {r.image_id for r in det_result.all()}
+            effective = [l for l in mask_labels if l not in exclude_set]
+            if effective:
+                det_query = det_query.where(Detection.label.in_(effective))
+            else:
+                run_det_query = False  # every include label is also excluded
+        elif exclude_set:
+            det_query = det_query.where(Detection.label.notin_(list(exclude_set)))
+        if run_det_query:
+            det_result = await db.execute(det_query)
+            ids_with_detections = {r.image_id for r in det_result.all()}
 
     total = len(rows)
     will_export = 0

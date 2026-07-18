@@ -106,6 +106,37 @@ def rasterize_detections(
     return canvas
 
 
+def compose_loss_mask(
+    include: list[tuple[str | None, list[float] | None]],
+    exclude: list[tuple[str | None, list[float] | None]],
+    width: int,
+    height: int,
+    invert: bool = False,
+) -> PilImage.Image:
+    """Compose a loss mask from include detections minus excluded regions.
+
+    The base mask marks the trainable region: ``rasterize_detections(include,
+    w, h, invert)`` when ``include`` is non-empty, else a full-white
+    ``PilImage.new("L", (w, h), 255)`` regardless of ``invert`` — an all-black
+    mask would zero the image's loss entirely, so an image with no include
+    geometry trains unmasked.
+
+    Excluded regions are then punched out of that base: when ``exclude`` is
+    non-empty, ``rasterize_detections(exclude, w, h)`` (never inverted) is
+    pasted as black (0). Because rasterized draws are binary 0/255, the paste
+    is an exact hole-punch. Applied *after* the (possibly inverted) base, so
+    exclusion is subtracted after invert.
+    """
+    if include:
+        base = rasterize_detections(include, width, height, invert)
+    else:
+        base = PilImage.new("L", (width, height), 255)
+    if exclude:
+        excl = rasterize_detections(exclude, width, height)
+        base.paste(0, mask=excl)
+    return base
+
+
 def detection_crop_rect(
     bboxes: list[list[float]],
     img_w: int,

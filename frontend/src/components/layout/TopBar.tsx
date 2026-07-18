@@ -129,6 +129,17 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
           }
         }
+        // Detection jobs (run / manual box+SAM / mask refine) change per-image
+        // detections and the dataset label/model rollups, but not the gallery —
+        // deliberately NOT in IMAGE_MODIFYING_JOB_TYPES. Detail pages go stale
+        // otherwise (bulk detect run finishing after navigation).
+        if (progress.job_type === "detection") {
+          qc.invalidateQueries({ queryKey: ["image"] });
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["detection-labels", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["detection-models", progress.dataset_id] });
+          }
+        }
       }
       // Live gallery updates while a captioning or ComfyUI-generate job runs — the
       // gallery would otherwise not refresh until the job completes (#39).

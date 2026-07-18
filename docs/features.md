@@ -66,7 +66,24 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - Click any label chip to toggle its boxes/masks on/off
 - Eye icon in the toolbar hides/shows all detections at once
 
-The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results.
+The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run.
+
+### Managing detections
+
+The DETECTIONS panel lists every detection as an editable row so you can fix a bad run without re-running everything:
+
+- **Rename** — click a detection's label to edit it inline (Enter saves, Esc cancels)
+- **Delete** — the trash icon removes a single detection immediately (detections are regenerable, so there's no confirm)
+- **Merge** — tick the checkboxes on two or more rows and click **Merge N → {label}** to combine them into one detection (the merged box covers all of them, and their masks are unioned); the result takes the first-selected row's label
+- **Draw a box by hand** — the **Draw Box** toolbar button lets you drag a rectangle on the image, type a label, and add it as a detection. Tick **Refine with SAM** to have SAM 2 turn the box into a precise mask (GPU host only); without it the plain box is stored. Draw mode stays active so you can annotate several boxes in a row. Press Esc to exit.
+- **Refine a mask** — the **Refine** button on any masked detection lets you click foreground points (left-click) and background points (right-click) to correct the mask, then **Apply** re-segments it with SAM 2 (GPU host only)
+- **Crop from Detections** — seeds the crop tool with a box around the currently-visible detections (padded), ready to adjust and confirm
+
+Hand-drawn, refined, and merged detections are tagged as `manual` so they're never wiped by an automatic re-run.
+
+### Bulk-deleting detections
+
+The **Detections** tab on the Bulk Edit page deletes detections across many images at once (the images themselves are untouched). Filter by detection **label**, by the **model** that produced them, and/or by a **score below** threshold (unscored and hand-made detections never match a score filter). A live count shows how many detections match before you commit, and a confirmation dialog guards the delete.
 
 ### Crop to detected subject
 

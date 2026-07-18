@@ -149,6 +149,103 @@ def detection_crop_rect(
     return (xi, yi, wi, hi)
 
 
+def polygons_to_mask_input(
+    mask_json: str | None,
+    bbox: list[float] | None = None,
+    size: int = 256,
+    logit: float = 8.0,
+) -> np.ndarray | None:
+    """Rasterize a detection's polygon/bbox to a SAM2 ``mask_input`` logit map.
+
+    SAM2's ``SAM2ImagePredictor.predict`` accepts ``mask_input`` as a
+    ``(1, 256, 256)`` float32 array of *low-res logits*. SAM2 resizes the
+    input image to a square (no aspect-preserving padding), so the normalized
+    0–1 polygon coordinates map straight onto a ``size×size`` square canvas —
+    that is the frame SAM2 expects. Returns ``None`` when the detection has no
+    fillable geometry.
+
+    NOTE (square-frame assumption): verified against the SAM2 source that the
+    image is square-resized, not letterbox-padded. If an installed sam2 build
+    pads instead, refined masks would be offset — fix here in isolation.
+    """
+    canvas = rasterize_detections([(mask_json, bbox)], size, size)
+    arr = np.asarray(canvas)
+    binary = arr > 127
+    if not binary.any():
+        return None
+    out = np.where(binary, logit, -logit).astype(np.float32)
+    return out.reshape(1, size, size)
+
+
+def merge_detection_geometry(
+    entries: list[tuple[str | None, list[float]]],
+) -> tuple[str | None, list[float]]:
+    """Merge several detections' geometry into one ``(mask_json, bbox)`` pair.
+
+    ``entries`` is a list of ``(mask_json, bbox)`` pairs (normalized 0–1). The
+    merged bbox is the union envelope of every sanitized/clamped/ordered box.
+    Polygons from every entry are concatenated (no boolean union — overlapping
+    polygons render/rasterize fine because each fills independently). When at
+    least one entry contributes polygons, bbox-only entries contribute a
+    rectangle polygon derived from their box so their region is not lost. When
+    no entry has any polygon, the result is ``(None, union_bbox)``.
+    """
+    boxes: list[list[float]] = []
+    polygons: list[list[list[float]]] = []
+    any_poly = False
+    parsed: list[tuple[list[list[float]], list[float] | None]] = []
+
+    for mask_json, bbox in entries:
+        polys: list[list[float]] = []
+        if mask_json:
+            try:
+                polys = json.loads(mask_json).get("polygons") or []
+            except (ValueError, AttributeError):
+                polys = []
+        polys = [p for p in polys if len(p) >= 3]
+
+        clean_box: list[float] | None = None
+        if bbox and len(bbox) == 4:
+            try:
+                x1, y1, x2, y2 = (float(v) for v in bbox)
+            except (TypeError, ValueError):
+                x1 = y1 = x2 = y2 = None  # type: ignore[assignment]
+            else:
+                if x1 > x2:
+                    x1, x2 = x2, x1
+                if y1 > y2:
+                    y1, y2 = y2, y1
+                clean_box = [
+                    min(max(x1, 0.0), 1.0), min(max(y1, 0.0), 1.0),
+                    min(max(x2, 0.0), 1.0), min(max(y2, 0.0), 1.0),
+                ]
+                boxes.append(clean_box)
+
+        if polys:
+            any_poly = True
+        parsed.append((polys, clean_box))
+
+    for polys, clean_box in parsed:
+        if polys:
+            polygons.extend(polys)
+        elif any_poly and clean_box is not None:
+            x1, y1, x2, y2 = clean_box
+            polygons.append([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
+
+    if not boxes:
+        union_bbox = [0.0, 0.0, 0.0, 0.0]
+    else:
+        union_bbox = [
+            min(b[0] for b in boxes),
+            min(b[1] for b in boxes),
+            max(b[2] for b in boxes),
+            max(b[3] for b in boxes),
+        ]
+
+    mask_out = json.dumps({"polygons": polygons}) if polygons else None
+    return mask_out, union_bbox
+
+
 def bbox_from_mask(mask: np.ndarray, img_w: int, img_h: int) -> list[float]:
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)

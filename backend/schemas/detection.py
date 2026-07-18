@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.schemas import UtcDatetime
 
@@ -30,6 +30,43 @@ class DetectionJobRequest(BaseModel):
     min_prob: float = 0.5          # NudeNet: minimum detection confidence (0-1)
     point_prompts: list[list[float]] | None = None   # SAM2 points mode: [[x,y], ...] normalized 0-1
     point_labels: list[int] | None = None            # SAM2 points mode: 1=foreground, 0=background
+
+
+class DetectionUpdate(BaseModel):
+    label: str = Field(min_length=1, max_length=256)
+
+
+class DetectionBulkDeleteRequest(BaseModel):
+    dataset_id: str
+    image_ids: list[str] | None = None       # None = dataset scope
+    subfolder: str | None = None
+    quality_flags: list[str] | None = None   # exclude images with these flags set
+    labels: list[str] | None = None          # restrict to these detection labels
+    models: list[str] | None = None          # restrict to these detection models
+    score_below: float | None = Field(None, ge=0.0, le=1.0)  # delete score < this (NULL never matches)
+    dry_run: bool = False
+
+
+class DetectionMergeRequest(BaseModel):
+    detection_ids: list[int] = Field(min_length=2)
+
+
+class ManualDetectionRequest(BaseModel):
+    image_id: str
+    bbox: list[float] = Field(min_length=4, max_length=4)  # [x1, y1, x2, y2] normalized 0-1
+    label: str = Field(min_length=1, max_length=256)
+    refine_with_sam: bool = False
+
+
+class DetectionRefineRequest(BaseModel):
+    point_prompts: list[list[float]] = Field(min_length=1)  # [[x,y], ...] normalized 0-1
+    point_labels: list[int]                                 # 1=foreground, 0=background
+
+    @model_validator(mode="after")
+    def _lengths_match(self):
+        if len(self.point_prompts) != len(self.point_labels):
+            raise ValueError("point_prompts and point_labels must have equal length")
+        return self
 
 
 class DetectionCropRequest(BaseModel):

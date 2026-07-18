@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../stores/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { imagesApi } from "../api/images";
@@ -28,6 +28,9 @@ import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
+import DetectionsPanel from "../components/detection/DetectionsPanel";
+import { detectionCropPrefill } from "../utils/detectionCrop";
+import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { encode } from "gpt-tokenizer";
 
@@ -169,7 +172,6 @@ export default function ImageDetailPage() {
   // Detection state
   const [overlayVisible, setOverlayVisible] = useState(true);
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
-  const [showDetectPanel, setShowDetectPanel] = useState(true);
   const [showDetectModal, setShowDetectModal] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
@@ -180,6 +182,18 @@ export default function ImageDetailPage() {
   const [detectMinProb, setDetectMinProb] = useState(0.5);
   const [samPoints, setSamPoints] = useState<{x: number; y: number; label: number}[]>([]);
   const [samPointMode, setSamPointMode] = useState(false);
+  // Manual bbox drawing + mask refine
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawRect, setDrawRect] = useState<{x1: number; y1: number; x2: number; y2: number} | null>(null);
+  const drawStart = useRef<{x: number; y: number} | null>(null);
+  const [pendingBox, setPendingBox] = useState<{x1: number; y1: number; x2: number; y2: number} | null>(null);
+  const [manualLabel, setManualLabel] = useState("");
+  const [manualRefineSam, setManualRefineSam] = useState(false);
+  const [manualJobId, setManualJobId] = useState<string | null>(null);
+  const [refineTarget, setRefineTarget] = useState<Detection | null>(null);
+  const [refineJobId, setRefineJobId] = useState<string | null>(null);
+  // Crop prefill (union of detections) — seeds react-easy-crop on fresh mount
+  const [cropInitialArea, setCropInitialArea] = useState<CropArea | null>(null);
 
   // AI captioning state
   const [showAi, setShowAi] = useState(false);
@@ -288,10 +302,31 @@ export default function ImageDetailPage() {
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
   }, [navCtx, datasetId, atEnd, atStart, nextId, prevId, nextPageData, prevPageData, paneGo]);
 
+  // Mutually-exclusive annotation modes (draw / SAM points / mask refine).
+  // Entering one clears the others' points/rect; passing null exits all.
+  const enterMode = useCallback((mode: "draw" | "points" | "refine" | null, det?: Detection) => {
+    setDrawMode(mode === "draw");
+    setSamPointMode(mode === "points");
+    setRefineTarget(mode === "refine" ? (det ?? null) : null);
+    setDrawRect(null);
+    setPendingBox(null);
+    drawStart.current = null;
+    // "points" accumulates its own clicks across toggles; draw/refine/exit start fresh.
+    if (mode !== "points") setSamPoints([]);
+  }, []);
+
   useEffect(() => {
     setHiddenLabels(new Set());
     setRenameMode(false);
     setRenameStem("");
+    // Reset annotation modes when navigating to another image.
+    setDrawMode(false);
+    setSamPointMode(false);
+    setSamPoints([]);
+    setDrawRect(null);
+    setPendingBox(null);
+    setRefineTarget(null);
+    setCropInitialArea(null);
   }, [imageId]);
 
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
@@ -300,6 +335,11 @@ export default function ImageDetailPage() {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
       if (showDeleteConfirm) return;
+      if (e.key === "Escape" && (drawMode || refineTarget || pendingBox)) {
+        setPendingBox(null);
+        enterMode(null);
+        return;
+      }
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
       if (e.key === " " && imageId && !showDetectModal) {
@@ -312,7 +352,7 @@ export default function ImageDetailPage() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, toggle, imageId, paneCtx, activePaneId]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   useEffect(() => {
     const anyModalOpen = showDetectModal || showDeleteConfirm;
@@ -379,6 +419,8 @@ export default function ImageDetailPage() {
   const upscaleJobProgress = useJobStore((s) => s.activeJobs.get(upscaleJobId ?? ""));
   const cropUpscaleJobProgress = useJobStore((s) => s.activeJobs.get(cropUpscaleJobId ?? ""));
   const lutJobProgress = useJobStore((s) => s.activeJobs.get(lutJobId ?? ""));
+  const manualJobProgress = useJobStore((s) => s.activeJobs.get(manualJobId ?? ""));
+  const refineJobProgress = useJobStore((s) => s.activeJobs.get(refineJobId ?? ""));
 
   useEffect(() => {
     if (!detectJobId || !detectJobProgress) return;
@@ -394,6 +436,37 @@ export default function ImageDetailPage() {
       toast.error(detectJobProgress.message || "Detection failed");
     }
   }, [detectJobProgress?.status, detectJobId, imageId, qc]);
+
+  // Manual box + SAM job completion (kept separate from the detect effect, which
+  // closes the detect modal).
+  useEffect(() => {
+    if (!manualJobId || !manualJobProgress) return;
+    if (manualJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+      setManualJobId(null);
+      setPendingBox(null);
+      toast.success("Detection added");
+    } else if (manualJobProgress.status === "failed") {
+      setManualJobId(null);
+      toast.error(manualJobProgress.message || "Failed to add detection");
+    }
+  }, [manualJobProgress?.status, manualJobId, imageId, datasetId, qc]);
+
+  // Mask refine job completion.
+  useEffect(() => {
+    if (!refineJobId || !refineJobProgress) return;
+    if (refineJobProgress.status === "completed") {
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+      setRefineJobId(null);
+      enterMode(null);
+      toast.success("Mask refined");
+    } else if (refineJobProgress.status === "failed") {
+      setRefineJobId(null);
+      toast.error(refineJobProgress.message || "Refine failed");
+    }
+  }, [refineJobProgress?.status, refineJobId, imageId, datasetId, qc, enterMode]);
 
   // When AI job completes, refresh caption
   useEffect(() => {
@@ -713,6 +786,37 @@ export default function ImageDetailPage() {
     },
   });
 
+  const createManualMutation = useMutation({
+    mutationFn: (params: { bbox: number[]; label: string; refine_with_sam: boolean }) =>
+      detectionApi.createManual({ image_id: imageId!, ...params }),
+    onSuccess: (data) => {
+      if ("job_id" in data) {
+        // SAM segmentation queued — completion effect will refresh + clear.
+        setManualJobId(data.job_id);
+      } else {
+        // Synchronous insert — refresh and keep drawing for multi-box annotation.
+        qc.invalidateQueries({ queryKey: ["image", imageId] });
+        qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+        setPendingBox(null);
+        toast.success("Detection added");
+      }
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Failed to add detection");
+    },
+  });
+
+  const refineMutation = useMutation({
+    mutationFn: (params: { id: number; point_prompts: number[][]; point_labels: number[] }) =>
+      detectionApi.refine(params.id, { point_prompts: params.point_prompts, point_labels: params.point_labels }),
+    onSuccess: (data) => setRefineJobId(data.job_id),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(msg ?? "Failed to start refine");
+    },
+  });
+
   const aiMutation = useMutation({
     mutationFn: () =>
       captioningApi.run({
@@ -759,6 +863,23 @@ export default function ImageDetailPage() {
   const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
   const lutRunning = !!lutJobId && lutJobProgress?.status === "running";
+  const manualRunning = !!manualJobId && manualJobProgress?.status === "running";
+  const refineRunning = !!refineJobId && refineJobProgress?.status === "running";
+  const detections: Detection[] = image.detections ?? [];
+
+  const onCropFromDetections = () => {
+    const prefill = detectionCropPrefill(detections, hiddenLabels, image.width ?? 0, image.height ?? 0);
+    if (!prefill) {
+      toast("No visible detections to crop to");
+      return;
+    }
+    enterMode(null);
+    setCropInitialArea(prefill);
+    setUpscaleMode(false);
+    setLutMode(false);
+    resetCrop();
+    setCropMode(true);
+  };
 
   return (
     <div className="flex h-full">
@@ -814,10 +935,19 @@ export default function ImageDetailPage() {
               Boxes
             </button>
           )}
+          {!cropMode && (
+            <button
+              className={`btn-sm flex items-center gap-1.5 ${drawMode ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => enterMode(drawMode ? null : "draw")}
+              title={drawMode ? "Exit draw mode" : "Draw a detection box by hand"}
+            >
+              <BoxSelect size={14} /> {drawMode ? "Drawing" : "Draw Box"}
+            </button>
+          )}
           {!cropMode && detectModel === "sam2" && detectTask === "points" && (
             <button
               className={`btn-sm flex items-center gap-1.5 ${samPointMode ? "btn-primary" : "btn-ghost"}`}
-              onClick={() => setSamPointMode((v) => !v)}
+              onClick={() => enterMode(samPointMode ? null : "points")}
               title={samPointMode ? "Deactivate point prompt mode (click=foreground, right-click=background)" : "Activate point prompt mode"}
             >
               <Crosshair size={14} />
@@ -838,7 +968,7 @@ export default function ImageDetailPage() {
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => {
               setCropMode((v) => {
-                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); }
+                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); setCropInitialArea(null); enterMode(null); }
                 return !v;
               });
             }}
@@ -856,14 +986,14 @@ export default function ImageDetailPage() {
           )}
           <button
             className={`btn-sm flex items-center gap-1.5 ${upscaleMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); setLutMode(false); }}
+            onClick={() => { setUpscaleMode((v) => !v); setCropMode(false); setLutMode(false); enterMode(null); }}
             disabled={upscaleRunning || cropUpscaleRunning}
           >
             <Maximize2 size={14} /> {upscaleMode ? "Cancel" : "Upscale"}
           </button>
           <button
             className={`btn-sm flex items-center gap-1.5 ${lutMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => { setLutMode((v) => !v); setCropMode(false); setUpscaleMode(false); }}
+            onClick={() => { setLutMode((v) => !v); setCropMode(false); setUpscaleMode(false); enterMode(null); }}
             disabled={lutRunning}
           >
             <Palette size={14} /> {lutMode ? "Cancel" : "LUT"}
@@ -1071,6 +1201,56 @@ export default function ImageDetailPage() {
               </button>
             </>
           )}
+
+          {/* Pending manual box → label + optional SAM segmentation */}
+          {pendingBox && !cropMode && (
+            <>
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>New box:</span>
+              <input
+                className="input"
+                style={{ width: 160 }}
+                placeholder="Label"
+                value={manualLabel}
+                onChange={(e) => setManualLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && manualLabel.trim() && !manualRunning) {
+                    createManualMutation.mutate({ bbox: [pendingBox.x1, pendingBox.y1, pendingBox.x2, pendingBox.y2], label: manualLabel.trim(), refine_with_sam: manualRefineSam });
+                  }
+                  if (e.key === "Escape") setPendingBox(null);
+                }}
+                autoFocus
+              />
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="Segment the drawn box with SAM 2 (GPU host only)">
+                <input type="checkbox" checked={manualRefineSam} onChange={(e) => setManualRefineSam(e.target.checked)} />
+                Refine with SAM
+              </label>
+              <button
+                className="btn-primary btn-sm flex items-center gap-1.5"
+                onClick={() => createManualMutation.mutate({ bbox: [pendingBox.x1, pendingBox.y1, pendingBox.x2, pendingBox.y2], label: manualLabel.trim(), refine_with_sam: manualRefineSam })}
+                disabled={!manualLabel.trim() || manualRunning || createManualMutation.isPending}
+              >
+                {manualRunning ? "Segmenting…" : "Add"}
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => setPendingBox(null)} disabled={manualRunning}>Cancel</button>
+            </>
+          )}
+
+          {/* Mask refine strip */}
+          {refineTarget && !cropMode && (
+            <>
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+                Refining <strong style={{ color: "var(--fg)" }}>{refineTarget.label}</strong> — click fg / right-click bg ({samPoints.length})
+              </span>
+              <button
+                className="btn-primary btn-sm"
+                onClick={() => refineMutation.mutate({ id: refineTarget.id, point_prompts: samPoints.map((p) => [p.x, p.y]), point_labels: samPoints.map((p) => p.label) })}
+                disabled={samPoints.length === 0 || refineRunning || refineMutation.isPending}
+              >
+                {refineRunning ? "Refining…" : "Apply"}
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => enterMode(null)} disabled={refineRunning}>Cancel</button>
+            </>
+          )}
         </div>
 
         <div className="flex-1 relative bg-black/40">
@@ -1080,6 +1260,7 @@ export default function ImageDetailPage() {
               crop={crop}
               zoom={zoom}
               aspect={effectiveAspect}
+              initialCroppedAreaPixels={cropInitialArea ?? undefined}
               onCropChange={setCrop}
               onZoomChange={setZoom}
               onCropComplete={onCropComplete}
@@ -1092,7 +1273,7 @@ export default function ImageDetailPage() {
                   alt={image.filename}
                   style={{ display: "block", maxWidth: "100%", maxHeight: "calc(100vh - 120px)", objectFit: "contain" }}
                 />
-                {(overlayVisible && (image.detections?.length ?? 0) > 0 || samPoints.length > 0) && image.width && image.height && (
+                {((overlayVisible && detections.length > 0) || samPoints.length > 0 || drawRect || pendingBox || refineTarget) && image.width && image.height && (
                   <svg
                     viewBox={`0 0 ${image.width} ${image.height}`}
                     preserveAspectRatio="xMidYMid meet"
@@ -1103,16 +1284,21 @@ export default function ImageDetailPage() {
                       const strokeW = maxDim * 0.004;
                       const fontSize = maxDim * 0.018;
                       const ptR = maxDim * 0.012;
-                      const visible = image.detections.filter(det => !hiddenLabels.has(det.label));
+                      // While refining, show only the target detection (others dimmed away).
+                      const detBoxes = refineTarget
+                        ? detections.filter((d) => d.id === refineTarget.id)
+                        : overlayVisible ? detections.filter((det) => !hiddenLabels.has(det.label)) : [];
+                      const live = drawRect ?? pendingBox;
                       return (
                         <>
-                          {visible.map((det) => {
+                          {detBoxes.map((det) => {
                             const [x1, y1, x2, y2] = det.bbox;
                             const rx = x1 * image.width!;
                             const ry = y1 * image.height!;
                             const rw = (x2 - x1) * image.width!;
                             const rh = (y2 - y1) * image.height!;
                             const color = labelColor(det.label);
+                            const maskOpacity = refineTarget ? 0.5 : 0.3;
                             return (
                               <g key={det.id}>
                                 {det.mask && (() => {
@@ -1122,7 +1308,7 @@ export default function ImageDetailPage() {
                                       const pts = poly.map(([px, py]) =>
                                         `${px * image.width!},${py * image.height!}`
                                       ).join(" ");
-                                      return <polygon key={pi} points={pts} fill={color} fillOpacity={0.3} stroke="none" />;
+                                      return <polygon key={pi} points={pts} fill={color} fillOpacity={maskOpacity} stroke="none" />;
                                     });
                                   } catch { return null; }
                                 })()}
@@ -1134,6 +1320,13 @@ export default function ImageDetailPage() {
                               </g>
                             );
                           })}
+                          {live && (() => {
+                            const rx = Math.min(live.x1, live.x2) * image.width!;
+                            const ry = Math.min(live.y1, live.y2) * image.height!;
+                            const rw = Math.abs(live.x2 - live.x1) * image.width!;
+                            const rh = Math.abs(live.y2 - live.y1) * image.height!;
+                            return <rect x={rx} y={ry} width={rw} height={rh} fill="none" stroke="white" strokeWidth={strokeW} strokeDasharray={`${strokeW * 3} ${strokeW * 2}`} />;
+                          })()}
                           {samPoints.map((pt, idx) => (
                             <g key={`sampt-${idx}`}>
                               <circle
@@ -1151,7 +1344,7 @@ export default function ImageDetailPage() {
                     })()}
                   </svg>
                 )}
-                {samPointMode && image.width && image.height && (
+                {(samPointMode || refineTarget) && image.width && image.height && (
                   <div
                     style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 10 }}
                     onClick={(e) => {
@@ -1167,6 +1360,38 @@ export default function ImageDetailPage() {
                       const y = (e.clientY - rect.top) / rect.height;
                       setSamPoints((prev) => [...prev, { x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000, label: 0 }]);
                     }}
+                  />
+                )}
+                {drawMode && !pendingBox && image.width && image.height && (
+                  <div
+                    style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 10 }}
+                    onMouseDown={(e) => {
+                      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                      const x = (e.clientX - rect.left) / rect.width;
+                      const y = (e.clientY - rect.top) / rect.height;
+                      drawStart.current = { x, y };
+                      setDrawRect({ x1: x, y1: y, x2: x, y2: y });
+                    }}
+                    onMouseMove={(e) => {
+                      if (!drawStart.current) return;
+                      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                      const x = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+                      const y = Math.min(Math.max((e.clientY - rect.top) / rect.height, 0), 1);
+                      setDrawRect({ x1: drawStart.current.x, y1: drawStart.current.y, x2: x, y2: y });
+                    }}
+                    onMouseUp={() => {
+                      const r = drawRect;
+                      drawStart.current = null;
+                      if (r && Math.abs(r.x2 - r.x1) >= 0.005 && Math.abs(r.y2 - r.y1) >= 0.005) {
+                        setPendingBox({
+                          x1: Math.min(r.x1, r.x2), y1: Math.min(r.y1, r.y2),
+                          x2: Math.max(r.x1, r.x2), y2: Math.max(r.y1, r.y2),
+                        });
+                        setManualLabel("");
+                      }
+                      setDrawRect(null);
+                    }}
+                    onMouseLeave={() => { drawStart.current = null; setDrawRect(null); }}
                   />
                 )}
               </div>
@@ -1300,96 +1525,22 @@ export default function ImageDetailPage() {
           )}
 
           {/* Detections panel */}
-          <div style={{ marginTop: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
-            <button
-              style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "space-between", padding: "2px 0", background: "none", border: "none", cursor: "pointer", color: "inherit" }}
-              onClick={() => setShowDetectPanel((v) => !v)}
-            >
-              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 5 }}>
-                <ScanSearch size={11} /> Detections
-                {(image.detections?.length ?? 0) > 0 && (
-                  <span style={{ fontWeight: 400, textTransform: "none" }}>({image.detections.length})</span>
-                )}
-              </span>
-              {showDetectPanel ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </button>
-
-            {showDetectPanel && (
-              <div style={{ marginTop: 6 }}>
-                {(image.detections?.length ?? 0) > 0 ? (
-                  <>
-                    <p style={{ fontSize: 10, color: "var(--fg-mute)", marginBottom: 6 }}>
-                      {image.detections[0].model} · {
-                        image.detections[0].task === "<OD>" ? "Object Detection" :
-                        image.detections[0].task === "<CAPTION_TO_PHRASE_GROUNDING>" ? "Grounded Caption" :
-                        image.detections[0].task === "nudenet" ? "Body-part detection" :
-                        image.detections[0].task === "text_prompt" ? "Text prompt" :
-                        image.detections[0].task === "points" ? "Point prompts" :
-                        image.detections[0].task
-                      }
-                    </p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {Object.entries(
-                        image.detections.reduce((acc, d) => {
-                          acc[d.label] = (acc[d.label] ?? 0) + 1;
-                          return acc;
-                        }, {} as Record<string, number>)
-                      )
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([label, count]) => {
-                          const hidden = hiddenLabels.has(label);
-                          return (
-                            <button
-                              key={label}
-                              onClick={() => setHiddenLabels(prev => {
-                                const next = new Set(prev);
-                                next.has(label) ? next.delete(label) : next.add(label);
-                                return next;
-                              })}
-                              title={hidden ? "Show boxes" : "Hide boxes"}
-                              style={{
-                                fontSize: 11,
-                                padding: "2px 7px",
-                                borderRadius: 4,
-                                background: hidden ? "transparent" : labelColor(label) + "33",
-                                border: `1px solid ${hidden ? labelColor(label) + "44" : labelColor(label) + "88"}`,
-                                color: hidden ? "var(--fg-mute)" : "var(--fg)",
-                                whiteSpace: "nowrap",
-                                cursor: "pointer",
-                                opacity: hidden ? 0.45 : 1,
-                                textDecoration: hidden ? "line-through" : "none",
-                              }}
-                            >
-                              {label}{count > 1 && <span style={{ opacity: 0.6, marginLeft: 3 }}>×{count}</span>}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <p style={{ fontSize: 11, color: "var(--fg-mute)" }}>No detections run yet.</p>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 5 }}
-                      onClick={() => setShowDetectModal(true)}
-                    >
-                      <ScanSearch size={12} /> Run Detection
-                    </button>
-                  </div>
-                )}
-                {(image.detections?.length ?? 0) > 0 && (
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}
-                    onClick={() => setShowDetectModal(true)}
-                  >
-                    <ScanSearch size={12} /> Re-run Detection
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          <DetectionsPanel
+            imageId={imageId!}
+            datasetId={datasetId ?? ""}
+            detections={detections}
+            hiddenLabels={hiddenLabels}
+            onToggleLabel={(label) => setHiddenLabels((prev) => {
+              const next = new Set(prev);
+              if (next.has(label)) next.delete(label); else next.add(label);
+              return next;
+            })}
+            onOpenDetectModal={() => setShowDetectModal(true)}
+            onStartRefine={(det) => enterMode("refine", det)}
+            onCropFromDetections={onCropFromDetections}
+            refineTargetId={refineTarget?.id ?? null}
+            busy={manualRunning || refineRunning}
+          />
 
           {/* AI generation metadata */}
           {image.generation_metadata && (

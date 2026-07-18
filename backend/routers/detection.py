@@ -9,11 +9,20 @@ from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.ml.mask_utils import detection_crop_rect
+from backend.ml.mask_utils import detection_crop_rect, merge_detection_geometry
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.detection import Detection
-from backend.schemas.detection import DetectionCropRequest, DetectionJobRequest, DetectionOut
+from backend.schemas.detection import (
+    DetectionBulkDeleteRequest,
+    DetectionCropRequest,
+    DetectionJobRequest,
+    DetectionMergeRequest,
+    DetectionOut,
+    DetectionRefineRequest,
+    DetectionUpdate,
+    ManualDetectionRequest,
+)
 from backend.services import version_service
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail
 from backend.utils import (
@@ -109,7 +118,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
                     if body.overwrite:
                         await session.execute(
-                            delete(Detection).where(Detection.image_id == img_id)
+                            delete(Detection).where(
+                                Detection.image_id == img_id,
+                                Detection.model == "nudenet",
+                            )
                         )
                     now = datetime.utcnow()
                     session.add_all([
@@ -176,7 +188,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
                     if body.overwrite:
                         await session.execute(
-                            delete(Detection).where(Detection.image_id == img_id)
+                            delete(Detection).where(
+                                Detection.image_id == img_id,
+                                Detection.model == "sam2",
+                            )
                         )
                     now = datetime.utcnow()
                     session.add_all([
@@ -246,7 +261,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
                     if body.overwrite:
                         await session.execute(
-                            delete(Detection).where(Detection.image_id == img_id)
+                            delete(Detection).where(
+                                Detection.image_id == img_id,
+                                Detection.model == "sam3",
+                            )
                         )
                     now = datetime.utcnow()
                     session.add_all([
@@ -306,7 +324,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
                 if body.overwrite:
                     await session.execute(
-                        delete(Detection).where(Detection.image_id == img_id)
+                        delete(Detection).where(
+                            Detection.image_id == img_id,
+                            Detection.model == body.model,
+                        )
                     )
                 now = datetime.utcnow()
                 session.add_all([
@@ -369,6 +390,338 @@ async def get_dataset_labels(dataset_id: str, db: AsyncSession = Depends(get_db)
         .order_by(image_count.desc(), Detection.label.asc())
     )
     return [{"label": r.label, "image_count": r.image_count} for r in result.all()]
+
+
+@router.get("/models/{dataset_id}")
+async def get_dataset_models(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """Distinct detection models in a dataset with the number of images each covers."""
+    image_count = func.count(func.distinct(Detection.image_id))
+    result = await db.execute(
+        select(Detection.model, image_count.label("image_count"))
+        .join(Image, Detection.image_id == Image.id)
+        .where(Image.dataset_id == dataset_id)
+        .group_by(Detection.model)
+        .order_by(image_count.desc(), Detection.model.asc())
+    )
+    return [{"model": r.model, "image_count": r.image_count} for r in result.all()]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_detections(
+    body: DetectionBulkDeleteRequest, db: AsyncSession = Depends(get_db)
+):
+    """Delete detections matching a scope + optional label/model/score filters.
+
+    Scope resolution mirrors ``crop_to_detection``: explicit ``image_ids`` win,
+    otherwise ``dataset_id`` + ``subfolder`` + ``quality_flags`` exclusions.
+    ``score_below`` uses SQL ``score < x`` which never matches NULL scores, so
+    manual/unscored rows are immune (intended). ``dry_run`` returns the count
+    that would be deleted without deleting.
+    """
+    # Resolve the image scope.
+    if body.image_ids is not None:
+        result = await db.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
+        image_ids = [r[0] for r in result.all()]
+    else:
+        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
+        if body.subfolder is not None:
+            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
+        if body.quality_flags:
+            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
+            if valid_flags:
+                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+        result = await db.execute(q)
+        image_ids = [r[0] for r in result.all()]
+
+    if not image_ids:
+        return {"deleted": 0, "dry_run": body.dry_run}
+
+    conditions = [Detection.image_id.in_(image_ids)]
+    if body.labels:
+        conditions.append(Detection.label.in_(body.labels))
+    if body.models:
+        conditions.append(Detection.model.in_(body.models))
+    if body.score_below is not None:
+        conditions.append(Detection.score < body.score_below)
+
+    if body.dry_run:
+        count = await db.execute(
+            select(func.count()).select_from(Detection).where(and_(*conditions))
+        )
+        return {"deleted": count.scalar_one(), "dry_run": True}
+
+    result = await db.execute(delete(Detection).where(and_(*conditions)))
+    await db.commit()
+    return {"deleted": result.rowcount or 0, "dry_run": False}
+
+
+@router.post("/merge", response_model=DetectionOut)
+async def merge_detections(body: DetectionMergeRequest, db: AsyncSession = Depends(get_db)):
+    """Merge ≥2 detections on the same image into one ``model="manual"`` row."""
+    result = await db.execute(
+        select(Detection).where(Detection.id.in_(body.detection_ids))
+    )
+    found = {d.id: d for d in result.scalars().all()}
+    missing = [i for i in body.detection_ids if i not in found]
+    if missing:
+        raise HTTPException(404, f"Detection(s) not found: {missing}")
+
+    dets = [found[i] for i in body.detection_ids]   # preserve request order
+    if len({d.image_id for d in dets}) != 1:
+        raise HTTPException(400, "All detections to merge must belong to the same image")
+
+    mask_json, bbox = merge_detection_geometry([(d.mask, d.bbox) for d in dets])
+    scores = [d.score for d in dets if d.score is not None]
+    merged = Detection(
+        image_id=dets[0].image_id,
+        label=dets[0].label,
+        bbox=bbox,
+        score=max(scores) if scores else None,
+        mask=mask_json,
+        model="manual",
+        task="merge",
+        detected_at=datetime.utcnow(),
+    )
+    db.add(merged)
+    for d in dets:
+        await db.delete(d)
+    await db.commit()
+    await db.refresh(merged)
+    return merged
+
+
+def _sanitize_bbox(bbox: list[float]) -> list[float]:
+    """Order + clamp a normalized bbox; raise 400 if either extent < 0.002."""
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "bbox must be four numbers")
+    if x1 > x2:
+        x1, x2 = x2, x1
+    if y1 > y2:
+        y1, y2 = y2, y1
+    x1, y1 = max(x1, 0.0), max(y1, 0.0)
+    x2, y2 = min(x2, 1.0), min(y2, 1.0)
+    if (x2 - x1) < 0.002 or (y2 - y1) < 0.002:
+        raise HTTPException(400, "bbox is too small")
+    return [x1, y1, x2, y2]
+
+
+@router.post("/manual")
+async def create_manual_detection(
+    body: ManualDetectionRequest, db: AsyncSession = Depends(get_db)
+):
+    """Create a hand-drawn detection, optionally segmenting the box with SAM2.
+
+    Without SAM: inserts a plain bbox row synchronously and returns a
+    ``DetectionOut`` dict. With SAM (``refine_with_sam=True``): enqueues a
+    detection job that segments the box; on success stores a ``task="box_prompt"``
+    row, on SAM failure falls back to a plain ``task="manual"`` bbox row so the
+    drawing is never lost. Returns ``{job_id}``. (Sync-or-job union response has
+    precedent in ``POST /images/{id}/crop``.)
+    """
+    image = await db.get(Image, body.image_id)
+    if not image:
+        raise HTTPException(404, "Image not found")
+    bbox = _sanitize_bbox(body.bbox)
+
+    if not body.refine_with_sam:
+        det = Detection(
+            image_id=body.image_id,
+            label=body.label,
+            bbox=bbox,
+            score=None,
+            mask=None,
+            model="manual",
+            task="manual",
+            detected_at=datetime.utcnow(),
+        )
+        db.add(det)
+        await db.commit()
+        await db.refresh(det)
+        return DetectionOut.model_validate(det).model_dump(mode="json")
+
+    filename = image.filename
+    file_path = image.file_path
+    dataset_id = image.dataset_id
+    image_id = body.image_id
+    label = body.label
+
+    job = BackgroundJob(
+        job_type="detection",
+        label=f"Manual box + SAM — {filename}",
+        dataset_id=dataset_id,
+        total_items=1,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        import functools
+
+        from backend.database import AsyncSessionLocal
+        from backend.ml.sam2_predictor import predict_sync
+        from backend.workers.progress import broadcaster
+
+        loop = asyncio.get_event_loop()
+        sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
+
+        detections: list[dict] = []
+        try:
+            fn = functools.partial(
+                predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
+            )
+            detections = await loop.run_in_executor(None, fn)
+        except Exception:
+            logger.error("Manual-box SAM2 prediction failed for %s", file_path, exc_info=True)
+
+        async with AsyncSessionLocal() as session:
+            now = datetime.utcnow()
+            if detections:
+                det = detections[0]
+                session.add(Detection(
+                    image_id=image_id,
+                    label=label,
+                    bbox=det["bbox"],
+                    score=det.get("score"),
+                    mask=det.get("mask"),
+                    model="manual",
+                    task="box_prompt",
+                    detected_at=now,
+                ))
+                message = "Segmented drawn box"
+            else:
+                # SAM produced nothing — keep the drawn box as a plain manual row.
+                session.add(Detection(
+                    image_id=image_id,
+                    label=label,
+                    bbox=bbox,
+                    score=None,
+                    mask=None,
+                    model="manual",
+                    task="manual",
+                    detected_at=now,
+                ))
+                message = "SAM found no mask — kept plain box"
+            await session.commit()
+
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "detection",
+            "status": "running", "done": 1, "total": 1, "percent": 100.0,
+            "current_item": filename, "message": message,
+        })
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.patch("/{detection_id}", response_model=DetectionOut)
+async def update_detection(
+    detection_id: int, body: DetectionUpdate, db: AsyncSession = Depends(get_db)
+):
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    det.label = body.label
+    await db.commit()
+    await db.refresh(det)
+    return det
+
+
+@router.delete("/{detection_id}", status_code=204)
+async def delete_detection(detection_id: int, db: AsyncSession = Depends(get_db)):
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    await db.delete(det)
+    await db.commit()
+
+
+@router.post("/{detection_id}/refine")
+async def refine_detection(
+    detection_id: int, body: DetectionRefineRequest, db: AsyncSession = Depends(get_db)
+):
+    """Refine an existing mask with point prompts (SAM2), in place.
+
+    Enqueues a detection job seeded by the detection's current mask logits. On
+    success the row is updated in place (``model="manual"``, ``task="refine"``);
+    if the row was deleted meanwhile the worker no-ops gracefully. Returns
+    ``{job_id}``. 400 when the detection has no mask to refine.
+    """
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    if det.mask is None:
+        raise HTTPException(400, "Detection has no mask to refine")
+
+    image = await db.get(Image, det.image_id)
+    if not image:
+        raise HTTPException(404, "Image not found")
+
+    # Capture into locals before the worker closure.
+    mask_json = det.mask
+    bbox = det.bbox
+    file_path = image.file_path
+    filename = image.filename
+    dataset_id = image.dataset_id
+    point_prompts = body.point_prompts
+    point_labels = body.point_labels
+
+    job = BackgroundJob(
+        job_type="detection",
+        label=f"Refine mask — {filename}",
+        dataset_id=dataset_id,
+        total_items=1,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        import functools
+
+        from backend.database import AsyncSessionLocal
+        from backend.ml.sam2_predictor import refine_sync
+        from backend.workers.progress import broadcaster
+
+        loop = asyncio.get_event_loop()
+        sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
+
+        result: dict | None = None
+        try:
+            fn = functools.partial(
+                refine_sync, file_path, sam2_entry.model, mask_json, bbox,
+                point_prompts, point_labels,
+            )
+            result = await loop.run_in_executor(None, fn)
+        except Exception:
+            logger.error("Mask refine failed for %s", file_path, exc_info=True)
+
+        async with AsyncSessionLocal() as session:
+            row = await session.get(Detection, detection_id)
+            if row is None:
+                message = "Detection was removed before refine completed"
+            elif result is None:
+                message = "Refine produced no mask — unchanged"
+            else:
+                row.mask = result["mask"]
+                row.bbox = result["bbox"]
+                row.score = result.get("score")
+                row.model = "manual"
+                row.task = "refine"
+                row.detected_at = datetime.utcnow()
+                await session.commit()
+                message = "Mask refined"
+
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "detection",
+            "status": "running", "done": 1, "total": 1, "percent": 100.0,
+            "current_item": filename, "message": message,
+        })
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
 
 
 async def _fetch_bboxes_by_image(

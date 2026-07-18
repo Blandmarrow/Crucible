@@ -150,21 +150,72 @@ normalized polygons.
       per-image label chips) surfaces via shared `CropToDetectionForm`; label
       chips from `GET /detection/labels/{dataset_id}`
 
-## Iteration 4 — Mask refinement & detection management  `[ ]`
+## Iteration 4 — Mask refinement & detection management  `[x]`
 
-- [ ] Per-detection delete and relabel endpoints (`DELETE /detection/{id}`,
+### Decisions (agreed 2026-07-18)
+
+- **Manual editing in tiers, cheapest first.** (1) SAM point-refinement of an
+  existing mask — feed the current mask back as SAM2's `mask_input` prompt
+  alongside new fg/bg points so refinement refines instead of restarting.
+  (2) Manual detection drawing — draw a bbox on the ImageDetailPage overlay,
+  assign a label, optionally run SAM2 box-prompted on it for a polygon; covers
+  the case where every detector missed the subject and gives loss-mask export a
+  manual fallback. (3) Freehand brush editing is **deferred** (see Deferred
+  section — polygon storage has no hole/ring support; would need RLE/raster).
+- **Mask review/QA lives on the Stats page, not ExportPage** (Iteration 5).
+  ExportPage keeps only its existing `images_without_detections` count; a true
+  export preview would depend on the form's label/invert state and is redundant
+  once Stats has coverage histograms with BucketPanel click-through.
+- **Re-run `overwrite` is scoped to the running model** (implemented): each
+  `/run` branch deletes only its own model's rows (`nudenet`/`sam2`/`sam3`
+  literals, `body.model` for Florence), so re-running one model preserves the
+  others' rows and all `model="manual"` rows. No append/replace toggle beyond
+  the existing `overwrite` flag was added.
+- **Refined/merged/hand-drawn rows are `model="manual"`** so automatic re-runs
+  never wipe them; provenance is recorded in `task`: `"manual"` (drawn box),
+  `"box_prompt"` (drawn box + SAM), `"refine"` (point-refined), `"merge"`. No DB
+  migration — `Detection.model` is `String(128)` and holds `"manual"`.
+
+### Tasks
+
+- [x] Per-detection delete and relabel endpoints (`DELETE /detection/{id}`,
       `PATCH /detection/{id}`) + UI on the ImageDetailPage detections panel
-- [ ] Point-edit an existing SAM mask (add fg/bg points to refine rather than re-run
-      from scratch)
-- [ ] Merge/union masks across detections
-- [ ] Prefill the ImageDetailPage interactive crop tool from detections: compute
-      the detection rect (union/largest + padding, reusing `detection_crop_rect`
-      semantics) and seed `react-easy-crop` with it
-      (`initialCroppedAreaPixels` on entering crop mode) so the user can
-      visually preview/adjust before applying — complements the Iteration 3
-      "Crop to Subject" modal, which applies without preview
+      (`DetectionsPanel`)
+- [x] Bulk detection delete-by-filter (dataset-level): by label, model, and/or
+      score-below-threshold (`POST /detection/bulk-delete`, dry-run count) — Bulk
+      Edit "Detections" tab
+- [x] Re-run policy: `overwrite` now scopes its delete to the running model
+      (per-model replace) so repeated runs don't stack duplicate rows
+- [x] Show `Detection.score` in the detections panel (per-detection rows)
+- [x] Manual detection drawing: draw bbox + assign label on the ImageDetailPage
+      overlay; optional "refine with SAM" runs SAM2 box-prompted (`predict_sync`
+      `mode="box"`); plain bbox row otherwise (`POST /detection/manual`)
+- [x] Point-edit an existing SAM mask (`POST /detection/{id}/refine`,
+      `refine_sync` + `polygons_to_mask_input` seeding SAM2 `mask_input`)
+- [x] Merge/union masks across detections (`POST /detection/merge`,
+      `merge_detection_geometry`)
+- [x] Prefill the ImageDetailPage interactive crop tool from detections
+      (`utils/detectionCrop.ts`, `initialCroppedAreaPixels` on fresh Cropper mount)
 
-## Iteration 5 — Watermark locate & remove (candidate)  `[ ]`
+## Iteration 5 — Detection stats & mask QA (Stats page)  `[ ]`
+
+Audit surface for mask data before it feeds export/training. StatsPage's
+existing pattern (histograms → clickable bars → `BucketPanel` thumbnails via
+`GET /images/` filters) is exactly the right shape; add a detections section.
+
+- [ ] Persist mask coverage: `Detection.mask_area` (float fraction of image
+      area, nullable) computed at write time — shoelace sum over polygons,
+      bbox area when no polygon — plus backfill for existing rows. Stats must
+      read a column, not parse polygon JSON per request
+- [ ] New "Detections & Masks" `CategorySection` on StatsPage: label
+      distribution, detection-score histogram, mask-coverage histogram,
+      images-without-detections stat card
+- [ ] `GET /images/` filter params for BucketPanel click-through:
+      `detection_label`, `detection_score_min/max`, `mask_coverage_min/max`
+      (EXISTS subqueries on `detections`) — e.g. click the "<2%" or ">95%"
+      coverage bucket to see suspicious masks and jump to the detail page
+
+## Iteration 6 — Watermark locate & remove (candidate)  `[ ]`
 
 `has_watermark` flags existence but not location. Ground "watermark"/"text"/"logo"
 through the text-prompt detector to localize, then crop-away or mask-out.
@@ -175,7 +226,27 @@ through the text-prompt detector to localize, then crop-away or mask-out.
 
 ## Deferred / out of scope
 
-- SAM 3 interactive points mode (`enable_inst_interactivity=True`) — revisit after
-  Iteration 1 proves SAM 3 quality; SAM2 points flow keeps working regardless
+- Freehand brush mask editing — feasible without a storage change (rasterize
+  polygon client-side, paint, re-polygonize via `mask_utils`), but the
+  Douglas-Peucker round-trip smooths fine brushwork and the polygon format has
+  no hole/ring support, so bg-brush "cut a hole" edits can't be represented.
+  Revisit only if Iteration 4's point-refinement + manual bbox drawing prove
+  insufficient; at that point storage should grow an RLE/raster mask option
+- SAM 3 interactive points mode (`enable_inst_interactivity=True`) — covers both a
+  SAM 3 points-detection mode and a SAM 3 **mask-refine** backend (Iteration 4's
+  refine is SAM2-only; see `sam2_predictor.refine_sync` docstring). Blocked today
+  by the checkpoint: the ungated 1038lab mirror strips the geometry-encoder
+  point-prompt + tracker weights (`sam3_predictor._is_expected_missing`), so points
+  have no trained weights to run. Revisit once a checkpoint with those weights is
+  available from the official repo. SAM2 points/refine flow keeps working regardless
+- SAM 3 multi-concept prompt in one run — today `sam3_predictor.predict_sync`
+  passes the whole prompt as a single concept and labels every mask with that
+  string, so multiple concepts require one run each (with overwrite off to stack
+  them, since re-run overwrite is now scoped per-model). If the official `sam3`
+  package's `set_text_prompt` accepts a batched/list prompt, loop or batch the
+  phrases in `predict_sync` and label each mask by its own phrase — giving the
+  SAM2/Grounding DINO `cat. dog. car.` multi-phrase experience natively on SAM3.
+  (Package not installable in the CPU container to confirm the API — verify on the
+  GPU host / against the official repo first.)
 - SAM 3.1 upgrade — blocked upstream (see Upstream watch)
 - Video segmentation/tracking — Crucible is image-only

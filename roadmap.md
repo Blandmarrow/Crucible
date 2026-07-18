@@ -3,7 +3,7 @@
 Working plan for the detection/masks improvement arc. Kept up to date as iterations
 land; review and adjust between iterations. Branch: `feature/detection-masks`.
 
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-18 (Iteration 5 in progress)
 
 ## Motivation
 
@@ -197,23 +197,66 @@ normalized polygons.
 - [x] Prefill the ImageDetailPage interactive crop tool from detections
       (`utils/detectionCrop.ts`, `initialCroppedAreaPixels` on fresh Cropper mount)
 
-## Iteration 5 — Detection stats & mask QA (Stats page)  `[ ]`
+## Iteration 5 — Detection stats & mask QA (Stats page)  `[x]`
 
 Audit surface for mask data before it feeds export/training. StatsPage's
 existing pattern (histograms → clickable bars → `BucketPanel` thumbnails via
 `GET /images/` filters) is exactly the right shape; add a detections section.
 
-- [ ] Persist mask coverage: `Detection.mask_area` (float fraction of image
-      area, nullable) computed at write time — shoelace sum over polygons,
-      bbox area when no polygon — plus backfill for existing rows. Stats must
-      read a column, not parse polygon JSON per request
-- [ ] New "Detections & Masks" `CategorySection` on StatsPage: label
-      distribution, detection-score histogram, mask-coverage histogram,
-      images-without-detections stat card
-- [ ] `GET /images/` filter params for BucketPanel click-through:
-      `detection_label`, `detection_score_min/max`, `mask_coverage_min/max`
-      (EXISTS subqueries on `detections`) — e.g. click the "<2%" or ">95%"
-      coverage bucket to see suspicious masks and jump to the detail page
+### Decisions (agreed 2026-07-18)
+
+- **Coverage is an approximation, not the rasterized union.** Per-image coverage
+  is `SUM(Detection.mask_area)` clamped to 1.0 — overlapping detections overcount,
+  so this is deliberately *not* the exported union mask. It is good enough to
+  surface <2% (mask too small / spurious) and >95% (mask swallowed the frame)
+  outliers, which is all the QA histogram needs. The coverage histogram covers
+  images with ≥1 detection; images with no detections are reported in a stat card
+  (`images_without_detections`), not the histogram.
+- **`mask_area` stays in sync via SQLAlchemy `set` listeners** on
+  `Detection.mask` and `Detection.bbox` (same mechanism as
+  `Image.caption_token_count`), so every write path — run branches, `/manual`,
+  `/merge`, `/refine`'s in-place mutation — updates it with zero call-site
+  changes. Backfill of existing rows happens **inside the Alembic migration**
+  (self-contained, no startup hook), with the shoelace/bbox math inlined (migrations
+  must not import app code).
+- **Score histogram gets an explicit "unscored" bucket.** `model="manual"` rows
+  (drawn boxes, some merges) have NULL score; they are counted separately rather
+  than dropped so the histogram totals reconcile with `total_detections`.
+- **Click-through needs exact-match label filtering.** The existing
+  `detection_label` param is an ILIKE substring match (kept for gallery search);
+  chart bars use a new `detection_label_exact` (`Detection.label == value`).
+  Label + score conditions combine into ONE EXISTS subquery so they apply to the
+  same detection row.
+- **All detection stats honor the `DatasetStats` subfolder invariant** — exact
+  `Image.subfolder == subfolder` equality when a subfolder is selected, matching
+  the rest of the Stats page.
+- **Two new histograms ship fixed-edge.** Detections-per-image and coverage
+  render via `HistPanel` without `rawValues` (no pencil / rebucket editor);
+  wiring their raw per-image arrays into `score-values` for custom edges is
+  deferred.
+
+### Tasks
+
+- [x] Persist mask coverage: `Detection.mask_area` (float fraction of image
+      area, nullable) via `mask_utils.detection_mask_area` + `set` listeners on
+      `Detection.mask`/`Detection.bbox`; shoelace sum over polygons, bbox area
+      when no polygon, clamped to [0, 1]; Alembic migration `c9e2f4a6b8d1` adds
+      the column and backfills existing rows with inlined math. Stats read the
+      column, never parse polygon JSON per request. Unit-tested in
+      `backend/tests/test_detection_mask_area.py`
+- [x] `GET /detection/stats/{dataset_id}?subfolder=` endpoint: stat cards
+      (total detections, % images with detections, distinct labels, bbox-only
+      count, images-without-detections), label distribution (top 30), per-model
+      breakdown, detection-score histogram (10 bins + "unscored"), mask-coverage
+      histogram (images with ≥1 detection), detections-per-image histogram
+- [x] New "Detections & Masks" `CategorySection` on StatsPage consuming that
+      endpoint; live-poll it (added `"detection"` to `LIVE_STATS_JOB_TYPES`);
+      CSV-export the new sections
+- [x] `GET /images/` filter params for BucketPanel click-through:
+      `detection_label_exact`, `detection_score_min/max`, `detection_score_null`
+      (one combined EXISTS subquery), `mask_coverage_min/max` (correlated SUM,
+      ≥1 detection), `detection_count_min/max` (correlated COUNT, coalesced to 0
+      so the "0" bucket works)
 
 ## Iteration 6 — Watermark locate & remove (candidate)  `[ ]`
 

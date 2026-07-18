@@ -25,6 +25,50 @@ def masks_to_polygons(masks: np.ndarray, img_w: int, img_h: int) -> list[list[li
     return polygons
 
 
+def detection_mask_area(mask_json: str | None, bbox: list | None) -> float | None:
+    """Estimate a detection's area as a fraction (0–1) of the whole image.
+
+    Coordinates in both ``mask_json`` polygons and ``bbox`` are normalized 0–1,
+    so the shoelace polygon area *is* the image-area fraction directly. When
+    ``mask_json`` has one or more valid polygons (≥3 points each), returns the
+    summed absolute shoelace area of those polygons (overlapping polygons
+    overcount — acceptable for the coverage-QA histogram, which is explicitly an
+    approximation, not a rasterized union). Falls back to the bbox rectangle area
+    ``(x2-x1)*(y2-y1)`` when there are no usable polygons and ``bbox`` has four
+    elements. Returns ``None`` when neither yields geometry. Tolerates malformed
+    JSON like :func:`rasterize_detections`. The result is clamped to [0, 1].
+    """
+    polygons: list = []
+    if mask_json:
+        try:
+            polygons = json.loads(mask_json).get("polygons") or []
+        except (ValueError, AttributeError):
+            polygons = []
+    polygons = [p for p in polygons if len(p) >= 3]
+
+    if polygons:
+        total = 0.0
+        for poly in polygons:
+            area = 0.0
+            n = len(poly)
+            for i in range(n):
+                x1, y1 = poly[i][0], poly[i][1]
+                x2, y2 = poly[(i + 1) % n][0], poly[(i + 1) % n][1]
+                area += x1 * y2 - x2 * y1
+            total += abs(area) / 2.0
+        return min(max(total, 0.0), 1.0)
+
+    if bbox and len(bbox) == 4:
+        try:
+            x1, y1, x2, y2 = (float(v) for v in bbox)
+        except (TypeError, ValueError):
+            return None
+        area = abs(x2 - x1) * abs(y2 - y1)
+        return min(max(area, 0.0), 1.0)
+
+    return None
+
+
 def rasterize_detections(
     detections: list[tuple[str | None, list[float] | None]],
     width: int,

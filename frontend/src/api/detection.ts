@@ -3,6 +3,20 @@ import type { Detection } from "../types";
 
 export type { Detection };
 
+export interface DetectionStats {
+  total_detections: number;
+  images_with_detections: number;
+  images_without_detections: number;
+  total_images: number;
+  distinct_labels: number;
+  bbox_only_count: number;
+  label_distribution: Record<string, number>;
+  model_distribution: Record<string, number>;
+  score_histogram: Record<string, number>;
+  coverage_histogram: Record<string, number>;
+  detections_per_image: Record<string, number>;
+}
+
 export const detectionApi = {
   run: (params: {
     dataset_id: string;
@@ -32,6 +46,13 @@ export const detectionApi = {
   models: (dataset_id: string) =>
     client
       .get<{ model: string; image_count: number }[]>(`/detection/models/${dataset_id}`)
+      .then((r) => r.data),
+
+  stats: (dataset_id: string, subfolder?: string) =>
+    client
+      .get<DetectionStats>(`/detection/stats/${dataset_id}`, {
+        params: subfolder !== undefined ? { subfolder } : undefined,
+      })
       .then((r) => r.data),
 
   deleteDetection: (id: number) =>

@@ -4,8 +4,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_, delete, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import Integer, and_, cast, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -404,6 +404,146 @@ async def get_dataset_models(dataset_id: str, db: AsyncSession = Depends(get_db)
         .order_by(image_count.desc(), Detection.model.asc())
     )
     return [{"model": r.model, "image_count": r.image_count} for r in result.all()]
+
+
+# Coverage histogram bucket edges (fraction of image area) + labels.
+_COVERAGE_EDGES = [0.02, 0.10, 0.25, 0.50, 0.75, 0.95]
+_COVERAGE_LABELS = ["<2%", "2–10%", "10–25%", "25–50%", "50–75%", "75–95%", ">95%"]
+
+
+@router.get("/stats/{dataset_id}")
+async def get_detection_stats(
+    dataset_id: str,
+    subfolder: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggregate detection/mask stats for the Stats page "Detections & Masks" section.
+
+    All aggregates join ``Detection.image_id == Image.id`` scoped to ``dataset_id``
+    and, when ``subfolder`` is given, ``Image.subfolder == subfolder`` (exact
+    equality — the ``DatasetStats`` subfolder invariant). Coverage is the per-image
+    ``SUM(mask_area)`` clamped to 1.0 (overlaps overcount — an approximation of the
+    exported union mask, not a rasterized union), bucketed over images with ≥1
+    detection. The score histogram gets an explicit "unscored" bucket for NULL
+    (manual) scores.
+    """
+    img_filter = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        img_filter.append(Image.subfolder == subfolder)
+
+    def _det_query(*cols):
+        return (
+            select(*cols)
+            .select_from(Detection)
+            .join(Image, Detection.image_id == Image.id)
+            .where(*img_filter)
+        )
+
+    total_images = (
+        await db.execute(select(func.count()).select_from(Image).where(*img_filter))
+    ).scalar_one()
+
+    total_detections = (await db.execute(_det_query(func.count()))).scalar_one()
+    images_with_detections = (
+        await db.execute(_det_query(func.count(func.distinct(Detection.image_id))))
+    ).scalar_one()
+    distinct_labels = (
+        await db.execute(_det_query(func.count(func.distinct(Detection.label))))
+    ).scalar_one()
+    bbox_only_count = (
+        await db.execute(_det_query(func.count()).where(Detection.mask.is_(None)))
+    ).scalar_one()
+
+    # Label distribution — top 30 labels by detection count.
+    label_rows = (
+        await db.execute(
+            _det_query(Detection.label, func.count().label("n"))
+            .group_by(Detection.label)
+            .order_by(func.count().desc(), Detection.label.asc())
+            .limit(30)
+        )
+    ).all()
+    label_distribution = {r.label: r.n for r in label_rows}
+
+    # Per-model breakdown.
+    model_rows = (
+        await db.execute(
+            _det_query(Detection.model, func.count().label("n"))
+            .group_by(Detection.model)
+            .order_by(func.count().desc(), Detection.model.asc())
+        )
+    ).all()
+    model_distribution = {r.model: r.n for r in model_rows}
+
+    # Score histogram — 10 bins (0.0–0.1 … 0.9–1.0) + an "unscored" bucket for NULLs.
+    score_histogram = {
+        f"{i / 10:.1f}–{(i + 1) / 10:.1f}": 0 for i in range(10)
+    }
+    score_bucket = cast(Detection.score * 10, Integer)
+    score_rows = (
+        await db.execute(
+            _det_query(score_bucket.label("b"), func.count().label("n"))
+            .where(Detection.score.isnot(None))
+            .group_by(score_bucket)
+        )
+    ).all()
+    bin_keys = list(score_histogram.keys())
+    for r in score_rows:
+        idx = min(max(int(r.b), 0), 9)  # score == 1.0 → bucket 10 → clamp into last bin
+        score_histogram[bin_keys[idx]] += r.n
+    score_histogram["unscored"] = (
+        await db.execute(_det_query(func.count()).where(Detection.score.is_(None)))
+    ).scalar_one()
+
+    # One GROUP BY image_id pass drives both the coverage histogram (images with
+    # ≥1 detection) and the detections-per-image histogram.
+    per_image_rows = (
+        await db.execute(
+            _det_query(
+                func.count().label("n"),
+                func.coalesce(func.sum(Detection.mask_area), 0.0).label("cov"),
+            ).group_by(Detection.image_id)
+        )
+    ).all()
+
+    coverage_histogram = {lbl: 0 for lbl in _COVERAGE_LABELS}
+    per_image_counts = {"1": 0, "2": 0, "3–5": 0, "6+": 0}
+    for r in per_image_rows:
+        cov = min(max(r.cov, 0.0), 1.0)
+        placed = False
+        for i, edge in enumerate(_COVERAGE_EDGES):
+            if cov < edge:
+                coverage_histogram[_COVERAGE_LABELS[i]] += 1
+                placed = True
+                break
+        if not placed:
+            coverage_histogram[_COVERAGE_LABELS[-1]] += 1
+
+        if r.n >= 6:
+            per_image_counts["6+"] += 1
+        elif r.n >= 3:
+            per_image_counts["3–5"] += 1
+        elif r.n == 2:
+            per_image_counts["2"] += 1
+        elif r.n == 1:
+            per_image_counts["1"] += 1
+
+    images_without_detections = total_images - images_with_detections
+    detections_per_image = {"0": images_without_detections, **per_image_counts}
+
+    return {
+        "total_detections": total_detections,
+        "images_with_detections": images_with_detections,
+        "images_without_detections": images_without_detections,
+        "total_images": total_images,
+        "distinct_labels": distinct_labels,
+        "bbox_only_count": bbox_only_count,
+        "label_distribution": label_distribution,
+        "model_distribution": model_distribution,
+        "score_histogram": score_histogram,
+        "coverage_histogram": coverage_histogram,
+        "detections_per_image": detections_per_image,
+    }
 
 
 @router.post("/bulk-delete")

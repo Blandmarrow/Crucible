@@ -113,6 +113,14 @@ async def list_images(
     score_filters: str | None = Query(None),
     subfolder: str | None = Query(None),
     detection_label: str | None = Query(None),
+    detection_label_exact: str | None = Query(None),
+    detection_score_min: float | None = Query(None),
+    detection_score_max: float | None = Query(None),
+    detection_score_null: bool | None = Query(None),
+    mask_coverage_min: float | None = Query(None),
+    mask_coverage_max: float | None = Query(None),
+    detection_count_min: int | None = Query(None),
+    detection_count_max: int | None = Query(None),
     caption_words_min: int | None = Query(None),
     caption_words_max: int | None = Query(None),
     caption_tokens_min: int | None = Query(None),
@@ -179,6 +187,60 @@ async def list_images(
             .where(Detection.image_id == Image.id, Detection.label.ilike(f"%{detection_label}%"))
             .exists()
         )
+
+    # Detection-driven filters for Stats "Detections & Masks" click-through.
+    # Exact label + score conditions combine into ONE EXISTS subquery so they all
+    # apply to the *same* detection row (a row scoring low on one label must not be
+    # matched via a different high-scoring label).
+    if (
+        detection_label_exact is not None
+        or detection_score_min is not None
+        or detection_score_max is not None
+        or detection_score_null is True
+    ):
+        det_conds = [Detection.image_id == Image.id]
+        if detection_label_exact is not None:
+            det_conds.append(Detection.label == detection_label_exact)
+        if detection_score_null is True:
+            det_conds.append(Detection.score.is_(None))
+        else:
+            if detection_score_min is not None:
+                det_conds.append(Detection.score >= detection_score_min)
+            if detection_score_max is not None:
+                det_conds.append(Detection.score < detection_score_max)
+        q = q.where(select(Detection.id).where(*det_conds).exists())
+
+    # Mask coverage — per-image SUM(mask_area) clamped to 1.0; min inclusive, max
+    # exclusive (matching caption filters). Requires ≥1 detection (EXISTS) so the
+    # click-through population matches the coverage histogram.
+    if mask_coverage_min is not None or mask_coverage_max is not None:
+        cov_subq = (
+            select(func.coalesce(func.sum(Detection.mask_area), 0.0))
+            .where(Detection.image_id == Image.id)
+            .scalar_subquery()
+        )
+        cov_expr = case((cov_subq > 1.0, 1.0), else_=cov_subq)
+        q = q.where(
+            select(Detection.id).where(Detection.image_id == Image.id).exists()
+        )
+        if mask_coverage_min is not None:
+            q = q.where(cov_expr >= mask_coverage_min)
+        if mask_coverage_max is not None:
+            q = q.where(cov_expr < mask_coverage_max)
+
+    # Detections-per-image count — correlated COUNT coalesced to 0 so the "0"
+    # bucket (images with no detections) works naturally.
+    if detection_count_min is not None or detection_count_max is not None:
+        count_subq = (
+            select(func.count(Detection.id))
+            .where(Detection.image_id == Image.id)
+            .scalar_subquery()
+        )
+        count_expr = func.coalesce(count_subq, 0)
+        if detection_count_min is not None:
+            q = q.where(count_expr >= detection_count_min)
+        if detection_count_max is not None:
+            q = q.where(count_expr <= detection_count_max)
 
     if score_filters:
         try:

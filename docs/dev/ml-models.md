@@ -73,6 +73,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `GET /detection/image/{image_id}` | — | `list[DetectionOut]` |
 | `GET /detection/labels/{dataset_id}` | — | `[{label, image_count}]` — distinct labels in the dataset; feeds the ExportPage loss-mask label chips (see `docs/dev/export-and-bulk-ops.md`) and the bulk-delete label chips |
 | `GET /detection/models/{dataset_id}` | — | `[{model, image_count}]` — distinct models in the dataset; feeds the bulk-delete model chips |
+| `GET /detection/stats/{dataset_id}?subfolder=` | — | Aggregate stats for the Stats "Detections & Masks" section (totals, label/model distributions, score & coverage histograms, detections-per-image); see `docs/dev/dashboard-pages.md` § Statistics page |
 | `PATCH /detection/{detection_id}` | `DetectionUpdate {label}` | `DetectionOut` — relabel one detection |
 | `DELETE /detection/{detection_id}` | — | 204 — delete one detection (no dialog; regenerable) |
 | `POST /detection/bulk-delete` | `DetectionBulkDeleteRequest` | `{deleted, dry_run}` — scoped delete; `dry_run` returns the match count only |
@@ -85,6 +86,8 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 **`model="manual"` provenance** — refined, merged, and hand-drawn rows are stored with `model="manual"` so automatic re-runs (which now scope their overwrite delete to the running model) never wipe them. The `task` column records how the row was made: `"manual"` (drawn box, no SAM), `"box_prompt"` (drawn box segmented by SAM), `"refine"` (point-refined mask), `"merge"` (geometry union of ≥2 rows). `_ALLOWED_MODELS`/`_ALLOWED_TASKS` are unchanged — these new tasks are created by the management endpoints, never validated through `/run`.
 
 **Per-model overwrite scoping** — each `/run` branch's `overwrite` delete is scoped to its own model (`Detection.model == "nudenet"`/`"sam2"`/`"sam3"`, or `body.model` for Florence), so re-running one model leaves the others' rows — and every `model="manual"` row — intact. Do not revert to the old dataset-wide `delete(Detection).where(image_id == …)`.
+
+**`Detection.mask_area` (persisted coverage fraction)** — the fraction (0–1) of the image covered by a detection's geometry, computed by `mask_utils.detection_mask_area` (shoelace sum over the normalized polygons, or bbox rectangle area when there is no polygon, clamped to [0, 1]). It is kept in sync by two SQLAlchemy `set` listeners in `backend/models/detection.py` — one on `Detection.mask`, one on `Detection.bbox` — that recompute it on every ORM attribute assignment (including constructor kwargs), so all write paths (run branches, `/manual`, `/merge`, `/refine`'s in-place mutation) update it with zero call-site changes. `bbox` is non-nullable so it is always assigned; when both are set the polygon area wins over the bbox. **Invariant: geometry must always be written via ORM attribute assignment** — a raw `update(Detection)` / SQL write to `mask` or `bbox` bypasses the listeners and leaves `mask_area` stale (mirrors the `Image.caption_token_count` invariant). Stats read this column instead of parsing polygon JSON per request; the migration backfills existing rows with an inlined copy of the math (`c9e2f4a6b8d1`).
 
 **`DetectionJobRequest`** fields:
 

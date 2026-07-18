@@ -72,7 +72,7 @@ _install_deps() {
     os="$(uname -s)"
 
     # --- Python ---
-    echo "[1/6] Checking Python..."
+    echo "[1/7] Checking Python..."
     PYTHON=""
     if _python_version_ok python3.12; then
         PYTHON=python3.12
@@ -142,7 +142,7 @@ _install_deps() {
     fi
 
     # --- Node.js ---
-    echo "[2/6] Checking Node.js..."
+    echo "[2/7] Checking Node.js..."
     if _node_version_ok; then
         echo "  Found: Node $(node --version)"
     else
@@ -372,7 +372,7 @@ cmd_setup() {
 
     _install_deps
 
-    echo "[3/6] Creating Python virtual environment..."
+    echo "[3/7] Creating Python virtual environment..."
     _do_create_venv=true
     if [ -d "$ROOT/venv" ]; then
         _venv_py="$ROOT/venv/bin/python"
@@ -390,7 +390,7 @@ cmd_setup() {
         echo "  venv created at $ROOT/venv (inherits system site-packages)"
     fi
 
-    echo "[4/6] Installing Python dependencies..."
+    echo "[4/7] Installing Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
@@ -414,7 +414,7 @@ cmd_setup() {
             ;;
     esac
 
-    echo "[5/6] Installing SAM2 (Segment Anything Model 2)..."
+    echo "[5/7] Installing SAM2 (Segment Anything Model 2)..."
     printf "  Download and install SAM2 from GitHub (~50 MB)? [Y/n] "
     read -r _reply || true
     case "$_reply" in
@@ -429,7 +429,26 @@ cmd_setup() {
             ;;
     esac
 
-    echo "[6/6] Installing frontend dependencies and building..."
+    echo "[6/7] Installing SAM3 (Segment Anything Model 3)..."
+    printf "  Download and install SAM3 from GitHub (~50 MB)? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping SAM3. SAM 3 text-prompt segmentation will not be available." ;;
+        *)
+            # --no-deps: sam3 pins numpy<2 and ftfy==6.1.1, which conflict with
+            # requirements.txt; its real runtime deps are installed explicitly.
+            if "$ROOT/venv/bin/pip" install "git+https://github.com/facebookresearch/sam3.git" --no-deps --quiet \
+                && "$ROOT/venv/bin/pip" install iopath ftfy pycocotools "setuptools<81" --quiet; then
+                echo "  SAM3 installed."
+            else
+                echo "  WARNING: SAM3 install failed. SAM 3 text-prompt segmentation will be unavailable."
+                echo "  To retry: ./venv/bin/pip install git+https://github.com/facebookresearch/sam3.git --no-deps && ./venv/bin/pip install iopath ftfy pycocotools \"setuptools<81\""
+            fi
+            ;;
+    esac
+    echo "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models/sam3/"
+
+    echo "[7/7] Installing frontend dependencies and building..."
     cd "$ROOT/frontend"
     npm install
     npm run build
@@ -565,7 +584,7 @@ cmd_update() {
             ;;
     esac
 
-    echo "[3/5] Installing/updating SAM2..."
+    echo "[3/6] Installing/updating SAM2..."
     printf "  Install or update SAM2 from GitHub? [Y/n] "
     read -r _reply || true
     case "$_reply" in
@@ -579,13 +598,31 @@ cmd_update() {
             ;;
     esac
 
-    echo "[4/5] Updating frontend dependencies..."
+    echo "[4/6] Installing/updating SAM3..."
+    printf "  Install or update SAM3 from GitHub? [Y/n] "
+    read -r _reply || true
+    case "$_reply" in
+        [Nn]*) echo "  Skipping SAM3." ;;
+        *)
+            # --no-deps: sam3 pins numpy<2 and ftfy==6.1.1, which conflict with
+            # requirements.txt; its real runtime deps are installed explicitly.
+            if "$ROOT/venv/bin/pip" install "git+https://github.com/facebookresearch/sam3.git" --no-deps --quiet \
+                && "$ROOT/venv/bin/pip" install iopath ftfy pycocotools "setuptools<81" --quiet; then
+                echo "  SAM3 up to date."
+            else
+                echo "  WARNING: SAM3 install failed."
+            fi
+            ;;
+    esac
+    echo "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models/sam3/"
+
+    echo "[5/6] Updating frontend dependencies..."
     cd "$ROOT/frontend"
     npm install
     cd "$ROOT"
     echo "  Done."
 
-    echo "[5/5] Building frontend..."
+    echo "[6/6] Building frontend..."
     _build_frontend
 
     echo ""

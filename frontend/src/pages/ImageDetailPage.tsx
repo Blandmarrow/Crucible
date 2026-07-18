@@ -1701,7 +1701,7 @@ export default function ImageDetailPage() {
                 const m = e.target.value;
                 setDetectModel(m);
                 if (m === "nudenet") setDetectTask("nudenet");
-                else if (m === "sam2") setDetectTask("text_prompt");
+                else if (m === "sam2" || m === "sam3") setDetectTask("text_prompt");
                 else setDetectTask("<OD>");
                 setDetectPrompt("");
               }}>
@@ -1709,6 +1709,7 @@ export default function ImageDetailPage() {
                 <option value="florence2_promptgen">Florence-2 PromptGen</option>
                 <option value="nudenet">NudeNet (body-part detection)</option>
                 <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
+                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
               </select>
             </div>
 
@@ -1768,7 +1769,21 @@ export default function ImageDetailPage() {
               </div>
             )}
 
-            {detectModel !== "nudenet" && detectModel !== "sam2" && (
+            {detectModel === "sam3" && (
+              <div className="space-y-1">
+                <label className="label">Text prompt</label>
+                <input
+                  className="input"
+                  placeholder="e.g. a person's face"
+                  value={detectPrompt}
+                  onChange={(e) => setDetectPrompt(e.target.value)}
+                  autoFocus
+                />
+                <p className="text-xs text-gray-500">SAM 3 finds and masks every instance of the phrase in one pass.</p>
+              </div>
+            )}
+
+            {detectModel !== "nudenet" && detectModel !== "sam2" && detectModel !== "sam3" && (
               <>
                 <div>
                   <label className="label">Task</label>
@@ -1833,7 +1848,7 @@ export default function ImageDetailPage() {
                   detectMutation.isPending ||
                   !!detectJobId ||
                   (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectPrompt.trim()) ||
-                  (detectModel === "sam2" && detectTask === "text_prompt" && !detectPrompt.trim()) ||
+                  ((detectModel === "sam2" || detectModel === "sam3") && detectTask === "text_prompt" && !detectPrompt.trim()) ||
                   (detectModel === "sam2" && detectTask === "points" && samPoints.length === 0)
                 }
 

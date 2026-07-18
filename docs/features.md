@@ -20,7 +20,7 @@
 
 ## Object Detection
 
-Run detection on any selection of images as a background job. Three models are available:
+Run detection on any selection of images as a background job. Four models are available:
 
 ### Florence-2 (bounding boxes)
 
@@ -48,11 +48,21 @@ Mask outputs are rendered as semi-transparent polygon fills on the SVG overlay i
 
 The **DINO box confidence** threshold (Settings → Quality Thresholds, default 0.35) controls how confident Grounding DINO must be before passing a detected region to SAM2 — lower values return more detections, higher values return fewer but more precise ones.
 
+### SAM 3 (text-prompt segmentation)
+
+Native open-vocabulary segmentation: type a phrase (e.g. `a person's face`) and SAM 3 finds and masks **every instance** of that concept in one pass — no separate detector stage, and typically better recall than the Grounding DINO → SAM2 pipeline for concept prompts. Text prompt only (point prompts remain a SAM2 feature).
+
+The **SAM 3 confidence** threshold (Settings → Quality Thresholds, default 0.5) controls the minimum instance confidence for a mask to be kept.
+
+SAM 3 requires two manual setup steps (both offered by `manage` setup/update):
+1. The `sam3` package: `pip install git+https://github.com/facebookresearch/sam3.git`
+2. The checkpoint: download `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) into `models/sam3/`. Only safetensors checkpoints are supported.
+
 ---
 
 Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - Label chips with per-label counts
-- SVG overlay on the image with per-label colour coding (filled polygon masks for SAM2, bounding boxes for all models)
+- SVG overlay on the image with per-label colour coding (filled polygon masks for SAM2/SAM3, bounding boxes for all models)
 - Click any label chip to toggle its boxes/masks on/off
 - Eye icon in the toolbar hides/shows all detections at once
 
@@ -95,7 +105,7 @@ Bulk score, upscale, LUT, detect, and rename operations all support a **quality 
 - **Batch score** — run technical, aesthetic, watermark, NSFW, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
-- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 segmentation on the selection
+- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 / SAM 3 text-prompt segmentation on the selection
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
@@ -177,6 +187,7 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into se
 | Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
 | NSFW threshold | Marqo classifier score cutoff for `is_nsfw` (default 0.5) |
 | DINO box confidence | Grounding DINO minimum confidence before passing a box to SAM2 (default 0.35) |
+| SAM 3 confidence | SAM 3 minimum instance confidence for a segmentation mask to be kept (default 0.5) |
 
 **Versioning** — version control mode (Off / Manual / Auto; see [Dataset Versioning](versioning.md)) plus branch snapshot behavior. Requires Save for the version control mode.
 

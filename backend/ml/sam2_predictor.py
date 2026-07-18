@@ -7,6 +7,7 @@ import threading
 import numpy as np
 
 from backend.ml import device as _device
+from backend.ml.mask_utils import bbox_from_mask, masks_to_polygons
 
 logger = logging.getLogger(__name__)
 
@@ -73,44 +74,6 @@ def _load_sam2_sync(job_id=None, loop=None, dataset_id=None):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _masks_to_polygons(masks: np.ndarray, img_w: int, img_h: int) -> list[list[list[float]]]:
-    import cv2
-    polygons = []
-    for mask in masks:
-        uint8 = (mask > 0).astype(np.uint8) * 255
-        contours, _ = cv2.findContours(uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            epsilon = 0.005 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            if len(approx) < 3:
-                continue
-            poly = [
-                [round(float(pt[0][0]) / img_w, 4), round(float(pt[0][1]) / img_h, 4)]
-                for pt in approx
-            ]
-            polygons.append(poly)
-    return polygons
-
-
-def _bbox_from_mask(mask: np.ndarray, img_w: int, img_h: int) -> list[float]:
-    rows = np.any(mask, axis=1)
-    cols = np.any(mask, axis=0)
-    if not rows.any():
-        return [0.0, 0.0, 0.0, 0.0]
-    y1, y2 = np.where(rows)[0][[0, -1]]
-    x1, x2 = np.where(cols)[0][[0, -1]]
-    return [
-        round(float(x1) / img_w, 4),
-        round(float(y1) / img_h, 4),
-        round(float(x2) / img_w, 4),
-        round(float(y2) / img_h, 4),
-    ]
-
-
-# ---------------------------------------------------------------------------
 # Prediction modes
 # ---------------------------------------------------------------------------
 
@@ -167,12 +130,12 @@ def _predict_text(img_np: np.ndarray, img_w: int, img_h: int, predictor, text_pr
             bool_mask = masks[best_idx] > 0
             if not bool_mask.any():
                 continue
-            polys = _masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+            polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
             if not polys:
                 continue
             results.append({
                 "label": str(label) if label else "object",
-                "bbox": _bbox_from_mask(bool_mask, img_w, img_h),
+                "bbox": bbox_from_mask(bool_mask, img_w, img_h),
                 "score": round(float(score), 4),
                 "mask": json.dumps({"polygons": polys}),
             })
@@ -202,12 +165,12 @@ def _predict_points(
         bool_mask = mask > 0
         if not bool_mask.any():
             continue
-        polys = _masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+        polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
         if not polys:
             continue
         results.append({
             "label": "segment",
-            "bbox": _bbox_from_mask(bool_mask, img_w, img_h),
+            "bbox": bbox_from_mask(bool_mask, img_w, img_h),
             "score": round(float(score), 4),
             "mask": json.dumps({"polygons": polys}),
         })

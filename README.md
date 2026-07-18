@@ -51,7 +51,7 @@ Every step from raw images to a training-ready export, in order:
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 
 ### Object detection
-- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, or Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts → [details](docs/features.md#object-detection)
+- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation → [details](docs/features.md#object-detection)
 
 ### Editing & processing
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
@@ -109,6 +109,8 @@ chmod +x manage.sh && ./manage.sh setup
 Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
 During setup you are also prompted to install **SAM2** (Segment Anything Model 2, ~50 MB from GitHub) — required only for Grounded SAM2 segmentation; all other features work without it.
+
+You are likewise prompted to install **SAM3** (Segment Anything Model 3, ~50 MB from GitHub) — required only for SAM 3 text-prompt segmentation. SAM3 additionally needs its checkpoint downloaded manually: get `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) and place it in `models/sam3/`. Only safetensors checkpoints are supported.
 
 **Optional: ComfyUI bridge** — if you use the ComfyUI generation page, the **CrucibleBridge** extension lets *Sync from canvas* pull the workflow you currently have open, instead of the last one you queued. It is a copy-a-folder install into ComfyUI's `custom_nodes/` and is entirely optional — see [extras/ComfyUI-CrucibleBridge/README.md](extras/ComfyUI-CrucibleBridge/README.md).
 
@@ -186,6 +188,17 @@ pip install "git+https://github.com/facebookresearch/sam2.git" pycocotools
 ```
 
 Skipping this disables Grounded SAM2 segmentation only; everything else still works.
+
+**4.6. Install SAM3 (optional — SAM 3 text-prompt segmentation)**
+
+```bash
+pip install "git+https://github.com/facebookresearch/sam3.git" --no-deps
+pip install iopath ftfy pycocotools "setuptools<81"
+```
+
+(`--no-deps` because sam3 pins `numpy<2` and `ftfy==6.1.1`, which conflict with `requirements.txt`; the second command installs its actual runtime dependencies.)
+
+Then download the checkpoint `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) into `models/sam3/`. Skipping this disables SAM 3 segmentation only.
 
 **5. Build the frontend**
 

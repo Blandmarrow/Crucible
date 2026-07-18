@@ -20,6 +20,7 @@ class ThresholdsOut(BaseModel):
     watermark_threshold: float
     nsfw_threshold: float
     gdino_threshold: float
+    sam3_threshold: float
     versioning_mode: str = "off"
     auto_rescan_on_open: bool = False
     comfyui_url: str = ""
@@ -36,6 +37,7 @@ class ThresholdsUpdate(BaseModel):
     watermark_threshold: float | None = Field(default=None, gt=0, le=1.0)
     nsfw_threshold: float | None = Field(default=None, gt=0, le=1.0)
     gdino_threshold: float | None = Field(default=None, gt=0, le=1.0)
+    sam3_threshold: float | None = Field(default=None, gt=0, le=1.0)
     versioning_mode: str | None = Field(default=None)
     auto_rescan_on_open: bool | None = Field(default=None)
     comfyui_url: str | None = Field(default=None, max_length=500)

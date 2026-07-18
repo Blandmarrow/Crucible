@@ -10,6 +10,7 @@ data/
 models_cache/
 models/upscale_models/
 models/lut/
+models/sam3/
 frontend/dist/
 frontend/node_modules/
 .claude/

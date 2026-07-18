@@ -839,47 +839,63 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <select
                 className="select w-full"
                 value={detectModel}
-                onChange={(e) => setDetectModel(e.target.value)}
+                onChange={(e) => {
+                  const m = e.target.value;
+                  setDetectModel(m);
+                  setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
+                  setDetectPrompt("");
+                  setDetectUseCaptions(false);
+                }}
               >
                 <option value="florence2_large">Florence-2 Large</option>
                 <option value="florence2_promptgen">Florence-2 PromptGen</option>
+                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
+                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
               </select>
             </div>
 
-            <div>
-              <label className="label">Task</label>
-              <select
-                className="select w-full"
-                value={detectTask}
-                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
-              >
-                <option value="<OD>">Object Detection (auto-detect everything)</option>
-                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
-              </select>
-            </div>
+            {detectModel !== "sam2" && detectModel !== "sam3" && (
+              <div>
+                <label className="label">Task</label>
+                <select
+                  className="select w-full"
+                  value={detectTask}
+                  onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
+                >
+                  <option value="<OD>">Object Detection (auto-detect everything)</option>
+                  <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+                </select>
+              </div>
+            )}
 
-            {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+            {(detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" || detectModel === "sam2" || detectModel === "sam3") && (
               <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={detectUseCaptions}
-                    onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
-                  />
-                  Use each image's existing caption as prompt
-                </label>
+                {detectModel !== "sam2" && detectModel !== "sam3" && (
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={detectUseCaptions}
+                      onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
+                    />
+                    Use each image's existing caption as prompt
+                  </label>
+                )}
                 {!detectUseCaptions && (
                   <>
-                    <label className="label">Caption to ground</label>
+                    <label className="label">
+                      {detectModel === "sam2" || detectModel === "sam3" ? "Text prompt" : "Caption to ground"}
+                    </label>
                     <input
                       className="input"
-                      placeholder="e.g. a cat sitting on a dog"
+                      placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. a person's face" : "e.g. a cat sitting on a dog"}
                       value={detectPrompt}
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus
                     />
                     <p className="text-xs text-gray-500">
-                      Florence-2 will draw boxes around the phrases from this caption.
+                      {detectModel === "sam2" || detectModel === "sam3"
+                        ? "Every instance of this phrase gets a segmentation mask."
+                        : "Florence-2 will draw boxes around the phrases from this caption."}
                     </p>
                   </>
                 )}
@@ -913,7 +929,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 onClick={() => detectMutation.mutate()}
                 disabled={
                   detectMutation.isPending ||
-                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())
+                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim()) ||
+                  ((detectModel === "sam2" || detectModel === "sam3") && !detectPrompt.trim())
                 }
               >
                 <ScanSearch size={14} /> Run Detection

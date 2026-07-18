@@ -12,6 +12,7 @@ DEFAULTS = dict(
     watermark_threshold=0.6,
     nsfw_threshold=0.5,
     gdino_threshold=0.35,
+    sam3_threshold=0.5,
     versioning_mode="off",
     auto_rescan_on_open=False,
     comfyui_url="",

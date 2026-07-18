@@ -40,6 +40,19 @@ logger = logging.getLogger(__name__)
 _ALLOWED_MODELS = frozenset({"florence2_large", "florence2_promptgen", "nudenet", "sam2", "sam3"})
 _ALLOWED_TASKS = frozenset({"<OD>", "<CAPTION_TO_PHRASE_GROUNDING>", "nudenet", "text_prompt", "points"})
 
+# Tasks whose located regions are watermark phrases we can sync to Image.has_watermark.
+_WATERMARK_SYNC_TASKS = frozenset({"text_prompt", "<CAPTION_TO_PHRASE_GROUNDING>"})
+
+
+async def _apply_watermark_flag(session: AsyncSession, img_id: str, found: bool) -> None:
+    """Set/clear ``Image.has_watermark`` for one scanned image (copy-then-reassign)."""
+    img = await session.get(Image, img_id)
+    if img is None:
+        return
+    flags = dict(img.quality_flags or {})     # copy-then-reassign invariant
+    flags["has_watermark"] = found
+    img.quality_flags = flags
+
 
 @router.post("/run")
 async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(get_db)):
@@ -61,6 +74,12 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         raise HTTPException(400, "custom_prompt is required for CAPTION_TO_PHRASE_GROUNDING (or enable use_caption_as_prompt)")
     if body.task == "text_prompt" and not body.custom_prompt.strip():
         raise HTTPException(400, "custom_prompt is required for the text_prompt task")
+    if body.sync_watermark_flag and body.task not in _WATERMARK_SYNC_TASKS:
+        raise HTTPException(
+            400,
+            "sync_watermark_flag requires a text-prompt grounding task "
+            "(text_prompt on sam2/sam3, or <CAPTION_TO_PHRASE_GROUNDING>)",
+        )
 
     query = select(Image.id, Image.file_path, Image.caption_text).where(Image.dataset_id == body.dataset_id)
     if body.image_ids:
@@ -100,6 +119,15 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         total = len(image_data)
         start_time = time.monotonic()
         loop = asyncio.get_event_loop()
+
+        async def _finish_watermark_sync() -> None:
+            """Refresh dataset stats after a watermark-sync run so the flag counts
+            update. No-op unless the run synced flags. Cancellation skips it."""
+            if not body.sync_watermark_flag:
+                return
+            from backend.services.dataset_service import refresh_stats
+            async with AsyncSessionLocal() as _stats_session:
+                await refresh_stats(_stats_session, body.dataset_id)
 
         # --- NudeNet branch (CPU-only, ONNX) ---
         if body.model == "nudenet":
@@ -171,6 +199,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
                     detections = []
+                    inference_ok = False
                     try:
                         fn = functools.partial(
                             predict_sync,
@@ -183,6 +212,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                             gdino_threshold,
                         )
                         detections = await loop.run_in_executor(None, fn)
+                        inference_ok = True
                     except Exception:
                         logger.error("SAM2 prediction failed for %s", file_path, exc_info=True)
 
@@ -207,6 +237,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                         )
                         for det in detections
                     ])
+                    if body.sync_watermark_flag and inference_ok:
+                        await _apply_watermark_flag(session, img_id, bool(detections))
                     await session.commit()
 
                 elapsed = time.monotonic() - start_time
@@ -229,6 +261,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     "throughput_ips": throughput,
                     "vram_used_mb": vram_mb,
                 })
+            await _finish_watermark_sync()
             return
 
         # --- SAM3 branch (native text-prompt segmentation) ---
@@ -247,6 +280,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
                     detections = []
+                    inference_ok = False
                     try:
                         fn = functools.partial(
                             sam3_predict_sync,
@@ -256,6 +290,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                             sam3_threshold,
                         )
                         detections = await loop.run_in_executor(None, fn)
+                        inference_ok = True
                     except Exception:
                         logger.error("SAM3 prediction failed for %s", file_path, exc_info=True)
 
@@ -280,6 +315,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                         )
                         for det in detections
                     ])
+                    if body.sync_watermark_flag and inference_ok:
+                        await _apply_watermark_flag(session, img_id, bool(detections))
                     await session.commit()
 
                 elapsed = time.monotonic() - start_time
@@ -302,6 +339,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     "throughput_ips": throughput,
                     "vram_used_mb": vram_mb,
                 })
+            await _finish_watermark_sync()
             return
 
         # --- Florence-2 branch ---
@@ -315,10 +353,12 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             async with AsyncSessionLocal() as session:
                 prompt = caption_text if body.use_caption_as_prompt else body.custom_prompt
                 detections = []
+                inference_ok = False
                 try:
                     detections = await detect_image(
                         file_path, model_entry, body.task, prompt
                     )
+                    inference_ok = True
                 except Exception:
                     logger.error("Detection failed for %s", file_path, exc_info=True)
 
@@ -342,6 +382,12 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     )
                     for det in detections
                 ])
+                if (
+                    body.sync_watermark_flag
+                    and inference_ok
+                    and body.task == "<CAPTION_TO_PHRASE_GROUNDING>"
+                ):
+                    await _apply_watermark_flag(session, img_id, bool(detections))
                 await session.commit()
 
             elapsed = time.monotonic() - start_time
@@ -365,6 +411,8 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 "throughput_ips": throughput,
                 "vram_used_mb": vram_mb,
             })
+
+        await _finish_watermark_sync()
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(image_data)}

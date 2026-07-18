@@ -30,6 +30,7 @@ export const detectionApi = {
     min_prob?: number;
     point_prompts?: number[][];
     point_labels?: number[];
+    sync_watermark_flag?: boolean;
   }) =>
     client
       .post<{ job_id: string | null; total: number }>("/detection/run", params)

@@ -3,7 +3,7 @@
 Working plan for the detection/masks improvement arc. Kept up to date as iterations
 land; review and adjust between iterations. Branch: `feature/detection-masks`.
 
-**Last updated:** 2026-07-18 (Iteration 5 in progress)
+**Last updated:** 2026-07-18 (Iteration 6 implemented)
 
 ## Motivation
 
@@ -258,17 +258,70 @@ existing pattern (histograms → clickable bars → `BucketPanel` thumbnails via
       ≥1 detection), `detection_count_min/max` (correlated COUNT, coalesced to 0
       so the "0" bucket works)
 
-## Iteration 6 — Watermark locate & remove (candidate)  `[ ]`
+## Iteration 6 — Watermark locate, flag sync & mask exclusion  `[x]`
 
-`has_watermark` flags existence but not location. Ground "watermark"/"text"/"logo"
-through the text-prompt detector to localize, then crop-away or mask-out.
+`has_watermark` (CLIP zero-shot) flags existence but not location. Ground watermark
+phrases through the existing text-prompt detectors to localize; consume the located
+regions two ways: verify/clear the quality flag, and punch the regions out of
+loss-mask export so trainers ignore watermark pixels. Crop-away and ComfyUI-inpaint
+removal are explicitly out of scope (see Deferred).
 
-- [ ] Scope after Iterations 2–3; may fold into detection-driven cropping
+### Decisions (agreed 2026-07-18)
+
+- **No new detector, no new overlay.** Locating = a normal text-prompt detection run
+  (GDINO multi-phrase `watermark. text. logo.` covers all three in one pass; SAM 3
+  is one phrase per run). Results are ordinary `Detection` rows, so the
+  ImageDetailPage overlay (boxed on the image), `DetectionsPanel` delete/relabel,
+  bulk-delete, and the Stats section all work on them unchanged.
+- **Flag sync lives inside the detection run, not a separate reconcile pass.**
+  `Detection` rows record hits only — there is no "scanned, found nothing" record —
+  so only the run itself knows which images it cleared. New
+  `DetectionJobRequest.sync_watermark_flag: bool = False` (text-prompt tasks only):
+  after each image's inference, set `has_watermark` True on ≥1 hit / False on none,
+  using the copy-then-reassign `quality_flags` invariant; `refresh_stats` once at
+  job end.
+- **Flag sync is per-run; the last synced run wins.** A no-hit image gets the flag
+  cleared even if an earlier run's rows exist. For multi-phrase coverage in one
+  synced run use SAM2+GDINO; on SAM 3 (single phrase per run) enable sync only on
+  the run meant to be authoritative.
+- **Exclusion regions are always black in the exported mask** — subtracted *after*
+  `mask_invert` is applied, and also punched out of the `mask_missing="white"`
+  fallback (an image with only watermark detections still trains on everything
+  except the watermark). A label in both the include and exclude sets: exclusion
+  wins. "Images without detections" continues to mean no *include*-label
+  detections; exclude-only images follow the `mask_missing` policy.
+
+### Tasks
+
+- [x] `sync_watermark_flag` on `POST /detection/run` + checkbox in the
+      `SelectionToolbar` Detect modal (shown for text-prompt tasks); review loop is
+      existing UI: gallery `has_watermark` filter → detect with sync → overlay
+      review, false positives deleted in `DetectionsPanel`
+- [x] `mask_exclude_labels` on the three export POSTs + preview GET (JSON-array
+      string in the GET, same convention as `mask_labels`); new pure
+      `compose_loss_mask` composes include (minus exclude) — `rasterize_detections`
+      is unchanged (still used by `polygons_to_mask_input`, where exclusion is wrong);
+      `_fetch_detections_by_image` prefetch covers include + exclude labels and
+      returns split maps; extended `backend/tests/test_mask_rasterize.py`
+- [x] ExportPage: second chip set "Exclude from mask" under the loss-mask section
+      (same `GET /detection/labels/{dataset_id}` source)
+- [x] Docs: `docs/dev/export-and-bulk-ops.md` (mask exclusion),
+      `docs/dev/ml-models.md` (flag sync), `docs/features.md` + `docs/export.md`
+      (user-facing workflow)
 
 ---
 
 ## Deferred / out of scope
 
+- Watermark **crop-away** — only sane for edge/corner watermarks and largely
+  covered incidentally by Iteration 3's crop-to-subject (a subject crop that
+  excludes the watermark bbox removes it). A dedicated op would need an
+  "abort if the watermark bbox intersects the subject/center" guard; revisit only
+  if mask exclusion proves insufficient in practice
+- Watermark **removal via ComfyUI inpainting** — localized box + existing ComfyUI
+  integration could round-trip an inpaint workflow (send region, re-import with
+  COW protection, replace-mode like upscale). The only true "remove" for mid-frame
+  watermarks; deferred as the highest-effort option
 - Freehand brush mask editing — feasible without a storage change (rasterize
   polygon client-side, paint, re-polygonize via `mask_utils`), but the
   Douglas-Peucker round-trip smooths fine brushwork and the polygon format has

@@ -36,6 +36,12 @@ Options:
 
 - **Detection labels** — pick which labels form the mask (chips show per-label
   image counts); selecting none uses all labels
+- **Exclude from mask** — pick labels whose regions are always painted black,
+  even inside a trained area and even with Invert on. Useful for punching a
+  located watermark out of the loss (see [Locating watermarks](features.md#locating-watermarks)).
+  Exclusion overrides inclusion: a label in both lists is excluded. An image with
+  only excluded regions (no included detection) counts as "without detections" and
+  follows the setting below.
 - **Invert** — flip the mask to train the *background* and mask out the detections
 - **Images without detections** — write a full-white mask (image trains normally,
   the count is reported in the job result) or skip the image entirely; the live

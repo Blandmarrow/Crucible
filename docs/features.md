@@ -68,6 +68,12 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 
 The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run.
 
+### Locating watermarks
+
+The batch **watermark** score (Quality → Batch score) flags *that* an image has a watermark but not *where* it is. To find the region, run a text-prompt detection (SAM 2, SAM 3, or Florence-2 Grounded Caption) with a watermark prompt such as `watermark. text. logo.` — the located boxes appear on the Image Detail overlay like any other detection, with the same delete/relabel tools.
+
+When one of those grounding tasks is selected, the detect modal shows a **Sync watermark flag from results** checkbox. With it on, the run updates each scanned image's watermark flag from its own result: images where a region was found are flagged, and images scanned clean have the flag cleared. Only images actually scanned are touched — an image whose inference fails keeps its previous flag, and (with caption-as-prompt grounding) uncaptioned images are left alone. Because the flag reflects the run that just finished, re-running with a better prompt corrects earlier mistakes. The Statistics watermark counts refresh when the run completes. A typical loop: filter the gallery to watermarked images → detect with sync → review the overlay → [exclude the watermark region from the loss mask](export.md#loss-masks-masked-training-loss) on export.
+
 ### Managing detections
 
 The DETECTIONS panel lists every detection as an editable row so you can fix a bad run without re-running everything:

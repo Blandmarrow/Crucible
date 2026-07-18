@@ -30,6 +30,7 @@ class DetectionJobRequest(BaseModel):
     min_prob: float = 0.5          # NudeNet: minimum detection confidence (0-1)
     point_prompts: list[list[float]] | None = None   # SAM2 points mode: [[x,y], ...] normalized 0-1
     point_labels: list[int] | None = None            # SAM2 points mode: 1=foreground, 0=background
+    sync_watermark_flag: bool = False    # set/clear Image.has_watermark from per-image results
 
 
 class DetectionUpdate(BaseModel):

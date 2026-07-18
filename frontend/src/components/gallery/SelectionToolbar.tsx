@@ -79,6 +79,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectSyncWatermark, setDetectSyncWatermark] = useState(false);
   const [detectJobLabel, setDetectJobLabel] = useState("");
   const [detectJobId, setDetectJobId] = useState<string | null>(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
@@ -367,6 +368,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
+  // Watermark-flag sync is only meaningful for text-prompt grounding tasks.
+  const detectSyncEligible =
+    detectModel === "sam2" || detectModel === "sam3" || detectTask === "<CAPTION_TO_PHRASE_GROUNDING>";
+
   const detectMutation = useMutation({
     mutationFn: () =>
       detectionApi.run({
@@ -377,6 +382,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
         use_caption_as_prompt: detectUseCaptions,
         overwrite: detectOverwrite,
+        sync_watermark_flag: detectSyncEligible && detectSyncWatermark,
         label: detectJobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
@@ -916,6 +922,16 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
               Overwrite existing detections
             </label>
+
+            {detectSyncEligible && (
+              <label
+                className="flex items-center gap-2 cursor-pointer text-sm"
+                title="After the run, set the watermark flag on images where a region was found and clear it on images scanned clean. Only images actually scanned are updated."
+              >
+                <input type="checkbox" checked={detectSyncWatermark} onChange={e => setDetectSyncWatermark(e.target.checked)} />
+                Sync watermark flag from results
+              </label>
+            )}
 
             <input
               className="input w-full"

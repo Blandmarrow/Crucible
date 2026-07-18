@@ -96,19 +96,38 @@ in one pass), replacing the two-stage GDINO → SAM2 pipeline for text mode.
 
 ---
 
-## Iteration 2 — Mask export for masked training loss  `[ ]`
+## Iteration 2 — Mask export for masked training loss  `[x]`
 
 The highest-leverage consumer of mask data: kohya and ai-toolkit both support masked
 loss via conditioning-image masks, and `Detection.mask` already stores clean
 normalized polygons.
 
-- [ ] Rasterize per-image polygon masks (union of selected labels) to PNG at export
-- [ ] Export format wiring: kohya `conditioning_data_dir`, ai-toolkit mask folder
-      conventions (confirm exact expectations per trainer before implementing)
-- [ ] Label selection UI in `ExportPage` (which detection labels form the mask;
+### Decisions (agreed 2026-07-18)
+
+- **Trainer conventions confirmed:** both trainers match masks to images by
+  filename stem and want grayscale white=train/black=ignore. kohya:
+  `conditioning_data_dir` in a TOML dataset config + `--masked_loss` (R channel
+  read). ai-toolkit: `mask_path` per dataset, tries `.jpg/.jpeg/.png/.webp`,
+  converts to `L`, has its own `mask_min_value`/`invert_mask`. → one artifact
+  serves both: sibling folder of grayscale PNGs (`{concept}_mask/`, plain:
+  `masks/`), stems matching the exported images.
+- **Bbox fallback included:** Florence-2/NudeNet detections (no polygons)
+  rasterize as filled rectangles, so all four detection models drive masks.
+- **No-detection policy is a UI choice:** full-white mask (default; count
+  reported as `masks_full_white`) or skip the image (`excluded_no_mask`).
+
+- [x] Rasterize per-image polygon masks (union of selected labels) to PNG at export
+      (`mask_utils.rasterize_detections` + `_write_mask` in `export_service.py`;
+      unit-tested in `backend/tests/test_mask_rasterize.py`)
+- [x] Export format wiring: kohya `conditioning_data_dir`, ai-toolkit mask folder
+      conventions (confirmed per trainer docs/source before implementing)
+- [x] Label selection UI in `ExportPage` (chips from new
+      `GET /detection/labels/{dataset_id}`; empty selection = all labels;
       invert option for background masking)
-- [ ] Images without detections: policy (full-white mask / skip / warn)
-- [ ] Respect export resize — masks must match exported image dimensions
+- [x] Images without detections: policy select (full-white mask / skip) + live
+      `images_without_detections` count in the export preview
+- [x] Respect export resize — `_write_image` returns final dims; masks
+      rasterized at exactly those dimensions (EXIF-orientation-aware fast path)
 
 ## Iteration 3 — Detection-driven cropping  `[ ]`
 

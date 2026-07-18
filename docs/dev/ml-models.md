@@ -71,6 +71,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 |---|---|---|
 | `POST /detection/run` | `DetectionJobRequest` | `{ job_id, total }` |
 | `GET /detection/image/{image_id}` | — | `list[DetectionOut]` |
+| `GET /detection/labels/{dataset_id}` | — | `[{label, image_count}]` — distinct labels in the dataset; feeds the ExportPage loss-mask label chips (see `docs/dev/export-and-bulk-ops.md`) |
 
 **`DetectionJobRequest`** fields:
 

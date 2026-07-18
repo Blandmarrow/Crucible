@@ -23,4 +23,9 @@ export const detectionApi = {
 
   getForImage: (image_id: string) =>
     client.get<Detection[]>(`/detection/image/${image_id}`).then((r) => r.data),
+
+  labels: (dataset_id: string) =>
+    client
+      .get<{ label: string; image_count: number }[]>(`/detection/labels/${dataset_id}`)
+      .then((r) => r.data),
 };

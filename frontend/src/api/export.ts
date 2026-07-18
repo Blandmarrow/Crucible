@@ -10,6 +10,10 @@ interface ExportFilters {
   subfolders?: string[] | null;
   strip_metadata?: boolean;
   captions_only?: boolean;
+  export_masks?: boolean;
+  mask_labels?: string[] | null;
+  mask_invert?: boolean;
+  mask_missing?: "white" | "skip";
   label?: string;
 }
 
@@ -49,6 +53,9 @@ export const exportApi = {
       exclude_flags?: string;
       style_sim_min?: number | null;
       subfolders?: string[] | null;
+      export_masks?: boolean;
+      mask_labels?: string[] | null;
+      mask_missing?: "white" | "skip";
     },
   ) =>
     client
@@ -59,6 +66,10 @@ export const exportApi = {
           ...(filters?.exclude_flags && { exclude_flags: filters.exclude_flags }),
           ...(filters?.style_sim_min != null && { style_sim_min: filters.style_sim_min }),
           ...(filters?.subfolders?.length && { subfolders: filters.subfolders.join(",") }),
+          ...(filters?.export_masks && { export_masks: true }),
+          // JSON array — detection labels are free text and may contain commas
+          ...(filters?.export_masks && filters?.mask_labels?.length && { mask_labels: JSON.stringify(filters.mask_labels) }),
+          ...(filters?.export_masks && filters?.mask_missing === "skip" && { mask_missing: "skip" }),
         },
       })
       .then((r) => r.data),

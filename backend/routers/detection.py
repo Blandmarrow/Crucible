@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -344,3 +344,17 @@ async def get_image_detections(image_id: str, db: AsyncSession = Depends(get_db)
         select(Detection).where(Detection.image_id == image_id).order_by(Detection.id)
     )
     return result.scalars().all()
+
+
+@router.get("/labels/{dataset_id}")
+async def get_dataset_labels(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """Distinct detection labels in a dataset with the number of images each covers."""
+    image_count = func.count(func.distinct(Detection.image_id))
+    result = await db.execute(
+        select(Detection.label, image_count.label("image_count"))
+        .join(Image, Detection.image_id == Image.id)
+        .where(Image.dataset_id == dataset_id)
+        .group_by(Detection.label)
+        .order_by(image_count.desc(), Detection.label.asc())
+    )
+    return [{"label": r.label, "image_count": r.image_count} for r in result.all()]

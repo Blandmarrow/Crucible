@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { exportApi } from "../api/export";
 import { datasetsApi } from "../api/datasets";
+import { detectionApi } from "../api/detection";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
@@ -16,6 +17,7 @@ import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
 type ResizeTo = number | null;
+type MaskMissing = "white" | "skip";
 
 const FORMAT_LABELS: Record<Format, string> = {
   kohya: "kohya",
@@ -35,6 +37,9 @@ interface ExportWorkflow {
   customResizeVal: string;
   stripMetadata: boolean;
   captionsOnly: boolean;
+  exportMasks: boolean;
+  maskInvert: boolean;
+  maskMissing: MaskMissing;
 }
 
 const EXPORT_WORKFLOW_DEFAULTS: ExportWorkflow = {
@@ -49,6 +54,9 @@ const EXPORT_WORKFLOW_DEFAULTS: ExportWorkflow = {
   customResizeVal: "",
   stripMetadata: false,
   captionsOnly: false,
+  exportMasks: false,
+  maskInvert: false,
+  maskMissing: "white",
 };
 
 interface ExportFilters {
@@ -60,6 +68,7 @@ interface ExportFilters {
   styleSimMin: number;
   subfolderFilterActive: boolean;
   selectedSubfolders: string[];
+  maskLabels: string[];
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -71,6 +80,7 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   styleSimMin: 0.5,
   subfolderFilterActive: false,
   selectedSubfolders: [],
+  maskLabels: [],
 };
 
 export default function ExportPage() {
@@ -87,6 +97,9 @@ export default function ExportPage() {
   const [resizeTo, setResizeTo] = useState<ResizeTo>(workflow.resizeTo);
   const [customResize, setCustomResize] = useState(workflow.customResize);
   const [customResizeVal, setCustomResizeVal] = useState(workflow.customResizeVal);
+  const [exportMasks, setExportMasks] = useState(workflow.exportMasks);
+  const [maskInvert, setMaskInvert] = useState(workflow.maskInvert);
+  const [maskMissing, setMaskMissing] = useState<MaskMissing>(workflow.maskMissing);
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
 
   // Remembered "filters" config — per-dataset.
@@ -101,6 +114,8 @@ export default function ExportPage() {
   const [styleSimMin, setStyleSimMin] = useState(filters.styleSimMin);
   const [subfolderFilterActive, setSubfolderFilterActive] = useState(filters.subfolderFilterActive);
   const [selectedSubfolders, setSelectedSubfolders] = useState<Set<string>>(new Set(filters.selectedSubfolders));
+  // Selected detection labels for mask export; empty = all labels.
+  const [maskLabels, setMaskLabels] = useState<Set<string>>(new Set(filters.maskLabels));
 
   const [stripMetadata, setStripMetadata] = useState(workflow.stripMetadata);
   const [captionsOnly, setCaptionsOnly] = useState(workflow.captionsOnly);
@@ -116,6 +131,12 @@ export default function ExportPage() {
     enabled: !!datasetId,
   });
 
+  const { data: detectionLabels = [] } = useQuery({
+    queryKey: ["detection-labels", datasetId],
+    queryFn: () => detectionApi.labels(datasetId!),
+    enabled: !!datasetId && exportMasks,
+  });
+
   // Debounced filter params for preview query
   const [debouncedFilters, setDebouncedFilters] = useState({
     aesthetic_min: null as number | null,
@@ -123,6 +144,9 @@ export default function ExportPage() {
     exclude_flags: "has_watermark",
     style_sim_min: null as number | null,
     subfolders: null as string[] | null,
+    export_masks: false,
+    mask_labels: null as string[] | null,
+    mask_missing: "white" as MaskMissing,
   });
 
   useEffect(() => {
@@ -133,6 +157,9 @@ export default function ExportPage() {
         exclude_flags: [...excludeFlags].join(","),
         style_sim_min: filterStyleSim ? styleSimMin : null,
         subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
+        export_masks: exportMasks && !captionsOnly,
+        mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
+        mask_missing: maskMissing,
       });
       if (datasetId) {
         savePersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId), {
@@ -141,11 +168,12 @@ export default function ExportPage() {
           filterStyleSim, styleSimMin,
           subfolderFilterActive,
           selectedSubfolders: [...selectedSubfolders],
+          maskLabels: [...maskLabels],
         });
       }
     }, 350);
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskMissing]);
 
   // Persist the "workflow" config (format/output settings) — global, debounced.
   useEffect(() => {
@@ -153,10 +181,11 @@ export default function ExportPage() {
       savePersisted(EXPORT_WORKFLOW_KEY, {
         format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt,
         resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly,
+        exportMasks, maskInvert, maskMissing,
       });
     }, 350);
     return () => clearTimeout(t);
-  }, [format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt, resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly]);
+  }, [format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt, resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly, exportMasks, maskInvert, maskMissing]);
 
   // Reload the "filters" blob when datasetId changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);
@@ -174,6 +203,7 @@ export default function ExportPage() {
     setStyleSimMin(next.styleSimMin);
     setSubfolderFilterActive(next.subfolderFilterActive);
     setSelectedSubfolders(new Set(next.selectedSubfolders));
+    setMaskLabels(new Set(next.maskLabels));
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -192,6 +222,10 @@ export default function ExportPage() {
     subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
     strip_metadata: !captionsOnly && stripMetadata,
     captions_only: captionsOnly,
+    export_masks: !captionsOnly && exportMasks,
+    mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
+    mask_invert: maskInvert,
+    mask_missing: maskMissing,
   });
 
   const exportMutation = useMutation({
@@ -209,16 +243,26 @@ export default function ExportPage() {
 
   const treePreview = () => {
     const base = outputDir || "output_dir";
+    const masks = exportMasks && !captionsOnly;
     switch (format) {
-      case "kohya":     return `${base}/\n  ${nRepeats}_${conceptToken}/\n    image.png\n    image.txt`;
-      case "aitoolkit": return `${base}/\n  ${conceptToken}/\n    image.jpg\n    image.txt`;
-      case "plain":     return `${base}/\n  images/\n    image.png\n  captions.jsonl\n  tags.csv`;
+      case "kohya":
+        return `${base}/\n  ${nRepeats}_${conceptToken}/\n    image.png\n    image.txt${masks ? `\n  ${nRepeats}_${conceptToken}_mask/\n    image.png` : ""}`;
+      case "aitoolkit":
+        return `${base}/\n  ${conceptToken}/\n    image.jpg\n    image.txt${masks ? `\n  ${conceptToken}_mask/\n    image.png` : ""}`;
+      case "plain":
+        return `${base}/\n  images/\n    image.png${masks ? `\n  masks/\n    image.png` : ""}\n  captions.jsonl`;
     }
   };
 
   const toggleFlag = (key: string) => setExcludeFlags((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  const toggleMaskLabel = (label: string) => setMaskLabels((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label); else next.add(label);
     return next;
   });
 
@@ -237,6 +281,9 @@ export default function ExportPage() {
     setCustomResizeVal(EXPORT_WORKFLOW_DEFAULTS.customResizeVal);
     setStripMetadata(EXPORT_WORKFLOW_DEFAULTS.stripMetadata);
     setCaptionsOnly(EXPORT_WORKFLOW_DEFAULTS.captionsOnly);
+    setExportMasks(EXPORT_WORKFLOW_DEFAULTS.exportMasks);
+    setMaskInvert(EXPORT_WORKFLOW_DEFAULTS.maskInvert);
+    setMaskMissing(EXPORT_WORKFLOW_DEFAULTS.maskMissing);
 
     setFilterAesthetic(EXPORT_FILTERS_DEFAULTS.filterAesthetic);
     setAestheticMin(EXPORT_FILTERS_DEFAULTS.aestheticMin);
@@ -246,6 +293,7 @@ export default function ExportPage() {
     setStyleSimMin(EXPORT_FILTERS_DEFAULTS.styleSimMin);
     setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
     setSelectedSubfolders(new Set(EXPORT_FILTERS_DEFAULTS.selectedSubfolders));
+    setMaskLabels(new Set(EXPORT_FILTERS_DEFAULTS.maskLabels));
 
     toast.success("Configuration reset to defaults");
   }
@@ -496,6 +544,69 @@ export default function ExportPage() {
               </div>
             )}
 
+            {/* Loss masks */}
+            <div className={`form-row${captionsOnly ? " disabled" : ""}`}>
+              <div className="lbl-col">
+                <h4>Loss masks</h4>
+                <p>
+                  Write a grayscale mask PNG per image from object detections, for
+                  masked-loss training (kohya <code>conditioning_data_dir</code>,
+                  ai-toolkit <code>mask_path</code>). White areas train; black areas
+                  are ignored.
+                </p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <label className="row-flex" style={{ gap: 8 }}>
+                  <input type="checkbox" className="checkbox" checked={exportMasks} onChange={(e) => setExportMasks(e.target.checked)} />
+                  <span style={{ fontSize: 12.5 }}>Export masks</span>
+                </label>
+                {exportMasks && (
+                  <>
+                    <div>
+                      <div style={{ fontSize: 12.5, color: "var(--fg-mute)", marginBottom: 5 }}>
+                        Detection labels{maskLabels.size === 0 ? " — none selected, all labels used" : ""}
+                      </div>
+                      {detectionLabels.length === 0 ? (
+                        <div style={{ fontSize: 12, color: "var(--fg-dim)" }}>
+                          No detections in this dataset yet — run object detection first.
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {detectionLabels.map(({ label, image_count }) => (
+                            <button
+                              key={label}
+                              className={`btn sm${maskLabels.has(label) ? " primary" : ""}`}
+                              onClick={() => toggleMaskLabel(label)}
+                              title={`${image_count} image${image_count === 1 ? "" : "s"}`}
+                            >
+                              {label}
+                              <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 4 }}>{image_count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <label className="row-flex" style={{ gap: 8 }}>
+                      <input type="checkbox" className="checkbox" checked={maskInvert} onChange={(e) => setMaskInvert(e.target.checked)} />
+                      <span style={{ fontSize: 12.5 }}>Invert — train the background, mask out detections</span>
+                    </label>
+                    <div className="row-flex" style={{ gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 12.5 }}>Images without detections:</span>
+                      <select
+                        className="input"
+                        value={maskMissing}
+                        onChange={(e) => setMaskMissing(e.target.value as MaskMissing)}
+                        style={{ width: "auto" }}
+                      >
+                        <option value="white">Full-white mask (train normally)</option>
+                        <option value="skip">Skip image</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Captions only */}
             <div className="form-row">
               <div className="lbl-col">
@@ -559,6 +670,18 @@ export default function ExportPage() {
                           <span className="mono" style={{ color: count ? "var(--warn)" : "var(--fg-dim)" }}>{count?.toLocaleString() ?? "—"}</span>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Mask coverage */}
+                  {exportMasks && !captionsOnly && preview.images_without_detections != null && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 14 }}>
+                      <span style={{ color: "var(--fg-mute)" }}>
+                        No detections → {maskMissing === "skip" ? "skipped" : "white mask"}
+                      </span>
+                      <span className="mono" style={{ color: preview.images_without_detections ? "var(--warn)" : "var(--fg-dim)" }}>
+                        {preview.images_without_detections.toLocaleString()}
+                      </span>
                     </div>
                   )}
 

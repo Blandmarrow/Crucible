@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
+from backend.models.detection import Detection
 from backend.workers.job_queue import job_queue
 
 # Only the columns the export loop actually reads — avoids loading multi-MB blob fields
@@ -55,10 +56,21 @@ def _write_image(
     jpeg_quality: int,
     resize_to: int | None,
     strip_metadata: bool = False,
-) -> None:
+) -> tuple[int, int]:
+    """Write the exported image and return its final (width, height)."""
     if resize_to is None and output_format == "original" and not strip_metadata:
+        # Metadata-only size read: exif_transpose would decode the pixels, so
+        # swap dimensions from the EXIF orientation tag instead.
+        with PilImage.open(src) as probe:
+            w, h = probe.size
+            try:
+                orientation = probe.getexif().get(0x0112)
+            except Exception:
+                orientation = None
+        if orientation in (5, 6, 7, 8):
+            w, h = h, w
         shutil.copy2(src, dest_img)
-        return
+        return (w, h)
 
     img = PilImage.open(src)
     try:
@@ -67,6 +79,7 @@ def _write_image(
         if resize_to and max(img.size) > resize_to:
             ratio = resize_to / max(img.size)
             img = img.resize((int(img.width * ratio), int(img.height * ratio)), PilImage.Resampling.LANCZOS)
+        final_size = img.size
 
         if output_format == "jpeg":
             if img.mode in ("RGBA", "P"):
@@ -81,6 +94,7 @@ def _write_image(
             if fmt == "JPEG" and img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             img.save(dest_img, fmt, quality=jpeg_quality)
+        return final_size
     finally:
         img.close()
 
@@ -97,6 +111,46 @@ def _dest_img_path(dest_dir: Path, img: Any, output_format: str) -> Path:
 def _write_sidecar(dest_dir: Path, stem: str, caption: str, caption_format: str) -> None:
     ext = ".caption" if caption_format == "caption" else ".txt"
     (dest_dir / f"{stem}{ext}").write_text(caption, encoding="utf-8")
+
+
+def _write_mask(
+    mask_path: Path,
+    detections: list[tuple[str | None, list[float] | None]],
+    size: tuple[int, int],
+    invert: bool,
+) -> None:
+    """Write the grayscale loss mask for one exported image.
+
+    No detections → full-white mask (the image trains unmasked), regardless of
+    ``invert`` — an all-black mask would zero the image's loss entirely.
+    """
+    from backend.ml.mask_utils import rasterize_detections
+
+    if detections:
+        mask = rasterize_detections(detections, size[0], size[1], invert)
+    else:
+        mask = PilImage.new("L", size, 255)
+    mask.save(mask_path, "PNG")
+
+
+async def _fetch_detections_by_image(
+    db: AsyncSession,
+    image_ids: list[str],
+    mask_labels: list[str] | None,
+) -> dict[str, list[tuple[str | None, list[float] | None]]]:
+    """Batch-fetch (mask_json, bbox) pairs keyed by image id, chunked to keep IN() bounded."""
+    by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
+    for start in range(0, len(image_ids), 10_000):
+        chunk = image_ids[start:start + 10_000]
+        query = select(Detection.image_id, Detection.mask, Detection.bbox).where(
+            Detection.image_id.in_(chunk)
+        )
+        if mask_labels:
+            query = query.where(Detection.label.in_(mask_labels))
+        result = await db.execute(query)
+        for row in result.all():
+            by_image.setdefault(row.image_id, []).append((row.mask, row.bbox))
+    return by_image
 
 
 async def _run_export_loop(
@@ -118,10 +172,16 @@ async def _run_export_loop(
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
     captions_only: bool = False,
+    mask_dir: Path | None = None,
+    mask_labels: list[str] | None = None,
+    mask_invert: bool = False,
+    mask_missing: str = "white",
 ) -> dict:
     """
     Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
-    'jsonl_entries' and 'csv_rows' when accumulate_plain=True.
+    'jsonl_entries' and 'csv_rows' when accumulate_plain=True. When mask_dir is set
+    (and captions_only is not), a grayscale loss-mask PNG is written per exported
+    image and the mask counters are included in the result.
     """
     from backend.workers.progress import broadcaster
 
@@ -134,8 +194,18 @@ async def _run_export_loop(
     result = await db.execute(query)
     images = result.all()
 
+    export_masks = mask_dir is not None and not captions_only
+    detections_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
+    if export_masks:
+        detections_by_image = await _fetch_detections_by_image(
+            db, [img.id for img in images], mask_labels
+        )
+
     jsonl_entries: list[dict] = []
     exported = 0
+    masks_written = 0
+    masks_full_white = 0
+    excluded_no_mask = 0
 
     for i, img in enumerate(images):
         if job_id:
@@ -145,15 +215,26 @@ async def _run_export_loop(
             continue
         if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
             continue
+        if export_masks and mask_missing == "skip" and not detections_by_image.get(img.id):
+            excluded_no_mask += 1
+            continue
 
         if captions_only:
             # Don't read or write image files; use original filename for any manifest entries.
             dest_img = dest_dir / img.filename
         else:
             dest_img = _dest_img_path(dest_dir, img, output_format)
-            await asyncio.get_event_loop().run_in_executor(
+            final_size = await asyncio.get_event_loop().run_in_executor(
                 None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata
             )
+            if export_masks:
+                dets = detections_by_image.get(img.id) or []
+                await asyncio.get_event_loop().run_in_executor(
+                    None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, final_size, mask_invert
+                )
+                masks_written += 1
+                if not dets:
+                    masks_full_white += 1
 
         caption = _caption_text(img)
 
@@ -174,10 +255,28 @@ async def _run_export_loop(
                 "current_item": img.filename, "message": f"Exporting {img.filename}",
             })
 
-    return {
+    loop_result: dict = {
         "exported": exported,
         "jsonl_entries": jsonl_entries,
     }
+    if export_masks:
+        loop_result["masks_written"] = masks_written
+        loop_result["masks_full_white"] = masks_full_white
+        if mask_missing == "skip":
+            loop_result["excluded_no_mask"] = excluded_no_mask
+    return loop_result
+
+
+_MASK_RESULT_KEYS = ("masks_written", "masks_full_white", "excluded_no_mask")
+
+
+def _mask_dir_for(
+    base: Path, export_masks: bool, captions_only: bool
+) -> Path | None:
+    if not export_masks or captions_only:
+        return None
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 async def export_kohya(
@@ -198,17 +297,26 @@ async def export_kohya(
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
     captions_only: bool = False,
+    export_masks: bool = False,
+    mask_labels: list[str] | None = None,
+    mask_invert: bool = False,
+    mask_missing: str = "white",
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
     dest = Path(output_dir) / f"{n_repeats}_{concept_token}"
     dest.mkdir(parents=True, exist_ok=True)
+    # Sibling conditioning_data_dir, mirroring the kohya masked-loss docs layout
+    mask_dir = _mask_dir_for(
+        Path(output_dir) / f"{n_repeats}_{concept_token}_mask", export_masks, captions_only
+    )
 
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
-        captions_only=captions_only,
+        captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -217,7 +325,11 @@ async def export_kohya(
             for entry in loop_result["jsonl_entries"]:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": loop_result["exported"], "output_dir": str(dest)}
+    result = {"exported": loop_result["exported"], "output_dir": str(dest)}
+    if mask_dir is not None:
+        result["mask_dir"] = str(mask_dir)
+    result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
+    return result
 
 
 async def export_aitoolkit(
@@ -237,17 +349,26 @@ async def export_aitoolkit(
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
     captions_only: bool = False,
+    export_masks: bool = False,
+    mask_labels: list[str] | None = None,
+    mask_invert: bool = False,
+    mask_missing: str = "white",
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
     dest = Path(output_dir) / concept_name
     dest.mkdir(parents=True, exist_ok=True)
+    # Sibling folder for the ai-toolkit dataset config's mask_path
+    mask_dir = _mask_dir_for(
+        Path(output_dir) / f"{concept_name}_mask", export_masks, captions_only
+    )
 
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, dest, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", caption_format, subfolders=subfolders, strip_metadata=strip_metadata,
-        captions_only=captions_only,
+        captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -256,7 +377,11 @@ async def export_aitoolkit(
             for entry in loop_result["jsonl_entries"]:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": loop_result["exported"], "output_dir": str(dest)}
+    result = {"exported": loop_result["exported"], "output_dir": str(dest)}
+    if mask_dir is not None:
+        result["mask_dir"] = str(mask_dir)
+    result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
+    return result
 
 
 async def export_plain(
@@ -274,6 +399,10 @@ async def export_plain(
     subfolders: list[str] | None = None,
     strip_metadata: bool = False,
     captions_only: bool = False,
+    export_masks: bool = False,
+    mask_labels: list[str] | None = None,
+    mask_invert: bool = False,
+    mask_missing: str = "white",
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -283,12 +412,15 @@ async def export_plain(
     else:
         dest_dir = out / "images"
     dest_dir.mkdir(parents=True, exist_ok=True)
+    mask_dir = _mask_dir_for(out / "masks", export_masks, captions_only)
 
     loop_result = await _run_export_loop(
         db, dataset_id, image_ids, dest_dir, output_format, jpeg_quality,
         resize_to, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
         job_id, "export", None, accumulate_plain=True, subfolders=subfolders,
         strip_metadata=strip_metadata, captions_only=captions_only,
+        mask_dir=mask_dir, mask_labels=mask_labels,
+        mask_invert=mask_invert, mask_missing=mask_missing,
     )
 
     jsonl_path = Path(output_dir) / "captions.jsonl"
@@ -296,7 +428,11 @@ async def export_plain(
         for entry in loop_result["jsonl_entries"]:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    return {"exported": loop_result["exported"], "output_dir": output_dir}
+    result = {"exported": loop_result["exported"], "output_dir": output_dir}
+    if mask_dir is not None:
+        result["mask_dir"] = str(mask_dir)
+    result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
+    return result
 
 
 async def preview_export(
@@ -307,11 +443,14 @@ async def preview_export(
     exclude_flags: list[str] | None = None,
     style_sim_min: float | None = None,
     subfolders: list[str] | None = None,
+    export_masks: bool = False,
+    mask_labels: list[str] | None = None,
+    mask_missing: str = "white",
 ) -> dict:
     exclude_flags = exclude_flags or []
 
     query = select(
-        Image.filename, Image.caption_text,
+        Image.id, Image.filename, Image.caption_text,
         Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
@@ -319,12 +458,26 @@ async def preview_export(
     result = await db.execute(query)
     rows = result.all()
 
+    ids_with_detections: set[str] = set()
+    if export_masks:
+        det_query = (
+            select(Detection.image_id)
+            .join(Image, Detection.image_id == Image.id)
+            .where(Image.dataset_id == dataset_id)
+            .distinct()
+        )
+        if mask_labels:
+            det_query = det_query.where(Detection.label.in_(mask_labels))
+        det_result = await db.execute(det_query)
+        ids_with_detections = {r.image_id for r in det_result.all()}
+
     total = len(rows)
     will_export = 0
     excl_aesthetic = 0
     excl_uncaptioned = 0
     excl_flagged = 0
     excl_style_sim = 0
+    without_detections = 0
     sample_files: list[dict] = []
 
     for r in rows:
@@ -343,12 +496,18 @@ async def preview_export(
             excl_style_sim += 1
 
         if not (low_aes or no_cap or flagged or low_sim):
+            no_det = export_masks and r.id not in ids_with_detections
+            if no_det:
+                without_detections += 1
+                # skip policy: these images are excluded from the export entirely
+                if mask_missing == "skip":
+                    continue
             will_export += 1
             if len(sample_files) < 5:
                 caption = r.caption_text or ""
                 sample_files.append({"image": r.filename, "caption_preview": caption[:80]})
 
-    return {
+    preview: dict = {
         "image_count": total,
         "will_export": will_export,
         "captioned_count": sum(1 for r in rows if r.caption_text),
@@ -358,3 +517,6 @@ async def preview_export(
         "excluded_style_sim": excl_style_sim,
         "sample_files": sample_files,
     }
+    if export_masks:
+        preview["images_without_detections"] = without_detections
+    return preview

@@ -24,6 +24,7 @@ import { type ProviderOut } from "../../api/providers";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
+import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 
@@ -852,10 +853,15 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 value={detectModel}
                 onChange={(e) => {
                   const m = e.target.value;
+                  const familyChanged = detectionModelFamily(m) !== detectionModelFamily(detectModel);
                   setDetectModel(m);
-                  setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
-                  setDetectPrompt("");
-                  setDetectUseCaptions(false);
+                  // Only reset task/prompt/use-captions when the model family changes;
+                  // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
+                  if (familyChanged) {
+                    setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
+                    setDetectPrompt("");
+                    setDetectUseCaptions(false);
+                  }
                 }}
               >
                 <option value="florence2_large">Florence-2 Large</option>
@@ -920,7 +926,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
-              Overwrite existing detections
+              Overwrite this model's existing detections
             </label>
 
             {detectSyncEligible && (

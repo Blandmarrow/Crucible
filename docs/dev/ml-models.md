@@ -101,7 +101,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `task` | required | `"<OD>"`, `"<CAPTION_TO_PHRASE_GROUNDING>"`, `"nudenet"`, `"text_prompt"`, or `"points"` |
 | `custom_prompt` | `""` | Phrase to ground (`<CAPTION_TO_PHRASE_GROUNDING>` / SAM2 or SAM3 `text_prompt`) |
 | `use_caption_as_prompt` | `false` | When `true`, each image's `caption_text` is used as the per-image prompt; images without a caption are skipped |
-| `overwrite` | `true` | Delete existing detections for each image before inserting new ones |
+| `overwrite` | `true` | Delete this model's existing detections for each image before inserting new ones (scoped to the running model — other models' and `manual` rows survive; see Per-model overwrite scoping above) |
 | `min_prob` | `0.5` | NudeNet confidence threshold (ignored for other models) |
 | `point_prompts` | `null` | Normalized `[x, y]` coordinates for SAM2 `points` mode |
 | `point_labels` | `null` | Foreground (1) / background (0) labels matching `point_prompts` |

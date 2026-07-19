@@ -27,6 +27,7 @@ import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
+import { detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
@@ -1880,11 +1881,18 @@ export default function ImageDetailPage() {
               <label className="label">Model</label>
               <select className="select w-full" value={detectModel} onChange={(e) => {
                 const m = e.target.value;
+                const familyChanged = detectionModelFamily(m) !== detectionModelFamily(detectModel);
                 setDetectModel(m);
-                if (m === "nudenet") setDetectTask("nudenet");
-                else if (m === "sam2" || m === "sam3") setDetectTask("text_prompt");
-                else setDetectTask("<OD>");
-                setDetectPrompt("");
+                if (familyChanged) {
+                  // Reset task/prompt only across families (Florence ↔ SAM ↔ NudeNet).
+                  if (m === "nudenet") setDetectTask("nudenet");
+                  else if (m === "sam2" || m === "sam3") setDetectTask("text_prompt");
+                  else setDetectTask("<OD>");
+                  setDetectPrompt("");
+                } else if (m === "sam3" && detectTask === "points") {
+                  // Same family (sam2 → sam3) but sam3 has no points task — force text.
+                  setDetectTask("text_prompt");
+                }
               }}>
                 <option value="florence2_large">Florence-2 Large</option>
                 <option value="florence2_promptgen">Florence-2 PromptGen</option>
@@ -2017,7 +2025,7 @@ export default function ImageDetailPage() {
 
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
-              Overwrite existing detections
+              Overwrite this model's existing detections
             </label>
 
             <div className="flex gap-2 justify-end">

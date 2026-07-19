@@ -1,9 +1,14 @@
 name: backend-tests
 
-# Runs the backend test suite (backend/tests/). Deliberately installs only the
-# minimal deps the tests need (numpy, pillow, pytest) — technical_scorer imports
-# cv2 lazily inside score_technical_sync, and no ML/DB packages are imported by
-# the tests. Keep it that way: if a new test needs torch-sized dependencies,
+# Runs the backend test suite (backend/tests/). Installs only lightweight,
+# pure-Python deps: numpy, pillow, pytest, plus the DB/web-layer packages the
+# tests' import chains pull in — sqlalchemy, aiosqlite, greenlet, pydantic,
+# pydantic-settings, fastapi, regex. The detection/mask tests import the ORM
+# models (backend.database creates the async engine at import → aiosqlite +
+# greenlet) and the export_service/utils helpers, so those deps are needed just
+# to collect them. Deliberately NO torch-sized / GPU / cv2 deps: technical_scorer
+# imports cv2 lazily inside score_technical_sync, and no test imports torch or an
+# ML model. Keep it that way — if a new test needs torch-sized dependencies,
 # reconsider the test design before growing this install step.
 
 on:
@@ -28,6 +33,6 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install test dependencies
-        run: pip install numpy pillow -r backend/requirements-dev.txt
+        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex -r backend/requirements-dev.txt
       - name: Run backend tests
         run: python -m pytest backend/tests/ -q

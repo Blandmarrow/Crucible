@@ -161,6 +161,8 @@ This must happen *before* `requirements.txt` so that packages like `open_clip_to
 pip install "torch>=2.7" --index-url <INDEX_URL>
 ```
 
+> If a CPU-only PyTorch is **already** installed in the venv, that command does nothing — the existing build already satisfies `torch>=2.7`, so pip skips it and reports success. Uninstall first: `pip uninstall -y torch torchvision`, then run the command above. Verify with `python -c "import torch; print(torch.cuda.is_available())"`.
+
 **NVIDIA GPU** — check your CUDA version with `nvidia-smi`. CUDA 12.6 or newer is required:
 
 | CUDA version | `<INDEX_URL>` |

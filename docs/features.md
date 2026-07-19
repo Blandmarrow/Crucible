@@ -60,6 +60,8 @@ SAM 3 requires two manual setup steps (both offered by `manage` setup/update):
 1. The `sam3` package: `pip install git+https://github.com/facebookresearch/sam3.git`
 2. The checkpoint: download `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) into `models/sam3/`. Only safetensors checkpoints are supported.
 
+**On Windows**, SAM 3 also needs `triton`, which PyTorch does not ship there: `pip install triton-windows`. Setup/update installs it for you; without it SAM 3 fails to load with `ModuleNotFoundError: No module named 'triton'`. Linux installs already include it via PyTorch.
+
 ---
 
 Results are shown in the **DETECTIONS** panel on the Image Detail page:

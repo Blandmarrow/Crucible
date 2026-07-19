@@ -525,12 +525,36 @@ function Cmd-Update {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "  git not found - skipping pull. Update the files manually if needed." -ForegroundColor DarkGray
     } else {
+        # PowerShell parses this entire file into an AST before executing a single
+        # line, so a pull that rewrites manage.ps1 has no effect on the run that
+        # pulled it - the rest of the update silently executes the OLD script, and
+        # the user has to run update twice for new logic to apply. Hash the script
+        # around the pull and hand off to the new version if it changed.
+        $selfHashBefore = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
         git -C "$ROOT" pull
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: git pull failed. Resolve any conflicts and try again." -ForegroundColor Red
             exit 1
         }
         Write-Host "  Done." -ForegroundColor Green
+
+        $selfHashAfter = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+        if ($selfHashBefore -ne $selfHashAfter) {
+            if ($env:CRUCIBLE_SELF_UPDATED -eq "1") {
+                # Already handed off once this update; never loop, even if the file
+                # somehow keeps changing.
+                Write-Host "  manage.ps1 changed again - continuing with the current version." -ForegroundColor DarkGray
+            } else {
+                Write-Host "  manage.ps1 was updated - restarting with the new version..." -ForegroundColor Yellow
+                $env:CRUCIBLE_SELF_UPDATED = "1"
+                # Re-invoke through the host that is actually running this script
+                # (powershell.exe or pwsh.exe) instead of assuming either one.
+                $psHost = (Get-Process -Id $PID).Path
+                if (-not $psHost) { $psHost = "powershell" }
+                & $psHost -ExecutionPolicy Bypass -NoProfile -File $PSCommandPath update
+                exit $LASTEXITCODE
+            }
+        }
     }
 
     if (-not (Test-Path "$ROOT\venv\Scripts\Activate.ps1")) {

@@ -545,8 +545,29 @@ cmd_update() {
     if ! command -v git &>/dev/null; then
         echo "  git not found - skipping pull. Update the files manually if needed."
     else
+        # bash reads this script incrementally by byte offset rather than parsing it
+        # up front, so a pull that rewrites manage.sh mid-run makes bash resume at a
+        # stale offset in the new file - it can execute a fragment of a line. Hash
+        # the script around the pull and exec the new version if it changed; exec
+        # replaces the process, which removes the hazard rather than hiding it.
+        local self_before self_after
+        self_before="$(cksum < "$0")"
         git -C "$ROOT" pull
         echo "  Done."
+        self_after="$(cksum < "$0")"
+        if [ "$self_before" != "$self_after" ]; then
+            if [ "${CRUCIBLE_SELF_UPDATED:-}" = "1" ]; then
+                # Already handed off once this update; never loop.
+                echo "  manage.sh changed again - continuing with the current version."
+            else
+                echo "  manage.sh was updated - restarting with the new version..."
+                export CRUCIBLE_SELF_UPDATED=1
+                # Re-exec through the running interpreter rather than "$0" alone:
+                # the script may have been invoked as `bash manage.sh`, in which
+                # case it need not carry the executable bit.
+                exec "${BASH:-bash}" "$0" update
+            fi
+        fi
     fi
 
     if [ ! -f "$ROOT/venv/bin/activate" ]; then

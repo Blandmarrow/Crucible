@@ -525,7 +525,7 @@ cmd_update() {
     echo "=== Crucible - Update ==="
     echo ""
 
-    echo "[1/5] Pulling latest changes..."
+    echo "[1/6] Pulling latest changes..."
     if ! command -v git &>/dev/null; then
         echo "  git not found - skipping pull. Update the files manually if needed."
     else
@@ -562,7 +562,7 @@ cmd_update() {
         fi
     fi
 
-    echo "[2/5] Updating Python dependencies..."
+    echo "[2/6] Updating Python dependencies..."
     "$ROOT/venv/bin/pip" install --upgrade pip --quiet
     _install_torch_if_needed
     if [ ! -f "$ROOT/backend/requirements.txt" ]; then

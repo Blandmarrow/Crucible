@@ -96,7 +96,9 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | Field | Default | Effect |
 |---|---|---|
 | `dataset_id` | required | Target dataset |
-| `image_ids` | `null` | If set, only these images; otherwise the whole dataset |
+| `image_ids` | `null` | If non-null, only these images (an **empty list matches nothing**); `null` = the whole dataset, optionally narrowed by `subfolder`/`quality_flags` |
+| `subfolder` | `null` | Whole-dataset runs only (ignored when `image_ids` is set): restrict to this subfolder (`normalize_subfolder`) |
+| `quality_flags` | `null` | Whole-dataset runs only: exclude images where any listed flag is `True` (`ALLOWED_FLAG_KEYS`-validated, `as_boolean().is_not(True)`) — same convention as `bulk-delete`/`crop` |
 | `model` | required | `"florence2_large"`, `"florence2_promptgen"`, `"nudenet"`, `"sam2"`, or `"sam3"` |
 | `task` | required | `"<OD>"`, `"<CAPTION_TO_PHRASE_GROUNDING>"`, `"nudenet"`, `"text_prompt"`, or `"points"` |
 | `custom_prompt` | `""` | Phrase to ground (`<CAPTION_TO_PHRASE_GROUNDING>` / SAM2 or SAM3 `text_prompt`) |
@@ -142,7 +144,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
   - `enterMode("draw"|"points"|"refine"|null)` enforces mutual exclusivity between the three annotation modes; entering crop/upscale/LUT or navigating to another image clears all three. Escape exits draw/refine/pending-box. SAM2 point-prompt mode ("SAM Points" toolbar button, when the detect model is sam2/points) and the detect modal (SAM 3 fixed `text_prompt`, no mode radios) are unchanged; SAM3 mask rows render through the same polygon overlay as SAM2. Like `SelectionToolbar`, the detect modal **closes on job start** (SAM points cleared then, since they were already sent in the payload) and tracks `detectJobIds: string[]` — no in-modal progress bar, run button never disabled by an active job, so a second run can be queued immediately.
   - **Crop prefill**: "Crop from Detections" (`utils/detectionCrop.ts::detectionCropPrefill`) computes the padded union of visible bboxes and seeds react-easy-crop via `initialCroppedAreaPixels` on fresh mount; the plain "Crop" button clears the prefill so it never leaks into a manual crop.
   - Detection jobs (`job_type="detection"`) invalidate detail pages via a dedicated TopBar completion branch (`["image"]` + `["detection-labels"|"detection-models", ds]`) — deliberately **not** in `IMAGE_MODIFYING_JOB_TYPES` (detections don't change the gallery).
-- `BulkEditPage` — "Detections" tab: a **Run Detection** panel (`components/detection/DetectionRunForm.tsx` — inline, non-modal; runs `POST /detection/run` across the scope, SAM2 text-prompt only) above a **Delete Detections** panel (`components/detection/DetectionBulkDeleteForm.tsx`): label chips + model chips + "Score below" input, a live dry-run count (`bulkDelete({dry_run:true})`), and a danger `ConfirmDialog` before the real delete. See `docs/dev/export-and-bulk-ops.md`.
+- `BulkEditPage` — "Detections" tab: a **Run Detection** panel (`components/detection/DetectionRunForm.tsx` — inline, non-modal; runs `POST /detection/run` across the scope; offers every model — Florence-2 Large/PromptGen, NudeNet, SAM2, SAM3 — with SAM2 text-prompt only here since point prompts are per-image) above a **Delete Detections** panel (`components/detection/DetectionBulkDeleteForm.tsx`): label chips + model chips + "Score below" input, a live dry-run count (`bulkDelete({dry_run:true})`), and a danger `ConfirmDialog` before the real delete. See `docs/dev/export-and-bulk-ops.md`.
 
 Flag thresholds:
 | Flag | Column | Default threshold | Source |

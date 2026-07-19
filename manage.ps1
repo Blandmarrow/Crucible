@@ -458,7 +458,7 @@ function Cmd-Update {
     Write-Host "=== Crucible - Update ===" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "[1/5] Pulling latest changes..." -ForegroundColor Yellow
+    Write-Host "[1/6] Pulling latest changes..." -ForegroundColor Yellow
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "  git not found - skipping pull. Update the files manually if needed." -ForegroundColor DarkGray
     } else {
@@ -501,7 +501,7 @@ function Cmd-Update {
         }
     }
 
-    Write-Host "[2/5] Updating Python dependencies..." -ForegroundColor Yellow
+    Write-Host "[2/6] Updating Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     Install-TorchIfNeeded
     if (-not [System.Console]::IsInputRedirected) {

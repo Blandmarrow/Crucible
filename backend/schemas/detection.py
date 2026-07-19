@@ -82,4 +82,5 @@ class DetectionCropRequest(BaseModel):
     padding_pct: float = Field(0.0, ge=0.0, le=100.0)
     target_ar: float | None = Field(None, gt=0.0)    # width/height; grow-only snap
     replace: bool = False
+    dest_subfolder: str | None = None        # new-file mode: subfolder for the new image; None = same as source
     label: str | None = None                 # job-label override (NOT a detection label)

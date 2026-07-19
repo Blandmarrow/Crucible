@@ -959,6 +959,11 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
         result = await db.execute(q)
         image_ids = [r[0] for r in result.all()]
 
+    # Normalize the destination subfolder once, up front, so a bad path 400s
+    # immediately instead of failing inside the background job.
+    if body.dest_subfolder is not None:
+        body.dest_subfolder = normalize_subfolder(body.dest_subfolder)
+
     by_image = await _fetch_bboxes_by_image(db, image_ids, body.labels)
     matched_ids = [i for i in image_ids if i in by_image]
     skipped = len(image_ids) - len(matched_ids)
@@ -990,6 +995,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             loop = asyncio.get_running_loop()
 
             replace = cfg["replace"]
+            dest_subfolder = cfg["dest_subfolder"]  # None = inherit source subfolder
             counts = {"cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0, "failed": 0}
 
             # Occupied/planned thumbnail stems for the non-replace path, keyed by
@@ -1117,7 +1123,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         dataset_id=img.dataset_id,
                         filename=new_filename,
                         original_filename=img.original_filename,
-                        subfolder=img.subfolder,
+                        subfolder=dest_subfolder if dest_subfolder is not None else img.subfolder,
                         file_path=dest_path_str,
                         thumbnail_path=thumb_path,
                         width=info["width"],

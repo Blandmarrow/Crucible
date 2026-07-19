@@ -3,9 +3,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Crop } from "lucide-react";
 import toast from "react-hot-toast";
 import { detectionApi } from "../../api/detection";
+import { datasetsApi } from "../../api/datasets";
 import { jobsApi } from "../../api/jobs";
 import { ASPECT_PRESETS } from "../../constants/aspectRatios";
 import { useJobStore } from "../../store/jobStore";
+
+// Destination-subfolder sentinels (new-file mode only)
+const DEST_SAME = "__same__";     // inherit source subfolder → omit dest_subfolder
+const DEST_ROOT = "__root__";     // root → send ""
+const DEST_CUSTOM = "__custom__"; // free-text new subfolder
 
 interface Props {
   datasetId: string;
@@ -42,6 +48,8 @@ export default function CropToDetectionForm({ datasetId, imageIds, subfolder, qu
   const [paddingPct, setPaddingPct] = useState("5");
   const [aspect, setAspect] = useState<number | undefined>(undefined);
   const [replace, setReplace] = useState(false);
+  const [destSelect, setDestSelect] = useState(DEST_SAME);
+  const [destCustom, setDestCustom] = useState("");
   const [jobLabel, setJobLabel] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -56,10 +64,29 @@ export default function CropToDetectionForm({ datasetId, imageIds, subfolder, qu
   const labelsLoading = !availableLabels && labelsQueryLoading;
   const countNoun = availableLabels ? "detection" : "image";
 
+  const { data: subfolders = [] } = useQuery({
+    queryKey: ["subfolders", datasetId],
+    queryFn: () => datasetsApi.subfolders(datasetId),
+  });
+
+  // Resolve the destination subfolder for the payload. `undefined` = omit the
+  // field (inherit source subfolder); "" = root; any string = that subfolder.
+  const resolveDestSubfolder = (): string | undefined => {
+    if (replace) return undefined;
+    if (destSelect === DEST_SAME) return undefined;
+    if (destSelect === DEST_ROOT) return "";
+    if (destSelect === DEST_CUSTOM) {
+      const trimmed = destCustom.trim();
+      return trimmed === "" ? undefined : trimmed; // empty → fall back to same-as-source
+    }
+    return destSelect; // an existing subfolder path
+  };
+
   useEffect(() => {
     if (!jobId || !jobProgress) return;
     if (jobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       const finishedId = jobId;
       setJobId(null);
       jobsApi
@@ -93,6 +120,7 @@ export default function CropToDetectionForm({ datasetId, imageIds, subfolder, qu
         padding_pct: Math.min(Math.max(parseFloat(paddingPct) || 0, 0), 100),
         target_ar: aspect ?? null,
         replace,
+        dest_subfolder: resolveDestSubfolder(),
         label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
@@ -200,6 +228,37 @@ export default function CropToDetectionForm({ datasetId, imageIds, subfolder, qu
           </label>
         </div>
       </div>
+
+      {/* Destination subfolder (new-file mode only) */}
+      {!replace && (
+        <div>
+          <label className="label">Destination subfolder</label>
+          <select
+            className="select"
+            value={destSelect}
+            onChange={(e) => setDestSelect(e.target.value)}
+          >
+            <option value={DEST_SAME}>Same as source</option>
+            <option value={DEST_ROOT}>— root (no subfolder) —</option>
+            {subfolders.filter((sf) => sf.path !== "").map((sf) => (
+              <option key={sf.path} value={sf.path}>
+                {sf.path} ({sf.image_count} image{sf.image_count !== 1 ? "s" : ""})
+              </option>
+            ))}
+            <option value={DEST_CUSTOM}>New subfolder…</option>
+          </select>
+          {destSelect === DEST_CUSTOM && (
+            <input
+              className="input"
+              style={{ marginTop: 6 }}
+              placeholder="New subfolder path (empty = same as source)"
+              value={destCustom}
+              onChange={(e) => setDestCustom(e.target.value)}
+              autoFocus
+            />
+          )}
+        </div>
+      )}
 
       {/* Progress */}
       {running && jobProgress && (

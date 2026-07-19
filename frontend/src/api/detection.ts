@@ -110,6 +110,7 @@ export const detectionApi = {
     padding_pct: number;
     target_ar?: number | null;
     replace: boolean;
+    dest_subfolder?: string;
     label?: string;
   }) =>
     client

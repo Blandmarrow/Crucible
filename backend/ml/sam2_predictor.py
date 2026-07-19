@@ -7,6 +7,7 @@ import threading
 import numpy as np
 
 from backend.ml import device as _device
+from backend.ml.image_utils import open_rgb
 from backend.ml.mask_utils import bbox_from_mask, masks_to_polygons, polygons_to_mask_input
 
 logger = logging.getLogger(__name__)
@@ -227,12 +228,10 @@ def predict_sync(
     mode: "text_prompt" | "points" | "box"
     Returns list of {label, bbox [x1,y1,x2,y2] norm., score, mask (polygon JSON)}.
     """
-    from PIL import Image
-
     predictor = model_entry["predictor"]
     dev = model_entry["device"]
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     img_w, img_h = img.size
     img_np = np.array(img)
     img.close()
@@ -303,7 +302,6 @@ def refine_sync(
     ``enable_inst_interactivity=True`` and use SAM3's interactive predict API).
     """
     import torch
-    from PIL import Image
 
     predictor = model_entry["predictor"]
 
@@ -311,7 +309,7 @@ def refine_sync(
     if mask_input is None:
         return None
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     img_w, img_h = img.size
     img_np = np.array(img)
     img.close()

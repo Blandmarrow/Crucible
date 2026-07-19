@@ -68,6 +68,8 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 
 The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run.
 
+> **Note on rotated images:** detections are now computed in the same EXIF-corrected frame the rest of the app uses, so overlays line up with the subject on photos that carry an EXIF orientation tag. Detections produced *before* this fix on such rotated images may be misaligned — re-run detection on those images to correct them.
+
 ### Locating watermarks
 
 The batch **watermark** score (Quality → Batch score) flags *that* an image has a watermark but not *where* it is. To find the region, run a text-prompt detection (SAM 2, SAM 3, or Florence-2 Grounded Caption) with a watermark prompt such as `watermark. text. logo.` — the located boxes appear on the Image Detail overlay like any other detection, with the same delete/relabel tools.

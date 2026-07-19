@@ -41,6 +41,8 @@ Model IDs and their captioner/scorer modules:
 
 **`_TAG_STYLES`** (`backend/routers/captioning.py`): module-level `frozenset` containing all comma-separated-output styles: `{"tags", "booru", "danbooru", "e621", "rule34", "booru_like"}`. Both `_run()` and `_run_pipeline_job()` use this set to decide whether to split caption output into individual tags. Do not duplicate this set locally — import or reference it from the module.
 
+**EXIF-consistent opening (mandatory for inference)**: every ML inference path must open images through `ml/image_utils.py::open_rgb(path)` — `Image.open().convert("RGB")` + `ImageOps.exif_transpose`. This guarantees all predictors (captioners, quality scorers, SAM2/SAM3, NudeNet) see pixels in the same EXIF-transposed frame, so normalized point/box coordinates denormalize consistently and detection overlays align with the subject on rotated images. Never open with a bare `Image.open(...)` in an inference path; `preprocess_for_caption` itself calls `open_rgb`. Close the returned image right after handing pixels to the model (per the "Close PIL Images after preprocessing" invariant).
+
 **Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All captioners (Florence-2, PaliGemma-2, JoyCaption, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 
 Quality scorers and what they add to `Image`:

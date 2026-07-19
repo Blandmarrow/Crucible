@@ -24,6 +24,7 @@ import numpy as np
 
 from backend.config import settings
 from backend.ml import device as _device
+from backend.ml.image_utils import open_rgb
 from backend.ml.mask_utils import bbox_from_mask, masks_to_polygons
 
 logger = logging.getLogger(__name__)
@@ -438,7 +439,6 @@ def predict_sync(
     — shape-identical to sam2_predictor.predict_sync output.
     """
     import torch
-    from PIL import Image
 
     if not text_prompt.strip():
         logger.warning("SAM3 called with empty prompt")
@@ -449,7 +449,7 @@ def predict_sync(
     # (state["scores"] > confidence_threshold in _forward_grounding).
     processor.confidence_threshold = score_threshold
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     img_w, img_h = img.size
 
     # sam3's fused ViT MLP kernel (perflib.fused.addmm_act) hard-casts to

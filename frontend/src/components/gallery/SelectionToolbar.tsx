@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
+import CropToDetectionForm from "../crop/CropToDetectionForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { imagesApi } from "../../api/images";
@@ -23,6 +24,7 @@ import { type ProviderOut } from "../../api/providers";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
+import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 
@@ -78,15 +80,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectSyncWatermark, setDetectSyncWatermark] = useState(false);
   const [detectJobLabel, setDetectJobLabel] = useState("");
-  const [detectJobId, setDetectJobId] = useState<string | null>(null);
+  const [detectJobIds, setDetectJobIds] = useState<string[]>([]);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
+  const [showCropDetect, setShowCropDetect] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
-  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
+  const activeJobs = useJobStore((s) => s.activeJobs);
 
   useEffect(() => {
     if (!scoreJobId || !scoreJobProgress) return;
@@ -110,17 +114,30 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     }
   }, [captionJobProgress?.status, captionJobId, datasetId, qc]);
 
+  // Track a list of detection jobs so multiple runs can be queued. Iterate the
+  // tracked ids each time activeJobs changes; drop any that reached a terminal
+  // status (toasting completed/failed, silent on cancelled).
   useEffect(() => {
-    if (!detectJobId || !detectJobProgress) return;
-    if (detectJobProgress.status === "completed") {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setDetectJobId(null);
-      toast.success("Detection complete");
-    } else if (detectJobProgress.status === "failed") {
-      setDetectJobId(null);
-      toast.error(detectJobProgress.message || "Detection failed");
+    if (detectJobIds.length === 0) return;
+    const done: string[] = [];
+    for (const jobId of detectJobIds) {
+      const progress = activeJobs.get(jobId);
+      if (!progress) continue;
+      if (progress.status === "completed") {
+        qc.invalidateQueries({ queryKey: ["images", datasetId] });
+        toast.success("Detection complete");
+        done.push(jobId);
+      } else if (progress.status === "failed") {
+        toast.error(progress.message || "Detection failed");
+        done.push(jobId);
+      } else if (progress.status === "cancelled") {
+        done.push(jobId);
+      }
     }
-  }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
+    if (done.length > 0) {
+      setDetectJobIds((prev) => prev.filter((id) => !done.includes(id)));
+    }
+  }, [activeJobs, detectJobIds, datasetId, qc]);
 
   const embeddingTypeInitialized = useRef(false);
   useEffect(() => {
@@ -365,6 +382,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
+  // Watermark-flag sync is only meaningful for text-prompt grounding tasks.
+  const detectSyncEligible =
+    detectModel === "sam2" || detectModel === "sam3" || detectTask === "<CAPTION_TO_PHRASE_GROUNDING>";
+
   const detectMutation = useMutation({
     mutationFn: () =>
       detectionApi.run({
@@ -375,13 +396,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
         use_caption_as_prompt: detectUseCaptions,
         overwrite: detectOverwrite,
+        sync_watermark_flag: detectSyncEligible && detectSyncWatermark,
         label: detectJobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
       setShowDetect(false);
       if (data.job_id) {
-        setDetectJobId(data.job_id);
-        toast.success(`Detecting objects in ${count} image${count !== 1 ? "s" : ""}…`);
+        setDetectJobIds((prev) => [...prev, data.job_id!]);
+        toast.success("Detection queued");
       } else {
         toast("No images to process");
       }
@@ -392,7 +414,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showMoveSubfolder || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showMoveSubfolder || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -454,6 +476,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowDetect(true)}>
           <ScanSearch size={14} /> Detect
+        </button>
+        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
+          <Crop size={14} /> Crop
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
@@ -839,47 +864,68 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <select
                 className="select w-full"
                 value={detectModel}
-                onChange={(e) => setDetectModel(e.target.value)}
+                onChange={(e) => {
+                  const m = e.target.value;
+                  const familyChanged = detectionModelFamily(m) !== detectionModelFamily(detectModel);
+                  setDetectModel(m);
+                  // Only reset task/prompt/use-captions when the model family changes;
+                  // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
+                  if (familyChanged) {
+                    setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
+                    setDetectPrompt("");
+                    setDetectUseCaptions(false);
+                  }
+                }}
               >
                 <option value="florence2_large">Florence-2 Large</option>
                 <option value="florence2_promptgen">Florence-2 PromptGen</option>
+                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
+                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
               </select>
             </div>
 
-            <div>
-              <label className="label">Task</label>
-              <select
-                className="select w-full"
-                value={detectTask}
-                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
-              >
-                <option value="<OD>">Object Detection (auto-detect everything)</option>
-                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
-              </select>
-            </div>
+            {detectModel !== "sam2" && detectModel !== "sam3" && (
+              <div>
+                <label className="label">Task</label>
+                <select
+                  className="select w-full"
+                  value={detectTask}
+                  onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
+                >
+                  <option value="<OD>">Object Detection (auto-detect everything)</option>
+                  <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
+                </select>
+              </div>
+            )}
 
-            {detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && (
+            {(detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" || detectModel === "sam2" || detectModel === "sam3") && (
               <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={detectUseCaptions}
-                    onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
-                  />
-                  Use each image's existing caption as prompt
-                </label>
+                {detectModel !== "sam2" && detectModel !== "sam3" && (
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={detectUseCaptions}
+                      onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
+                    />
+                    Use each image's existing caption as prompt
+                  </label>
+                )}
                 {!detectUseCaptions && (
                   <>
-                    <label className="label">Caption to ground</label>
+                    <label className="label">
+                      {detectModel === "sam2" || detectModel === "sam3" ? "Text prompt" : "Caption to ground"}
+                    </label>
                     <input
                       className="input"
-                      placeholder="e.g. a cat sitting on a dog"
+                      placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. face, hand, watermark" : "e.g. a cat sitting on a dog"}
                       value={detectPrompt}
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus
                     />
                     <p className="text-xs text-gray-500">
-                      Florence-2 will draw boxes around the phrases from this caption.
+                      {detectModel === "sam2" || detectModel === "sam3"
+                        ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
+                        : "Florence-2 will draw boxes around the phrases from this caption."}
                     </p>
                   </>
                 )}
@@ -893,8 +939,18 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
-              Overwrite existing detections
+              Overwrite this model's existing detections
             </label>
+
+            {detectSyncEligible && (
+              <label
+                className="flex items-center gap-2 cursor-pointer text-sm"
+                title="After the run, set the watermark flag on images where a region was found and clear it on images scanned clean. Only images actually scanned are updated."
+              >
+                <input type="checkbox" checked={detectSyncWatermark} onChange={e => setDetectSyncWatermark(e.target.checked)} />
+                Sync watermark flag from results
+              </label>
+            )}
 
             <input
               className="input w-full"
@@ -913,7 +969,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 onClick={() => detectMutation.mutate()}
                 disabled={
                   detectMutation.isPending ||
-                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())
+                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim()) ||
+                  ((detectModel === "sam2" || detectModel === "sam3") && !detectPrompt.trim())
                 }
               >
                 <ScanSearch size={14} /> Run Detection
@@ -954,6 +1011,24 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               imageIds={ids}
               onSuccess={() => setShowUpscale(false)}
               onCancel={() => setShowUpscale(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Crop-to-detection modal */}
+      {showCropDetect && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Crop size={15} /> Crop to Detection — {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+            {datasetBreakdown}
+            <CropToDetectionForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => setShowCropDetect(false)}
+              onCancel={() => setShowCropDetect(false)}
             />
           </div>
         </div>

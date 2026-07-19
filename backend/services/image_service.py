@@ -272,7 +272,17 @@ def crop_image_to_dest(
     }
 
 
-def crop_to_aspect(path: str, target_ar: float, strategy: str = "center") -> tuple[int, int]:
+def crop_to_aspect(
+    path: str, target_ar: float, strategy: str = "center"
+) -> tuple[int, int, tuple[int, int, int, int], tuple[int, int]]:
+    """Center/top crop an image to ``target_ar`` in place.
+
+    Returns ``(new_w, new_h, rect, orig_size)`` where ``rect`` is the crop
+    rectangle ``(x, y, w, h)`` and ``orig_size`` the pre-crop ``(w, h)``, both in
+    the EXIF-transposed frame (``_open_safe``). The extra return values let the
+    single caller (``routers/images.py::batch_crop``) remap detections through the
+    crop.
+    """
     img = _open_safe(path)
     orig_w, orig_h = img.width, img.height
     current_ar = orig_w / orig_h
@@ -292,7 +302,7 @@ def crop_to_aspect(path: str, target_ar: float, strategy: str = "center") -> tup
 
     cropped = img.crop((x, y, x + new_w, y + new_h))
     cropped.save(path, **_save_kwargs(path))
-    return cropped.width, cropped.height
+    return cropped.width, cropped.height, (x, y, new_w, new_h), (orig_w, orig_h)
 
 
 def convert_and_save(src_path: str, dest_path: str, fmt: str = "PNG", quality: int = 95) -> None:

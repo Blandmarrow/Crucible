@@ -8,6 +8,7 @@ export interface Thresholds {
   watermark_threshold: number;
   nsfw_threshold: number;
   gdino_threshold: number;
+  sam3_threshold: number;
   versioning_mode: "off" | "manual" | "auto";
   auto_rescan_on_open: boolean;
   comfyui_url: string;

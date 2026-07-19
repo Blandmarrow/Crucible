@@ -15,6 +15,7 @@ class ThresholdSettings(Base):
     watermark_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.6")
     nsfw_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
     gdino_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.35")
+    sam3_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="off")
     auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")

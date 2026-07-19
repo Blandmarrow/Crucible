@@ -9,6 +9,7 @@ import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../stores/paneStore";
+import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
@@ -18,7 +19,7 @@ import { Columns2, RefreshCw } from "lucide-react";
 const RESTART_SLOW_MS = 25_000;
 
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -128,6 +129,16 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
           }
+        }
+        // Detection jobs (run / manual box+SAM / mask refine) change per-image
+        // detections and the dataset label/model/stats rollups, but not the
+        // gallery — deliberately NOT in IMAGE_MODIFYING_JOB_TYPES. Detail pages go
+        // stale otherwise (bulk detect run finishing after navigation).
+        // crop_to_detection is included too: replace-mode crops now remap (and can
+        // drop) detection geometry, so those rollups must refresh as well.
+        if (progress.job_type === "detection" || progress.job_type === "crop_to_detection") {
+          qc.invalidateQueries({ queryKey: ["image"] });
+          invalidateDetectionQueries(qc, progress.dataset_id);
         }
       }
       // Live gallery updates while a captioning or ComfyUI-generate job runs — the

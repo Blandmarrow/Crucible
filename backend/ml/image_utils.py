@@ -1,14 +1,26 @@
 from PIL import Image, ImageOps
 
 
+def open_rgb(image_path: str) -> Image.Image:
+    """The single sanctioned open for ML inference paths.
+
+    Opens the image, converts to RGB, and applies ``ImageOps.exif_transpose`` so
+    every predictor sees pixels in the same EXIF-transposed frame. Normalized
+    point/box coordinates therefore denormalize consistently. Callers own closing
+    the returned image (call ``img.close()`` right after handing pixels to the
+    model's preprocessor, per the "Close PIL Images after preprocessing" invariant).
+    """
+    img = Image.open(image_path).convert("RGB")
+    return ImageOps.exif_transpose(img)
+
+
 def preprocess_for_caption(
     image_path: str,
     target_w: int | None,
     target_h: int | None,
 ) -> Image.Image:
     """Open image, correct EXIF orientation, and optionally center-crop + resize to target resolution."""
-    img = Image.open(image_path).convert("RGB")
-    img = ImageOps.exif_transpose(img)
+    img = open_rgb(image_path)
 
     if target_w and target_h:
         target_ar = target_w / target_h

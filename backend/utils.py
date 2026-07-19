@@ -1,11 +1,28 @@
 import re
 import shutil
 import time
+from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeVar
 
 import regex as _regex
 from fastapi import HTTPException
+
+_T = TypeVar("_T")
+
+
+def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
+    """Yield successive ``size``-length slices of ``seq``.
+
+    The single source of truth for chunking id lists before an SQL ``IN (...)``
+    so the number of bind parameters stays under SQLite's 999-variable limit.
+    ``size`` defaults to 10k. Empty ``seq`` yields nothing.
+    """
+    if size <= 0:
+        raise ValueError("size must be positive")
+    for start in range(0, len(seq), size):
+        yield seq[start:start + size]
 
 
 REGEX_TIMEOUT_SECONDS = 30.0

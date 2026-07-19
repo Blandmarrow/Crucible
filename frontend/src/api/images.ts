@@ -60,6 +60,14 @@ export interface ImageListParams {
   score_filters?: string;
   subfolder?: string;
   detection_label?: string;
+  detection_label_exact?: string;
+  detection_score_min?: number;
+  detection_score_max?: number;
+  detection_score_null?: boolean;
+  mask_coverage_min?: number;
+  mask_coverage_max?: number;
+  detection_count_min?: number;
+  detection_count_max?: number;
   caption_words_min?: number;
   caption_words_max?: number;
   caption_tokens_min?: number;

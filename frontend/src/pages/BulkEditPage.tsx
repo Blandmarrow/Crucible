@@ -9,6 +9,9 @@ import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
 import BulkEditForm from "../components/caption/BulkEditForm";
 import UpscaleForm from "../components/upscale/UpscaleForm";
+import CropToDetectionForm from "../components/crop/CropToDetectionForm";
+import DetectionBulkDeleteForm from "../components/detection/DetectionBulkDeleteForm";
+import DetectionRunForm from "../components/detection/DetectionRunForm";
 import LutForm from "../components/lut/LutForm";
 import BulkRenameForm from "../components/image/BulkRenameForm";
 import BulkDeleteForm from "../components/image/BulkDeleteForm";
@@ -16,7 +19,7 @@ import { BULK_EDIT_WORKFLOW_KEY, BULK_EDIT_FILTERS_PREFIX } from "../constants/s
 import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 
 type Scope = "all" | "flags" | "selected";
-type Tab = "captions" | "upscale" | "lut" | "rename" | "delete";
+type Tab = "captions" | "upscale" | "crop" | "detections" | "lut" | "rename" | "delete";
 
 interface BulkEditWorkflow {
   tab: Tab;
@@ -156,6 +159,12 @@ export default function BulkEditPage() {
           <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
             Upscale
           </button>
+          <button className={`tab${tab === "crop" ? " active" : ""}`} onClick={() => setTab("crop")}>
+            Crop to Subject
+          </button>
+          <button className={`tab${tab === "detections" ? " active" : ""}`} onClick={() => setTab("detections")}>
+            Detections
+          </button>
           <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
             Apply LUT
           </button>
@@ -275,6 +284,53 @@ export default function BulkEditPage() {
             />
           </div>
         </div>
+      )}
+
+      {tab === "crop" && (
+        <div className="panel">
+          <div className="panel-h">Crop to Detected Subject</div>
+          <div className="panel-b">
+            <CropToDetectionForm
+              key={`${scope}-${resetKey}`}
+              datasetId={datasetId}
+              imageIds={imageIds}
+              subfolder={subfolder}
+              qualityFlags={qualityFlags}
+              disabled={formDisabled}
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === "detections" && (
+        <>
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-h">Run Detection</div>
+            <div className="panel-b">
+              <DetectionRunForm
+                key={`run-${scope}-${resetKey}`}
+                datasetId={datasetId}
+                imageIds={imageIds}
+                subfolder={subfolder}
+                qualityFlags={qualityFlags}
+                disabled={formDisabled}
+              />
+            </div>
+          </div>
+          <div className="panel">
+            <div className="panel-h">Delete Detections</div>
+            <div className="panel-b">
+              <DetectionBulkDeleteForm
+                key={`${scope}-${resetKey}`}
+                datasetId={datasetId}
+                imageIds={imageIds}
+                subfolder={subfolder}
+                qualityFlags={qualityFlags}
+                disabled={formDisabled}
+              />
+            </div>
+          </div>
+        </>
       )}
 
       {tab === "lut" && (

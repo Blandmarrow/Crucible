@@ -7,6 +7,8 @@ import threading
 import numpy as np
 
 from backend.ml import device as _device
+from backend.ml.image_utils import open_rgb
+from backend.ml.mask_utils import bbox_from_mask, masks_to_polygons, polygons_to_mask_input
 
 logger = logging.getLogger(__name__)
 
@@ -73,44 +75,6 @@ def _load_sam2_sync(job_id=None, loop=None, dataset_id=None):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _masks_to_polygons(masks: np.ndarray, img_w: int, img_h: int) -> list[list[list[float]]]:
-    import cv2
-    polygons = []
-    for mask in masks:
-        uint8 = (mask > 0).astype(np.uint8) * 255
-        contours, _ = cv2.findContours(uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            epsilon = 0.005 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            if len(approx) < 3:
-                continue
-            poly = [
-                [round(float(pt[0][0]) / img_w, 4), round(float(pt[0][1]) / img_h, 4)]
-                for pt in approx
-            ]
-            polygons.append(poly)
-    return polygons
-
-
-def _bbox_from_mask(mask: np.ndarray, img_w: int, img_h: int) -> list[float]:
-    rows = np.any(mask, axis=1)
-    cols = np.any(mask, axis=0)
-    if not rows.any():
-        return [0.0, 0.0, 0.0, 0.0]
-    y1, y2 = np.where(rows)[0][[0, -1]]
-    x1, x2 = np.where(cols)[0][[0, -1]]
-    return [
-        round(float(x1) / img_w, 4),
-        round(float(y1) / img_h, 4),
-        round(float(x2) / img_w, 4),
-        round(float(y2) / img_h, 4),
-    ]
-
-
-# ---------------------------------------------------------------------------
 # Prediction modes
 # ---------------------------------------------------------------------------
 
@@ -126,7 +90,10 @@ def _predict_text(img_np: np.ndarray, img_w: int, img_h: int, predictor, text_pr
 
     img_pil = _Image.fromarray(img_np)
 
-    text = text_prompt.lower().strip()
+    # Grounding DINO natively grounds multiple classes separated by " . " and
+    # returns a per-phrase label for each box. Normalize comma-separated phrases
+    # to that separator; a single phrase collapses to the old behavior.
+    text = " . ".join(p.strip() for p in text_prompt.lower().split(",") if p.strip())
     if not text.endswith("."):
         text += "."
 
@@ -154,30 +121,61 @@ def _predict_text(img_np: np.ndarray, img_w: int, img_h: int, predictor, text_pr
     with torch.inference_mode():
         predictor.set_image(img_np)
         for box, score, label in zip(boxes_px, scores, labels):
-            try:
-                masks, iou_scores, _ = predictor.predict(
-                    box=box,
-                    multimask_output=True,
-                )
-            except Exception as exc:
-                logger.debug("SAM2 mask failed for box %s: %s", box, exc)
-                continue
-            # Pick the single best mask by IoU score.
-            best_idx = int(np.argmax(iou_scores))
-            bool_mask = masks[best_idx] > 0
-            if not bool_mask.any():
-                continue
-            polys = _masks_to_polygons(np.array([bool_mask]), img_w, img_h)
-            if not polys:
+            geom = _predict_box(img_np, img_w, img_h, predictor, box, set_image=False)
+            if geom is None:
                 continue
             results.append({
                 "label": str(label) if label else "object",
-                "bbox": _bbox_from_mask(bool_mask, img_w, img_h),
+                "bbox": geom["bbox"],
                 "score": round(float(score), 4),
-                "mask": json.dumps({"polygons": polys}),
+                "mask": geom["mask"],
             })
 
     return results
+
+
+def _predict_box(
+    img_np: np.ndarray,
+    img_w: int,
+    img_h: int,
+    predictor,
+    box_px,
+    set_image: bool = True,
+) -> dict | None:
+    """SAM2 mask for a single pixel-space box; label-agnostic geometry only.
+
+    ``box_px`` is ``[x1, y1, x2, y2]`` in pixels. Returns ``{bbox, score, mask}``
+    (mask-derived normalized bbox, IoU score, polygon JSON) or ``None`` when SAM2
+    produces no usable mask. When ``set_image`` is False the caller is expected to
+    have already called ``predictor.set_image`` inside ``torch.inference_mode()``
+    (the text-prompt loop reuses one embedding for many boxes).
+    """
+    import torch
+
+    def _run() -> dict | None:
+        try:
+            masks, iou_scores, _ = predictor.predict(box=box_px, multimask_output=True)
+        except Exception as exc:
+            logger.debug("SAM2 mask failed for box %s: %s", box_px, exc)
+            return None
+        best_idx = int(np.argmax(iou_scores))
+        bool_mask = masks[best_idx] > 0
+        if not bool_mask.any():
+            return None
+        polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+        if not polys:
+            return None
+        return {
+            "bbox": bbox_from_mask(bool_mask, img_w, img_h),
+            "score": round(float(iou_scores[best_idx]), 4),
+            "mask": json.dumps({"polygons": polys}),
+        }
+
+    if set_image:
+        with torch.inference_mode():
+            predictor.set_image(img_np)
+            return _run()
+    return _run()
 
 
 
@@ -202,12 +200,12 @@ def _predict_points(
         bool_mask = mask > 0
         if not bool_mask.any():
             continue
-        polys = _masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+        polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
         if not polys:
             continue
         results.append({
             "label": "segment",
-            "bbox": _bbox_from_mask(bool_mask, img_w, img_h),
+            "bbox": bbox_from_mask(bool_mask, img_w, img_h),
             "score": round(float(score), 4),
             "mask": json.dumps({"polygons": polys}),
         })
@@ -226,18 +224,17 @@ def predict_sync(
     point_prompts: list[list[float]] | None = None,
     point_labels: list[int] | None = None,
     gdino_threshold: float = 0.35,
+    box_prompt: list[float] | None = None,
 ) -> list[dict]:
     """Run Grounded SAM2 prediction on a single image.
 
-    mode: "text_prompt" | "auto" | "points"
+    mode: "text_prompt" | "points" | "box"
     Returns list of {label, bbox [x1,y1,x2,y2] norm., score, mask (polygon JSON)}.
     """
-    from PIL import Image
-
     predictor = model_entry["predictor"]
     dev = model_entry["device"]
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     img_w, img_h = img.size
     img_np = np.array(img)
     img.close()
@@ -257,8 +254,93 @@ def predict_sync(
         lbls = np.array(point_labels or [1] * len(point_prompts), dtype=np.int32)
         return _predict_points(img_np, img_w, img_h, predictor, pts, lbls)
 
+    if mode == "box":
+        if not box_prompt or len(box_prompt) != 4:
+            return []
+        x1, y1, x2, y2 = box_prompt
+        box_px = np.array(
+            [x1 * img_w, y1 * img_h, x2 * img_w, y2 * img_h], dtype=np.float32
+        )
+        geom = _predict_box(img_np, img_w, img_h, predictor, box_px, set_image=True)
+        if geom is None:
+            return []
+        return [{
+            "label": "segment",
+            "bbox": geom["bbox"],
+            "score": geom["score"],
+            "mask": geom["mask"],
+        }]
+
     logger.warning("SAM2: unknown mode %r", mode)
     return []
+
+
+def refine_sync(
+    image_path: str,
+    model_entry: dict,
+    mask_json: str | None,
+    bbox: list[float] | None,
+    point_prompts: list[list[float]],
+    point_labels: list[int],
+) -> dict | None:
+    """Refine an existing mask with point prompts, seeded by its low-res logits.
+
+    Rasterizes the detection's polygons/bbox into a ``(1, 256, 256)`` logit map
+    (``polygons_to_mask_input``) and passes it as ``mask_input`` alongside the
+    click points, ``multimask_output=False``. Returns ``{bbox, score, mask}`` for
+    the refined region, or ``None`` when there is nothing to seed from or SAM2
+    yields an empty mask.
+
+    SAM2-only (why refine is not a SAM3 path): point-refinement needs the
+    ``predict(point_coords, point_labels, mask_input=…)`` interactive interface,
+    which ``SAM2ImagePredictor`` exposes natively. SAM3 architecturally has a
+    geometry/point-prompt path, but our SAM3 model is built with
+    ``enable_inst_interactivity=False`` and the ungated 1038lab mirror checkpoint
+    strips the geometry-encoder point-prompt weights (see
+    ``sam3_predictor._is_expected_missing`` — ``geometry_encoder.points_*`` are
+    treated as expected-missing), so those weights simply aren't present to run.
+    The ``Sam3Processor`` we drive is text-prompt only (``set_text_prompt``).
+    Revisit a SAM3 refine path once a checkpoint with the point-prompt + tracker
+    weights is available from the official repo (then: build with
+    ``enable_inst_interactivity=True`` and use SAM3's interactive predict API).
+    """
+    import torch
+
+    predictor = model_entry["predictor"]
+
+    mask_input = polygons_to_mask_input(mask_json, bbox)
+    if mask_input is None:
+        return None
+
+    img = open_rgb(image_path)
+    img_w, img_h = img.size
+    img_np = np.array(img)
+    img.close()
+
+    pts = np.array(
+        [[p[0] * img_w, p[1] * img_h] for p in point_prompts], dtype=np.float32
+    )
+    lbls = np.array(point_labels, dtype=np.int32)
+
+    with torch.inference_mode():
+        predictor.set_image(img_np)
+        masks, scores, _ = predictor.predict(
+            point_coords=pts,
+            point_labels=lbls,
+            mask_input=mask_input,
+            multimask_output=False,
+        )
+    bool_mask = masks[0] > 0
+    if not bool_mask.any():
+        return None
+    polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+    if not polys:
+        return None
+    return {
+        "bbox": bbox_from_mask(bool_mask, img_w, img_h),
+        "score": round(float(scores[0]), 4),
+        "mask": json.dumps({"polygons": polys}),
+    }
 
 
 async def predict_batch(

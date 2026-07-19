@@ -1,3 +1,6 @@
+import json
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +36,11 @@ class KohyaExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    export_masks: bool = False
+    mask_labels: list[str] | None = None   # None/empty = all detection labels
+    mask_exclude_labels: list[str] | None = None   # regions always painted black
+    mask_invert: bool = False
+    mask_missing: Literal["white", "skip"] = "white"
     label: str | None = None
 
 
@@ -52,6 +60,11 @@ class AIToolkitExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    export_masks: bool = False
+    mask_labels: list[str] | None = None
+    mask_exclude_labels: list[str] | None = None
+    mask_invert: bool = False
+    mask_missing: Literal["white", "skip"] = "white"
     label: str | None = None
 
 
@@ -69,7 +82,36 @@ class PlainExportRequest(BaseModel):
     subfolders: list[str] | None = None
     strip_metadata: bool = False
     captions_only: bool = False
+    export_masks: bool = False
+    mask_labels: list[str] | None = None
+    mask_exclude_labels: list[str] | None = None
+    mask_invert: bool = False
+    mask_missing: Literal["white", "skip"] = "white"
     label: str | None = None
+
+
+def _normalize_mask_labels(labels: list[str] | None) -> list[str] | None:
+    """Strip and drop empty entries; an empty selection means all labels."""
+    cleaned = [l.strip() for l in (labels or []) if l.strip()]
+    return cleaned or None
+
+
+def _parse_labels_json_param(value: str, param_name: str) -> list[str] | None:
+    """Parse a JSON-array-of-strings query param into normalized mask labels.
+
+    Detection labels are free text and may contain commas, so the preview GET
+    passes them as a JSON array rather than comma-separated. Empty string means
+    the param was omitted (None → all/none per caller semantics).
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{param_name} must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(status_code=400, detail=f"{param_name} must be a JSON array of strings")
+    return _normalize_mask_labels(parsed)
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -90,6 +132,8 @@ def _parse_flags(s: str) -> list[str]:
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    mask_labels = _normalize_mask_labels(body.mask_labels)
+    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -122,6 +166,11 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 body.subfolders,
                 body.strip_metadata,
                 body.captions_only,
+                export_masks=body.export_masks,
+                mask_labels=mask_labels,
+                mask_exclude_labels=mask_exclude_labels,
+                mask_invert=body.mask_invert,
+                mask_missing=body.mask_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -139,6 +188,8 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    mask_labels = _normalize_mask_labels(body.mask_labels)
+    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -170,6 +221,11 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 body.subfolders,
                 body.strip_metadata,
                 body.captions_only,
+                export_masks=body.export_masks,
+                mask_labels=mask_labels,
+                mask_exclude_labels=mask_exclude_labels,
+                mask_invert=body.mask_invert,
+                mask_missing=body.mask_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -187,6 +243,8 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    mask_labels = _normalize_mask_labels(body.mask_labels)
+    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -216,6 +274,11 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 body.subfolders,
                 body.strip_metadata,
                 body.captions_only,
+                export_masks=body.export_masks,
+                mask_labels=mask_labels,
+                mask_exclude_labels=mask_exclude_labels,
+                mask_invert=body.mask_invert,
+                mask_missing=body.mask_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -237,9 +300,15 @@ async def preview(
     exclude_flags: str = Query(default=""),
     style_sim_min: float | None = Query(default=None),
     subfolders: str = Query(default=""),
+    export_masks: bool = Query(default=False),
+    mask_labels: str = Query(default="", description="JSON array of label strings; empty = all labels"),
+    mask_exclude_labels: str = Query(default="", description="JSON array of label strings; regions always painted black"),
+    mask_missing: Literal["white", "skip"] = Query(default="white"),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
+    label_list = _parse_labels_json_param(mask_labels, "mask_labels")
+    exclude_label_list = _parse_labels_json_param(mask_exclude_labels, "mask_exclude_labels")
     return await preview_export(
         db,
         dataset_id,
@@ -248,4 +317,8 @@ async def preview(
         _parse_flags(exclude_flags),
         style_sim_min,
         subfolder_list,
+        export_masks=export_masks,
+        mask_labels=label_list,
+        mask_exclude_labels=exclude_label_list,
+        mask_missing=mask_missing,
     )

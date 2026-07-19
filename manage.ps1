@@ -284,7 +284,7 @@ function Cmd-Setup {
 
     Install-Deps
 
-    Write-Host "[3/6] Creating Python virtual environment..." -ForegroundColor Yellow
+    Write-Host "[3/7] Creating Python virtual environment..." -ForegroundColor Yellow
     if (Test-Path "$ROOT\venv") {
         # Validate existing venv before reusing - recreate if Python is wrong version or pre-release.
         $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
@@ -307,7 +307,7 @@ function Cmd-Setup {
         Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green
     }
 
-    Write-Host "[4/6] Installing Python dependencies..." -ForegroundColor Yellow
+    Write-Host "[4/7] Installing Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     # Pre-install a CUDA-enabled PyTorch before the rest of requirements so that
     # packages like open_clip_torch link against the GPU build, not the CPU fallback.
@@ -331,7 +331,7 @@ function Cmd-Setup {
         Write-Host "  Python dependencies installed." -ForegroundColor Green
     }
 
-    Write-Host "[5/6] Installing SAM2 (Segment Anything Model 2)..." -ForegroundColor Yellow
+    Write-Host "[5/7] Installing SAM2 (Segment Anything Model 2)..." -ForegroundColor Yellow
     if ([System.Console]::IsInputRedirected) { $reply = "" } else {
         $reply = Read-Host "  Download and install SAM2 from GitHub (~50 MB)? [Y/n]"
     }
@@ -347,7 +347,29 @@ function Cmd-Setup {
         }
     }
 
-    Write-Host "[6/6] Installing frontend dependencies and building..." -ForegroundColor Yellow
+    Write-Host "[6/7] Installing SAM3 (Segment Anything Model 3)..." -ForegroundColor Yellow
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Download and install SAM3 from GitHub (~50 MB)? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping SAM3. SAM 3 text-prompt segmentation will not be available." -ForegroundColor DarkGray
+    } else {
+        # --no-deps: sam3 pins numpy<2 and ftfy==6.1.1, which conflict with
+        # requirements.txt; its real runtime deps are installed explicitly.
+        & "$ROOT\venv\Scripts\pip.exe" install "git+https://github.com/facebookresearch/sam3.git" --no-deps --quiet
+        if ($LASTEXITCODE -eq 0) {
+            & "$ROOT\venv\Scripts\pip.exe" install iopath ftfy pycocotools "setuptools<81" --quiet
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  SAM3 installed." -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: SAM3 install failed. SAM 3 text-prompt segmentation will be unavailable." -ForegroundColor Yellow
+            Write-Host "  To retry: .\venv\Scripts\pip.exe install git+https://github.com/facebookresearch/sam3.git --no-deps; .\venv\Scripts\pip.exe install iopath ftfy pycocotools 'setuptools<81'" -ForegroundColor DarkGray
+        }
+    }
+    Write-Host "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models\sam3\" -ForegroundColor DarkGray
+
+    Write-Host "[7/7] Installing frontend dependencies and building..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -436,7 +458,7 @@ function Cmd-Update {
     Write-Host "=== Crucible - Update ===" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "[1/5] Pulling latest changes..." -ForegroundColor Yellow
+    Write-Host "[1/6] Pulling latest changes..." -ForegroundColor Yellow
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "  git not found - skipping pull. Update the files manually if needed." -ForegroundColor DarkGray
     } else {
@@ -479,7 +501,7 @@ function Cmd-Update {
         }
     }
 
-    Write-Host "[2/5] Updating Python dependencies..." -ForegroundColor Yellow
+    Write-Host "[2/6] Updating Python dependencies..." -ForegroundColor Yellow
     & "$ROOT\venv\Scripts\pip.exe" install --upgrade pip --quiet
     Install-TorchIfNeeded
     if (-not [System.Console]::IsInputRedirected) {
@@ -501,7 +523,7 @@ function Cmd-Update {
         Write-Host "  Done." -ForegroundColor Green
     }
 
-    Write-Host "[3/5] Installing/updating SAM2..." -ForegroundColor Yellow
+    Write-Host "[3/6] Installing/updating SAM2..." -ForegroundColor Yellow
     if ([System.Console]::IsInputRedirected) { $reply = "" } else {
         $reply = Read-Host "  Install or update SAM2 from GitHub? [Y/n]"
     }
@@ -516,7 +538,28 @@ function Cmd-Update {
         }
     }
 
-    Write-Host "[4/5] Updating frontend dependencies..." -ForegroundColor Yellow
+    Write-Host "[4/6] Installing/updating SAM3..." -ForegroundColor Yellow
+    if ([System.Console]::IsInputRedirected) { $reply = "" } else {
+        $reply = Read-Host "  Install or update SAM3 from GitHub? [Y/n]"
+    }
+    if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
+        Write-Host "  Skipping SAM3." -ForegroundColor DarkGray
+    } else {
+        # --no-deps: sam3 pins numpy<2 and ftfy==6.1.1, which conflict with
+        # requirements.txt; its real runtime deps are installed explicitly.
+        & "$ROOT\venv\Scripts\pip.exe" install "git+https://github.com/facebookresearch/sam3.git" --no-deps --quiet
+        if ($LASTEXITCODE -eq 0) {
+            & "$ROOT\venv\Scripts\pip.exe" install iopath ftfy pycocotools "setuptools<81" --quiet
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  SAM3 up to date." -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: SAM3 install failed." -ForegroundColor Yellow
+        }
+    }
+    Write-Host "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models\sam3\" -ForegroundColor DarkGray
+
+    Write-Host "[5/6] Updating frontend dependencies..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -527,7 +570,7 @@ function Cmd-Update {
     Pop-Location
     Write-Host "  Done." -ForegroundColor Green
 
-    Write-Host "[5/5] Building frontend..." -ForegroundColor Yellow
+    Write-Host "[6/6] Building frontend..." -ForegroundColor Yellow
     Build-Frontend
 
     Write-Host ""

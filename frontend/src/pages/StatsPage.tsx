@@ -7,13 +7,14 @@ import type { ImageListItem, SubfolderInfo } from "../types";
 import { datasetsApi } from "../api/datasets";
 import { captionsApi } from "../api/captions";
 import { imagesApi, type ImageListParams } from "../api/images";
+import { detectionApi, type DetectionStats } from "../api/detection";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, savePersisted, datasetScopedKey } from "../utils/persistentState";
 
-const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score"]);
+const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score", "detection"]);
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const BLUR_EDGES   = [20, 40, 80, 150, 300];
@@ -87,13 +88,14 @@ type FilterParams = Omit<ImageListParams, "dataset_id" | "page" | "limit">;
 interface ChartEntry { name: string; count: number; filter?: FilterParams; }
 type PanelFilter = { title: string; params: FilterParams } | null;
 
-type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captions";
+type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captions" | "detections";
 type ItemId =
   | "score_guide" | "quality_flags" | "score_coverage"
   | "aesthetic_score" | "style_sim" | "color_richness" | "saturation"
   | "blur" | "noise" | "uniformity" | "watermark"
   | "aspect_ratio" | "megapixels" | "file_size" | "file_formats"
-  | "caption_wc" | "caption_tc" | "top_tags" | "cooccurrence";
+  | "caption_wc" | "caption_tc" | "top_tags" | "cooccurrence"
+  | "det_overview" | "det_labels" | "det_models" | "det_score" | "det_coverage" | "det_per_image";
 
 interface StatsCategoryDef { id: CategoryId; label: string; items: { id: ItemId; label: string }[]; }
 interface StatsVisibility {
@@ -336,7 +338,75 @@ const STATS_CONFIG: StatsCategoryDef[] = [
     { id: "top_tags",     label: "Top 20 tags"         },
     { id: "cooccurrence", label: "Tag co-occurrence"   },
   ]},
+  { id: "detections", label: "Detections & Masks", items: [
+    { id: "det_overview",  label: "Overview cards"        },
+    { id: "det_labels",    label: "Label distribution"    },
+    { id: "det_models",    label: "Model breakdown"       },
+    { id: "det_score",     label: "Detection score"       },
+    { id: "det_coverage",  label: "Mask coverage"         },
+    { id: "det_per_image", label: "Detections per image"  },
+  ]},
 ];
+
+// ─── Detection chart builders ─────────────────────────────────────────────────
+const COVERAGE_BUCKETS: { name: string; min?: number; max?: number }[] = [
+  { name: "<2%",     max: 0.02 },
+  { name: "2–10%",   min: 0.02, max: 0.10 },
+  { name: "10–25%",  min: 0.10, max: 0.25 },
+  { name: "25–50%",  min: 0.25, max: 0.50 },
+  { name: "50–75%",  min: 0.50, max: 0.75 },
+  { name: "75–95%",  min: 0.75, max: 0.95 },
+  { name: ">95%",    min: 0.95 },
+];
+
+const PER_IMAGE_BUCKETS: { name: string; min: number; max?: number }[] = [
+  { name: "0", min: 0, max: 0 },
+  { name: "1", min: 1, max: 1 },
+  { name: "2", min: 2, max: 2 },
+  { name: "3–5", min: 3, max: 5 },
+  { name: "6+", min: 6 },
+];
+
+function detLabelEntries(dist: Record<string, number>): ChartEntry[] {
+  return Object.entries(dist).map(([name, count]) => ({
+    name, count, filter: { detection_label_exact: name },
+  }));
+}
+
+// Model isn't a gallery filter param, so bars are non-clickable (no filter).
+function detModelEntries(dist: Record<string, number>): ChartEntry[] {
+  return Object.entries(dist).map(([name, count]) => ({ name, count }));
+}
+
+function detScoreEntries(dist: Record<string, number>): ChartEntry[] {
+  return Object.entries(dist).map(([name, count]) => {
+    if (name === "unscored") return { name, count, filter: { detection_score_null: true } };
+    const [lo, hi] = name.split("–").map(Number);
+    return {
+      name, count,
+      filter: {
+        detection_score_min: isNaN(lo) ? undefined : lo,
+        // Top bin (0.9–1.0) must include score == 1.0, which the exclusive max
+        // would drop — leave max open there.
+        detection_score_max: isNaN(hi) || hi >= 1 ? undefined : hi,
+      },
+    };
+  });
+}
+
+function detCoverageEntries(dist: Record<string, number>): ChartEntry[] {
+  return COVERAGE_BUCKETS.filter((b) => b.name in dist).map((b) => ({
+    name: b.name, count: dist[b.name],
+    filter: { mask_coverage_min: b.min, mask_coverage_max: b.max },
+  }));
+}
+
+function detPerImageEntries(dist: Record<string, number>): ChartEntry[] {
+  return PER_IMAGE_BUCKETS.filter((b) => b.name in dist).map((b) => ({
+    name: b.name, count: dist[b.name],
+    filter: { detection_count_min: b.min, detection_count_max: b.max },
+  }));
+}
 
 // ─── Visibility hook ──────────────────────────────────────────────────────────
 const STATS_VIS_KEY = "stats-visibility-v1";
@@ -620,6 +690,7 @@ function BucketPanel({
     const next = images.filter((img) => img.id !== imageId);
     queryClient.setQueryData<ImageListItem[]>(queryKey, next);
     queryClient.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+    queryClient.invalidateQueries({ queryKey: ["detection-stats", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["score-values", datasetId] });
     queryClient.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
@@ -813,7 +884,7 @@ function meanOf(values: number[] | undefined): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string, datasetName: string) {
+function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStats | undefined, datasetId: string, datasetName: string) {
   type Row = [string, string | number];
   const section = (label: string): Row[] => [["", ""], [`## ${label}`, ""]];
   const dist = (prefix: string, d: Record<string, number>): Row[] =>
@@ -895,6 +966,30 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, datasetId: string,
 
     ...section("CAPTION TOKEN DISTRIBUTION"),
     ...dist("caption_tokens", stats.caption_token_distribution),
+
+    ...(det ? [
+      ...section("DETECTIONS SUMMARY"),
+      ["total_detections", det.total_detections] as Row,
+      ["images_with_detections", det.images_with_detections] as Row,
+      ["images_without_detections", det.images_without_detections] as Row,
+      ["distinct_labels", det.distinct_labels] as Row,
+      ["bbox_only_count", det.bbox_only_count] as Row,
+
+      ...section("DETECTION LABEL DISTRIBUTION"),
+      ...dist("det_label", det.label_distribution),
+
+      ...section("DETECTION MODEL DISTRIBUTION"),
+      ...dist("det_model", det.model_distribution),
+
+      ...section("DETECTION SCORE DISTRIBUTION"),
+      ...dist("det_score", det.score_histogram),
+
+      ...section("MASK COVERAGE DISTRIBUTION"),
+      ...dist("mask_coverage", det.coverage_histogram),
+
+      ...section("DETECTIONS PER IMAGE DISTRIBUTION"),
+      ...dist("det_per_image", det.detections_per_image),
+    ] : []),
   ];
 
   const csv = rows.map(([k, v]) => `${k},${v}`).join("\n");
@@ -1107,6 +1202,13 @@ export default function StatsPage() {
     refetchInterval: statsRefetchInterval,
   });
 
+  const { data: detStats } = useQuery<DetectionStats>({
+    queryKey: ["detection-stats", datasetId, activeSubfolder],
+    queryFn: () => detectionApi.stats(datasetId!, activeSubfolder),
+    enabled: !!datasetId,
+    refetchInterval: statsRefetchInterval,
+  });
+
   const { data: thresholds } = useQuery<Thresholds>({
     queryKey: ["settings", "thresholds"],
     queryFn: settingsApi.getThresholds,
@@ -1142,6 +1244,14 @@ export default function StatsPage() {
   const maxTagCount = Math.max(...topTags.map((t) => t.count), 1);
 
   const ssimData = ssimEntries(stats.style_similarity_distribution ?? {});
+
+  // ── Detection chart data ──
+  const detLabelData    = detStats ? detLabelEntries(detStats.label_distribution)    : [];
+  const detModelData    = detStats ? detModelEntries(detStats.model_distribution)    : [];
+  const detScoreData    = detStats ? detScoreEntries(detStats.score_histogram)       : [];
+  const detCoverageData = detStats ? detCoverageEntries(detStats.coverage_histogram) : [];
+  const detPerImageData = detStats ? detPerImageEntries(detStats.detections_per_image) : [];
+  const hasDetections   = (detStats?.total_detections ?? 0) > 0;
 
   // ── Conditional visibility ──
   const hasQualityScores  = Object.keys(stats.blur_distribution).length > 0;
@@ -1191,7 +1301,7 @@ export default function StatsPage() {
               ))}
             </select>
           )}
-          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, datasetId!, stats?.name ?? "")}>
+          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, detStats, datasetId!, stats?.name ?? "")}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
             </svg>
@@ -1468,6 +1578,67 @@ export default function StatsPage() {
               </div>
             )}
           </div>
+        )}
+      </CategorySection>
+
+      {/* ── Detections & Masks ───────────────────────────────────────────────── */}
+      <CategorySection
+        label="Detections & Masks"
+        isVisible={vis.categories.detections}
+        isCollapsed={vis.collapsed.detections}
+        onToggleCollapsed={() => toggleCollapsed("detections")}
+      >
+        {!hasDetections ? (
+          <div className="panel" style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-mute)", fontSize: 12.5, marginBottom: 14 }}>
+            No detections in this {activeSubfolder ? "subfolder" : "dataset"} yet. Run object detection or draw masks to populate this section.
+          </div>
+        ) : (
+          <>
+            {show("detections", "det_overview") && detStats && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 14 }}>
+                {[
+                  { k: "Total detections", v: detStats.total_detections.toLocaleString() },
+                  { k: "Images w/ detections", v: `${detStats.images_with_detections.toLocaleString()} · ${detStats.total_images > 0 ? Math.round((detStats.images_with_detections / detStats.total_images) * 100) : 0}%` },
+                  { k: "Distinct labels", v: detStats.distinct_labels.toLocaleString() },
+                  { k: "Bbox-only (no mask)", v: detStats.bbox_only_count.toLocaleString() },
+                  { k: "Images w/o detections", v: detStats.images_without_detections.toLocaleString() },
+                ].map(({ k, v }) => (
+                  <div key={k} className="stat-card">
+                    <div className="sk">{k}</div>
+                    <div className="sv" style={{ fontSize: 15 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(show("detections", "det_labels") || show("detections", "det_models")) && (
+              <div style={{ display: "grid", gridTemplateColumns: show("detections", "det_labels") && show("detections", "det_models") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+                {show("detections", "det_labels") && (
+                  <HistPanel title="Label distribution" subtitle="Top 30 labels · click a bar to view matching images" entries={detLabelData} onBarClick={open("Detections")} />
+                )}
+                {show("detections", "det_models") && (
+                  <HistPanel title="Model breakdown" subtitle="Detections by source model" entries={detModelData} onBarClick={() => {}} />
+                )}
+              </div>
+            )}
+
+            {(show("detections", "det_score") || show("detections", "det_coverage")) && (
+              <div style={{ display: "grid", gridTemplateColumns: show("detections", "det_score") && show("detections", "det_coverage") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
+                {show("detections", "det_score") && (
+                  <HistPanel title="Detection score" subtitle="Confidence · &ldquo;unscored&rdquo; = manual rows · click to browse" entries={detScoreData} onBarClick={open("Detection score")} />
+                )}
+                {show("detections", "det_coverage") && (
+                  <HistPanel title="Mask coverage" subtitle="Approx. % of image covered · &lt;2% or &gt;95% often flag bad masks" entries={detCoverageData} onBarClick={open("Mask coverage")} />
+                )}
+              </div>
+            )}
+
+            {show("detections", "det_per_image") && (
+              <div style={{ marginBottom: 14 }}>
+                <HistPanel title="Detections per image" subtitle="Click a bar to view images with that many detections" entries={detPerImageData} onBarClick={open("Detections per image")} />
+              </div>
+            )}
+          </>
         )}
       </CategorySection>
 

@@ -20,7 +20,9 @@
 
 ## Object Detection
 
-Run detection on any selection of images as a background job. Three models are available:
+Run detection on any selection of images as a background job. Four models are available:
+
+Detection runs in the background: the **Detect** dialog closes as soon as the job is queued (progress shows in the global job bar at the top), so you can immediately open it again and queue another run — jobs run one after another. This works on both the gallery **Detect** button and the Image Detail page.
 
 ### Florence-2 (bounding boxes)
 
@@ -41,22 +43,73 @@ Two-stage pipeline: **Grounding DINO** localises objects from a text description
 
 | Mode | Description |
 |---|---|
-| **Text prompt** | Describe what to segment (e.g. `person . car`); noun phrases separated by ` . ` for multiple targets |
+| **Text prompt** | Describe what to segment; separate multiple targets with commas (e.g. `face, hand, watermark`) — one run detects them all, and each result is labelled with its phrase |
 | **Point prompts** | Use the **SAM Points** toolbar button on the image detail page to place foreground points (left-click) and background points (right-click), then run |
 
 Mask outputs are rendered as semi-transparent polygon fills on the SVG overlay in addition to bounding boxes.
 
 The **DINO box confidence** threshold (Settings → Quality Thresholds, default 0.35) controls how confident Grounding DINO must be before passing a detected region to SAM2 — lower values return more detections, higher values return fewer but more precise ones.
 
+### SAM 3 (text-prompt segmentation)
+
+Native open-vocabulary segmentation: type a phrase (e.g. `a person's face`) and SAM 3 finds and masks **every instance** of that concept in one pass — no separate detector stage, and typically better recall than the Grounding DINO → SAM2 pipeline for concept prompts. Separate several phrases with commas (e.g. `face, hand, watermark`) to detect them all in one run, each labelled with its phrase. Text prompt only (point prompts remain a SAM2 feature).
+
+The **SAM 3 confidence** threshold (Settings → Quality Thresholds, default 0.5) controls the minimum instance confidence for a mask to be kept.
+
+SAM 3 requires two manual setup steps (both offered by `manage` setup/update):
+1. The `sam3` package: `pip install git+https://github.com/facebookresearch/sam3.git`
+2. The checkpoint: download `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) into `models/sam3/`. Only safetensors checkpoints are supported.
+
 ---
 
 Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - Label chips with per-label counts
-- SVG overlay on the image with per-label colour coding (filled polygon masks for SAM2, bounding boxes for all models)
+- SVG overlay on the image with per-label colour coding (filled polygon masks for SAM2/SAM3, bounding boxes for all models)
 - Click any label chip to toggle its boxes/masks on/off
 - Eye icon in the toolbar hides/shows all detections at once
 
-The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results.
+The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run.
+
+> **Note on rotated images:** detections are now computed in the same EXIF-corrected frame the rest of the app uses, so overlays line up with the subject on photos that carry an EXIF orientation tag. Detections produced *before* this fix on such rotated images may be misaligned — re-run detection on those images to correct them.
+
+### Locating watermarks
+
+The batch **watermark** score (Quality → Batch score) flags *that* an image has a watermark but not *where* it is. To find the region, run a text-prompt detection (SAM 2, SAM 3, or Florence-2 Grounded Caption) with a watermark prompt such as `watermark. text. logo.` — the located boxes appear on the Image Detail overlay like any other detection, with the same delete/relabel tools.
+
+When one of those grounding tasks is selected, the detect modal shows a **Sync watermark flag from results** checkbox. With it on, the run updates each scanned image's watermark flag from its own result: images where a region was found are flagged, and images scanned clean have the flag cleared. Only images actually scanned are touched — an image whose inference fails keeps its previous flag, and (with caption-as-prompt grounding) uncaptioned images are left alone. Because the flag reflects the run that just finished, re-running with a better prompt corrects earlier mistakes. The Statistics watermark counts refresh when the run completes. A typical loop: filter the gallery to watermarked images → detect with sync → review the overlay → [exclude the watermark region from the loss mask](export.md#loss-masks-masked-training-loss) on export.
+
+### Managing detections
+
+The DETECTIONS panel lists every detection as an editable row so you can fix a bad run without re-running everything:
+
+- **Rename** — click a detection's label to edit it inline (Enter saves, Esc cancels)
+- **Delete** — the trash icon removes a single detection immediately (detections are regenerable, so there's no confirm)
+- **Merge** — tick the checkboxes on two or more rows and click **Merge N → {label}** to combine them into one detection (the merged box covers all of them, and their masks are unioned); the result takes the first-selected row's label
+- **Draw a box by hand** — the **Draw Box** toolbar button lets you drag a rectangle on the image, type a label, and add it as a detection. Tick **Refine with SAM** to have SAM 2 turn the box into a precise mask (GPU host only); without it the plain box is stored. Draw mode stays active so you can annotate several boxes in a row. Press Esc to exit.
+- **Refine a mask** — the **Refine** button on any masked detection lets you click foreground points (left-click) and background points (right-click) to correct the mask, then **Apply** re-segments it with SAM 2 (GPU host only)
+- **Crop from Detections** — seeds the crop tool with a box around the currently-visible detections (padded), ready to adjust and confirm
+
+Hand-drawn, refined, and merged detections are tagged as `manual` so they're never wiped by an automatic re-run.
+
+### Running & bulk-deleting detections
+
+The **Detections** tab on the Bulk Edit page has two panels, both scoped by the page's shared Scope selector (all images / a subfolder / images without chosen quality flags / the current selection):
+
+- **Run Detection** — run any detection model across the scope without leaving the page, the same way the gallery **Detect** dialog does (Florence-2, NudeNet, Grounded SAM 2.1 with a text prompt, or SAM 3; SAM 2 point prompts stay per-image on the detail page). Pick the model and prompt, optionally sync the watermark flag, and queue it — you can queue several runs back to back.
+- **Delete Detections** — deletes detections across many images at once (the images themselves are untouched). Filter by detection **label**, by the **model** that produced them, and/or by a **score below** threshold (unscored and hand-made detections never match a score filter). A live count shows how many detections match before you commit, and a confirmation dialog guards the delete.
+
+### Crop to detected subject
+
+Batch-crop images to their detections — useful for turning full scenes into tight subject crops before training:
+
+- **Detection labels** — chips select which labels drive the crop (none selected = all labels); images without a matching detection are skipped and reported
+- **Crop box** — *Union of all matches* (one box covering every matching detection) or *Largest match* (the single biggest detection)
+- **Padding %** — expands the box by a percentage of its own size on each side
+- **Aspect ratio** — optional grow-only snap: the crop expands (never shrinks) toward the chosen ratio, clamped to the image; if the subject can't fit any rect of that ratio, the ratio bends rather than cutting the subject
+- Same **Replace** / **New file** (`{stem}_crop{ext}`) output modes as upscaling. In **New file** mode you can also choose a **destination subfolder** for the cropped copies — *Same as source* (default), the dataset root, an existing subfolder, or a new one you name — making it easy to keep crops separate from originals (the choice is a logical label; no files are moved)
+- A completion toast reports how many images were cropped, skipped (no detections), unchanged (detection already spans the full image), or failed
+
+Available from: the **Crop** button in SelectionToolbar, the **Crop to Subject** tab on the Bulk Edit page, and the **Crop to Subject** button in the Image Detail page toolbar next to Crop/Upscale/LUT (single image; shown only when the image has detections, and its label chips show only that image's labels). When a crop **replaces** the image (any replace-mode crop — manual, replace + upscale, batch aspect crop, or Crop to Subject), the image's existing detections are automatically remapped into the new crop frame so their boxes/masks still line up; detections that fall entirely outside the crop are dropped. This remap is **geometric, not label-scoped**: the label you crop to only picks the crop rectangle — afterwards *every* detection that still overlaps the crop is kept, not just the one you cropped to. A whole-image detection (e.g. a `background` mask covering `[0,0]–[1,1]`) therefore survives as a full-frame detection on the crop; delete it by hand if you don't want it (detections are regenerable). **New-file** crops instead leave the original and its detections untouched and create a fresh image with **no** detections — re-run detection on it if you need boxes.
 
 ## Image Processing
 
@@ -88,14 +141,15 @@ Available from: the **LUT** button in the ImageDetailPage toolbar (mutually excl
 
 Select any images in the gallery (checkbox click), **shift+click** a checkbox to extend the selection as a contiguous range (re-shift-clicking replaces the previous range without affecting independently-selected images outside it), or use **Space** while viewing an image in the detail view. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
 
-Bulk score, upscale, LUT, detect, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
+Bulk score, upscale, LUT, detect, detection-crop, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
 - **Batch score** — run technical, aesthetic, watermark, NSFW, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
-- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 segmentation on the selection
+- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 / SAM 3 text-prompt segmentation on the selection
+- **Crop to detected subject** — batch-crop selected images to their detection boxes with padding and aspect-ratio snap → [details](#crop-to-detected-subject)
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
@@ -127,6 +181,7 @@ The gallery sort dropdown includes a **Custom order** option. Selecting it activ
 - Editable histogram bucket edges — rebucketing runs entirely client-side against raw score arrays
 - Top-500 tag frequency chart and tag co-occurrence matrix
 - The **Summary** section includes a score guide table (metric, value range, flag threshold, detection method) and score coverage bars showing what percentage of images have been scored for each metric
+- The **Detections & Masks** section audits object-detection/mask data before it feeds export or training: overview cards (total detections, % of images with detections, distinct labels, bbox-only count, images with no detections), a label distribution, a per-model breakdown, and detection-score, mask-coverage, and detections-per-image histograms. Mask coverage is an approximate percentage of the image each mask covers, useful for spotting masks that are too small (<2%) or that swallowed the whole frame (>95%). Clicking a bar opens the same filtered thumbnail grid — e.g. jump straight to the suspicious masks. The section live-updates while a detection job runs
 - Click any histogram bar or quality flag card to open a filtered thumbnail grid; clicking a thumbnail in that grid opens a full-resolution **lightbox** with prev/next navigation, a "View Details →" link to the image detail page, and a two-step delete button; a per-thumbnail × button on hover also provides inline delete
 - A gear icon in the page header opens a settings drawer to toggle individual histogram panels on/off; visibility state is persisted per-browser
 - All histograms and charts can be scoped to a specific subfolder via a dropdown in the page header
@@ -177,6 +232,7 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into se
 | Duplicate threshold | pHash Hamming distance cutoff for `is_duplicate` (default 8) |
 | NSFW threshold | Marqo classifier score cutoff for `is_nsfw` (default 0.5) |
 | DINO box confidence | Grounding DINO minimum confidence before passing a box to SAM2 (default 0.35) |
+| SAM 3 confidence | SAM 3 minimum instance confidence for a segmentation mask to be kept (default 0.5) |
 
 **Versioning** — version control mode (Off / Manual / Auto; see [Dataset Versioning](versioning.md)) plus branch snapshot behavior. Requires Save for the version control mode.
 

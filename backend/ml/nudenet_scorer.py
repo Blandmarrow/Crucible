@@ -29,16 +29,19 @@ def detect_sync(image_path: str, min_prob: float = 0.5) -> list[dict]:
     Returns a list of dicts: {label, bbox [x1,y1,x2,y2] normalized 0-1, score}.
     Detections below min_prob are filtered out.
     """
-    from PIL import Image
+    from backend.ml.image_utils import open_rgb
 
     detector = _load_detector()
 
     # NudeNet returns list[{"class": str, "score": float, "box": [x, y, w, h]}]
     raw = detector.detect(image_path)
 
-    # Get image dimensions for normalization
-    with Image.open(image_path) as img:
-        W, H = img.size
+    # Normalize by the EXIF-transposed size: cv2 inside NudeNet applies EXIF
+    # orientation, so its boxes are in the transposed frame. Using the raw
+    # Image.open size here would mis-scale boxes on rotated images.
+    img = open_rgb(image_path)
+    W, H = img.size
+    img.close()
 
     results = []
     for det in raw:

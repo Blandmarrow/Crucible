@@ -590,6 +590,28 @@ class ModelManager:
                 self._registry[model_id] = entry
             return entry
 
+    async def load_sam3(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = "sam3"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            from backend.ml.sam3_predictor import _load_sam3_sync
+            self._evict_lru(3500)
+            entry = await _loop.run_in_executor(
+                None, _load_sam3_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
     async def unload(self, model_id: str) -> None:
         async with self._get_lock(model_id):
             with self._sync_lock:
@@ -673,6 +695,7 @@ class ModelManager:
             {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
             {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000},
             {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800},
+            {"id": "sam3", "name": "SAM 3 (text-prompt segmentation)", "vram_mb": 3500},
             {"id": "tag_embedder", "name": "MiniLM Tag Embedder", "vram_mb": 500},
         ]
         return [{**m, "loaded": m["id"] in loaded} for m in all_models]

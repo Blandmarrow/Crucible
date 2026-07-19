@@ -4,7 +4,6 @@ import re
 import shutil
 from pathlib import Path
 
-import imagehash
 from PIL import Image, ImageOps
 
 from backend.config import settings
@@ -183,6 +182,8 @@ def extract_generation_metadata(path: str) -> dict | None:
 
 
 def get_image_info(path: str) -> dict:
+    import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
+
     try:
         img = _open_safe(path)
         return {
@@ -249,6 +250,8 @@ def crop_image_to_dest(
     output_width: int | None = None,
     output_height: int | None = None,
 ) -> dict:
+    import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
+
     img = _open_safe(src_path)
     cropped = img.crop((x, y, x + width, y + height))
     img.close()

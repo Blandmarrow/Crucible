@@ -16,6 +16,7 @@ from backend.schemas.versioning import (
     SnapshotCreate, VersionOut, VersionUpdate,
 )
 from backend.services import version_service
+from backend.services.dataset_busy import busy
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ async def create_branch(
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
+        async with AsyncSessionLocal() as session, busy(dataset_id, "branch snapshot"):
             try:
                 await version_service.create_branch(session, dataset_id, branch_name, from_vid, inc_snap)
             except Exception as exc:
@@ -150,7 +151,7 @@ async def checkout_branch(
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
+        async with AsyncSessionLocal() as session, busy(dataset_id, "branch checkout"):
             await version_service.checkout_branch(
                 session, dataset_id, branch_id,
                 pre_restore_snapshot=pre_restore,
@@ -242,7 +243,7 @@ async def create_snapshot(
 
         async def _run(job_id: str) -> None:
             from backend.database import AsyncSessionLocal
-            async with AsyncSessionLocal() as session:
+            async with AsyncSessionLocal() as session, busy(dataset_id, "snapshot"):
                 await version_service.create_snapshot(
                     session, dataset_id,
                     name=snap_name, description=snap_desc,
@@ -375,13 +376,49 @@ async def restore_version(
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
+        async with AsyncSessionLocal() as session, busy(dataset_id, "restore"):
             await version_service.restore_snapshot(
                 session, dataset_id, version_id,
                 handle_extra_images=h_extra,
                 pre_restore_snapshot=pre_restore,
                 job_id=job_id,
             )
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.post("/{dataset_id}/versions/prune")
+async def prune_versions(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    dataset = await db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(404, "Dataset not found")
+
+    from backend.services.threshold_service import get_thresholds
+    settings = await get_thresholds(db)
+    if settings.versioning_mode == "off":
+        raise HTTPException(400, "Versioning is disabled. Enable it in Settings first.")
+
+    job = BackgroundJob(
+        job_type="prune_versions",
+        label="Prune version storage",
+        dataset_id=dataset_id,
+        total_items=1,
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session, busy(dataset_id, "prune"):
+            summary = await version_service.prune_object_store(
+                session, dataset_id, job_id=job_id
+            )
+        async with AsyncSessionLocal() as session:
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = summary
+                await session.commit()
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

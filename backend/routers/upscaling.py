@@ -132,6 +132,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
 
                 if replace:
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                    await session.commit()  # persist the COW hash backfill before the overwrite
 
                 try:
                     info = await loop.run_in_executor(

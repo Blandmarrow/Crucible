@@ -28,6 +28,7 @@ export interface RestoreRequest {
 export interface RestoreSummary {
   files_restored: number;
   files_unavailable: number;
+  files_failed: number;
   images_re_created: number;
   images_removed: number;
   pre_restore_version_id: string | null;
@@ -89,6 +90,11 @@ export const versioningApi = {
   restoreVersion: (datasetId: string, versionId: string, body: RestoreRequest) =>
     client
       .post<{ job_id: string }>(`/datasets/${datasetId}/versions/${versionId}/restore`, body)
+      .then((r) => r.data),
+
+  pruneStorage: (datasetId: string) =>
+    client
+      .post<{ job_id: string }>(`/datasets/${datasetId}/versions/prune`)
       .then((r) => r.data),
 
   diff: (datasetId: string, v1: string, v2: string) =>

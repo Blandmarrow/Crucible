@@ -47,10 +47,14 @@ class DatasetVersion(Base):
         back_populates="versions",
         foreign_keys=[branch_id],
     )
+    # passive_deletes: version_image_states.version_id has ondelete="CASCADE" and
+    # PRAGMA foreign_keys=ON is set per connection, so the DB deletes state rows —
+    # the ORM must not load thousands of them just to delete a version.
     image_states: Mapped[list["VersionImageState"]] = relationship(
         "VersionImageState",
         back_populates="version",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 

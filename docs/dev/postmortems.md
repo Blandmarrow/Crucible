@@ -12,4 +12,6 @@ phrase it with the words someone would actually search for when the bug resurfac
 
 | ID | Symptom | Root-cause category | Status | Detail |
 |---|---|---|---|---|
-| PM-EX (EXAMPLE — delete me) | Timestamps in job history shifted by the browser's UTC offset ("job ran 3h ago") | Naive datetime serialized without timezone | STRUCTURAL | `docs/dev/postmortems/PM-000-template.md` (illustrative — real rows link their own PM-NNN file) |
+| PM-001 | Restore failed: UNIQUE constraint failed: images.dataset_id, images.filename (filename swaps/renumber chains, deleted-name reuse) | Batch write permuting values under a unique constraint without staged updates (SQLite checks constraints per statement) | MITIGATED | `docs/dev/postmortems/PM-001-restore-filename-collision.md` |
+| PM-002 | Pre-restore/checkout auto-snapshot appeared on "main" and moved main's head while working on another branch | Auto-created record resolved context from a hardcoded name instead of current state | MITIGATED | `docs/dev/postmortems/PM-002-auto-snapshot-wrong-branch.md` |
+| PM-003 | Restore crashed with PK IntegrityError / snapshot couldn't materialize an image after batch move to another dataset | Scope-removal path (move) bypassed the versioning deletion hook keyed on DB deletes only | MITIGATED | `docs/dev/postmortems/PM-003-move-bypassed-versioning-hook.md` |

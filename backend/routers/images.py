@@ -34,6 +34,7 @@ from backend.schemas.image import (
 )
 from backend.services.dataset_service import refresh_stats
 from backend.services import version_service
+from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_service import (
     crop_image_to_dest,
@@ -307,6 +308,7 @@ async def upload_images(
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
+    ensure_not_busy(dataset_id)
 
     dest_images = Path(ds.folder_path) / "images"
     dest_thumbs = Path(ds.folder_path) / "thumbnails"
@@ -391,6 +393,7 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
     if not img:
         raise HTTPException(404, "Image not found")
     dataset_id = img.dataset_id
+    ensure_not_busy(dataset_id)
     p = Path(img.file_path)
     t = Path(img.thumbnail_path) if img.thumbnail_path else None
     txt = p.with_suffix(".txt")
@@ -414,6 +417,8 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
         return
 
     dataset_ids = {r.dataset_id for r in rows}
+    for did in dataset_ids:
+        ensure_not_busy(did)
     files_to_delete: list[Path] = []
     for r in rows:
         p = Path(r.file_path)
@@ -445,6 +450,7 @@ async def bulk_count(body: BulkCountRequest, db: AsyncSession = Depends(get_db))
 
 @router.post("/bulk-rename")
 async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db)):
+    ensure_not_busy(body.dataset_id)
     raw = body.new_stem.strip()
     if not raw:
         raise HTTPException(400, "new_stem cannot be empty")
@@ -578,6 +584,7 @@ async def batch_reorder(body: BatchReorderRequest, db: AsyncSession = Depends(ge
 
 @router.post("/bulk-delete")
 async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depends(get_db)):
+    ensure_not_busy(body.dataset_id)
     query = _apply_bulk_filters(
         select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path).where(
             Image.dataset_id == body.dataset_id
@@ -642,7 +649,9 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
+    ensure_not_busy(img.dataset_id)
     await version_service.protect_file_before_overwrite(image_id, img.file_path, db)
+    await db.commit()  # persist the COW hash backfill before the overwrite
     new_w, new_h = await asyncio.get_event_loop().run_in_executor(
         None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
     )
@@ -658,6 +667,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
+    ensure_not_busy(img.dataset_id)
 
     src_path = Path(img.file_path)
     dest_images = src_path.parent
@@ -667,6 +677,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     # --- Replace mode: overwrite the original image ---
     if body.replace:
         await version_service.protect_file_before_overwrite(img.id, img.file_path, db)
+        await db.commit()  # persist the COW hash backfill before the overwrite
         tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
 
         if not body.upscale_model:
@@ -897,6 +908,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
             for i, img in enumerate(images):
                 loop = asyncio.get_event_loop()
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
                 new_w, new_h = await loop.run_in_executor(
                     None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar
                 )
@@ -930,6 +942,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
             for i, img in enumerate(images):
                 loop = asyncio.get_event_loop()
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
                 new_w, new_h, rect, old_size = await loop.run_in_executor(
                     None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
                 )
@@ -955,6 +968,7 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
+    ensure_not_busy(img.dataset_id)
 
     raw = body.new_stem.strip()
     if not raw or "/" in raw or "\\" in raw or len(raw) > 200:
@@ -1007,6 +1021,7 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
         raise HTTPException(404, "No matching images found")
 
     dataset_id = rows[0].dataset_id
+    ensure_not_busy(dataset_id)
     images_dir = Path(rows[0].file_path).parent
 
     if body.rename_on_move:
@@ -1089,6 +1104,8 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         raise HTTPException(404, "No matching images found")
     if source_dataset_id == body.target_dataset_id:
         raise HTTPException(400, "Source and target dataset must differ")
+    ensure_not_busy(source_dataset_id)
+    ensure_not_busy(body.target_dataset_id)
 
     target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
     target_dataset = target_ds_result.scalar_one_or_none()
@@ -1141,6 +1158,12 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         new_thumb = Path(thumbnail_path_for(str(new_path)))
         assigned_order = (next_sort_order + idx) if next_sort_order is not None else None
         plan.append((old_path, new_path, old_thumb, new_thumb, row.id, new_fn, assigned_order))
+
+    # Moving an image out of its dataset removes it from that dataset's history —
+    # back its content into the source object store first so pre-move snapshots
+    # can still restore it. Must run while dataset_id still points at the source.
+    for old_path, _new_path, _old_thumb, _new_thumb, img_id, _new_fn, _order in plan:
+        await version_service.mark_image_deleted_in_versions(img_id, str(old_path), db)
 
     for old_path, new_path, old_thumb, new_thumb, img_id, new_fn, assigned_order in plan:
         await db.execute(
@@ -1205,6 +1228,8 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         raise HTTPException(404, "No matching images found")
     if source_dataset_id == body.target_dataset_id:
         raise HTTPException(400, "Source and target dataset must differ")
+    ensure_not_busy(source_dataset_id)
+    ensure_not_busy(body.target_dataset_id)
 
     target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
     target_dataset = target_ds_result.scalar_one_or_none()

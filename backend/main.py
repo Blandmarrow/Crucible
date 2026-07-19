@@ -7,8 +7,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-# Triton is unavailable on Windows; disable TorchDynamo so torch.compile is never
-# attempted during inference (single-image inference gains nothing from it anyway).
+# Disable TorchDynamo so torch.compile is never attempted during inference
+# (single-image inference gains nothing from it anyway). torch ships no triton on
+# Windows, so compile would fail there outright; SAM3 users install triton-windows
+# separately, which makes triton importable but is not a reason to enable compile.
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 # HuggingFace symlink warning: expected on Windows without Developer Mode — cache still works fine
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -17,6 +19,13 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 warnings.filterwarnings("ignore", message=".*Detected no triton.*")
 # open_clip: ViT-L-14 weights trained with QuickGELU; no effect on inference output
 warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU activation.*")
+# sam3 imports the deprecated timm.models.layers path; third-party, nothing to fix here.
+# NOTE: sam3's other import-time warning ("CUDA is not available ... Disabling
+# autocast") is deliberately NOT filtered - it is the clearest signal that the venv
+# has a CPU-only torch, which is otherwise only visible as unexplained slowness.
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, message=".*timm.models.layers is deprecated.*"
+)
 # pydantic: HuggingFace internals use Field(repr=, frozen=) in a way Pydantic v2 flags; no runtime effect
 try:
     from pydantic.warnings import UnsupportedFieldAttributeWarning

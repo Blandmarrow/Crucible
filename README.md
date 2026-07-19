@@ -110,6 +110,14 @@ chmod +x manage.sh && ./manage.sh setup
 
 Setup auto-detects your GPU and prompts before downloading the matching PyTorch wheel (~2.5 GB) — no manual pre-install needed.
 
+> **Answer Y to the GPU PyTorch prompt.** It installs the CUDA-enabled PyTorch build *into the venv*; it is not the system CUDA toolkit, and having CUDA already installed on your machine does not replace it. Declining leaves every ML feature running on CPU. To check afterwards:
+>
+> ```bash
+> python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+> ```
+>
+> A `+cpu` version or `False` means you are on CPU — re-run setup/update and answer Y.
+
 During setup you are also prompted to install **SAM2** (Segment Anything Model 2, ~50 MB from GitHub) — required only for Grounded SAM 2.1 segmentation; all other features work without it.
 
 You are likewise prompted to install **SAM3** (Segment Anything Model 3, ~50 MB from GitHub) — required only for SAM 3 text-prompt segmentation. SAM3 additionally needs its checkpoint downloaded manually: get `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) and place it in `models/sam3/`. Only safetensors checkpoints are supported.
@@ -196,9 +204,12 @@ Skipping this disables Grounded SAM 2.1 segmentation only; everything else still
 ```bash
 pip install "git+https://github.com/facebookresearch/sam3.git" --no-deps
 pip install iopath ftfy pycocotools "setuptools<81"
+pip install triton-windows   # Windows only
 ```
 
 (`--no-deps` because sam3 pins `numpy<2` and `ftfy==6.1.1`, which conflict with `requirements.txt`; the second command installs its actual runtime dependencies.)
+
+SAM 3 requires `triton`. PyTorch's Linux wheels already include it, but its **Windows** wheels do not — hence the third command. Without it, SAM 3 fails to load with `ModuleNotFoundError: No module named 'triton'`.
 
 Then download the checkpoint `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) into `models/sam3/`. Skipping this disables SAM 3 segmentation only.
 

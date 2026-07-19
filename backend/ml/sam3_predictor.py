@@ -353,8 +353,24 @@ def _disable_pin_memory_off_cuda() -> None:
 def _load_sam3_sync(job_id=None, loop=None, dataset_id=None):
     """Build the SAM3 image model, load the safetensors checkpoint, wrap in Sam3Processor."""
     from safetensors.torch import load_file
-    from sam3.model_builder import build_sam3_image_model
-    from sam3.model.sam3_image_processor import Sam3Processor
+    try:
+        from sam3.model_builder import build_sam3_image_model
+        from sam3.model.sam3_image_processor import Sam3Processor
+    except ModuleNotFoundError as e:
+        # sam3 imports triton unconditionally (sam3/model/edt.py) and also calls
+        # into triton kernels on CUDA (perflib nms / connected components), but
+        # torch's Windows wheels never ship triton - only its Linux wheels pull it
+        # in transitively. Raise something the user can act on instead of a bare
+        # import traceback from six frames deep inside sam3.
+        if (e.name or "").split(".")[0] == "triton":
+            raise RuntimeError(
+                "SAM 3 requires the 'triton' package, which PyTorch does not ship on "
+                "Windows. Install it with:\n"
+                "    venv\\Scripts\\pip.exe install triton-windows\n"
+                "(re-running 'manage.ps1 update' installs it too). On Linux, "
+                "reinstall PyTorch so its bundled triton is present."
+            ) from e
+        raise
     from backend.ml.model_manager import ModelEntry
     from backend.ml.download_progress import emit_sync
 

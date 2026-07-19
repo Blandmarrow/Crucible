@@ -281,10 +281,21 @@ _install_torch_if_needed() {
                     [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
                 esac
                 echo "  Installing PyTorch ($tag) from PyTorch wheel index..."
-                if "$ROOT/venv/bin/pip" install "torch>=2.7" --index-url "$index_url" --quiet; then
+                # A CPU-only build already in the venv satisfies "torch>=2.7", so a
+                # plain install is a silent no-op that still exits 0 and the GPU
+                # wheel never lands. Uninstall first so the install is real.
+                # torchvision goes too: a +cpu torchvision against a CUDA torch
+                # fails at runtime.
+                "$ROOT/venv/bin/pip" uninstall -y torch torchvision --quiet 2>/dev/null || true
+                "$ROOT/venv/bin/pip" install "torch>=2.7" torchvision --index-url "$index_url" --quiet || true
+                # Verify against the interpreter, not pip's exit code: pip exits 0
+                # in several cases where no usable CUDA build ended up installed.
+                if "$ROOT/venv/bin/python" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
                     echo "  CUDA-enabled PyTorch ($tag) installed."
                 else
-                    echo "  WARNING: CUDA torch install failed — CPU-only fallback will be used."
+                    echo "  WARNING: PyTorch is still CPU-only — ML features will be very slow."
+                    echo "  Retry: ./venv/bin/pip uninstall -y torch torchvision"
+                    echo "         ./venv/bin/pip install torch torchvision --index-url $index_url"
                 fi
                 return
             else
@@ -340,10 +351,15 @@ _install_torch_if_needed() {
             [Nn]*) echo "  Skipping GPU PyTorch - CPU-only will be installed via requirements.txt."; return ;;
         esac
         echo "  Installing PyTorch ($rocm_tag) from PyTorch wheel index..."
-        if "$ROOT/venv/bin/pip" install "torch>=2.7" --index-url "$index_url" --quiet; then
+        # Same already-satisfied no-op as the CUDA branch above - uninstall first.
+        "$ROOT/venv/bin/pip" uninstall -y torch torchvision --quiet 2>/dev/null || true
+        "$ROOT/venv/bin/pip" install "torch>=2.7" torchvision --index-url "$index_url" --quiet || true
+        if "$ROOT/venv/bin/python" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
             echo "  ROCm-enabled PyTorch ($rocm_tag) installed."
         else
-            echo "  WARNING: ROCm torch install failed — CPU-only fallback will be used."
+            echo "  WARNING: PyTorch is still CPU-only — ML features will be very slow."
+            echo "  Retry: ./venv/bin/pip uninstall -y torch torchvision"
+            echo "         ./venv/bin/pip install torch torchvision --index-url $index_url"
         fi
         return
     fi

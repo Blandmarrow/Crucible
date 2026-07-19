@@ -177,6 +177,46 @@ function Get-BestCudaTag {
     return $bestTag
 }
 
+function Install-TritonWindows {
+    # triton is a REAL runtime dependency of sam3 on CUDA, not just an import
+    # artifact: sam3/perflib/nms.py and connected_components.py both lazily import
+    # triton kernels inside their `.is_cuda` branch, and nms_masks is called on the
+    # image inference path. sam3 also imports it unconditionally at module load
+    # (sam3/model/edt.py), so without it SAM3 cannot even be imported.
+    #
+    # torch's Windows wheels never ship triton; torch's Linux wheels pull it in
+    # transitively, which is why this only ever bites on Windows. triton-windows
+    # is the Windows port. Non-fatal: SAM3 still imports and runs on CPU-only
+    # hosts, which never reach a triton code path.
+    Write-Host "  Installing triton-windows (required by SAM3 on GPU)..." -ForegroundColor DarkGray
+    & "$ROOT\venv\Scripts\pip.exe" install triton-windows --quiet
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  triton-windows installed." -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: triton-windows install failed - SAM 3 will fail to load." -ForegroundColor Yellow
+        Write-Host "  To retry: .\venv\Scripts\pip.exe install triton-windows" -ForegroundColor DarkGray
+    }
+    # Don't let a triton failure flip the SAM3 status message below.
+    $global:LASTEXITCODE = 0
+}
+
+function Warn-IfCpuOnlyTorch {
+    # Printed at the very end of setup/update so a CPU-only fallback cannot
+    # scroll past unnoticed - it costs an order of magnitude in ML speed and
+    # every symptom of it (slow jobs, autocast warnings from sam3) is indirect.
+    $cuda = $null
+    try {
+        $cuda = & "$ROOT\venv\Scripts\python.exe" -c `
+            "import torch; print(torch.cuda.is_available())" 2>$null
+    } catch { return }
+    if ($cuda -eq "True") { return }
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return }
+    Write-Host ""
+    Write-Host "  !! PyTorch is CPU-only, but an NVIDIA GPU is present." -ForegroundColor Yellow
+    Write-Host "  !! Captioning, scoring and detection will be extremely slow." -ForegroundColor Yellow
+    Write-Host "  !! Re-run this script and answer Y to the GPU PyTorch prompt." -ForegroundColor Yellow
+}
+
 function Install-TorchIfNeeded {
     # If a CUDA-capable torch is already reachable (e.g. via --system-site-packages
     # from a prior CUDA install) there is nothing to do.
@@ -222,6 +262,10 @@ function Install-TorchIfNeeded {
 
         if ($tag) {
             $indexUrl = "https://download.pytorch.org/whl/$tag"
+            Write-Host "  PyTorch in this venv is currently CPU-only (or not yet installed)." -ForegroundColor Yellow
+            Write-Host "  This installs the CUDA-enabled PyTorch build INTO THE VENV. It is not" -ForegroundColor Yellow
+            Write-Host "  the system CUDA toolkit, and an existing CUDA install does not provide" -ForegroundColor Yellow
+            Write-Host "  it. Answering N leaves all ML features running on CPU (very slow)." -ForegroundColor Yellow
             Write-Host "  Source: $indexUrl (~2.5 GB)" -ForegroundColor DarkGray
             if ([System.Console]::IsInputRedirected) { $reply = "" } else {
                 $reply = Read-Host "  Install GPU-accelerated PyTorch ($tag)? [Y/n]"
@@ -231,11 +275,27 @@ function Install-TorchIfNeeded {
                 return
             }
             Write-Host "  Installing PyTorch ($tag) from PyTorch wheel index..." -ForegroundColor Yellow
-            & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.7" --index-url $indexUrl --quiet
-            if ($LASTEXITCODE -eq 0) {
+            # A CPU-only build already in the venv (e.g. 2.12.1+cpu) SATISFIES
+            # "torch>=2.7", so a plain install is a silent no-op that still exits 0
+            # and the CUDA wheel never lands - the user answers Y, sees a success
+            # message, and stays on CPU. Uninstall first so the install is real.
+            # torchvision goes too: a +cpu torchvision against a CUDA torch fails
+            # at runtime, and sam3/spandrel/timm all pull it in.
+            & "$ROOT\venv\Scripts\pip.exe" uninstall -y torch torchvision --quiet 2>$null
+            & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.7" torchvision --index-url $indexUrl --quiet
+            # Verify against the interpreter, not $LASTEXITCODE: pip exits 0 in
+            # several cases where no usable CUDA build ended up installed.
+            $cudaNow = $null
+            try {
+                $cudaNow = & "$ROOT\venv\Scripts\python.exe" -c `
+                    "import torch; print(torch.cuda.is_available())" 2>$null
+            } catch { }
+            if ($cudaNow -eq "True") {
                 Write-Host "  CUDA-enabled PyTorch ($tag) installed." -ForegroundColor Green
             } else {
-                Write-Host "  WARNING: CUDA torch install failed - CPU-only fallback will be used." -ForegroundColor Yellow
+                Write-Host "  WARNING: PyTorch is still CPU-only - ML features will be very slow." -ForegroundColor Yellow
+                Write-Host "  Retry manually: .\venv\Scripts\pip.exe uninstall -y torch torchvision" -ForegroundColor DarkGray
+                Write-Host "                  .\venv\Scripts\pip.exe install torch torchvision --index-url $indexUrl" -ForegroundColor DarkGray
             }
         } else {
             Write-Host "  CUDA $maj.$min is older than 12.6 - GPU-accelerated PyTorch is not available." -ForegroundColor Yellow
@@ -360,11 +420,13 @@ function Cmd-Setup {
         if ($LASTEXITCODE -eq 0) {
             & "$ROOT\venv\Scripts\pip.exe" install iopath ftfy pycocotools "setuptools<81" --quiet
         }
-        if ($LASTEXITCODE -eq 0) {
+        $sam3Ok = ($LASTEXITCODE -eq 0)
+        if ($sam3Ok) { Install-TritonWindows }
+        if ($sam3Ok) {
             Write-Host "  SAM3 installed." -ForegroundColor Green
         } else {
             Write-Host "  WARNING: SAM3 install failed. SAM 3 text-prompt segmentation will be unavailable." -ForegroundColor Yellow
-            Write-Host "  To retry: .\venv\Scripts\pip.exe install git+https://github.com/facebookresearch/sam3.git --no-deps; .\venv\Scripts\pip.exe install iopath ftfy pycocotools 'setuptools<81'" -ForegroundColor DarkGray
+            Write-Host "  To retry: .\venv\Scripts\pip.exe install git+https://github.com/facebookresearch/sam3.git --no-deps; .\venv\Scripts\pip.exe install iopath ftfy pycocotools 'setuptools<81' triton-windows" -ForegroundColor DarkGray
         }
     }
     Write-Host "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models\sam3\" -ForegroundColor DarkGray
@@ -392,6 +454,7 @@ function Cmd-Setup {
         Write-Host "  Created .env from .env.example. Edit it to add your HF_TOKEN if you plan to use PaliGemma-2." -ForegroundColor Yellow
     }
 
+    Warn-IfCpuOnlyTorch
     Write-Host ""
     Write-Host "=== Setup complete! ===" -ForegroundColor Green
     Write-Host "Run .\manage.ps1 start to launch the app." -ForegroundColor Cyan
@@ -551,7 +614,9 @@ function Cmd-Update {
         if ($LASTEXITCODE -eq 0) {
             & "$ROOT\venv\Scripts\pip.exe" install iopath ftfy pycocotools "setuptools<81" --quiet
         }
-        if ($LASTEXITCODE -eq 0) {
+        $sam3Ok = ($LASTEXITCODE -eq 0)
+        if ($sam3Ok) { Install-TritonWindows }
+        if ($sam3Ok) {
             Write-Host "  SAM3 up to date." -ForegroundColor Green
         } else {
             Write-Host "  WARNING: SAM3 install failed." -ForegroundColor Yellow
@@ -573,6 +638,7 @@ function Cmd-Update {
     Write-Host "[6/6] Building frontend..." -ForegroundColor Yellow
     Build-Frontend
 
+    Warn-IfCpuOnlyTorch
     Write-Host ""
     Write-Host "=== Update complete! ===" -ForegroundColor Green
     Write-Host "Database migrations will run automatically on next start." -ForegroundColor DarkGray

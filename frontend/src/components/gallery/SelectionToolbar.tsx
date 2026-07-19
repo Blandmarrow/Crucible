@@ -82,7 +82,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectOverwrite, setDetectOverwrite] = useState(true);
   const [detectSyncWatermark, setDetectSyncWatermark] = useState(false);
   const [detectJobLabel, setDetectJobLabel] = useState("");
-  const [detectJobId, setDetectJobId] = useState<string | null>(null);
+  const [detectJobIds, setDetectJobIds] = useState<string[]>([]);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
@@ -90,7 +90,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
-  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
+  const activeJobs = useJobStore((s) => s.activeJobs);
 
   useEffect(() => {
     if (!scoreJobId || !scoreJobProgress) return;
@@ -114,17 +114,30 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     }
   }, [captionJobProgress?.status, captionJobId, datasetId, qc]);
 
+  // Track a list of detection jobs so multiple runs can be queued. Iterate the
+  // tracked ids each time activeJobs changes; drop any that reached a terminal
+  // status (toasting completed/failed, silent on cancelled).
   useEffect(() => {
-    if (!detectJobId || !detectJobProgress) return;
-    if (detectJobProgress.status === "completed") {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setDetectJobId(null);
-      toast.success("Detection complete");
-    } else if (detectJobProgress.status === "failed") {
-      setDetectJobId(null);
-      toast.error(detectJobProgress.message || "Detection failed");
+    if (detectJobIds.length === 0) return;
+    const done: string[] = [];
+    for (const jobId of detectJobIds) {
+      const progress = activeJobs.get(jobId);
+      if (!progress) continue;
+      if (progress.status === "completed") {
+        qc.invalidateQueries({ queryKey: ["images", datasetId] });
+        toast.success("Detection complete");
+        done.push(jobId);
+      } else if (progress.status === "failed") {
+        toast.error(progress.message || "Detection failed");
+        done.push(jobId);
+      } else if (progress.status === "cancelled") {
+        done.push(jobId);
+      }
     }
-  }, [detectJobProgress?.status, detectJobId, datasetId, qc]);
+    if (done.length > 0) {
+      setDetectJobIds((prev) => prev.filter((id) => !done.includes(id)));
+    }
+  }, [activeJobs, detectJobIds, datasetId, qc]);
 
   const embeddingTypeInitialized = useRef(false);
   useEffect(() => {
@@ -389,8 +402,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onSuccess: (data) => {
       setShowDetect(false);
       if (data.job_id) {
-        setDetectJobId(data.job_id);
-        toast.success(`Detecting objects in ${count} image${count !== 1 ? "s" : ""}…`);
+        setDetectJobIds((prev) => [...prev, data.job_id!]);
+        toast.success("Detection queued");
       } else {
         toast("No images to process");
       }
@@ -904,14 +917,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     </label>
                     <input
                       className="input"
-                      placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. a person's face" : "e.g. a cat sitting on a dog"}
+                      placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. face, hand, watermark" : "e.g. a cat sitting on a dog"}
                       value={detectPrompt}
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus
                     />
                     <p className="text-xs text-gray-500">
                       {detectModel === "sam2" || detectModel === "sam3"
-                        ? "Every instance of this phrase gets a segmentation mask."
+                        ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
                         : "Florence-2 will draw boxes around the phrases from this caption."}
                     </p>
                   </>

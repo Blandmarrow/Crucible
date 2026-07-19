@@ -21,6 +21,8 @@ export const detectionApi = {
   run: (params: {
     dataset_id: string;
     image_ids?: string[];
+    subfolder?: string;
+    quality_flags?: string[];
     model: string;
     task: string;
     custom_prompt?: string;

@@ -21,6 +21,8 @@ class DetectionOut(BaseModel):
 class DetectionJobRequest(BaseModel):
     dataset_id: str
     image_ids: list[str] | None = None
+    subfolder: str | None = None
+    quality_flags: list[str] | None = None   # exclude images with these flags set
     model: str          # "florence2_large", "florence2_promptgen", "nudenet", "sam2"
     task: str           # "<OD>", "<CAPTION_TO_PHRASE_GROUNDING>", "nudenet", "text_prompt", "points"
     custom_prompt: str = ""        # shared prompt for grounding; ignored when use_caption_as_prompt=True

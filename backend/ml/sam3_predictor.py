@@ -440,7 +440,10 @@ def predict_sync(
     """
     import torch
 
-    if not text_prompt.strip():
+    # Comma-separated multi-phrase: one job runs every phrase. A single phrase
+    # is byte-identical to the old single-prompt path (one-element list).
+    phrases = [p.strip() for p in text_prompt.split(",") if p.strip()]
+    if not phrases:
         logger.warning("SAM3 called with empty prompt")
         return []
 
@@ -456,45 +459,51 @@ def predict_sync(
     # bfloat16, so inference must run under bf16 autocast or the following
     # f32 linear raises a dtype mismatch. This matches official sam3 usage.
     dev_type = "cuda" if str(model_entry["device"]).startswith("cuda") else "cpu"
-    with torch.inference_mode(), torch.autocast(device_type=dev_type, dtype=torch.bfloat16):
-        state = processor.set_image(img)
-        state = processor.set_text_prompt(prompt=text_prompt.strip(), state=state)
-    img.close()
-
-    # state["masks"]: bool tensor [N, 1, H, W] already interpolated to the
-    # original resolution; state["scores"]: [N] probabilities.
-    masks = _to_numpy(state.get("masks"))
-    scores = _to_numpy(state.get("scores"))
-    if masks is None or len(masks) == 0:
-        return []
-    if scores is None:
-        scores = np.ones(len(masks), dtype=np.float32)
-
-    label = text_prompt.strip()
     results = []
-    for mask, score in zip(masks, scores):
-        if float(score) < score_threshold:
-            continue
-        mask2d = np.squeeze(mask)
-        if mask2d.ndim != 2:
-            logger.warning("SAM3 mask has unexpected shape %s; skipping", mask.shape)
-            continue
-        bool_mask = mask2d > 0
-        if bool_mask.shape != (img_h, img_w):
-            import cv2
-            bool_mask = cv2.resize(
-                bool_mask.astype(np.uint8), (img_w, img_h),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-        if not bool_mask.any():
-            continue
-        polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
-        if not polys:
-            continue
-        results.append({
-            "label": label,
-            "bbox": bbox_from_mask(bool_mask, img_w, img_h),
-            "score": round(float(score), 4),
-            "mask": json.dumps({"polygons": polys}),
-        })
+    with torch.inference_mode(), torch.autocast(device_type=dev_type, dtype=torch.bfloat16):
+        # Encode the image once, then re-prompt the reused state per phrase so
+        # the expensive ViT pass is not repeated across phrases. set_image fully
+        # consumes the pixels, so close the decoded buffer before the per-phrase
+        # inference loop runs (finally: even if set_image raises).
+        try:
+            state = processor.set_image(img)
+        finally:
+            img.close()
+        for phrase in phrases:
+            phrase_state = processor.set_text_prompt(prompt=phrase, state=state)
+
+            # state["masks"]: bool tensor [N, 1, H, W] already interpolated to
+            # the original resolution; state["scores"]: [N] probabilities.
+            masks = _to_numpy(phrase_state.get("masks"))
+            scores = _to_numpy(phrase_state.get("scores"))
+            if masks is None or len(masks) == 0:
+                continue
+            if scores is None:
+                scores = np.ones(len(masks), dtype=np.float32)
+
+            for mask, score in zip(masks, scores):
+                if float(score) < score_threshold:
+                    continue
+                mask2d = np.squeeze(mask)
+                if mask2d.ndim != 2:
+                    logger.warning("SAM3 mask has unexpected shape %s; skipping", mask.shape)
+                    continue
+                bool_mask = mask2d > 0
+                if bool_mask.shape != (img_h, img_w):
+                    import cv2
+                    bool_mask = cv2.resize(
+                        bool_mask.astype(np.uint8), (img_w, img_h),
+                        interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
+                if not bool_mask.any():
+                    continue
+                polys = masks_to_polygons(np.array([bool_mask]), img_w, img_h)
+                if not polys:
+                    continue
+                results.append({
+                    "label": phrase,
+                    "bbox": bbox_from_mask(bool_mask, img_w, img_h),
+                    "score": round(float(score), 4),
+                    "mask": json.dumps({"polygons": polys}),
+                })
     return results

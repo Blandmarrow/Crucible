@@ -180,7 +180,7 @@ export default function ImageDetailPage() {
   const [detectTask, setDetectTask] = useState("<OD>");
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectOverwrite, setDetectOverwrite] = useState(true);
-  const [detectJobId, setDetectJobId] = useState<string | null>(null);
+  const [detectJobIds, setDetectJobIds] = useState<string[]>([]);
   const [detectMinProb, setDetectMinProb] = useState(0.5);
   const [samPoints, setSamPoints] = useState<{x: number; y: number; label: number}[]>([]);
   const [samPointMode, setSamPointMode] = useState(false);
@@ -423,7 +423,7 @@ export default function ImageDetailPage() {
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
 
-  const detectJobProgress = useJobStore((s) => s.activeJobs.get(detectJobId ?? ""));
+  const activeJobs = useJobStore((s) => s.activeJobs);
 
   // Track AI job progress from the global SSE store (TopBar already subscribes to all jobs)
   const aiJobProgress = useJobStore((s) => s.activeJobs.get(aiJobId ?? ""));
@@ -435,21 +435,31 @@ export default function ImageDetailPage() {
   const manualJobProgress = useJobStore((s) => s.activeJobs.get(manualJobId ?? ""));
   const refineJobProgress = useJobStore((s) => s.activeJobs.get(refineJobId ?? ""));
 
+  // Track a list of detection jobs so multiple runs can be queued (the modal
+  // closes and SAM points clear at job start, not here). Iterate the tracked ids
+  // each time activeJobs changes; drop any that reached a terminal status.
   useEffect(() => {
-    if (!detectJobId || !detectJobProgress) return;
-    if (detectJobProgress.status === "completed") {
-      qc.invalidateQueries({ queryKey: ["image", imageId] });
-      invalidateDetectionQueries(qc, datasetId);
-      setDetectJobId(null);
-      setShowDetectModal(false);
-      setSamPointMode(false);
-      setSamPoints([]);
-      toast.success("Detection complete");
-    } else if (detectJobProgress.status === "failed") {
-      setDetectJobId(null);
-      toast.error(detectJobProgress.message || "Detection failed");
+    if (detectJobIds.length === 0) return;
+    const done: string[] = [];
+    for (const jobId of detectJobIds) {
+      const progress = activeJobs.get(jobId);
+      if (!progress) continue;
+      if (progress.status === "completed") {
+        qc.invalidateQueries({ queryKey: ["image", imageId] });
+        invalidateDetectionQueries(qc, datasetId);
+        toast.success("Detection complete");
+        done.push(jobId);
+      } else if (progress.status === "failed") {
+        toast.error(progress.message || "Detection failed");
+        done.push(jobId);
+      } else if (progress.status === "cancelled") {
+        done.push(jobId);
+      }
     }
-  }, [detectJobProgress?.status, detectJobId, imageId, datasetId, qc]);
+    if (done.length > 0) {
+      setDetectJobIds((prev) => prev.filter((id) => !done.includes(id)));
+    }
+  }, [activeJobs, detectJobIds, imageId, datasetId, qc]);
 
   // Manual box + SAM job completion (kept separate from the detect effect, which
   // closes the detect modal).
@@ -789,7 +799,13 @@ export default function ImageDetailPage() {
       }),
     onSuccess: (data) => {
       if (data.job_id) {
-        setDetectJobId(data.job_id);
+        setDetectJobIds((prev) => [...prev, data.job_id!]);
+        // Points were already sent in the payload; close the modal and clear
+        // SAM point state so the user can queue another run immediately.
+        setShowDetectModal(false);
+        setSamPointMode(false);
+        setSamPoints([]);
+        toast.success("Detection queued");
       } else {
         toast("No images to process");
       }
@@ -1941,12 +1957,12 @@ export default function ImageDetailPage() {
                     <label className="label">Text prompt</label>
                     <input
                       className="input"
-                      placeholder="e.g. a person's face"
+                      placeholder="e.g. face, hand, watermark"
                       value={detectPrompt}
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus
                     />
-                    <p className="text-xs text-gray-500">Grounding DINO will locate matching regions; SAM2 will produce precise masks.</p>
+                    <p className="text-xs text-gray-500">Grounding DINO will locate matching regions; SAM2 will produce precise masks. Separate multiple phrases with commas.</p>
                   </div>
                 )}
                 {detectTask === "points" && (
@@ -1963,12 +1979,12 @@ export default function ImageDetailPage() {
                 <label className="label">Text prompt</label>
                 <input
                   className="input"
-                  placeholder="e.g. a person's face"
+                  placeholder="e.g. face, hand, watermark"
                   value={detectPrompt}
                   onChange={(e) => setDetectPrompt(e.target.value)}
                   autoFocus
                 />
-                <p className="text-xs text-gray-500">SAM 3 finds and masks every instance of the phrase in one pass.</p>
+                <p className="text-xs text-gray-500">SAM 3 finds and masks every instance of each phrase in one pass. Separate multiple phrases with commas.</p>
               </div>
             )}
 
@@ -2014,35 +2030,25 @@ export default function ImageDetailPage() {
               </>
             )}
 
-            {detectJobId && detectJobProgress && (
-              <div className="space-y-1">
-                <div className="bg-gray-700 rounded-full h-1.5">
-                  <div className="bg-accent h-1.5 rounded-full transition-all" style={{ width: `${detectJobProgress.percent ?? 0}%` }} />
-                </div>
-                <p className="text-xs text-gray-500">{detectJobProgress.message || "Detecting…"}</p>
-              </div>
-            )}
-
             <label className="flex items-center gap-2 cursor-pointer text-sm">
               <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
               Overwrite this model's existing detections
             </label>
 
             <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowDetectModal(false)} disabled={!!detectJobId}>Cancel</button>
+              <button className="btn-ghost" onClick={() => setShowDetectModal(false)}>Cancel</button>
               <button
                 className="btn-primary flex items-center gap-2"
                 onClick={() => detectMutation.mutate()}
                 disabled={
                   detectMutation.isPending ||
-                  !!detectJobId ||
                   (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectPrompt.trim()) ||
                   ((detectModel === "sam2" || detectModel === "sam3") && detectTask === "text_prompt" && !detectPrompt.trim()) ||
                   (detectModel === "sam2" && detectTask === "points" && samPoints.length === 0)
                 }
 
               >
-                <ScanSearch size={14} /> {detectJobId ? "Running…" : "Run Detection"}
+                <ScanSearch size={14} /> Run Detection
               </button>
             </div>
           </div>

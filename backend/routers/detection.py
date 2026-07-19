@@ -84,8 +84,19 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         )
 
     query = select(Image.id, Image.file_path, Image.caption_text).where(Image.dataset_id == body.dataset_id)
-    if body.image_ids:
+    if body.image_ids is not None:
+        # `is not None`, not truthiness (same convention as bulk-delete/crop):
+        # an empty selection must match nothing, never widen to the dataset.
         query = query.where(Image.id.in_(body.image_ids))
+    else:
+        # Dataset-scope filters (mirror bulk-delete / crop). Explicit ids win and
+        # bypass these; subfolder/flag scoping is only for whole-dataset runs.
+        if body.subfolder is not None:
+            query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
+        if body.quality_flags:
+            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
+            if valid_flags:
+                query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
     if body.use_caption_as_prompt:
         query = query.where(Image.caption_text.isnot(None), Image.caption_text != "")
     result = await db.execute(query)

@@ -90,7 +90,10 @@ def _predict_text(img_np: np.ndarray, img_w: int, img_h: int, predictor, text_pr
 
     img_pil = _Image.fromarray(img_np)
 
-    text = text_prompt.lower().strip()
+    # Grounding DINO natively grounds multiple classes separated by " . " and
+    # returns a per-phrase label for each box. Normalize comma-separated phrases
+    # to that separator; a single phrase collapses to the old behavior.
+    text = " . ".join(p.strip() for p in text_prompt.lower().split(",") if p.strip())
     if not text.endswith("."):
         text += "."
 

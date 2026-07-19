@@ -11,6 +11,7 @@ import BulkEditForm from "../components/caption/BulkEditForm";
 import UpscaleForm from "../components/upscale/UpscaleForm";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import DetectionBulkDeleteForm from "../components/detection/DetectionBulkDeleteForm";
+import DetectionRunForm from "../components/detection/DetectionRunForm";
 import LutForm from "../components/lut/LutForm";
 import BulkRenameForm from "../components/image/BulkRenameForm";
 import BulkDeleteForm from "../components/image/BulkDeleteForm";
@@ -302,19 +303,34 @@ export default function BulkEditPage() {
       )}
 
       {tab === "detections" && (
-        <div className="panel">
-          <div className="panel-h">Delete Detections</div>
-          <div className="panel-b">
-            <DetectionBulkDeleteForm
-              key={`${scope}-${resetKey}`}
-              datasetId={datasetId}
-              imageIds={imageIds}
-              subfolder={subfolder}
-              qualityFlags={qualityFlags}
-              disabled={formDisabled}
-            />
+        <>
+          <div className="panel" style={{ marginBottom: 16 }}>
+            <div className="panel-h">Run Detection</div>
+            <div className="panel-b">
+              <DetectionRunForm
+                key={`run-${scope}-${resetKey}`}
+                datasetId={datasetId}
+                imageIds={imageIds}
+                subfolder={subfolder}
+                qualityFlags={qualityFlags}
+                disabled={formDisabled}
+              />
+            </div>
           </div>
-        </div>
+          <div className="panel">
+            <div className="panel-h">Delete Detections</div>
+            <div className="panel-b">
+              <DetectionBulkDeleteForm
+                key={`${scope}-${resetKey}`}
+                datasetId={datasetId}
+                imageIds={imageIds}
+                subfolder={subfolder}
+                qualityFlags={qualityFlags}
+                disabled={formDisabled}
+              />
+            </div>
+          </div>
+        </>
       )}
 
       {tab === "lut" && (

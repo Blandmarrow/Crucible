@@ -22,6 +22,8 @@
 
 Run detection on any selection of images as a background job. Four models are available:
 
+Detection runs in the background: the **Detect** dialog closes as soon as the job is queued (progress shows in the global job bar at the top), so you can immediately open it again and queue another run — jobs run one after another. This works on both the gallery **Detect** button and the Image Detail page.
+
 ### Florence-2 (bounding boxes)
 
 | Task | Description |
@@ -41,7 +43,7 @@ Two-stage pipeline: **Grounding DINO** localises objects from a text description
 
 | Mode | Description |
 |---|---|
-| **Text prompt** | Describe what to segment (e.g. `person . car`); noun phrases separated by ` . ` for multiple targets |
+| **Text prompt** | Describe what to segment; separate multiple targets with commas (e.g. `face, hand, watermark`) — one run detects them all, and each result is labelled with its phrase |
 | **Point prompts** | Use the **SAM Points** toolbar button on the image detail page to place foreground points (left-click) and background points (right-click), then run |
 
 Mask outputs are rendered as semi-transparent polygon fills on the SVG overlay in addition to bounding boxes.
@@ -50,7 +52,7 @@ The **DINO box confidence** threshold (Settings → Quality Thresholds, default 
 
 ### SAM 3 (text-prompt segmentation)
 
-Native open-vocabulary segmentation: type a phrase (e.g. `a person's face`) and SAM 3 finds and masks **every instance** of that concept in one pass — no separate detector stage, and typically better recall than the Grounding DINO → SAM2 pipeline for concept prompts. Text prompt only (point prompts remain a SAM2 feature).
+Native open-vocabulary segmentation: type a phrase (e.g. `a person's face`) and SAM 3 finds and masks **every instance** of that concept in one pass — no separate detector stage, and typically better recall than the Grounding DINO → SAM2 pipeline for concept prompts. Separate several phrases with commas (e.g. `face, hand, watermark`) to detect them all in one run, each labelled with its phrase. Text prompt only (point prompts remain a SAM2 feature).
 
 The **SAM 3 confidence** threshold (Settings → Quality Thresholds, default 0.5) controls the minimum instance confidence for a mask to be kept.
 
@@ -89,9 +91,12 @@ The DETECTIONS panel lists every detection as an editable row so you can fix a b
 
 Hand-drawn, refined, and merged detections are tagged as `manual` so they're never wiped by an automatic re-run.
 
-### Bulk-deleting detections
+### Running & bulk-deleting detections
 
-The **Detections** tab on the Bulk Edit page deletes detections across many images at once (the images themselves are untouched). Filter by detection **label**, by the **model** that produced them, and/or by a **score below** threshold (unscored and hand-made detections never match a score filter). A live count shows how many detections match before you commit, and a confirmation dialog guards the delete.
+The **Detections** tab on the Bulk Edit page has two panels, both scoped by the page's shared Scope selector (all images / a subfolder / images without chosen quality flags / the current selection):
+
+- **Run Detection** — run any detection model across the scope without leaving the page, the same way the gallery **Detect** dialog does (Florence-2, NudeNet, Grounded SAM 2.1 with a text prompt, or SAM 3; SAM 2 point prompts stay per-image on the detail page). Pick the model and prompt, optionally sync the watermark flag, and queue it — you can queue several runs back to back.
+- **Delete Detections** — deletes detections across many images at once (the images themselves are untouched). Filter by detection **label**, by the **model** that produced them, and/or by a **score below** threshold (unscored and hand-made detections never match a score filter). A live count shows how many detections match before you commit, and a confirmation dialog guards the delete.
 
 ### Crop to detected subject
 

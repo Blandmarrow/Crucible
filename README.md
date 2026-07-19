@@ -51,8 +51,8 @@ Every step from raw images to a training-ready export, in order:
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
 
 ### Object detection
-- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation → [details](docs/features.md#object-detection)
-- **Manage detections** — rename, delete, merge, hand-draw new boxes (optionally SAM-segmented), and point-refine masks per image; bulk-delete detections by label/model/score across the dataset → [details](docs/features.md#managing-detections)
+- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM2 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/features.md#object-detection)
+- **Manage detections** — rename, delete, merge, hand-draw new boxes (optionally SAM-segmented), and point-refine masks per image; run or bulk-delete detections by label/model/score across the dataset from the Bulk Edit page → [details](docs/features.md#managing-detections)
 - **Crop to detected subject** — batch-crop images to their detection boxes (union or largest, padding %, aspect-ratio snap) → [details](docs/features.md#crop-to-detected-subject)
 
 ### Editing & processing

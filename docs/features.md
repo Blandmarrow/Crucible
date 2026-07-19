@@ -104,7 +104,7 @@ Batch-crop images to their detections — useful for turning full scenes into ti
 - Same **Replace** / **New file** (`{stem}_crop{ext}`) output modes as upscaling
 - A completion toast reports how many images were cropped, skipped (no detections), unchanged (detection already spans the full image), or failed
 
-Available from: the **Crop** button in SelectionToolbar, the **Crop to Subject** tab on the Bulk Edit page, and the **Crop to Subject** button in the Image Detail page toolbar next to Crop/Upscale/LUT (single image; shown only when the image has detections, and its label chips show only that image's labels). Note that cropping changes the image geometry — re-run detection afterwards if you need up-to-date boxes/masks on the cropped images.
+Available from: the **Crop** button in SelectionToolbar, the **Crop to Subject** tab on the Bulk Edit page, and the **Crop to Subject** button in the Image Detail page toolbar next to Crop/Upscale/LUT (single image; shown only when the image has detections, and its label chips show only that image's labels). When a crop **replaces** the image (any replace-mode crop — manual, replace + upscale, batch aspect crop, or Crop to Subject), the image's existing detections are automatically remapped into the new crop frame so their boxes/masks still line up; detections that fall entirely outside the crop are dropped. (New-file crops leave the original and its detections untouched.)
 
 ## Image Processing
 

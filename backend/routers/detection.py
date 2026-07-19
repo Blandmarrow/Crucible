@@ -24,6 +24,7 @@ from backend.schemas.detection import (
     ManualDetectionRequest,
 )
 from backend.services import version_service
+from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
@@ -1013,6 +1014,9 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     continue
 
                 src_path = Path(img.file_path)
+                # Capture the OLD (pre-crop) transposed dims for detection remap —
+                # rect is in this frame; img.width/height get overwritten below.
+                old_size = (img.width, img.height)
 
                 if replace:
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
@@ -1051,6 +1055,9 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         "target_ar": cfg["target_ar"],
                         "at": now.isoformat(),
                     }]
+                    # Replace-mode crop changed the image geometry: remap the
+                    # image's detections into the crop frame (drop ones outside).
+                    await remap_detections_for_crop(session, img.id, rect, old_size)
                     last_image_id = img.id
                 else:
                     dest_images = src_path.parent

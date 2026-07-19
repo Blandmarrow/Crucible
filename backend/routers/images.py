@@ -34,6 +34,7 @@ from backend.schemas.image import (
 )
 from backend.services.dataset_service import refresh_stats
 from backend.services import version_service
+from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_service import (
     crop_image_to_dest,
     crop_to_aspect,
@@ -670,6 +671,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
         if not body.upscale_model:
             # Synchronous replace crop
+            old_size = (img.width, img.height)
             info = await loop.run_in_executor(
                 None, crop_image_to_dest,
                 str(src_path), str(tmp_path),
@@ -684,10 +686,15 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             img.file_size_bytes = info["file_size_bytes"]
             img.format = info["format"]
             img.phash = info["phash"]
+            # Replace crop changed geometry: remap this image's detections.
+            await remap_detections_for_crop(
+                db, img.id, (body.x, body.y, body.width, body.height), old_size
+            )
             await db.commit()
             return {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
 
         # Replace + upscale: crop to temp, enqueue job that upscales to original path
+        old_size = (img.width, img.height)
         await loop.run_in_executor(
             None, crop_image_to_dest,
             str(src_path), str(tmp_path),
@@ -702,6 +709,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             "upscale_model": body.upscale_model,
             "upscale_target_width": body.upscale_target_width,
             "upscale_target_height": body.upscale_target_height,
+            # For detection remap after a successful upscale (crop frame = old dims).
+            "crop_rect": [body.x, body.y, body.width, body.height],
+            "old_size": [old_size[0], old_size[1]],
         }
         job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=replace_cfg)
         db.add(job)
@@ -734,6 +744,16 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     updated.width = info["width"]
                     updated.height = info["height"]
                     updated.file_size_bytes = info["file_size_bytes"]
+                    # Remap detections only now that the upscale succeeded (a
+                    # failed upscale raises above and never reaches here). The
+                    # crop rect is in the OLD (pre-crop) transposed frame.
+                    rect = replace_cfg["crop_rect"]
+                    old_dims = replace_cfg["old_size"]
+                    await remap_detections_for_crop(
+                        session, replace_cfg["image_id"],
+                        (rect[0], rect[1], rect[2], rect[3]),
+                        (old_dims[0], old_dims[1]),
+                    )
                     await session.commit()
 
             await broadcaster.emit(job_id, {
@@ -910,10 +930,12 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
             for i, img in enumerate(images):
                 loop = asyncio.get_event_loop()
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-                new_w, new_h = await loop.run_in_executor(
+                new_w, new_h, rect, old_size = await loop.run_in_executor(
                     None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
                 )
                 img.width, img.height = new_w, new_h
+                # Aspect crop changed geometry: remap this image's detections.
+                await remap_detections_for_crop(session, img.id, rect, old_size)
                 if img.thumbnail_path:
                     await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
                 await broadcaster.emit(job_id, {

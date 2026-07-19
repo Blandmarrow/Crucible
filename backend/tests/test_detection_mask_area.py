@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from backend.ml.mask_utils import detection_mask_area
+from backend.ml.mask_utils import detection_mask_area, remap_detection_geometry
 from backend.models.detection import Detection
 
 
@@ -102,3 +102,17 @@ def test_listener_clearing_mask_reverts_to_bbox():
     assert det.mask_area == pytest.approx(0.5)
     det.mask = None
     assert det.mask_area == pytest.approx(0.25)
+
+
+def test_listener_remap_assignment_updates_mask_area():
+    # Emulate remap_detections_for_crop's mask-then-bbox assignment order and
+    # confirm the listener recomputes mask_area from the remapped geometry.
+    det = _make(mask=_poly_json([HALF_RECT]), bbox=[0.0, 0.0, 1.0, 0.5])
+    assert det.mask_area == pytest.approx(0.5)
+    # Crop the top-left quarter (0,0,50,50) of a 100x100 image.
+    new_mask, new_bbox = remap_detection_geometry(
+        det.mask, det.bbox, (0, 0, 50, 50), (100, 100)
+    )
+    det.mask = new_mask
+    det.bbox = new_bbox
+    assert det.mask_area == pytest.approx(detection_mask_area(new_mask, new_bbox))

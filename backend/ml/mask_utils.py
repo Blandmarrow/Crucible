@@ -321,6 +321,94 @@ def merge_detection_geometry(
     return mask_out, union_bbox
 
 
+def remap_detection_geometry(
+    mask_json: str | None,
+    bbox: list[float] | None,
+    rect: tuple[int, int, int, int],
+    old_size: tuple[int, int],
+) -> tuple[str | None, list[float]] | None:
+    """Remap a detection's normalized geometry into a crop's frame.
+
+    ``rect`` is the crop rectangle ``(x, y, w, h)`` in pixels of the OLD image's
+    EXIF-transposed frame (the frame detection coordinates live in — see
+    ``open_rgb`` / ``_open_safe``); ``old_size`` is ``(old_w, old_h)`` of that
+    frame. A normalized coordinate ``n`` on an axis maps to
+    ``(n * old_dim - offset) / extent`` (``offset``/``extent`` = the rect's origin
+    and size on that axis), clamped to [0, 1] — i.e. re-expressed as a fraction of
+    the crop.
+
+    The bbox is the primary, non-nullable geometry: when its remapped extent falls
+    below 0.002 on either axis (mirroring ``_sanitize_bbox``) the detection lies
+    outside the crop and the function returns ``None`` to signal the row should be
+    deleted. Polygon vertices are remapped and clamped (polygons crossing the crop
+    edge flatten against the border — accepted); a remapped polygon whose shoelace
+    area drops below 1e-4 is dropped. When a masked detection loses every polygon
+    this way the mask becomes ``None`` while the still-valid bbox is kept, yielding
+    ``(None, bbox)``.
+
+    Returns ``(new_mask_json_or_None, new_bbox)``, or ``None`` (delete the row).
+    """
+    rx, ry, rw, rh = rect
+    old_w, old_h = old_size
+    if rw <= 0 or rh <= 0 or old_w <= 0 or old_h <= 0:
+        return None
+
+    def _mx(n: float) -> float:
+        return min(max((n * old_w - rx) / rw, 0.0), 1.0)
+
+    def _my(n: float) -> float:
+        return min(max((n * old_h - ry) / rh, 0.0), 1.0)
+
+    # --- bbox (primary geometry, always present) ---
+    if not bbox or len(bbox) != 4:
+        return None
+    try:
+        bx1, by1, bx2, by2 = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return None
+    if bx1 > bx2:
+        bx1, bx2 = bx2, bx1
+    if by1 > by2:
+        by1, by2 = by2, by1
+    nbx1, nby1, nbx2, nby2 = _mx(bx1), _my(by1), _mx(bx2), _my(by2)
+    if (nbx2 - nbx1) < 0.002 or (nby2 - nby1) < 0.002:
+        return None
+    new_bbox = [round(nbx1, 4), round(nby1, 4), round(nbx2, 4), round(nby2, 4)]
+
+    # --- polygons (optional) ---
+    polygons: list = []
+    if mask_json:
+        try:
+            polygons = json.loads(mask_json).get("polygons") or []
+        except (ValueError, AttributeError):
+            polygons = []
+    polygons = [p for p in polygons if len(p) >= 3]
+
+    new_polys: list[list[list[float]]] = []
+    for poly in polygons:
+        remapped: list[list[float]] = []
+        for pt in poly:
+            try:
+                px, py = float(pt[0]), float(pt[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            remapped.append([round(_mx(px), 4), round(_my(py), 4)])
+        if len(remapped) < 3:
+            continue
+        area = 0.0
+        n = len(remapped)
+        for i in range(n):
+            x1, y1 = remapped[i]
+            x2, y2 = remapped[(i + 1) % n]
+            area += x1 * y2 - x2 * y1
+        if abs(area) / 2.0 < 1e-4:
+            continue
+        new_polys.append(remapped)
+
+    mask_out = json.dumps({"polygons": new_polys}) if new_polys else None
+    return mask_out, new_bbox
+
+
 def bbox_from_mask(mask: np.ndarray, img_w: int, img_h: int) -> list[float]:
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)

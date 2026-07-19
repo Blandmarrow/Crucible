@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
 from backend.models.detection import Detection
+from backend.utils import chunked
 from backend.workers.job_queue import job_queue
 
 # Only the columns the export loop actually reads — avoids loading multi-MB blob fields
@@ -184,8 +185,7 @@ async def _fetch_detections_by_image(
     exclude_set = set(mask_exclude_labels or [])
     include_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
     exclude_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
-    for start in range(0, len(image_ids), 10_000):
-        chunk = image_ids[start:start + 10_000]
+    for chunk in chunked(image_ids):
         query = select(
             Detection.image_id, Detection.label, Detection.mask, Detection.bbox
         ).where(Detection.image_id.in_(chunk))

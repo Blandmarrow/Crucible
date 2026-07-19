@@ -28,6 +28,7 @@ from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
+    chunked,
     normalize_subfolder,
     slugify_filename,
     thumbnail_path_for,
@@ -607,10 +608,14 @@ async def bulk_delete_detections(
     manual/unscored rows are immune (intended). ``dry_run`` returns the count
     that would be deleted without deleting.
     """
-    # Resolve the image scope.
+    # Resolve the image scope into an IN-condition for Detection.image_id.
     if body.image_ids is not None:
-        result = await db.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-        image_ids = [r[0] for r in result.all()]
+        # Explicit ids are bounded by the request body, so a literal IN is safe —
+        # no need to round-trip through Image to re-materialize the same list
+        # (a non-existent id simply matches no detections via the FK).
+        if not body.image_ids:
+            return {"deleted": 0, "dry_run": body.dry_run}
+        scope_condition = Detection.image_id.in_(body.image_ids)
     else:
         q = select(Image.id).where(Image.dataset_id == body.dataset_id)
         if body.subfolder is not None:
@@ -619,13 +624,11 @@ async def bulk_delete_detections(
             valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
             if valid_flags:
                 q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
-        result = await db.execute(q)
-        image_ids = [r[0] for r in result.all()]
+        # Correlated subquery — never materialize the id list, which can exceed
+        # SQLite's 999-variable limit on large datasets.
+        scope_condition = Detection.image_id.in_(q)
 
-    if not image_ids:
-        return {"deleted": 0, "dry_run": body.dry_run}
-
-    conditions = [Detection.image_id.in_(image_ids)]
+    conditions = [scope_condition]
     if body.labels:
         conditions.append(Detection.label.in_(body.labels))
     if body.models:
@@ -918,8 +921,7 @@ async def _fetch_bboxes_by_image(
 ) -> dict[str, list[list[float]]]:
     """Batch-fetch detection bboxes keyed by image id, chunked to keep IN() bounded."""
     by_image: dict[str, list[list[float]]] = {}
-    for start in range(0, len(image_ids), 10_000):
-        chunk = image_ids[start:start + 10_000]
+    for chunk in chunked(image_ids):
         query = select(Detection.image_id, Detection.bbox).where(Detection.image_id.in_(chunk))
         if labels:
             query = query.where(Detection.label.in_(labels))
@@ -969,23 +971,24 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
         from backend.workers.progress import broadcaster
 
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(matched_ids)))
-            images = result.scalars().all()
+            images = []
+            for chunk in chunked(matched_ids):
+                result = await session.execute(select(Image).where(Image.id.in_(chunk)))
+                images.extend(result.scalars().all())
             bboxes_by_image = await _fetch_bboxes_by_image(session, matched_ids, cfg["labels"])
             loop = asyncio.get_running_loop()
 
             replace = cfg["replace"]
             counts = {"cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0, "failed": 0}
 
-            # Pre-build occupied thumbnail stems for the non-replace path so that
-            # images with different extensions but the same derived stem don't
-            # share a thumbnail. planned_thumb_stems accumulates across iterations.
-            occupied_thumb_stems: set[str] = set()
-            planned_thumb_stems: set[str] = set()
-            if not replace and images:
-                dest_thumb_dir = Path(images[0].file_path).parent.parent / "thumbnails"
-                if dest_thumb_dir.exists():
-                    occupied_thumb_stems = {p.stem for p in dest_thumb_dir.glob("*.webp")}
+            # Occupied/planned thumbnail stems for the non-replace path, keyed by
+            # thumbnail directory: matched images can span multiple datasets (each
+            # with its own thumbnails/ dir), so a single flat set would false-share
+            # stems across datasets. Built lazily per dir inside the loop;
+            # planned_by_dir accumulates across iterations (mutated by
+            # unique_filename_with_thumb per its contract).
+            occupied_by_dir: dict[Path, set[str]] = {}
+            planned_by_dir: dict[Path, set[str]] = {}
 
             last_image_id: str | None = None
             cancelled = False
@@ -1061,6 +1064,14 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     last_image_id = img.id
                 else:
                     dest_images = src_path.parent
+                    dest_thumb_dir = src_path.parent.parent / "thumbnails"
+                    if dest_thumb_dir not in occupied_by_dir:
+                        occupied_by_dir[dest_thumb_dir] = (
+                            {p.stem for p in dest_thumb_dir.glob("*.webp")}
+                            if dest_thumb_dir.exists() else set()
+                        )
+                    occupied_thumb_stems = occupied_by_dir[dest_thumb_dir]
+                    planned_thumb_stems = planned_by_dir.setdefault(dest_thumb_dir, set())
                     dest_stem = slugify_filename(src_path.stem + "_crop")
                     existing = await session.execute(
                         select(Image.filename).where(

@@ -194,6 +194,11 @@ export default function ImageDetailPage() {
   const [refineJobId, setRefineJobId] = useState<string | null>(null);
   // Crop prefill (union of detections) — seeds react-easy-crop on fresh mount
   const [cropInitialArea, setCropInitialArea] = useState<CropArea | null>(null);
+  // Bumped whenever the crop tool should re-read initialCroppedAreaPixels; used
+  // as the Cropper's key to force a remount (react-easy-crop only reads the
+  // initial area on mount). A counter, not a JSON key, so the *same* prefill
+  // applied twice (e.g. Crop-from-Detections clicked again) still remounts.
+  const [cropSeed, setCropSeed] = useState(0);
 
   // AI captioning state
   const [showAi, setShowAi] = useState(false);
@@ -335,13 +340,19 @@ export default function ImageDetailPage() {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
       if (showDeleteConfirm) return;
-      if (e.key === "Escape" && (drawMode || refineTarget || pendingBox)) {
+      const target = e.target as HTMLElement;
+      const inTextField =
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" || target.isContentEditable;
+      // Escape exits annotation modes — but not while typing in a text field.
+      // The draw-box label input has its own Escape handler (clears the pending
+      // box only), and the caption editor's Escape must be left to the browser.
+      if (e.key === "Escape" && !inTextField && (drawMode || refineTarget || pendingBox)) {
         setPendingBox(null);
         enterMode(null);
         return;
       }
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (inTextField) return;
       if (e.key === " " && imageId && !showDetectModal) {
         e.preventDefault();
         toggle(imageId, datasetId ?? "");
@@ -875,6 +886,7 @@ export default function ImageDetailPage() {
     }
     enterMode(null);
     setCropInitialArea(prefill);
+    setCropSeed((s) => s + 1);
     setUpscaleMode(false);
     setLutMode(false);
     resetCrop();
@@ -947,7 +959,12 @@ export default function ImageDetailPage() {
           {!cropMode && detectModel === "sam2" && detectTask === "points" && (
             <button
               className={`btn-sm flex items-center gap-1.5 ${samPointMode ? "btn-primary" : "btn-ghost"}`}
-              onClick={() => enterMode(samPointMode ? null : "points")}
+              // Deactivating points mode must NOT clear the placed points — they
+              // survive a plain toggle-off (invariant: points are cleared only by
+              // the Clear button, switching to another mode, job completion, or
+              // navigation). So toggle off with setSamPointMode(false), not
+              // enterMode(null) which would wipe them.
+              onClick={() => (samPointMode ? setSamPointMode(false) : enterMode("points"))}
               title={samPointMode ? "Deactivate point prompt mode (click=foreground, right-click=background)" : "Activate point prompt mode"}
             >
               <Crosshair size={14} />
@@ -968,7 +985,7 @@ export default function ImageDetailPage() {
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
             onClick={() => {
               setCropMode((v) => {
-                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); setCropInitialArea(null); enterMode(null); }
+                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); setCropInitialArea(null); setCropSeed((s) => s + 1); enterMode(null); }
                 return !v;
               });
             }}
@@ -1256,6 +1273,7 @@ export default function ImageDetailPage() {
         <div className="flex-1 relative bg-black/40">
           {cropMode ? (
             <Cropper
+              key={cropSeed}
               image={imagesApi.fileUrlVersioned(imageId!, image.updated_at)}
               crop={crop}
               zoom={zoom}

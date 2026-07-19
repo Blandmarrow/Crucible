@@ -30,6 +30,7 @@ import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
+import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { encode } from "gpt-tokenizer";
@@ -437,6 +438,7 @@ export default function ImageDetailPage() {
     if (!detectJobId || !detectJobProgress) return;
     if (detectJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
+      invalidateDetectionQueries(qc, datasetId);
       setDetectJobId(null);
       setShowDetectModal(false);
       setSamPointMode(false);
@@ -446,7 +448,7 @@ export default function ImageDetailPage() {
       setDetectJobId(null);
       toast.error(detectJobProgress.message || "Detection failed");
     }
-  }, [detectJobProgress?.status, detectJobId, imageId, qc]);
+  }, [detectJobProgress?.status, detectJobId, imageId, datasetId, qc]);
 
   // Manual box + SAM job completion (kept separate from the detect effect, which
   // closes the detect modal).
@@ -454,7 +456,7 @@ export default function ImageDetailPage() {
     if (!manualJobId || !manualJobProgress) return;
     if (manualJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
-      qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+      invalidateDetectionQueries(qc, datasetId);
       setManualJobId(null);
       setPendingBox(null);
       toast.success("Detection added");
@@ -469,7 +471,7 @@ export default function ImageDetailPage() {
     if (!refineJobId || !refineJobProgress) return;
     if (refineJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
-      qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+      invalidateDetectionQueries(qc, datasetId);
       setRefineJobId(null);
       enterMode(null);
       toast.success("Mask refined");
@@ -807,7 +809,7 @@ export default function ImageDetailPage() {
       } else {
         // Synchronous insert — refresh and keep drawing for multi-box annotation.
         qc.invalidateQueries({ queryKey: ["image", imageId] });
-        qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+        invalidateDetectionQueries(qc, datasetId);
         setPendingBox(null);
         toast.success("Detection added");
       }

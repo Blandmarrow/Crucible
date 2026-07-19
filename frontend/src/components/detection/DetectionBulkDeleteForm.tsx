@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { detectionApi } from "../../api/detection";
+import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import ConfirmDialog from "../common/ConfirmDialog";
 
 interface Props {
@@ -55,8 +56,7 @@ export default function DetectionBulkDeleteForm({ datasetId, imageIds, subfolder
     mutationFn: () => detectionApi.bulkDelete({ ...params, dry_run: false }),
     onSuccess: (data) => {
       setConfirming(false);
-      qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
-      qc.invalidateQueries({ queryKey: ["detection-models", datasetId] });
+      invalidateDetectionQueries(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["detection-bulk-count", datasetId] });
       qc.invalidateQueries({ queryKey: ["image"] });
       toast.success(`Deleted ${data.deleted} detection${data.deleted !== 1 ? "s" : ""}`);

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScanSearch, ChevronUp, ChevronDown, Trash2, Focus, Combine, Save } from "lucide-react";
 import toast from "react-hot-toast";
 import { detectionApi } from "../../api/detection";
+import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import type { Detection } from "../../types";
 
 const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
@@ -45,7 +46,9 @@ export default function DetectionsPanel({
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["image", imageId] });
-    qc.invalidateQueries({ queryKey: ["detection-labels", datasetId] });
+    // Refresh all dataset-scoped detection caches (labels + models + stats) so a
+    // merge/relabel/delete updates model chips and the Statistics panel too.
+    invalidateDetectionQueries(qc, datasetId);
   };
 
   const relabel = useMutation({

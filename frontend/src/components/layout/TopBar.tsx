@@ -9,6 +9,7 @@ import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../stores/paneStore";
+import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
@@ -130,15 +131,14 @@ export default function TopBar() {
           }
         }
         // Detection jobs (run / manual box+SAM / mask refine) change per-image
-        // detections and the dataset label/model rollups, but not the gallery —
-        // deliberately NOT in IMAGE_MODIFYING_JOB_TYPES. Detail pages go stale
-        // otherwise (bulk detect run finishing after navigation).
-        if (progress.job_type === "detection") {
+        // detections and the dataset label/model/stats rollups, but not the
+        // gallery — deliberately NOT in IMAGE_MODIFYING_JOB_TYPES. Detail pages go
+        // stale otherwise (bulk detect run finishing after navigation).
+        // crop_to_detection is included too: replace-mode crops now remap (and can
+        // drop) detection geometry, so those rollups must refresh as well.
+        if (progress.job_type === "detection" || progress.job_type === "crop_to_detection") {
           qc.invalidateQueries({ queryKey: ["image"] });
-          if (progress.dataset_id) {
-            qc.invalidateQueries({ queryKey: ["detection-labels", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["detection-models", progress.dataset_id] });
-          }
+          invalidateDetectionQueries(qc, progress.dataset_id);
         }
       }
       // Live gallery updates while a captioning or ComfyUI-generate job runs — the

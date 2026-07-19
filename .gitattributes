@@ -1,0 +1,2 @@
+# Normalize line endings: force LF in the repo, prevent CRLF creeping in from Windows/WSL tooling.
+* text=auto eol=lf

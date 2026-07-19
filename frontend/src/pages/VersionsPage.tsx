@@ -89,6 +89,7 @@ export default function VersionsPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDiffModal, setShowDiffModal] = useState(false);
+  const [showPruneConfirm, setShowPruneConfirm] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<Version | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Version | null>(null);
   const [activeBranchId, setActiveBranchId] = useState<string | undefined>(
@@ -174,6 +175,15 @@ export default function VersionsPage() {
     },
   });
 
+  const pruneMutation = useMutation({
+    mutationFn: () => versioningApi.pruneStorage(datasetId!),
+    onSuccess: () => { toast.success("Prune job started"); },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Prune failed";
+      toast.error(msg);
+    },
+  });
+
   const pinMutation = useMutation({
     mutationFn: ({ version, pinned }: { version: Version; pinned: boolean }) =>
       versioningApi.updateVersion(datasetId!, version.id, { is_pinned: pinned }),
@@ -244,6 +254,9 @@ export default function VersionsPage() {
         />
         <button className="btn sm ghost" onClick={() => setShowDiffModal(true)} disabled={versions.length < 2}>
           Compare ▾
+        </button>
+        <button className="btn sm ghost" onClick={() => setShowPruneConfirm(true)}>
+          Prune storage
         </button>
         <button className="btn sm primary" onClick={() => setShowCreateModal(true)}>
           + Create Snapshot
@@ -331,6 +344,16 @@ export default function VersionsPage() {
       )}
       {showDiffModal && (
         <DiffModal datasetId={datasetId} versions={versions} onClose={() => setShowDiffModal(false)} />
+      )}
+      {showPruneConfirm && (
+        <ConfirmDialog
+          title="Prune Version Storage"
+          message="Delete backup data no longer referenced by any snapshot. This cannot be undone."
+          confirmLabel="Prune"
+          danger
+          onConfirm={() => { pruneMutation.mutate(); setShowPruneConfirm(false); }}
+          onCancel={() => setShowPruneConfirm(false)}
+        />
       )}
       {deleteTarget && (
         <ConfirmDialog

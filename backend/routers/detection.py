@@ -1040,6 +1040,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
                 if replace:
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                    await session.commit()  # persist the COW hash backfill before the overwrite
                     tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
                     try:
                         info = await loop.run_in_executor(

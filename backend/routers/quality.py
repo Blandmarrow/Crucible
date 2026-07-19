@@ -14,6 +14,7 @@ from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.services import version_service
+from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
 from backend.utils import normalize_subfolder
 from backend.workers.job_queue import job_queue
@@ -589,6 +590,8 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         )
         rows = result.all()
         dataset_ids = {r.dataset_id for r in rows}
+        for did in dataset_ids:
+            ensure_not_busy(did)
         files_to_delete: list[Path] = []
         for r in rows:
             p = Path(r.file_path)

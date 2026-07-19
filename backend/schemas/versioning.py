@@ -59,6 +59,7 @@ class RestoreRequest(BaseModel):
 class RestoreSummary(BaseModel):
     files_restored: int
     files_unavailable: int
+    files_failed: int = 0
     images_re_created: int
     images_removed: int
     pre_restore_version_id: str | None

@@ -18,11 +18,14 @@ is_present semantics:
 import asyncio
 import hashlib
 import logging
+import os
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,12 +54,36 @@ def _object_store_path(dataset_folder: str, sha256: str) -> Path:
     return Path(dataset_folder) / ".versions" / "objects" / sha256[:2] / sha256[2:]
 
 
-def _copy_to_object_store_if_absent(dataset_folder: str, src_path: str, sha256: str) -> None:
-    dest = _object_store_path(dataset_folder, sha256)
-    if dest.exists():
-        return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src_path, dest)
+def _store_object(dataset_folder: str, src_path: str) -> str:
+    """Stream a file into the object store atomically, returning the hash of the
+    bytes actually stored.
+
+    Hashing and writing happen in the same read pass to a temp file in objects/
+    (same filesystem, so the final os.replace is atomic) — the stored content and
+    its address can never disagree, even if the source file is overwritten
+    mid-copy (the hash-then-copy TOCTOU that could permanently poison a
+    content-addressed entry).
+    """
+    objects_dir = Path(dataset_folder) / ".versions" / "objects"
+    objects_dir.mkdir(parents=True, exist_ok=True)
+    tmp = objects_dir / f".tmp-{uuid4().hex}"
+    h = hashlib.sha256()
+    try:
+        with open(src_path, "rb") as src, open(tmp, "wb") as out:
+            for chunk in iter(lambda: src.read(65536), b""):
+                h.update(chunk)
+                out.write(chunk)
+        sha256 = h.hexdigest()
+        dest = _object_store_path(dataset_folder, sha256)
+        if dest.exists():
+            tmp.unlink()
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, dest)
+        return sha256
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _remove_stale_files(file_path: str | None, sidecar: bool, thumbnail_path: str | None) -> None:
@@ -110,10 +137,13 @@ async def _backup_and_record_hash(
     image_id: str, file_path: str, dataset_folder: str, db: AsyncSession,
     precomputed_sha256: str | None = None,
 ) -> str | None:
-    """Hash file, copy to object store, backfill NULL-hash state rows. Returns sha256 or None.
+    """Store file in the object store, backfill NULL-hash state rows. Returns sha256 or None.
 
-    ``precomputed_sha256`` skips the hashing pass when the caller already hashed the
-    file (restore hashes once per image and reuses the result).
+    ``precomputed_sha256`` skips all I/O when its object already exists (the content
+    is safely stored — correct even if the file changed since the caller hashed it).
+    Otherwise the file is re-stored via ``_store_object`` and the backfilled hash is
+    the hash of the bytes actually stored, so a file mutating between the caller's
+    hash and the copy can never poison the store or the state rows.
     """
     null_check = await db.execute(
         select(VersionImageState.id).where(
@@ -125,9 +155,8 @@ async def _backup_and_record_hash(
         return None
     loop = asyncio.get_running_loop()
     sha256 = precomputed_sha256
-    if sha256 is None:
-        sha256 = await loop.run_in_executor(None, _compute_sha256, file_path)
-    await loop.run_in_executor(None, _copy_to_object_store_if_absent, dataset_folder, file_path, sha256)
+    if sha256 is None or not _object_store_path(dataset_folder, sha256).exists():
+        sha256 = await loop.run_in_executor(None, _store_object, dataset_folder, file_path)
     await db.execute(
         update(VersionImageState)
         .where(VersionImageState.image_id == image_id, VersionImageState.file_hash.is_(None))
@@ -151,6 +180,8 @@ class _RestorePlan:
     staged: Path | None = None         # temp path when moved aside in Pass 3a
     file_restored: bool = False
     recreated: bool = False
+    fork_new_id: str | None = None     # fresh ID when state.image_id now lives in another dataset
+    skip_recreate: bool = False        # foreign ID + no recorded content — nothing to restore
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +197,11 @@ async def protect_file_before_overwrite(
     Only fires in "auto" mode. The is_present=True filter is intentional: it avoids
     loading img/dataset when no active snapshot references this image with a null hash.
     Returns the SHA-256 hash, or None if no-op.
+
+    The hash backfill is only flushed, not committed. Callers that overwrite the
+    file before their own final commit must commit right after this call —
+    otherwise a crash during the overwrite rolls back the backfill and the
+    snapshot rows silently claim "content unchanged" (the post-overwrite file).
     """
     settings = await get_thresholds(db)
     if settings.versioning_mode != "auto":
@@ -266,9 +302,20 @@ async def create_snapshot(
     settings = await get_thresholds(db)
     mode = settings.versioning_mode
 
-    # Ensure main branch exists and resolve branch
+    dataset = await db.get(Dataset, dataset_id)
+
+    # Resolve branch: explicit branch_id wins; otherwise the dataset's current
+    # branch (so auto-snapshots — pre-restore, checkout — land on the branch the
+    # user is actually on); main is only a fallback for datasets that have never
+    # branched.
+    branch: DatasetBranch | None = None
     if branch_id is None:
-        branch = await _ensure_main_branch(db, dataset_id)
+        if dataset is not None and dataset.current_branch_id:
+            branch = await db.get(DatasetBranch, dataset.current_branch_id)
+            if branch is not None and branch.dataset_id != dataset_id:
+                branch = None
+        if branch is None:
+            branch = await _ensure_main_branch(db, dataset_id)
         branch_id = branch.id
     else:
         branch = await db.get(DatasetBranch, branch_id)
@@ -306,22 +353,21 @@ async def create_snapshot(
     db.add(version)
     await db.flush()
 
-    dataset = await db.get(Dataset, dataset_id)
     loop = asyncio.get_running_loop()
     states = []
+    backup_failures = 0
 
     for i, img in enumerate(images):
         file_hash: str | None = None
 
         if mode == "manual" and Path(img.file_path).exists():
             try:
-                file_hash = await loop.run_in_executor(None, _compute_sha256, img.file_path)
-                await loop.run_in_executor(
-                    None, _copy_to_object_store_if_absent,
-                    dataset.folder_path, img.file_path, file_hash
+                file_hash = await loop.run_in_executor(
+                    None, _store_object, dataset.folder_path, img.file_path
                 )
             except Exception as exc:
                 logger.warning("Could not back up %s: %s", img.file_path, exc)
+                backup_failures += 1
                 file_hash = None
 
         states.append(VersionImageState(
@@ -362,6 +408,20 @@ async def create_snapshot(
             })
 
     db.add_all(states)
+
+    # A manual snapshot promises a full backup — a silent hole (file_hash=NULL
+    # restores as "content unchanged") must be visible on the version card.
+    if backup_failures:
+        warning = f"{backup_failures} file(s) could not be backed up to the object store"
+        version.description = f"{version.description}\n[warning] {warning}".strip()
+        logger.warning("Snapshot %s: %s", version.name, warning)
+        if job_id:
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": "create_snapshot",
+                "status": "running",
+                "done": len(images), "total": len(images), "percent": 100.0,
+                "message": f"Warning: {warning}",
+            })
 
     # Update branch head
     if branch is not None:
@@ -509,10 +569,12 @@ async def restore_snapshot(
 ) -> dict:
     from backend.services.image_service import generate_thumbnail
     from backend.services.dataset_service import refresh_stats
-    from backend.utils import rename_with_sidecar, thumbnail_path_for
+    from backend.utils import rename_with_sidecar, thumbnail_path_for, unique_filename_with_thumb
     from backend.workers.progress import broadcaster
 
-    # Auto-snapshot current state before restoring
+    # Auto-snapshot current state before restoring. A failed safety snapshot must
+    # abort the restore — proceeding would silently make it non-undoable. The UI's
+    # pre-restore checkbox is the explicit way to opt out.
     pre_restore_version_id: str | None = None
     if pre_restore_snapshot:
         try:
@@ -525,7 +587,12 @@ async def restore_snapshot(
             )
             pre_restore_version_id = pre.id
         except Exception as exc:
-            logger.warning("Pre-restore snapshot failed: %s", exc)
+            logger.error("Pre-restore snapshot failed: %s", exc)
+            raise RuntimeError(
+                f"Pre-restore snapshot failed ({exc}); restore aborted before any "
+                "changes were made. Disable the pre-restore snapshot option to "
+                "restore anyway."
+            ) from exc
 
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
@@ -548,6 +615,7 @@ async def restore_snapshot(
     loop = asyncio.get_running_loop()
     files_restored = 0
     files_unavailable = 0
+    files_failed = 0
     images_re_created = 0
     images_removed = 0
 
@@ -572,8 +640,53 @@ async def restore_snapshot(
             renamed=img is not None and current_path != target_path,
             old_thumbnail=img.thumbnail_path if img is not None else None,
         ))
+    # ── Pass 0b: resolve snapshot images whose ID now lives in another dataset ──
+    # (moved out via batch move — the ID cannot be re-inserted here). Adopt a
+    # same-name current image whose content matches the snapshot (so repeat
+    # restores don't duplicate), otherwise fork a fresh-ID row whose content
+    # Pass 3 restores from the object store; with no recorded hash there is
+    # nothing to materialize.
+    current_by_filename = {im.filename: im for im in current_images.values()}
+    adopted_ids: set[str] = set()
+    for p in plans:
+        if p.img is not None or p.state.image_id is None:
+            continue
+        foreign = await db.get(Image, p.state.image_id)
+        if foreign is None:
+            continue  # truly deleted — normal re-creation path
+        candidate = current_by_filename.get(p.state.filename)
+        if candidate is not None and candidate.id in target_image_ids:
+            candidate = None  # belongs to another plan; never adopt it
+        adopted = False
+        if (
+            handle_extra_images == "keep"
+            and candidate is not None
+            and p.state.file_hash is not None
+            and Path(candidate.file_path).exists()
+        ):
+            try:
+                cand_hash = await loop.run_in_executor(
+                    None, _compute_sha256, candidate.file_path
+                )
+                adopted = cand_hash == p.state.file_hash
+            except Exception:
+                adopted = False
+        if adopted:
+            p.img = candidate
+            p.current_path = candidate.file_path
+            p.renamed = candidate.file_path != p.target_path
+            p.old_thumbnail = candidate.thumbnail_path
+            adopted_ids.add(candidate.id)
+        elif p.state.file_hash is not None:
+            p.fork_new_id = str(uuid4())
+        else:
+            p.skip_recreate = True
+
     all_targets = {p.target_path for p in plans}
-    extra_imgs = [im for iid, im in current_images.items() if iid not in target_image_ids]
+    extra_imgs = [
+        im for iid, im in current_images.items()
+        if iid not in target_image_ids and iid not in adopted_ids
+    ]
 
     # ── Pass 1: gated COW protection, hash once (no dataset-file mutation) ──
     # Backs the current on-disk content into the pre-restore snapshot's NULL-hash
@@ -598,14 +711,16 @@ async def restore_snapshot(
                         pass
                 p.needs_restore = cur_hash != p.state.file_hash
                 if p.needs_restore and cur_hash is not None:
+                    # p.img.id, not state.image_id: an adopted plan's current row
+                    # is a different image than the one the snapshot recorded.
                     await protect_file_before_overwrite(
-                        p.state.image_id, p.current_path, db, precomputed_sha256=cur_hash
+                        p.img.id, p.current_path, db, precomputed_sha256=cur_hash
                     )
             else:
                 # Renamed with recorded content: the current file will be removed
                 # (or moved) after the restore — protect it. needs_restore is
                 # resolved in Pass 3 (the target may change during staging).
-                await protect_file_before_overwrite(p.state.image_id, p.current_path, db)
+                await protect_file_before_overwrite(p.img.id, p.current_path, db)
         # Pure rename (file_hash is None): moved, not overwritten — no protection.
 
     # Extras occupying a restore target would be clobbered by Pass 3 — back them
@@ -621,11 +736,62 @@ async def restore_snapshot(
                 await protect_file_before_overwrite(extra_img.id, extra_img.file_path, db)
 
     # ── Pass 2: all DB updates, then commit (DB is authoritative before FS) ──
+    # Filename moves need DB-level staging too: SQLite checks uq_dataset_filename
+    # per statement, so swaps/renumber chains and re-creations whose old name a
+    # newer image now holds would abort the whole flush with an IntegrityError.
+    # Order: clear extras off restored names (2a), park renamed images on unique
+    # temp names (2b), then apply final values in one collision-free flush (2c).
+
+    # Pass 2a: extras. "remove" deletes them now so the DELETEs are flushed
+    # before any re-creation INSERT; "keep" renames extras occupying a restored
+    # filename aside (uniquified, like import collisions) so both survive. The
+    # matching file moves happen at the top of Pass 3a.
+    extra_renames: list[tuple[Image, str, str | None]] = []  # (row, old_path, old_thumb)
+    if handle_extra_images == "remove":
+        for extra_img in extra_imgs:
+            await db.delete(extra_img)
+            images_removed += 1
+        await db.flush()
+    else:
+        target_filenames = {p.state.filename for p in plans}
+        colliding = [e for e in extra_imgs if e.filename in target_filenames]
+        if colliding:
+            db_names = {im.filename for im in current_images.values()} | target_filenames
+            thumb_dir = Path(dataset.folder_path) / "thumbnails"
+            occupied_thumb_stems = (
+                {t.stem for t in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+            )
+            planned_thumb_stems: set[str] = set()
+            for e in colliding:
+                e_dir = Path(e.file_path).parent
+                new_fn = unique_filename_with_thumb(
+                    e_dir, Path(e.filename).stem, Path(e.filename).suffix,
+                    db_names, occupied_thumb_stems, planned_thumb_stems,
+                )
+                extra_renames.append((e, e.file_path, e.thumbnail_path))
+                e.filename = new_fn
+                e.file_path = str(e_dir / new_fn)
+                e.thumbnail_path = thumbnail_path_for(e.file_path)
+            await db.flush()
+
+    # Pass 2b: park renamed images on unique temp filenames.
+    parked = [p for p in plans if p.img is not None and p.img.filename != p.state.filename]
+    if parked:
+        for p in parked:
+            p.img.filename = (
+                f"__dbtmp_{p.state.image_id[:8]}{Path(p.state.filename).suffix}"
+            )
+        await db.flush()
+
+    # Pass 2c: final values; re-creation INSERTs are now collision-free.
     for p in plans:
         img = p.img
         if img is None and p.state.image_id is not None:
+            if p.skip_recreate:
+                files_unavailable += 1
+                continue
             img = Image(
-                id=p.state.image_id,
+                id=p.fork_new_id or p.state.image_id,
                 dataset_id=dataset_id,
                 filename=p.state.filename,
                 original_filename=p.state.original_filename,
@@ -671,14 +837,26 @@ async def restore_snapshot(
         if state.file_size_bytes:
             img.file_size_bytes = state.file_size_bytes
 
-    if handle_extra_images == "remove":
-        for extra_img in extra_imgs:
-            await db.delete(extra_img)
-            images_removed += 1
-
     await db.commit()
 
-    # ── Pass 3a: stage rename sources that another image's restore targets ──
+    # ── Pass 3a: move keep-mode extras off restored filenames, then stage
+    # rename sources that another image's restore targets ──────────────────
+    # Extras first: their old path is a restore target, so they must vacate it
+    # before any restore write can land there.
+    for e, old_path, old_thumb in extra_renames:
+        try:
+            src_e = Path(old_path)
+            if src_e.exists():
+                await loop.run_in_executor(
+                    None, rename_with_sidecar, src_e, Path(e.file_path)
+                )
+            if old_thumb and old_thumb != e.thumbnail_path and Path(old_thumb).exists():
+                await loop.run_in_executor(None, shutil.move, old_thumb, e.thumbnail_path)
+        except Exception as exc:
+            # Leave the row at its new name: the old path will be overwritten by
+            # the restore; the extra's content was COW-protected in Pass 1.
+            logger.warning("Rename-aside failed for extra %s: %s", e.filename, exc)
+
     # Handles swaps/renumber chains: moving each colliding source to a temp name
     # first means no restore write can land on top of a file that is still
     # someone's current content. The real suffix is preserved so
@@ -734,79 +912,87 @@ async def restore_snapshot(
         # Only remove the old thumbnail when the stem actually changed.
         stale_thumb = p.old_thumbnail if p.old_thumbnail and p.old_thumbnail != new_thumb else None
 
-        if state.file_hash is not None:
-            needs_restore = p.needs_restore
-            if needs_restore is None:  # renamed: decide now, post-staging
-                needs_restore = True
-                if target_file.exists():
-                    try:
-                        current_hash = await loop.run_in_executor(
-                            None, _compute_sha256, str(target_file)
-                        )
-                        if current_hash == state.file_hash:
-                            needs_restore = False
-                    except Exception:
-                        pass
+        # One image's failure (disk full, permissions) must not abort the batch:
+        # compensate this row's paths and keep going, so no plan is left with a
+        # committed target path and no fixup, and no staged file goes untracked.
+        try:
+            if state.file_hash is not None:
+                needs_restore = p.needs_restore
+                if needs_restore is None:  # renamed: decide now, post-staging
+                    needs_restore = True
+                    if target_file.exists():
+                        try:
+                            current_hash = await loop.run_in_executor(
+                                None, _compute_sha256, str(target_file)
+                            )
+                            if current_hash == state.file_hash:
+                                needs_restore = False
+                        except Exception:
+                            pass
 
-            object_path = _object_store_path(dataset.folder_path, state.file_hash)
-            if needs_restore and object_path.exists():
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                await loop.run_in_executor(None, shutil.copy2, str(object_path), str(target_file))
-                p.file_restored = True
-                files_restored += 1
-                if p.renamed:
-                    # The pre-rename copy (backed up in Pass 1) is now stale.
+                object_path = _object_store_path(dataset.folder_path, state.file_hash)
+                if needs_restore and object_path.exists():
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    await loop.run_in_executor(None, shutil.copy2, str(object_path), str(target_file))
+                    p.file_restored = True
+                    files_restored += 1
+                    if p.renamed:
+                        # The pre-rename copy (backed up in Pass 1) is now stale.
+                        await loop.run_in_executor(
+                            None, _remove_stale_files, str(src), True, stale_thumb
+                        )
+                elif needs_restore:
+                    # Object store copy is missing. NEVER delete the current file —
+                    # it may be the only remaining copy. If renamed, move it to the
+                    # target so disk matches the committed DB paths.
+                    files_unavailable += 1
+                    if p.renamed and src.exists():
+                        try:
+                            target_file.parent.mkdir(parents=True, exist_ok=True)
+                            await loop.run_in_executor(None, rename_with_sidecar, src, target_file)
+                            p.file_restored = True  # name restored; content best-effort
+                            if stale_thumb:
+                                await loop.run_in_executor(
+                                    None, _remove_stale_files, None, False, stale_thumb
+                                )
+                        except Exception as exc:
+                            logger.warning("Rename restore failed for %s: %s", state.filename, exc)
+                            _compensate_paths(p)
+                elif p.renamed:
+                    # Target already holds the snapshot content; the old copy is stale.
                     await loop.run_in_executor(
                         None, _remove_stale_files, str(src), True, stale_thumb
                     )
-            elif needs_restore:
-                # Object store copy is missing. NEVER delete the current file —
-                # it may be the only remaining copy. If renamed, move it to the
-                # target so disk matches the committed DB paths.
-                files_unavailable += 1
-                if p.renamed and src.exists():
+
+            elif p.renamed:
+                # No recorded content change — the image was only renamed/moved since
+                # the snapshot (auto mode leaves file_hash NULL for un-overwritten
+                # files). Move the current file (and its .txt sidecar) back.
+                if src.exists():
                     try:
                         target_file.parent.mkdir(parents=True, exist_ok=True)
                         await loop.run_in_executor(None, rename_with_sidecar, src, target_file)
-                        p.file_restored = True  # name restored; content best-effort
+                        p.file_restored = True
+                        files_restored += 1
                         if stale_thumb:
+                            # Only after a successful move; regenerated below.
                             await loop.run_in_executor(
                                 None, _remove_stale_files, None, False, stale_thumb
                             )
                     except Exception as exc:
                         logger.warning("Rename restore failed for %s: %s", state.filename, exc)
                         _compensate_paths(p)
-            elif p.renamed:
-                # Target already holds the snapshot content; the old copy is stale.
-                await loop.run_in_executor(
-                    None, _remove_stale_files, str(src), True, stale_thumb
-                )
-
-        elif p.renamed:
-            # No recorded content change — the image was only renamed/moved since
-            # the snapshot (auto mode leaves file_hash NULL for un-overwritten
-            # files). Move the current file (and its .txt sidecar) back.
-            if src.exists():
-                try:
-                    target_file.parent.mkdir(parents=True, exist_ok=True)
-                    await loop.run_in_executor(None, rename_with_sidecar, src, target_file)
+                elif target_file.exists():
+                    # Source gone but the target already holds a file (e.g. an earlier
+                    # partially-applied restore) — keep the committed target paths.
                     p.file_restored = True
-                    files_restored += 1
-                    if stale_thumb:
-                        # Only after a successful move; regenerated below.
-                        await loop.run_in_executor(
-                            None, _remove_stale_files, None, False, stale_thumb
-                        )
-                except Exception as exc:
-                    logger.warning("Rename restore failed for %s: %s", state.filename, exc)
+                else:
+                    files_unavailable += 1
                     _compensate_paths(p)
-            elif target_file.exists():
-                # Source gone but the target already holds a file (e.g. an earlier
-                # partially-applied restore) — keep the committed target paths.
-                p.file_restored = True
-            else:
-                files_unavailable += 1
-                _compensate_paths(p)
+        except Exception as exc:
+            logger.error("Restore failed for %s: %s", state.filename, exc)
+            files_failed += 1
+            _compensate_paths(p)
 
         # Regenerate the thumbnail whenever the file content changed or the stem
         # moved (a renamed image needs a thumbnail under its new stem, and its old
@@ -832,9 +1018,31 @@ async def restore_snapshot(
                 None, _sync_caption_sidecar, p.img.file_path, state.caption_text
             )
 
+    # Sweep: no __restore_tmp file may survive untracked. A staged file whose
+    # restore failed is recovered to its row's committed path when that spot is
+    # free; otherwise the row is pointed at the staged file itself.
+    for p in plans:
+        if (
+            p.staged is not None and p.staged.exists()
+            and p.img is not None and not Path(p.img.file_path).exists()
+        ):
+            try:
+                await loop.run_in_executor(
+                    None, rename_with_sidecar, p.staged, Path(p.img.file_path)
+                )
+            except Exception:
+                p.img.file_path = str(p.staged)
+                p.img.filename = p.staged.name
+
     # ── Pass 3c: remove extra images' files (rows deleted + backed up above) ──
     if handle_extra_images == "remove":
         for extra_img in extra_imgs:
+            if extra_img.file_path in all_targets:
+                # A restored image now owns this path (its content was written
+                # there in Pass 3b, or is pending as files_unavailable) —
+                # unlinking would delete the restored file. Same stem means the
+                # thumbnail is shared too; it gets regenerated above.
+                continue
             await loop.run_in_executor(
                 None, _remove_stale_files,
                 extra_img.file_path, True, extra_img.thumbnail_path,
@@ -854,6 +1062,7 @@ async def restore_snapshot(
     return {
         "files_restored": files_restored,
         "files_unavailable": files_unavailable,
+        "files_failed": files_failed,
         "images_re_created": images_re_created,
         "images_removed": images_removed,
         "pre_restore_version_id": pre_restore_version_id,
@@ -881,10 +1090,18 @@ async def create_branch(
     if existing.scalar_one_or_none() is not None:
         raise ValueError(f"Branch '{branch_name}' already exists")
 
-    # Resolve source version
+    # Resolve source version: branch from the current branch's head (main only
+    # as a fallback for never-branched datasets).
     if from_version_id is None:
-        main_branch = await _ensure_main_branch(db, dataset_id)
-        from_version_id = main_branch.head_version_id
+        dataset = await db.get(Dataset, dataset_id)
+        source_branch: DatasetBranch | None = None
+        if dataset is not None and dataset.current_branch_id:
+            source_branch = await db.get(DatasetBranch, dataset.current_branch_id)
+            if source_branch is not None and source_branch.dataset_id != dataset_id:
+                source_branch = None
+        if source_branch is None:
+            source_branch = await _ensure_main_branch(db, dataset_id)
+        from_version_id = source_branch.head_version_id
 
     branch = DatasetBranch(dataset_id=dataset_id, name=branch_name)
     db.add(branch)
@@ -945,3 +1162,101 @@ async def checkout_branch(
     result["restored"] = True
     result.update(restore_result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Object-store GC
+# ---------------------------------------------------------------------------
+
+def _prune_objects_sync(
+    dataset_folder: str, referenced: set[str], min_age_seconds: float
+) -> dict:
+    """Delete unreferenced objects and stale .tmp-* leftovers. Sync — call via executor.
+
+    Files younger than ``min_age_seconds`` are kept regardless: a COW write racing
+    the reference scan may have stored an object whose state row isn't committed
+    yet (belt-and-suspenders on top of the dataset-busy flag).
+    """
+    objects_dir = Path(dataset_folder) / ".versions" / "objects"
+    deleted = kept = 0
+    bytes_freed = 0
+    if not objects_dir.exists():
+        return {"objects_deleted": 0, "objects_kept": 0, "bytes_freed": 0}
+    cutoff = time.time() - min_age_seconds
+
+    def _try_delete(path: Path) -> bool:
+        nonlocal deleted, bytes_freed
+        try:
+            st = path.stat()
+            if st.st_mtime > cutoff:
+                return False
+            path.unlink()
+            deleted += 1
+            bytes_freed += st.st_size
+            return True
+        except OSError:
+            return False
+
+    for entry in objects_dir.iterdir():
+        if entry.is_file():
+            if entry.name.startswith(".tmp-"):
+                _try_delete(entry)
+            continue
+        if not entry.is_dir():
+            continue
+        for obj in entry.iterdir():
+            if not obj.is_file():
+                continue
+            if entry.name + obj.name in referenced:
+                kept += 1
+            elif not _try_delete(obj):
+                kept += 1
+        try:
+            entry.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
+    return {"objects_deleted": deleted, "objects_kept": kept, "bytes_freed": bytes_freed}
+
+
+async def prune_object_store(
+    db: AsyncSession,
+    dataset_id: str,
+    job_id: str | None = None,
+    min_age_seconds: int = 3600,
+) -> dict:
+    """Delete object-store files no snapshot references. Returns a summary dict.
+
+    Objects are per-dataset (the store lives under the dataset folder), so
+    cross-dataset references are impossible — the reference set is exactly this
+    dataset's non-NULL state hashes.
+    """
+    from backend.workers.progress import broadcaster
+
+    dataset = await db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise ValueError(f"Dataset {dataset_id} not found")
+
+    result = await db.execute(
+        select(VersionImageState.file_hash)
+        .distinct()
+        .join(DatasetVersion, VersionImageState.version_id == DatasetVersion.id)
+        .where(
+            DatasetVersion.dataset_id == dataset_id,
+            VersionImageState.file_hash.is_not(None),
+        )
+    )
+    referenced = {r[0] for r in result.all()}
+
+    loop = asyncio.get_running_loop()
+    summary = await loop.run_in_executor(
+        None, _prune_objects_sync, dataset.folder_path, referenced, min_age_seconds
+    )
+
+    if job_id:
+        mb = summary["bytes_freed"] / (1024 * 1024)
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "prune_versions",
+            "status": "running", "done": 1, "total": 1, "percent": 100.0,
+            "message": f"Freed {mb:.1f} MB ({summary['objects_deleted']} objects)",
+        })
+    return summary

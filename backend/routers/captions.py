@@ -1,8 +1,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.models import Image
 from backend.schemas.caption import (
     BulkEditRequest,
     BulkEditResponse,
@@ -18,6 +20,7 @@ from backend.services.caption_service import (
     get_tag_stats,
     set_caption,
 )
+from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
 
 router = APIRouter(prefix="/captions", tags=["captions"])
@@ -33,6 +36,11 @@ async def get(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/image/{image_id}", response_model=CaptionOut)
 async def update(image_id: str, body: CaptionUpdate, db: AsyncSession = Depends(get_db)):
+    ds_id = (
+        await db.execute(select(Image.dataset_id).where(Image.id == image_id))
+    ).scalar_one_or_none()
+    if ds_id is not None:
+        ensure_not_busy(ds_id)
     dataset_id = await set_caption(db, image_id, body.caption_text, body.caption_style, "manual")
     if dataset_id:
         await refresh_stats(db, dataset_id)
@@ -47,6 +55,7 @@ async def tag_stats(dataset_id: str, subfolder: str | None = Query(None), db: As
 
 @router.post("/dataset/{dataset_id}/find-replace")
 async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSession = Depends(get_db)):
+    ensure_not_busy(dataset_id)
     try:
         count = await find_replace_captions(
             db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
@@ -59,6 +68,7 @@ async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSessi
 
 @router.post("/dataset/{dataset_id}/bulk-edit", response_model=BulkEditResponse)
 async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = Depends(get_db)):
+    ensure_not_busy(dataset_id)
     try:
         result = await bulk_edit_captions(
             db,

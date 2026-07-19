@@ -148,7 +148,7 @@ Bulk score, upscale, LUT, detect, detection-crop, and rename operations all supp
 - **Batch score** — run technical, aesthetic, watermark, NSFW, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
-- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM2 / SAM 3 text-prompt segmentation on the selection
+- **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM 2.1 / SAM 3 text-prompt segmentation on the selection
 - **Crop to detected subject** — batch-crop selected images to their detection boxes with padding and aspect-ratio snap → [details](#crop-to-detected-subject)
 - **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
 - **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)

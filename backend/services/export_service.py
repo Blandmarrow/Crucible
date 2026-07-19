@@ -49,6 +49,28 @@ def _is_excluded(
     return False
 
 
+def _unique_stem(stem: str, used: set[str]) -> str:
+    """Return a stem not already in ``used``, adding ``_001``, ``_002``, … on collision.
+
+    Mutates ``used`` (adds the chosen stem). Deliberately **not**
+    ``utils.unique_filename``: that also probes the filesystem, which would rename
+    every file on a re-export into the same directory. This guards only against
+    collisions *within one export run* so an image, its caption sidecar, and its
+    mask stay a consistent triple even when two source images share a stem (e.g.
+    ``same.png`` and ``same.jpg``).
+    """
+    if stem not in used:
+        used.add(stem)
+        return stem
+    i = 1
+    while True:
+        cand = f"{stem}_{i:03d}"
+        if cand not in used:
+            used.add(cand)
+            return cand
+        i += 1
+
+
 def _write_image(
     src: Path,
     dest_img: Path,
@@ -56,9 +78,19 @@ def _write_image(
     jpeg_quality: int,
     resize_to: int | None,
     strip_metadata: bool = False,
-) -> tuple[int, int]:
-    """Write the exported image and return its final (width, height)."""
+    need_size: bool = True,
+) -> tuple[int, int] | None:
+    """Write the exported image and return its final (width, height).
+
+    Returns ``None`` when ``need_size`` is False and the fast-copy branch is taken
+    — the caller only needs the size to rasterize a loss mask, so when masks are
+    off we skip the PIL probe entirely (a corrupt-but-copyable file still exports).
+    """
     if resize_to is None and output_format == "original" and not strip_metadata:
+        if not need_size:
+            # No mask to size — copy the bytes without opening the file in PIL.
+            shutil.copy2(src, dest_img)
+            return None
         # Metadata-only size read: exif_transpose would decode the pixels, so
         # swap dimensions from the EXIF orientation tag instead.
         with PilImage.open(src) as probe:
@@ -220,6 +252,7 @@ async def _run_export_loop(
         )
 
     jsonl_entries: list[dict] = []
+    used_stems: set[str] = set()
     exported = 0
     masks_written = 0
     masks_full_white = 0
@@ -240,10 +273,14 @@ async def _run_export_loop(
         if captions_only:
             # Don't read or write image files; use original filename for any manifest entries.
             dest_img = dest_dir / img.filename
+            dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
         else:
             dest_img = _dest_img_path(dest_dir, img, output_format)
+            # Uniquify within this run so two source images sharing a stem don't
+            # clobber each other's image/caption/mask (all derive from dest_img).
+            dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
             final_size = await asyncio.get_event_loop().run_in_executor(
-                None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata
+                None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata, export_masks
             )
             if export_masks:
                 dets = detections_by_image.get(img.id) or []

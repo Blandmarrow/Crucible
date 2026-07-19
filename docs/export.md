@@ -19,6 +19,7 @@ Three fully implemented export formats, all with identical filter and processing
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`
 - Subfolder scoping — export images from one or more selected subfolders; a checklist lets you pick any combination
 - Export order follows the **Custom order** drag sequence when set, with `created_at` as tiebreak — numbered filenames (`0001.jpg`, `0002.jpg`, …) in Kohya and AI Toolkit formats reflect this order
+- If two images would land on the same output filename (e.g. `same.png` and `same.jpg`, or when converting both to one format), the second is suffixed `_001`, `_002`, … so no image, caption, or mask overwrites another
 - **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested
 - **Captions only** — skip image files entirely and export only caption sidecars / JSONL manifests; useful for updating captions in an existing dataset without re-copying images
 - **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run

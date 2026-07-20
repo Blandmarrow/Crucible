@@ -1,3 +1,21 @@
+/** Droppable ids for the gallery subfolder sidebar (drag images onto a row to move
+ *  them there). Image ids are UUIDs, so the prefix can never collide with a card id
+ *  in the same DndContext. */
+export const SUBFOLDER_DROP_PREFIX = "subfolder:";
+
+export const subfolderDropId = (path: string) => SUBFOLDER_DROP_PREFIX + path; // root → "subfolder:"
+
+export const isSubfolderDropId = (id: unknown): id is string =>
+  typeof id === "string" && id.startsWith(SUBFOLDER_DROP_PREFIX);
+
+export const subfolderFromDropId = (id: string) => id.slice(SUBFOLDER_DROP_PREFIX.length);
+
+/** Sentinel droppable spanning the whole subfolder sidebar. Never a move target — it
+ *  exists so a drop on sidebar chrome ("All", the header, the create form, the padding
+ *  below the last row) can be swallowed instead of falling through to the closestCenter
+ *  card fallback, which scores by the dragged card's rect and would silently reorder. */
+export const SIDEBAR_DROP_ID = "subfolder-sidebar";
+
 export const SORT_OPTIONS = [
   { label: "Newest first",       sort: "created_at",             order: "desc" },
   { label: "Oldest first",       sort: "created_at",             order: "asc"  },

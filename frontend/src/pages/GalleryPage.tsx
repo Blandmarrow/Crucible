@@ -3,7 +3,11 @@ import { ArrowRightFromLine, Copy } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { createPortal } from "react-dom";
+import {
+  DndContext, DragOverlay, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors,
+  type DragEndEvent, type DragStartEvent, type CollisionDetection,
+} from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { imagesApi } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
@@ -15,13 +19,14 @@ import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
 import { showImportSummaryToast } from "../utils/importToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
+import DropZone from "../components/gallery/DropZone";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
-import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter } from "../constants/storage";
-import { SORT_OPTIONS } from "../constants/galleryOptions";
+import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
+import { SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -96,7 +101,7 @@ function loadSavedState(datasetId: string) {
 export default function GalleryPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
-  const { selectAll, clear, count, toggle, replaceRange } = useSelectionStore();
+  const { selectAll, clear, count, toggle, replaceRange, selectedIds, datasetByImageId } = useSelectionStore();
 
   const pageSize = useMemo(getGalleryPageSize, []);
 
@@ -150,6 +155,34 @@ export default function GalleryPage() {
   const lastSelectedId = useRef<string | null>(null);
   const lastRangeEndId = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+
+  // closestCenter alone is wrong once the 180px sidebar rows are droppables (a card
+  // dragged near the grid's left edge can be "closest" to a row), but pointerWithin
+  // alone makes reordering feel dead in the gutters between cards. Compose the two.
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointer = pointerWithin(args);
+    // A sidebar row under the pointer always wins — rows never overlap cards.
+    const folderHit = pointer.find(c => isSubfolderDropId(c.id));
+    if (folderHit) return [folderHit];
+    // Inside the sidebar but not on a row ("All", the header, the create form, the
+    // padding below the last row): swallow the drop. Falling through would hand
+    // closestCenter — which scores by the dragged card's rect, not the pointer — a grid
+    // card, silently reordering an image the user was only trying to file away.
+    if (pointer.some(c => c.id === SIDEBAR_DROP_ID)) return [];
+    if (pointer.length > 0) return pointer;
+    // Gutters between cards: fall back to the nearest card, never a folder row or the
+    // sidebar sentinel (a 180px-wide rect would often out-score a card).
+    return closestCenter({
+      ...args,
+      // Sentinel check first: `isSubfolderDropId` is a `id is string` predicate, so a
+      // leading `!isSubfolderDropId(...)` narrows `c.id` to `number` and the sentinel
+      // comparison stops compiling.
+      droppableContainers: args.droppableContainers.filter(
+        c => c.id !== SIDEBAR_DROP_ID && !isSubfolderDropId(c.id)
+      ),
+    });
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -382,6 +415,58 @@ export default function GalleryPage() {
     onError: () => toast.error("Failed to save order"),
   });
 
+  // Mirrors SelectionToolbar's moveSubfolderMutation so the drag path and the toolbar
+  // path can't diverge — same rename preference, same invalidations, same toast.
+  const moveToSubfolderMutation = useMutation({
+    mutationFn: (p: { ids: string[]; target: string }) =>
+      imagesApi.batchMoveSubfolder(p.ids, p.target, localStorage.getItem(SUBFOLDER_RENAME_KEY) !== "off"),
+    onSuccess: (data, vars) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      // Only for multi-moves — dragging a single unselected card must not wipe
+      // an unrelated selection.
+      if (vars.ids.length > 1) clear();
+      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ?? "Move failed");
+    },
+  });
+
+  // Images to move for a drag starting on `draggedId`: the whole selection if the
+  // dragged card is part of it, otherwise just that card.
+  const dragIdsFor = useCallback((draggedId: string) => {
+    // The selection store is module-global, so in a split-pane setup it can hold ids
+    // from another dataset — the backend derives dataset_id from the first row and
+    // would silently move them into this dataset's folder.
+    return selectedIds.has(draggedId)
+      ? [...selectedIds].filter(id => datasetByImageId.get(id) === datasetId)
+      : [draggedId];
+  }, [selectedIds, datasetByImageId, datasetId]);
+
+  const activeDragImage = useMemo(
+    () => (activeDragId ? images.find(i => i.id === activeDragId) ?? null : null),
+    [images, activeDragId]
+  );
+  const activeDragCount = activeDragId ? dragIdsFor(activeDragId).length : 0;
+
+  const moveImagesTo = useCallback((draggedId: string, target: string) => {
+    if (!datasetId) return;
+    const ids = dragIdsFor(draggedId);
+    if (!ids.length) return;
+
+    // The backend does not filter out images already in the target, and with
+    // rename_on_move they'd be pointlessly renamed to a fresh unique stem.
+    const known = new Map(images.map(i => [i.id, i.subfolder]));
+    const toMove = ids.filter(id => (known.get(id) ?? null) !== target);
+    if (!toMove.length) {
+      toast(`Already in "${target || "(root)"}"`);
+      return;
+    }
+    moveToSubfolderMutation.mutate({ ids: toMove, target });
+  }, [datasetId, dragIdsFor, images, moveToSubfolderMutation]);
+
   const renumberMutation = useMutation({
     mutationFn: () => {
       const stem = activeSubfolder ? (activeSubfolder.split("/").pop() || "image") : "image";
@@ -418,9 +503,22 @@ export default function GalleryPage() {
     }
   }, [sortIdx, datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleDragStart = useCallback((e: DragStartEvent) => setActiveDragId(String(e.active.id)), []);
+  const handleDragCancel = useCallback(() => setActiveDragId(null), []);
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || active.id === over.id || !datasetId) return;
+    setActiveDragId(null);
+    if (!over || !datasetId) return;
+
+    // Dropped on a sidebar subfolder row → move rather than reorder.
+    if (isSubfolderDropId(over.id)) {
+      moveImagesTo(String(active.id), subfolderFromDropId(over.id));
+      return;
+    }
+
+    // Reorder — only meaningful in custom-order mode.
+    if (!isCustomOrder || active.id === over.id) return;
     const cached = qc.getQueryData<ImageListItem[]>(imagesQueryKey) ?? [];
     const oldIndex = cached.findIndex(img => img.id === active.id);
     const newIndex = cached.findIndex(img => img.id === over.id);
@@ -429,7 +527,7 @@ export default function GalleryPage() {
     qc.setQueryData(imagesQueryKey, newOrder);
     const pageOffset = (page - 1) * pageSize;
     reorderMutation.mutate(newOrder.map((img, idx) => ({ id: img.id, sort_order: pageOffset + idx })));
-  }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation]);
+  }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation, isCustomOrder, moveImagesTo]);
 
   const handleUpload = useCallback(async (files: FileList | File[], sf?: string) => {
     if (!datasetId) return;
@@ -611,7 +709,10 @@ export default function GalleryPage() {
     resetPage();
   };
 
-  const rootEntry = subfolders.find(sf => sf.path === "");
+  // Always offer a (root) drop target. list_subfolders only returns a "" row while at
+  // least one image still lives there, so dragging the last one out would otherwise
+  // remove the only way to drag images back to root.
+  const rootEntry = subfolders.find(sf => sf.path === "") ?? { path: "", image_count: 0 };
   const isRootActive = activeSubfolder === "";
 
   const deleteDialogMessage = pendingDeleteSubfolder
@@ -637,12 +738,16 @@ export default function GalleryPage() {
 
     return (
       <div key={node.path}>
+        <DropZone id={subfolderDropId(node.path)}>
+        {({ setNodeRef, isOver }) => (
         <div
+          ref={setNodeRef}
           className="subfolder-row"
           style={{
             display: "flex", alignItems: "center",
             borderRadius: "var(--r)",
-            background: isActive ? "var(--surface-3)" : "transparent",
+            background: isOver || isActive ? "var(--surface-3)" : "transparent",
+            boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
           }}
         >
           {/* expand/collapse toggle (doubles as indent) */}
@@ -718,6 +823,8 @@ export default function GalleryPage() {
             }}
           >×</button>
         </div>
+        )}
+        </DropZone>
 
         {/* inline child-create form */}
         {createChildOf === node.path && (
@@ -1043,15 +1150,30 @@ export default function GalleryPage() {
         </div>
       )}
 
-      {/* Grid area with subfolder sidebar */}
+      {/* Grid area with subfolder sidebar. One DndContext spans both so image cards
+          can be dragged from the grid onto a subfolder row. */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        {/* Subfolder sidebar */}
+        {/* Subfolder sidebar. Itself a sentinel droppable — not a move target, but it
+            lets collisionDetection tell "missed a row" from "over the grid" and swallow
+            the drop instead of falling through to a reorder. */}
         {(subfolders.length > 0 || showCreateSubfolder) && (
-          <div style={{
-            width: 180, flexShrink: 0, borderRight: "1px solid var(--line)",
-            overflowY: "auto", padding: "10px 6px",
-            background: "var(--surface-1)",
-          }}>
+          <DropZone id={SIDEBAR_DROP_ID}>
+          {({ setNodeRef }) => (
+          <div
+            ref={setNodeRef}
+            style={{
+              width: 180, flexShrink: 0, borderRight: "1px solid var(--line)",
+              overflowY: "auto", padding: "10px 6px",
+              background: "var(--surface-1)",
+            }}
+          >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 8px 6px" }}>
               <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: ".08em", color: "var(--fg-mute)", textTransform: "uppercase" }}>
                 Subfolders
@@ -1107,14 +1229,18 @@ export default function GalleryPage() {
               <span>All</span>
               <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{dataset?.image_count ?? ""}</span>
             </button>
-            {/* (root) entry — images with no subfolder */}
-            {rootEntry && (
+            {/* (root) entry — images with no subfolder. Rendered even when empty so it
+                stays available as a drop target for dragging images back out. */}
+            <DropZone id={subfolderDropId("")}>
+              {({ setNodeRef, isOver }) => (
               <div
+                ref={setNodeRef}
                 className="subfolder-row"
                 style={{
                   display: "flex", alignItems: "center",
                   borderRadius: "var(--r)",
-                  background: isRootActive ? "var(--surface-3)" : "transparent",
+                  background: isOver || isRootActive ? "var(--surface-3)" : "transparent",
+                  boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
                 }}
               >
                 <button
@@ -1132,21 +1258,28 @@ export default function GalleryPage() {
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>(root)</span>
                   <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 4, flexShrink: 0 }}>{rootEntry.image_count}</span>
                 </button>
-                <button
-                  className="subfolder-action-btn subfolder-move-btn"
-                  title={`Move "(root)" to another dataset`}
-                  onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(rootEntry); }}
-                ><ArrowRightFromLine size={11} /></button>
-                <button
-                  className="subfolder-action-btn subfolder-copy-btn"
-                  title={`Copy "(root)" to another dataset`}
-                  onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(rootEntry); }}
-                ><Copy size={11} /></button>
+                {rootEntry.image_count > 0 && (
+                  <>
+                    <button
+                      className="subfolder-action-btn subfolder-move-btn"
+                      title={`Move "(root)" to another dataset`}
+                      onClick={(e) => { e.stopPropagation(); setPendingMoveSubfolder(rootEntry); }}
+                    ><ArrowRightFromLine size={11} /></button>
+                    <button
+                      className="subfolder-action-btn subfolder-copy-btn"
+                      title={`Copy "(root)" to another dataset`}
+                      onClick={(e) => { e.stopPropagation(); setPendingCopySubfolder(rootEntry); }}
+                    ><Copy size={11} /></button>
+                  </>
+                )}
               </div>
-            )}
+              )}
+            </DropZone>
             {/* nested subfolder tree */}
             {subfolderTree.map(renderSubfolderNode)}
           </div>
+          )}
+          </DropZone>
         )}
 
         {/* Main grid column */}
@@ -1189,33 +1322,25 @@ export default function GalleryPage() {
           </div>
         ) : (
           (() => {
+            // Cards are draggable in every sort mode (so they can be dropped on a
+            // subfolder row); only sort-reordering is gated on custom order.
             const grid = (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-                {images.map((img) =>
-                  isCustomOrder ? (
-                    <SortableImageCard
-                      key={img.id}
-                      image={img}
-                      onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
-                      onSelect={handleSelect}
-                    />
-                  ) : (
-                    <ImageCard
-                      key={img.id}
-                      image={img}
-                      onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
-                      onSelect={handleSelect}
-                    />
-                  )
-                )}
+                {images.map((img) => (
+                  <SortableImageCard
+                    key={img.id}
+                    image={img}
+                    sortable={isCustomOrder}
+                    onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                    onSelect={handleSelect}
+                  />
+                ))}
               </div>
             );
             return isCustomOrder ? (
-              <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
-                <SortableContext items={images.map(i => i.id)} strategy={rectSortingStrategy}>
-                  {grid}
-                </SortableContext>
-              </DndContext>
+              <SortableContext items={images.map(i => i.id)} strategy={rectSortingStrategy}>
+                {grid}
+              </SortableContext>
             ) : grid;
           })()
         )}
@@ -1234,6 +1359,33 @@ export default function GalleryPage() {
         </div>
         </div>
       </div>
+
+      {/* Drag preview. Portaled out so it isn't clipped by the grid's overflow-y
+          container when dragged over the sidebar. */}
+      {createPortal(
+        <DragOverlay dropAnimation={null} zIndex={60}>
+          {activeDragImage && (
+            <div style={{
+              position: "relative", pointerEvents: "none", opacity: 0.92,
+              boxShadow: "0 12px 32px -8px rgba(0,0,0,.6)", borderRadius: "var(--r-lg)",
+            }}>
+              <ImageCard image={activeDragImage} />
+              {activeDragCount > 1 && (
+                <span style={{
+                  position: "absolute", top: -8, right: -8, zIndex: 2,
+                  padding: "2px 8px", borderRadius: 999,
+                  background: "var(--accent)", color: "#03130d",
+                  fontSize: 11, fontWeight: 600, fontFamily: '"Geist Mono", monospace',
+                }}>
+                  {activeDragCount} images
+                </span>
+              )}
+            </div>
+          )}
+        </DragOverlay>,
+        document.body
+      )}
+      </DndContext>
 
       {/* Generation metadata modal */}
       {genMetaImage?.generation_metadata && (

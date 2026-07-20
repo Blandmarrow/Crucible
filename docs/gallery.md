@@ -30,11 +30,19 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 - **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
 - **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
 
+## Organising into subfolders
+
+**Drag an image card onto a subfolder row** in the left sidebar to move it there — this works in any sort mode. Drop onto **(root)** to move an image back out of its subfolder; that row is always available, even when it's empty. The row highlights as you drag over it, and missing it — dropping on **All** or on empty sidebar space — does nothing.
+
+If the card you drag is part of the current selection, the **whole selection moves**; dragging an unselected card moves just that one and leaves your selection intact. Dropping images onto the subfolder they're already in makes no changes — you'll just get an "Already in …" notice.
+
+Whether moved files are also renamed to match the target subfolder follows the same **auto-rename** preference as the selection toolbar's "Move to subfolder" action. The toolbar route remains available for moving to a subfolder that doesn't exist yet.
+
 ## Manual Image Ordering
 
 The gallery sort dropdown includes a **Custom order** option. Selecting it activates drag-and-drop reordering:
 
-- Drag any image card to reposition it; the new order persists across sessions
+- Drag any image card to reposition it; the new order persists across sessions. The card you're dragging dims in place while a floating preview follows the cursor
 - **First activation** silently initialises order from the current page arrangement so existing sequences are preserved
 - **Renumber Files** button (visible in the gallery toolbar when Custom order is active) — renames all images in the current subfolder to `{slug}_001.ext`, `_002`, … in drag order; useful before export so filenames match the training sequence
 - Export always follows custom order (`sort_order ASC`) with `created_at` as tiebreak — numbered filenames in Kohya and AI Toolkit formats reflect the drag sequence

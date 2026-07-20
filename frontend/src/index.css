@@ -173,6 +173,21 @@
   /* Legacy */
   .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg); }
 
+  /* ── Modal dialogs ── */
+  .dialog-bg {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .6); padding: 24px;
+  }
+  .dialog {
+    background: var(--surface-1); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: 22px;
+    width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+  .dialog h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .dialog p  { margin: 0 0 14px; color: var(--fg-mute); font-size: 12.5px; line-height: 1.5; }
+
   /* ── Form rows ── */
   .form-row {
     display: grid; grid-template-columns: 200px 1fr; gap: 16px;
@@ -310,6 +325,14 @@
     70%  { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
     100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
   }
+  /* Newly created dataset — box-shadow so nothing reflows mid-animation */
+  @keyframes ds-flash {
+    0%       { box-shadow: 0 0 0 0 transparent; }
+    12%, 65% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 7px var(--accent-glow); }
+    100%     { box-shadow: 0 0 0 0 transparent; }
+  }
+  .ds-flash { animation: ds-flash 2s ease-out 1; }
+
   .pp-label { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pp-bar { width: 80px; height: 3px; background: var(--surface-3); border-radius: 2px; overflow: hidden; flex-shrink: 0; position: relative; }
   .pp-fill { height: 100%; background: var(--accent); transition: width .4s; }

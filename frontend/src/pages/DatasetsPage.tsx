@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { DECLARED_CATEGORIES_KEY } from "../constants/storage";
+import type { HTMLAttributes, DragEvent as ReactDragEvent } from "react";
+import { DECLARED_CATEGORIES_KEY, DATASETS_UI_KEY } from "../constants/storage";
+import { loadPersisted, savePersisted } from "../utils/persistentState";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
@@ -54,6 +56,23 @@ const SORT_OPTIONS = [
   { value: "size_asc",     label: "Smallest" },
   { value: "captioned_desc", label: "Most captioned %" },
 ];
+
+/** Section key for datasets with no category. Not a real category name. */
+const UNCATEGORIZED = "(Uncategorized)";
+
+type Density = "grid" | "rows";
+
+/** Persisted page UI state (DATASETS_UI_KEY). `selectedCategory: null` = "All". */
+interface DatasetsUiConfig {
+  collapsed: string[];
+  density: Density;
+  selectedCategory: string | null;
+}
+const DATASETS_UI_DEFAULTS: DatasetsUiConfig = {
+  collapsed: [],
+  density: "grid",
+  selectedCategory: null,
+};
 
 // ── CategoryPicker ────────────────────────────────────────────────────────────
 // Select from existing categories or type a new one.
@@ -127,8 +146,24 @@ export default function DatasetsPage() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("created_desc");
 
-  // ── Category collapse ────────────────────────────────────────────────────
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  // ── Persisted page UI (collapse / density / rail selection) ──────────────
+  // Coerce every field: loadPersisted shallow-merges arbitrary parsed JSON, so a
+  // hand-edited or corrupted blob can hand back the wrong type.
+  const [persistedUi] = useState(() => loadPersisted(DATASETS_UI_KEY, DATASETS_UI_DEFAULTS));
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
+    () => new Set(Array.isArray(persistedUi.collapsed) ? persistedUi.collapsed.filter((c) => typeof c === "string") : []),
+  );
+  const [density, setDensity] = useState<Density>(persistedUi.density === "rows" ? "rows" : "grid");
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(
+    typeof persistedUi.selectedCategory === "string" ? persistedUi.selectedCategory : null,
+  );
+
+  // Root element — owns the native file-drop listeners and hosts the highlight lookup.
+  const pageRef = useRef<HTMLDivElement>(null);
+
+  // ── Newly created dataset: scroll into view + flash ──────────────────────
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Category management (rename/delete) ──────────────────────────────────
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
@@ -194,6 +229,7 @@ export default function DatasetsPage() {
   // Dataset-to-category drag state
   const [draggingDatasetId, setDraggingDatasetId] = useState<string | null>(null);
   const [dropTargetCategory, setDropTargetCategory] = useState<string | null>(null);
+  const [railDropTarget, setRailDropTarget] = useState<string | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: datasets = [], isLoading } = useQuery({
@@ -346,12 +382,60 @@ export default function DatasetsPage() {
     localStorage.setItem(DECLARED_CATEGORIES_KEY, JSON.stringify(emptyCategories));
   }, [emptyCategories]);
 
+  // Persist page UI state. `collapsed` is deliberately NOT pruned to currently-known
+  // categories — that would discard collapse state for categories hidden by search.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      savePersisted(DATASETS_UI_KEY, {
+        collapsed: [...collapsedCategories],
+        density,
+        selectedCategory,
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [collapsedCategories, density, selectedCategory]);
+
+  // Scroll a newly created dataset into view once the refetched list has rendered it.
+  // Re-runs on `datasets` because the node does not exist until the invalidation lands.
+  // No cleanup that clears the timer: `datasets` churns on every refetch and would keep
+  // resetting the 2s window. The unmount cleanup + hard expiry below cover it.
+  useEffect(() => {
+    if (!highlightId) return;
+    const el = pageRef.current?.querySelector<HTMLElement>(`[data-dataset-id="${CSS.escape(highlightId)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightId(null), 2000);
+  }, [highlightId, datasets]);
+
+  // Hard expiry so an id that never renders (filtered out, deleted) can't pin the class.
+  useEffect(() => {
+    if (!highlightId) return;
+    const t = setTimeout(() => setHighlightId(null), 6000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
+
+  useEffect(() => () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current); }, []);
+
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMutation = useMutation({
     mutationFn: () => datasetsApi.create(newName, newDesc, newCategory),
     onSuccess: (ds) => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory("");
+      // Make sure the new dataset is actually reachable before highlighting it: clear
+      // any search, drop the rail to "All" only if its section isn't already selected,
+      // and expand its section if collapsed.
+      const targetKey = ds.category || UNCATEGORIZED;
+      setSearch("");
+      setSelectedCategory((prev) => (prev === null || prev === targetKey ? prev : null));
+      setCollapsedCategories((prev) => {
+        if (!prev.has(targetKey)) return prev;
+        const next = new Set(prev);
+        next.delete(targetKey);
+        return next;
+      });
+      setHighlightId(ds.id);
       toast.success(`Dataset "${ds.name}" created`);
     },
     onError: () => toast.error("Failed to create dataset"),
@@ -419,6 +503,16 @@ export default function DatasetsPage() {
     },
     onSuccess: (_data, { oldName, newName: renamedTo }) => {
       setEmptyCategories((prev) => prev.map((c) => (c === oldName ? renamedTo : c)));
+      // Carry persisted UI state across the rename, or the user silently loses their
+      // collapse state and rail selection lands on a name that no longer exists.
+      setSelectedCategory((prev) => (prev === oldName ? renamedTo : prev));
+      setCollapsedCategories((prev) => {
+        if (!prev.has(oldName)) return prev;
+        const next = new Set(prev);
+        next.delete(oldName);
+        next.add(renamedTo);
+        return next;
+      });
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setRenamingCategory(null);
       toast.success("Category renamed");
@@ -437,6 +531,7 @@ export default function DatasetsPage() {
     },
     onSuccess: (_data, catName) => {
       setEmptyCategories((prev) => prev.filter((c) => c !== catName));
+      setSelectedCategory((prev) => (prev === catName ? null : prev));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setDeletingCategory(null);
       toast.success("Category removed");
@@ -468,7 +563,6 @@ export default function DatasetsPage() {
     }
   }, [qc]);
 
-  const pageRef = useRef<HTMLDivElement>(null);
   const dragRafRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -524,14 +618,122 @@ export default function DatasetsPage() {
     setNewCategoryName("");
   }
 
+  // ── Shared between the card and compact-row renderers ─────────────────────
+  /** Identity, drag source, and click-through props every dataset element needs.
+   *  `data-dataset-id` is also the file-upload drop target selector (see the native
+   *  listeners on pageRef) — never put it on anything that isn't a dataset. */
+  type DatasetElementProps = HTMLAttributes<HTMLDivElement> & {
+    "data-dataset-id": string;
+    draggable: boolean;
+  };
+  const datasetElementProps = (ds: Dataset): DatasetElementProps => ({
+    "data-dataset-id": ds.id,
+    draggable: hasAnyCategory,
+    // Pane-aware navigation: must stay go(), not useNavigate — see docs/dev/frontend-core.md
+    onClick: () => go(`/datasets/${ds.id}/gallery`, { page: "gallery", datasetId: ds.id }),
+    onDragStart: (e) => {
+      setDraggingDatasetId(ds.id);
+      e.dataTransfer.setData("dataset-id", ds.id);
+      e.dataTransfer.effectAllowed = "move";
+    },
+    onDragEnd: () => { setDraggingDatasetId(null); setDropTargetCategory(null); setRailDropTarget(null); },
+  });
+
+  /** The six per-dataset actions, shared by both densities. */
+  const renderDatasetActions = (ds: Dataset, variant: "card" | "row") => {
+    const btn = variant === "card"
+      ? { width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }
+      : { width: 22, height: 22 };
+    return (
+      <div
+        className="ds-row-actions"
+        style={variant === "card"
+          ? { position: "absolute", top: 10, right: 10, display: "flex", gap: 4, opacity: 0, transition: "opacity .15s", zIndex: 2 }
+          : { display: "flex", gap: 2, opacity: 0, transition: "opacity .15s", flexShrink: 0, marginLeft: 4 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-btn"
+          title="Edit"
+          style={btn}
+          onClick={() => {
+            setRenameTarget(ds);
+            setRenameName(ds.name);
+            setRenameDesc(ds.description ?? "");
+            setRenameCategory(ds.category ?? "");
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z"/>
+          </svg>
+        </button>
+        <button
+          className="icon-btn"
+          title="Duplicate"
+          style={btn}
+          onClick={() => {
+            setDuplicateTarget(ds);
+            setDuplicateName(`${ds.name} (copy)`);
+            setDupBranchId(undefined);
+            setDuplicateVersionId(undefined);
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <rect x="5" y="5" width="8" height="9" rx="1"/><path d="M3 11V3a1 1 0 011-1h8"/>
+          </svg>
+        </button>
+        <button
+          className="icon-btn"
+          title="Import folder"
+          style={btn}
+          onClick={() => { setImportInitialId(ds.id); setImportOpen(true); }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
+          </svg>
+        </button>
+        <button
+          className="icon-btn"
+          title="Import captions (.txt sidecars from a folder)"
+          style={btn}
+          onClick={() => { setCaptionImportTarget(ds); setCaptionImportPath(""); }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M4 2.5h6l2.5 2.5v8.5h-8.5v-11z"/><path d="M5.5 8h5M5.5 10.5h3"/>
+          </svg>
+        </button>
+        <button
+          className="icon-btn"
+          title="Rescan folder from disk"
+          disabled={rescanTargetId === ds.id}
+          style={btn}
+          onClick={() => rescanMutation.mutate(ds)}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
+          </svg>
+        </button>
+        <button
+          className="icon-btn danger"
+          title="Delete"
+          style={btn}
+          onClick={() => setDeleteTarget(ds)}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+            <path d="M3 4.5h10M5.5 4.5V3a1 1 0 011-1h3a1 1 0 011 1v1.5M5.5 7.5v4M10.5 7.5v4M4 4.5l1 9h6l1-9"/>
+          </svg>
+        </button>
+      </div>
+    );
+  };
+
   // ── Card renderer ─────────────────────────────────────────────────────────
   const renderCard = (ds: Dataset, i: number) => {
     const pct = ds.image_count ? Math.round((ds.captioned_count / ds.image_count) * 100) : 0;
     return (
       <div
         key={ds.id}
-        data-dataset-id={ds.id}
-        draggable={hasAnyCategory}
+        {...datasetElementProps(ds)}
         style={{
           background: "var(--surface-1)",
           border: `1px solid ${dragOverId === ds.id ? "var(--accent)" : "var(--line)"}`,
@@ -540,16 +742,9 @@ export default function DatasetsPage() {
           position: "relative", transition: "border-color .15s, opacity .15s",
           opacity: draggingDatasetId === ds.id ? 0.45 : 1,
         }}
-        onClick={() => go(`/datasets/${ds.id}/gallery`, { page: "gallery", datasetId: ds.id })}
         onMouseEnter={(e) => { if (dragOverId !== ds.id) (e.currentTarget as HTMLElement).style.borderColor = "var(--line-2)"; }}
         onMouseLeave={(e) => { if (dragOverId !== ds.id) (e.currentTarget as HTMLElement).style.borderColor = "var(--line)"; }}
-        onDragStart={(e) => {
-          setDraggingDatasetId(ds.id);
-          e.dataTransfer.setData("dataset-id", ds.id);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragEnd={() => { setDraggingDatasetId(null); setDropTargetCategory(null); }}
-        className="ds-card-wrapper"
+        className={"ds-card-wrapper" + (highlightId === ds.id ? " ds-flash" : "")}
       >
         {/* Drag-over overlay */}
         {dragOverId === ds.id && (
@@ -579,9 +774,13 @@ export default function DatasetsPage() {
                 const imgId = ds.preview_image_ids[k % ds.preview_image_ids.length];
                 return (
                   <div key={k} style={{ height: 110, overflow: "hidden", background: "var(--surface-3)" }}>
+                    {/* draggable={false}: a default-draggable <img> inside a draggable
+                        ancestor starts its own image drag carrying no "dataset-id",
+                        silently breaking dataset→category drag from the preview strip. */}
                     <img
                       src={`/api/v1/images/${imgId}/thumbnail`}
                       alt=""
+                      draggable={false}
                       style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }}
                     />
                   </div>
@@ -594,84 +793,7 @@ export default function DatasetsPage() {
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, transparent 30%, var(--surface-1))", pointerEvents: "none" }} />
         </div>
 
-        {/* Row actions (shown on hover via CSS) */}
-        <div
-          className="ds-row-actions"
-          style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 4, opacity: 0, transition: "opacity .15s", zIndex: 2 }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            className="icon-btn"
-            title="Edit"
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => {
-              setRenameTarget(ds);
-              setRenameName(ds.name);
-              setRenameDesc(ds.description ?? "");
-              setRenameCategory(ds.category ?? "");
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z"/>
-            </svg>
-          </button>
-          <button
-            className="icon-btn"
-            title="Duplicate"
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => {
-              setDuplicateTarget(ds);
-              setDuplicateName(`${ds.name} (copy)`);
-              setDupBranchId(undefined);
-              setDuplicateVersionId(undefined);
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <rect x="5" y="5" width="8" height="9" rx="1"/><path d="M3 11V3a1 1 0 011-1h8"/>
-            </svg>
-          </button>
-          <button
-            className="icon-btn"
-            title="Import folder"
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => { setImportInitialId(ds.id); setImportOpen(true); }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
-            </svg>
-          </button>
-          <button
-            className="icon-btn"
-            title="Import captions (.txt sidecars from a folder)"
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => { setCaptionImportTarget(ds); setCaptionImportPath(""); }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M4 2.5h6l2.5 2.5v8.5h-8.5v-11z"/><path d="M5.5 8h5M5.5 10.5h3"/>
-            </svg>
-          </button>
-          <button
-            className="icon-btn"
-            title="Rescan folder from disk"
-            disabled={rescanTargetId === ds.id}
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => rescanMutation.mutate(ds)}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
-            </svg>
-          </button>
-          <button
-            className="icon-btn danger"
-            title="Delete"
-            style={{ width: 26, height: 26, background: "rgba(7,9,11,.7)", border: "1px solid var(--line-2)", backdropFilter: "blur(8px)" }}
-            onClick={() => setDeleteTarget(ds)}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M3 4.5h10M5.5 4.5V3a1 1 0 011-1h3a1 1 0 011 1v1.5M5.5 7.5v4M10.5 7.5v4M4 4.5l1 9h6l1-9"/>
-            </svg>
-          </button>
-        </div>
+        {renderDatasetActions(ds, "card")}
 
         {/* Body */}
         <div style={{ padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -709,6 +831,84 @@ export default function DatasetsPage() {
     </div>
   );
 
+  // ── Compact row renderer ──────────────────────────────────────────────────
+  // ~44px per dataset instead of ~275px. Shares datasetElementProps with the card so
+  // dataset→category drag, file-drop upload, and pane navigation behave identically.
+  const renderRow = (ds: Dataset, i: number) => {
+    const pct = ds.image_count ? Math.round((ds.captioned_count / ds.image_count) * 100) : 0;
+    const thumb = ds.preview_image_ids?.[0];
+    return (
+      <div
+        key={ds.id}
+        {...datasetElementProps(ds)}
+        className={"ds-list-row" + (highlightId === ds.id ? " ds-flash" : "")}
+        style={{
+          display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 8px 0 6px",
+          background: "var(--surface-1)",
+          border: `1px solid ${dragOverId === ds.id ? "var(--accent)" : "var(--line)"}`,
+          borderRadius: "var(--r)", position: "relative", overflow: "hidden",
+          cursor: hasAnyCategory ? "grab" : "pointer",
+          opacity: draggingDatasetId === ds.id ? 0.45 : 1,
+          transition: "border-color .15s, opacity .15s",
+        }}
+      >
+        {dragOverId === ds.id && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none",
+            background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center",
+            color: "var(--accent)", fontSize: 12, fontWeight: 600,
+          }}>
+            Drop to upload
+          </div>
+        )}
+
+        <div style={{
+          width: 36, height: 36, flexShrink: 0, borderRadius: "var(--r-sm)", overflow: "hidden",
+          background: thumb ? "var(--surface-3)" : tileGrad(i, 0),
+        }}>
+          {thumb && (
+            <img
+              src={`/api/v1/images/${thumb}/thumbnail`}
+              alt=""
+              draggable={false}
+              style={{ width: 36, height: 36, objectFit: "cover", display: "block" }}
+            />
+          )}
+        </div>
+
+        <span style={{
+          fontSize: 13, fontWeight: 600, flexShrink: 0, maxWidth: 240,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{ds.name}</span>
+
+        <span style={{
+          fontSize: 12, color: "var(--fg-mute)", flex: 1, minWidth: 0,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{ds.description}</span>
+
+        <span className="mono" style={{
+          display: "flex", gap: 14, flexShrink: 0, fontSize: 11.5,
+          color: "var(--fg-dim)", fontFeatureSettings: '"tnum"',
+        }}>
+          <span>{ds.image_count.toLocaleString()} img</span>
+          <span style={{ color: "var(--accent)" }}>{pct}%</span>
+          <span>{formatSize(ds.total_size_bytes)}</span>
+        </span>
+
+        {renderDatasetActions(ds, "row")}
+      </div>
+    );
+  };
+
+  const renderRows = (items: Dataset[]) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {items.map((ds, i) => renderRow(ds, i))}
+    </div>
+  );
+
+  const renderItems = (items: Dataset[]) =>
+    density === "rows" ? renderRows(items) : renderGrid(items);
+
   const toggleCategory = (cat: string) => {
     setCollapsedCategories((prev) => {
       const next = new Set(prev);
@@ -717,9 +917,13 @@ export default function DatasetsPage() {
     });
   };
 
-  const renderCategorySection = (cat: string, items: Dataset[], muted = false) => {
-    const collapsed = collapsedCategories.has(cat);
-    const isUncategorized = cat === "(Uncategorized)";
+  // `forceExpanded` is set when the rail has filtered to a single category: a
+  // persisted-collapsed section would otherwise render as a header over nothing.
+  const renderCategorySection = (
+    cat: string, items: Dataset[], muted = false, opts?: { forceExpanded?: boolean },
+  ) => {
+    const collapsed = !opts?.forceExpanded && collapsedCategories.has(cat);
+    const isUncategorized = cat === UNCATEGORIZED;
     const isRenaming = renamingCategory === cat;
     const isDropTarget = dropTargetCategory === cat;
 
@@ -783,7 +987,7 @@ export default function DatasetsPage() {
 
             <span className="badge" style={{ flexShrink: 0 }}>{items.length}</span>
 
-            {!isRenaming && (
+            {!isRenaming && !opts?.forceExpanded && (
               <svg
                 width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="var(--fg-mute)" strokeWidth="1.4"
                 style={{ flexShrink: 0, transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform .15s" }}
@@ -856,7 +1060,7 @@ export default function DatasetsPage() {
           )}
         </div>
 
-        {!collapsed && (items.length > 0 ? renderGrid(items) : (
+        {!collapsed && (items.length > 0 ? renderItems(items) : (
           <div style={{
             height: 68, border: `2px dashed ${isDropTarget ? "var(--accent)" : "var(--line)"}`,
             borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
@@ -869,6 +1073,94 @@ export default function DatasetsPage() {
       </div>
     );
   };
+
+  // ── Category rail ─────────────────────────────────────────────────────────
+  // A filter, not a replacement for sections: picking a category still renders through
+  // renderCategorySection, so collapse/rename/delete/drop all stay in one place.
+  // `key === null` is the "All" pseudo-entry.
+  const renderRailRow = (key: string | null, label: string, count: number) => {
+    const isActive = effectiveSelected === key;
+    const isDrop = key !== null && railDropTarget === key;
+    // "All" is not a drop target — there is no category to assign.
+    // NB: never add data-dataset-id here; it is the file-upload target selector and
+    // would make handleCardDrop POST images to a category name as if it were an id.
+    const dropHandlers = key === null ? {} : {
+      onDragOver: (e: ReactDragEvent) => {
+        if (!e.dataTransfer.types.includes("dataset-id")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (railDropTarget !== key) setRailDropTarget(key);
+      },
+      onDragLeave: (e: ReactDragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRailDropTarget(null);
+      },
+      onDrop: (e: ReactDragEvent) => {
+        e.preventDefault();
+        const datasetId = e.dataTransfer.getData("dataset-id");
+        setRailDropTarget(null);
+        setDraggingDatasetId(null);
+        if (!datasetId) return;
+        const target = key === UNCATEGORIZED ? "" : key;
+        const src = datasets.find((d) => d.id === datasetId);
+        if (src && src.category !== target) moveCategoryMutation.mutate({ datasetId, category: target });
+      },
+    };
+
+    return (
+      <button
+        key={key ?? "__all__"}
+        className="ds-rail-row"
+        title={label}
+        onClick={() => setSelectedCategory(key)}
+        {...dropHandlers}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+          width: "100%", padding: "5px 8px", borderRadius: "var(--r)",
+          textAlign: "left", cursor: "pointer",
+          // transparent border rather than none, so the drop highlight doesn't shift the row
+          border: `1px solid ${isDrop ? "var(--accent)" : "transparent"}`,
+          background: isDrop ? "var(--accent-glow)" : isActive ? "var(--surface-3)" : "transparent",
+          color: isActive ? "var(--accent)" : "var(--fg)",
+          fontSize: 12.5, fontWeight: isActive ? 600 : 400,
+          fontStyle: key === UNCATEGORIZED ? "italic" : undefined,
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span className="ds-rail-count" style={{ fontSize: 11, color: "var(--fg-mute)", flexShrink: 0 }}>{count}</span>
+      </button>
+    );
+  };
+
+  const renderRail = () => (
+    <aside style={{
+      width: 180, flexShrink: 0, borderRight: "1px solid var(--line)",
+      overflowY: "auto", padding: "10px 6px", background: "var(--surface-1)",
+      // Dimmed while searching: rail selection is bypassed so no match can hide
+      // behind an unselected category.
+      opacity: isSearching ? 0.55 : 1, transition: "opacity .12s",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 8px 6px" }}>
+        <span style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: ".08em",
+          color: "var(--fg-mute)", textTransform: "uppercase",
+        }}>
+          Categories
+        </span>
+        <button
+          className="icon-btn"
+          style={{ width: 20, height: 20 }}
+          title="New category"
+          onClick={() => setShowCreateCategory(true)}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+        </button>
+      </div>
+      {renderRailRow(null, "All", filteredAndSorted.length)}
+      {sectionKeys.map((k) => renderRailRow(k, k, sectionItems.get(k)?.length ?? 0))}
+    </aside>
+  );
 
   // ── Grouped layout ────────────────────────────────────────────────────────
   const { hasAnyCategory, categoryNames, uncategorized } = useMemo(() => {
@@ -886,6 +1178,36 @@ export default function DatasetsPage() {
     };
   }, [filteredAndSorted, emptyCategories, search]);
 
+  // Datasets bucketed by section key, in one pass — the previous per-section .filter()
+  // was O(categories × datasets) on every render.
+  // Deliberately not wrapped in useMemo: building the Map mutates it, which React
+  // Compiler cannot preserve as manual memoization, and a useMemo here makes it skip
+  // optimizing this whole component. The compiler memoizes this on its own.
+  const sectionItems = (() => {
+    const m = new Map<string, Dataset[]>();
+    for (const k of categoryNames) m.set(k, []);
+    for (const d of filteredAndSorted) {
+      if (!d.category) continue;
+      m.get(d.category)?.push(d);
+    }
+    if (uncategorized.length > 0) m.set(UNCATEGORIZED, uncategorized);
+    return m;
+  })();
+
+  // Uncategorized first — a newly created dataset has no category and must not be
+  // pushed below every named section.
+  const sectionKeys = [...(uncategorized.length > 0 ? [UNCATEGORIZED] : []), ...categoryNames];
+
+  // A persisted selection that no longer exists is handled by derivation, never by
+  // clearing it in an effect — on first paint `datasets` is [], so eager cleanup would
+  // wipe a still-valid selection while the list loads.
+  const isSearching = search.trim() !== "";
+  const effectiveSelected =
+    !isSearching && selectedCategory && sectionKeys.includes(selectedCategory) ? selectedCategory : null;
+  const visibleSectionKeys = effectiveSelected ? [effectiveSelected] : sectionKeys;
+  const showRail = hasAnyCategory && sectionKeys.length >= 2;
+  const allCollapsed = sectionKeys.length > 0 && sectionKeys.every((k) => collapsedCategories.has(k));
+
   // ── Rename modal: changed detection ───────────────────────────────────────
   const renameChanged = renameTarget
     ? renameName !== renameTarget.name ||
@@ -895,16 +1217,18 @@ export default function DatasetsPage() {
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div ref={pageRef} style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
+    <div ref={pageRef} style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       {/* Page header */}
-      <div className="page-h">
+      <div className="page-h" style={{ padding: "24px 28px 0", marginBottom: 16, flexShrink: 0 }}>
         <div>
           <h1>Datasets</h1>
           <p>
             {datasets.length} datasets · {totalImages.toLocaleString()} images · {formatSize(totalSize)} on disk
           </p>
         </div>
-        <div className="phactions">
+        {/* Wraps rather than overflowing: this toolbar is wide and the page also
+            renders inside narrow split-view panes. */}
+        <div className="phactions" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
           <div className="search-wrap">
             <svg className="search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/>
@@ -927,6 +1251,52 @@ export default function DatasetsPage() {
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
+
+          {/* Density toggle — cards vs ~44px compact rows */}
+          <div style={{
+            display: "flex", gap: 2, padding: 2, border: "1px solid var(--line-2)",
+            borderRadius: "var(--r)", background: "var(--surface-2)",
+          }}>
+            {(["grid", "rows"] as const).map((m) => (
+              <button
+                key={m}
+                className="icon-btn"
+                aria-pressed={density === m}
+                title={m === "grid" ? "Card grid" : "Compact rows"}
+                onClick={() => setDensity(m)}
+                style={{
+                  width: 26, height: 24,
+                  background: density === m ? "var(--surface-3)" : "transparent",
+                  color: density === m ? "var(--accent)" : "var(--fg-mute)",
+                }}
+              >
+                {m === "grid" ? (
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                    <rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/>
+                    <rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/>
+                  </svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                    <path d="M2 4h12M2 8h12M2 12h12"/>
+                  </svg>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {hasAnyCategory && !effectiveSelected && (
+            <button
+              className="btn"
+              title={allCollapsed ? "Expand all categories" : "Collapse all categories"}
+              onClick={() => setCollapsedCategories(allCollapsed ? new Set() : new Set(sectionKeys))}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                {allCollapsed ? <path d="M4 6l4 4 4-4"/> : <path d="M4 10l4-4 4 4"/>}
+              </svg>
+              {allCollapsed ? "Expand all" : "Collapse all"}
+            </button>
+          )}
+
           <button className="btn" onClick={() => { setImportInitialId(undefined); setImportOpen(true); }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
@@ -948,25 +1318,36 @@ export default function DatasetsPage() {
         </div>
       </div>
 
-      {isLoading && <p style={{ color: "var(--fg-mute)" }}>Loading…</p>}
+      {/* Rail + content. pageRef stays on the root so the native file-drop listeners
+          still cover both columns. */}
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {showRail && renderRail()}
 
-      {/* Dataset grid — flat or grouped */}
-      {hasAnyCategory ? (
-        <>
-          {categoryNames.map((cat) =>
-            renderCategorySection(cat, filteredAndSorted.filter((d) => d.category === cat))
-          )}
-          {uncategorized.length > 0 &&
-            renderCategorySection("(Uncategorized)", uncategorized, true)}
-        </>
-      ) : (
-        renderGrid(filteredAndSorted)
-      )}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 28px 28px" }}>
+          {isLoading && <p style={{ color: "var(--fg-mute)" }}>Loading…</p>}
 
-      {/* Hover reveals for card actions and category actions */}
+          {/* Sections (Uncategorized first, via sectionKeys) or a flat grid */}
+          {hasAnyCategory
+            ? visibleSectionKeys.map((k) =>
+                renderCategorySection(
+                  k,
+                  sectionItems.get(k) ?? [],
+                  k === UNCATEGORIZED,
+                  { forceExpanded: !!effectiveSelected },
+                ))
+            : renderItems(filteredAndSorted)}
+        </div>
+      </div>
+
+      {/* Hover reveals for card/row actions, category actions, and rail rows.
+          Kept local (not index.css) alongside the inline-style convention on this page. */}
       <style>{`
         .ds-card-wrapper:hover .ds-row-actions { opacity: 1 !important; }
+        .ds-list-row:hover .ds-row-actions { opacity: 1 !important; }
+        .ds-list-row:hover { border-color: var(--line-2) !important; }
         .ds-cat-header:hover .ds-cat-actions { opacity: 1 !important; }
+        .ds-rail-row:hover { background: var(--surface-2); }
+        .ds-rail-row:hover .ds-rail-count { color: var(--fg); }
       `}</style>
 
       {/* ── Edit Dataset Modal ─────────────────────────────────────────────── */}

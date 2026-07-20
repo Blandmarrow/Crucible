@@ -35,6 +35,11 @@ npm run build    # TypeScript check + Vite production build → frontend/dist/
 npm run lint     # ESLint
 ```
 
+**`npm run build` is the only real typecheck.** The root `tsconfig.json` is a solution-style
+config (`"files": []` + project references), so a bare `npx tsc --noEmit` type-checks
+**nothing** and exits 0 on code that does not compile. Verify frontend changes with
+`npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
+
 ## Architecture
 
 ### Data flow
@@ -90,7 +95,7 @@ file into every conversation, defeating the purpose of this split. Use plain rel
 | File | Contents | Read this when... | Lines |
 |---|---|---|---|
 | `docs/dev/ml-models.md` | Model manager (VRAM/unload), model ID registry, JoyCaption/Florence-2 details, quality scorers, object detection, upscaling, LUT grading, device abstraction, TorchDynamo, config validation | Working on captioning models, quality scoring, object detection, upscaling, LUT grading, or `backend/ml/` | ~257 |
-| `docs/dev/gallery-and-images.md` | Image naming/renaming/collisions, gallery selection/filters/subfolder sidebar, manual drag ordering, gallery navigation state (incl. ImageDetailPage crop/selection/caption panel), generation metadata | Working on `GalleryPage`, `ImageDetailPage`, image upload/move/copy/rename, or generation-metadata display | ~150 |
+| `docs/dev/gallery-and-images.md` | Image naming/renaming/collisions, gallery selection/filters/subfolder sidebar, manual drag ordering, drag-images-onto-subfolders (dnd-kit droppables, DragOverlay, collision detection), gallery navigation state (incl. ImageDetailPage crop/selection/caption panel), generation metadata | Working on `GalleryPage`, `ImageDetailPage`, gallery drag & drop, image upload/move/copy/rename, or generation-metadata display | ~168 |
 | `docs/dev/captioning.md` | Captioning post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config and ModelPicker | Working on `CaptioningPage`, the caption job pipeline, or LLM provider integration | ~55 |
 | `docs/dev/export-and-bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count, detection-driven cropping (`/detection/crop`, `detection_crop_rect`), dataset export (kohya/ai-toolkit/plain, filters, resize, metadata stripping) | Working on `ExportPage`, `BulkEditPage`, `CropToDetectionForm`, or any `bulk-*` endpoint | ~109 |
 | `docs/dev/tag-consolidation.md` | Dataset-wide semantic tag consolidation: MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, `TagConsolidatePage` preview/confirm UI | Working on `TagConsolidatePage`, the `tag-consolidation` router, `tag_embedder`, or per-image `dedupe_tags` | ~100 |

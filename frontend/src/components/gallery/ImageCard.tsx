@@ -24,6 +24,9 @@ interface Props {
   onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void;
   isDraggable?: boolean;
   isActiveDrag?: boolean;
+  /** Whether the card participates in sort-reordering. When false it stays draggable
+   *  (so it can be dropped on a subfolder row) but is not itself a drop target. */
+  sortable?: boolean;
 }
 
 export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable, isActiveDrag }: Props) {
@@ -228,8 +231,13 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   );
 }
 
-export function SortableImageCard({ image, onShowGenMeta, onSelect }: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: image.id });
+export function SortableImageCard({ image, onShowGenMeta, onSelect, sortable = true }: Props) {
+  // Outside custom-order mode the card must still be draggable (to drop onto a subfolder
+  // row) but must not be a drop target itself, so `over.id` can only ever be a subfolder.
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: image.id,
+    disabled: { draggable: false, droppable: !sortable },
+  });
   return (
     <div
       ref={setNodeRef}

@@ -154,7 +154,11 @@ you learn new things during a session:
   a setup step — update `README.md` and the relevant `docs/*.md` **in the same
   change**, not just `docs/dev/`. A whole subsystem (its own page + settings) earns
   its own `docs/<topic>.md` plus a README Docs-table row (see `docs/comfyui.md`);
-  a smaller capability is a section in `docs/features.md`. README's Workflow chain,
+  a smaller capability is a section in the `docs/<topic>.md` that already covers
+  its area. **`docs/features.md` is an index, not a container** — it gets a row
+  pointing at the topic doc, never prose. (It previously held ten subsystems and
+  reached 4,700 words; `scripts/check_docs.py` now enforces a line budget on
+  `docs/*.md` so that cannot recur.) README's Workflow chain,
   Prerequisites, and Docs table are part of the change when the feature affects
   them. `scripts/check_docs.py` link-checks these files but cannot tell that a
   feature is missing from them — that is on you.

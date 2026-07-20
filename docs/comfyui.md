@@ -61,7 +61,7 @@ From the **Rows** toolbar:
 - **+ Add row** — one empty row.
 - **Paste prompts…** — one row per line of pasted text.
 - **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces).
-- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](features.md#settings). Two fields do different jobs: **Instructions** describe *how* prompts should be written and persist with the plan, while **Request** describes *what* to generate this time. Generate a batch at a time, or run *generate until N* and let it loop; the model is told which prompts already exist so it diverges from them, and duplicates are dropped. Review and edit the results before adding them as rows.
+- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and persist with the plan, while **Request** describes *what* to generate this time. Generate a batch at a time, or run *generate until N* and let it loop; the model is told which prompts already exist so it diverges from them, and duplicates are dropped. Review and edit the results before adding them as rows.
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
 - **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
 

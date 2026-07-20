@@ -22,11 +22,11 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 Every step from raw images to a training-ready export, in order:
 
-1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/features.md#datasets--gallery) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md)
-2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
+1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/gallery.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md)
+2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/gallery.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
-5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/features.md#batch-operations)
+5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/editing.md)
 6. **Version** — capture named snapshots and branches, and restore any prior state → [details](docs/versioning.md)
 7. **Export** — output to Kohya, AI Toolkit, or plain folder format — ready to train Stable Diffusion, SDXL, Flux, and more — with per-export filtering and resizing → [details](docs/export.md)
 
@@ -35,9 +35,9 @@ Every step from raw images to a training-ready export, in order:
 ## Features
 
 ### Dataset management
-- **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/features.md#datasets--gallery)
-- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/features.md#datasets--gallery)
-- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/features.md#datasets--gallery)
+- **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/gallery.md)
+- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
 
 ### Image generation
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
@@ -48,29 +48,29 @@ Every step from raw images to a training-ready export, in order:
 
 ### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics → [details](docs/scoring.md)
-- **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/features.md#datasets--gallery)
+- **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/gallery.md)
 
 ### Object detection
-- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM 2.1 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/features.md#object-detection)
-- **Manage detections** — rename, delete, merge, hand-draw new boxes (optionally SAM-segmented), and point-refine masks per image; run or bulk-delete detections by label/model/score across the dataset from the Bulk Edit page → [details](docs/features.md#managing-detections)
-- **Crop to detected subject** — batch-crop images to their detection boxes (union or largest, padding %, aspect-ratio snap) → [details](docs/features.md#crop-to-detected-subject)
+- **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM 2.1 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/detection.md)
+- **Manage detections** — rename, delete, merge, hand-draw new boxes (optionally SAM-segmented), and point-refine masks per image; run or bulk-delete detections by label/model/score across the dataset from the Bulk Edit page → [details](docs/detection.md#managing-detections)
+- **Crop to detected subject** — batch-crop images to their detection boxes (union or largest, padding %, aspect-ratio snap) → [details](docs/detection.md#crop-to-detected-subject)
 
 ### Editing & processing
-- **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/features.md#batch-operations)
-- **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/features.md#tag-consolidation)
-- **Process** images with ML upscaling and LUT color grading → [details](docs/features.md#image-processing)
-- **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/features.md#manual-image-ordering)
+- **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/editing.md)
+- **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/tag-consolidation.md)
+- **Process** images with ML upscaling and LUT color grading → [details](docs/editing.md#image-processing)
+- **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/gallery.md#manual-image-ordering)
 
 ### Versioning & export
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
 
 ### Workspace & tooling
-- **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/features.md#statistics-dashboard)
-- **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/features.md#split-view)
-- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/features.md#file-browser)
-- **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/features.md#booru-tag-lookup)
-- **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/features.md#logs)
+- **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
+- **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/workspace.md#split-view)
+- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/workspace.md#file-browser)
+- **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
+- **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 
@@ -249,7 +249,7 @@ GELBOORU_USER_ID=...
 
 **Linux / macOS** — same commands via `./manage.sh start`, `./manage.sh dev`, `./manage.sh update`.
 
-To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal.
+To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/workspace.md#restarting--shutting-down).
 
 ---
 
@@ -263,11 +263,20 @@ To shut down, click the power icon in the top-right of the app, or press `Ctrl+C
 
 ## Docs
 
+Start at the [feature index](docs/features.md), or jump straight to a topic:
+
 | Topic | |
 |---|---|
-| Full feature reference | [docs/features.md](docs/features.md) |
+| Feature index | [docs/features.md](docs/features.md) |
+| Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
+| Object Detection | [docs/detection.md](docs/detection.md) |
+| Batch Editing & Image Processing | [docs/editing.md](docs/editing.md) |
+| Tag Consolidation | [docs/tag-consolidation.md](docs/tag-consolidation.md) |
+| Statistics Dashboard | [docs/statistics.md](docs/statistics.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
 | Export | [docs/export.md](docs/export.md) |
+| Settings | [docs/settings.md](docs/settings.md) |
+| Workspace — jobs, server control, split view, logs | [docs/workspace.md](docs/workspace.md) |

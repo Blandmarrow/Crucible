@@ -10,7 +10,7 @@ Checks (FAIL sets a non-zero exit code; WARN does not):
   1. FAIL  broken repo-path references in the docs (dev + user)
   2. FAIL  a markdown link to a .md file is missing, or its #anchor matches no heading
   3. FAIL  the `@docs/` / `@CLAUDE` auto-load footgun appears outside inline code
-  4. WARN  CLAUDE.md / docs/dev/*.md over their size thresholds
+  4. WARN  any doc over its size threshold (see size_limit())
   5. WARN  a docs/dev/*.md file has no Documentation Map row, or vice versa
 
 Why the heuristics are conservative: the docs reference many paths relative to
@@ -20,11 +20,15 @@ false positives we (a) ignore fenced ``` code blocks entirely, (b) only treat a 
 as a checkable path when it contains `/` and ends in a known file extension or `/`,
 and (c) resolve it against the repo root *and* `backend/`/`frontend/` before flagging.
 
-Two file sets, deliberately different: size and Documentation Map checks are
-dev-only (`docs/*.md` has neither a Map nor a line budget), while path and anchor
-checks cover both. What this CANNOT do is notice that a shipped feature has no
-user docs at all — the gap that motivated adding user docs here in the first place.
-Only the CLAUDE.md maintenance rules prevent that.
+Two file sets, deliberately different: the Documentation Map check is dev-only
+(`docs/*.md` has no Map), while path, anchor and size checks cover both. Size
+budgets are per-file — see `size_limit()`. `docs/*.md` was previously exempt, and
+`docs/features.md` grew to 4,700 words unflagged as a result; it is now an index
+that points at one doc per topic, and the budget is what keeps it that way.
+
+What this CANNOT do is notice that a shipped feature has no user docs at all —
+the gap that motivated adding user docs here in the first place. Only the
+CLAUDE.md maintenance rules prevent that.
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CLAUDE_MAX_LINES = 200   # raised from 150: the full maintenance block is intentionally long
 TOPIC_MAX_LINES = 250
+USER_MAX_LINES = 250     # docs/*.md — same budget as a dev topic file
+README_MAX_LINES = 300   # the landing page legitimately runs longer than a topic file
 
 # Bases a path token may be relative to. The docs reference source files relative to
 # `backend/` (e.g. `routers/captioning.py`) and `frontend/src/` (e.g. `api/foo.ts`).
@@ -212,11 +218,23 @@ def check_md_links(files: list[Path]) -> list[str]:
     return errors
 
 
+def size_limit(f: Path) -> int:
+    """Per-file line budget. Both always-loaded landing files (CLAUDE.md, README.md)
+    get their own; everything else is a topic file on the standard budget."""
+    if f.name == "CLAUDE.md":
+        return CLAUDE_MAX_LINES
+    if f.name == "README.md":
+        return README_MAX_LINES
+    if f.parent.name == "dev":
+        return TOPIC_MAX_LINES
+    return USER_MAX_LINES
+
+
 def check_sizes(files: list[Path]) -> list[str]:
     warnings: list[str] = []
     for f in files:
         n = len(f.read_text(encoding="utf-8").splitlines())
-        limit = CLAUDE_MAX_LINES if f.name == "CLAUDE.md" else TOPIC_MAX_LINES
+        limit = size_limit(f)
         if n > limit:
             warnings.append(f"{f.relative_to(REPO_ROOT)}: {n} lines (> {limit})")
     return warnings
@@ -277,7 +295,7 @@ def main() -> int:
     broken = check_broken_paths(every)
     links = check_md_links(every)
     footgun = check_footgun(dev)      # user docs are not auto-loaded into context
-    sizes = check_sizes(dev)          # docs/*.md has no line budget
+    sizes = check_sizes(every)        # dev + user; see size_limit() for per-file budgets
     map_sync = check_map_sync()       # docs/*.md has no Documentation Map
 
     print("Documentation drift check\n" + "=" * 26)

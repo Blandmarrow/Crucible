@@ -28,7 +28,7 @@ Three fully implemented export formats, all with identical filter and processing
 ## Loss masks (masked training loss)
 
 When **Export masks** is enabled, every exported image gets a matching grayscale
-mask PNG rasterized from its object detections (see [Object Detection](features.md#object-detection)),
+mask PNG rasterized from its object detections (see [Object Detection](detection.md)),
 sized to the exported image (including any resize). White areas train, black areas
 are ignored. SAM2/SAM3 detections contribute their precise polygon masks;
 bbox-only detections (Florence-2, NudeNet) contribute filled rectangles.
@@ -39,7 +39,7 @@ Options:
   image counts); selecting none uses all labels
 - **Exclude from mask** — pick labels whose regions are always painted black,
   even inside a trained area and even with Invert on. Useful for punching a
-  located watermark out of the loss (see [Locating watermarks](features.md#locating-watermarks)).
+  located watermark out of the loss (see [Locating watermarks](detection.md#locating-watermarks)).
   Exclusion overrides inclusion: a label in both lists is excluded. An image with
   only excluded regions (no included detection) counts as "without detections" and
   follows the setting below.

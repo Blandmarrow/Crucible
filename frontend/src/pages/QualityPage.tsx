@@ -10,7 +10,8 @@ import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
-import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 interface QualityWorkflow {
   runAesthetic: boolean;
@@ -101,28 +102,20 @@ export default function QualityPage() {
   }, [embeddingType]);
 
   // Persist the "workflow" config (scoring toggles/style settings) — global, debounced.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      savePersisted(QUALITY_WORKFLOW_KEY, {
-        runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw,
-        runDinoLayers, embeddingType, dinoLayer,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw, runDinoLayers, embeddingType, dinoLayer]);
+  useDebouncedPersist(QUALITY_WORKFLOW_KEY, {
+    runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw,
+    runDinoLayers, embeddingType, dinoLayer,
+  });
 
   // Persist "filters" config (subfolder/style refs) — per-dataset, debounced.
-  useEffect(() => {
-    if (!datasetId) return;
-    const t = setTimeout(() => {
-      savePersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId), {
-        activeSubfolder: activeSubfolder ?? null,
-        showStyleSection,
-        selectedRefIds: [...selectedRefIds],
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [datasetId, activeSubfolder, showStyleSection, selectedRefIds]);
+  useDebouncedPersist(
+    datasetId ? datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId) : null,
+    {
+      activeSubfolder: activeSubfolder ?? null,
+      showStyleSection,
+      selectedRefIds: [...selectedRefIds],
+    },
+  );
 
   // Reload the "filters" blob when datasetId changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);

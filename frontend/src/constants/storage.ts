@@ -28,6 +28,7 @@ export const EXPORT_WORKFLOW_KEY     = "export-workflow-config";
 export const QUALITY_WORKFLOW_KEY    = "quality-workflow-config";
 export const BULK_EDIT_WORKFLOW_KEY  = "bulk-edit-workflow-config";
 export const TAG_CONSOLIDATE_WORKFLOW_KEY = "tag-consolidate-workflow-config";
+export const DATASETS_UI_KEY         = "datasets-ui-config"; // collapse / density / rail selection
 
 // Remembered per-page "filters/scope" config — per-dataset blobs.
 // Append `-${datasetId}` via datasetScopedKey() from utils/persistentState.ts

@@ -47,6 +47,10 @@ export default function GeneratePromptsModal({ planId, queuePrompts, onAdd, addi
   const [busy, setBusy] = useState<"batch" | "until" | null>(null);
   const stopRef = useRef(false);
 
+  // Deliberately a synchronous write, not useDebouncedPersist: with no debounce
+  // there is no window in which an unmount could drop a write, and this modal is
+  // closed by unmounting — a debounced write would be the fragile choice here, not
+  // the safe one. See docs/dev/frontend-core.md.
   useEffect(() => {
     savePersisted(storageKey, { instructions, providerId, model, batchSize, temperature });
   }, [storageKey, instructions, providerId, model, batchSize, temperature]);

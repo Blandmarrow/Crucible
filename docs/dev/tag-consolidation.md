@@ -73,7 +73,8 @@ A single page-level **subfolder** select scopes both sections.
   Run button calls `subsume(..., dry_run:false)` then invalidates caches. This is the
   one home for subsumption (it was removed from `BulkEditForm`).
 - **Find synonyms** — threshold slider (persisted to `localStorage` under
-  `TAG_CONSOLIDATE_WORKFLOW_KEY` via `loadPersisted`/`savePersisted`) → **Analyze** fires
+  `TAG_CONSOLIDATE_WORKFLOW_KEY` via `loadPersisted`/`savePersisted` — synchronous, deliberately
+  not `useDebouncedPersist`; see `docs/dev/frontend-core.md` § persistence shapes) → **Analyze** fires
   the job; a `useRef`-guarded effect fetches `jobsApi.get(jobId).result_data` once and
   seeds editable cluster state.
 - **Cluster review** uses a **default-accept** model: every cluster's `accepted` defaults

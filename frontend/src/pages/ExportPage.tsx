@@ -12,7 +12,8 @@ import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
-import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Format = "kohya" | "aitoolkit" | "plain";
 type CaptionFmt = "txt" | "caption" | "jsonl";
@@ -167,32 +168,33 @@ export default function ExportPage() {
         mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
         mask_missing: maskMissing,
       });
-      if (datasetId) {
-        savePersisted(datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId), {
-          filterAesthetic, aestheticMin, filterCaptioned,
-          excludeFlags: [...excludeFlags],
-          filterStyleSim, styleSimMin,
-          subfolderFilterActive,
-          selectedSubfolders: [...selectedSubfolders],
-          maskLabels: [...maskLabels],
-          maskExcludeLabels: [...maskExcludeLabels],
-        });
-      }
     }, 350);
+    // Cancel, not flush: this timer only drives the preview query, which should
+    // not fire for a state the user has already navigated away from. Persistence
+    // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
   }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing]);
 
+  // Persist "filters" config — per-dataset, debounced.
+  useDebouncedPersist(
+    datasetId ? datasetScopedKey(EXPORT_FILTERS_PREFIX, datasetId) : null,
+    {
+      filterAesthetic, aestheticMin, filterCaptioned,
+      excludeFlags: [...excludeFlags],
+      filterStyleSim, styleSimMin,
+      subfolderFilterActive,
+      selectedSubfolders: [...selectedSubfolders],
+      maskLabels: [...maskLabels],
+      maskExcludeLabels: [...maskExcludeLabels],
+    },
+  );
+
   // Persist the "workflow" config (format/output settings) — global, debounced.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      savePersisted(EXPORT_WORKFLOW_KEY, {
-        format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt,
-        resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly,
-        exportMasks, maskInvert, maskMissing,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt, resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly, exportMasks, maskInvert, maskMissing]);
+  useDebouncedPersist(EXPORT_WORKFLOW_KEY, {
+    format, captionFmt, outputDir, nRepeats, conceptToken, outputImgFmt,
+    resizeTo, customResize, customResizeVal, stripMetadata, captionsOnly,
+    exportMasks, maskInvert, maskMissing,
+  });
 
   // Reload the "filters" blob when datasetId changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);

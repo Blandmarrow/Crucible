@@ -52,6 +52,10 @@ export default function TagConsolidatePage() {
     () => loadPersisted(TAG_CONSOLIDATE_WORKFLOW_KEY, { threshold: 0.85 }).threshold,
   );
   const [subfolder, setSubfolder] = useState<string | undefined>(undefined);
+  // Deliberately a synchronous write, not useDebouncedPersist: the payload is a
+  // single number, so there is no debounce and therefore no window in which an
+  // unmount could drop a write. Adopting the hook here would *add* a 350ms delay
+  // rather than fix anything. See docs/dev/frontend-core.md.
   useEffect(() => {
     savePersisted(TAG_CONSOLIDATE_WORKFLOW_KEY, { threshold });
   }, [threshold]);

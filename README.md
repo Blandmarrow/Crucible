@@ -23,7 +23,7 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 Every step from raw images to a training-ready export, in order:
 
 1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly → [details](docs/gallery.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md)
-2. **Organize** — group datasets into named categories; drag cards between sections to reassign → [details](docs/gallery.md)
+2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/editing.md)
@@ -35,7 +35,7 @@ Every step from raw images to a training-ready export, in order:
 ## Features
 
 ### Dataset management
-- **Organize** datasets into named categories; drag cards between sections to reassign → [details](docs/gallery.md)
+- **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/gallery.md)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
 - **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
 

@@ -12,7 +12,8 @@ import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
-import { loadPersisted, savePersisted, datasetScopedKey } from "../utils/persistentState";
+import { loadPersisted, datasetScopedKey } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score", "detection"]);
 
@@ -1149,15 +1150,10 @@ export default function StatsPage() {
     setActiveSubfolder(next.activeSubfolder ?? undefined);
   }, [datasetId]);
 
-  useEffect(() => {
-    if (!datasetId) return;
-    const t = setTimeout(() => {
-      savePersisted(datasetScopedKey(STATS_FILTERS_PREFIX, datasetId), {
-        activeSubfolder: activeSubfolder ?? null,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [datasetId, activeSubfolder]);
+  useDebouncedPersist(
+    datasetId ? datasetScopedKey(STATS_FILTERS_PREFIX, datasetId) : null,
+    { activeSubfolder: activeSubfolder ?? null },
+  );
 
   const hasActiveJob = useJobStore(s =>
     [...s.activeJobs.values()].some(

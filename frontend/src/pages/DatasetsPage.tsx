@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import type { HTMLAttributes, DragEvent as ReactDragEvent } from "react";
 import { DECLARED_CATEGORIES_KEY, DATASETS_UI_KEY } from "../constants/storage";
-import { loadPersisted, savePersisted } from "../utils/persistentState";
+import { loadPersisted } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
@@ -384,16 +385,11 @@ export default function DatasetsPage() {
 
   // Persist page UI state. `collapsed` is deliberately NOT pruned to currently-known
   // categories — that would discard collapse state for categories hidden by search.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      savePersisted(DATASETS_UI_KEY, {
-        collapsed: [...collapsedCategories],
-        density,
-        selectedCategory,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [collapsedCategories, density, selectedCategory]);
+  useDebouncedPersist(DATASETS_UI_KEY, {
+    collapsed: [...collapsedCategories],
+    density,
+    selectedCategory,
+  });
 
   // Scroll a newly created dataset into view once the refetched list has rendered it.
   // Re-runs on `datasets` because the node does not exist until the invalidation lands.
@@ -1180,9 +1176,8 @@ export default function DatasetsPage() {
 
   // Datasets bucketed by section key, in one pass — the previous per-section .filter()
   // was O(categories × datasets) on every render.
-  // Deliberately not wrapped in useMemo: building the Map mutates it, which React
-  // Compiler cannot preserve as manual memoization, and a useMemo here makes it skip
-  // optimizing this whole component. The compiler memoizes this on its own.
+  // Deliberately not memoized: this is a single pass over the dataset list, which is
+  // far cheaper than the bookkeeping a useMemo would add.
   const sectionItems = (() => {
     const m = new Map<string, Dataset[]>();
     for (const k of categoryNames) m.set(k, []);

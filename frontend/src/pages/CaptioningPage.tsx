@@ -29,7 +29,8 @@ import {
   CAPTIONING_WORKFLOW_KEY,
   CAPTIONING_FILTERS_PREFIX,
 } from "../constants/storage";
-import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Scope = "uncaptioned" | "selected" | "all";
 
@@ -444,35 +445,24 @@ export default function CaptioningPage() {
   }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      savePersisted(CAPTIONING_WORKFLOW_KEY, {
-        selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
-        targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
-        stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
-        saveBackup, renameOnCaption,
-        detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
-        additionalSteps,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [selectedModel, providerModelInput, style, customPrompt, wd14Threshold, targetWidth, targetHeight,
-      scope, delimiterMode, delimiterParts, stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
-      saveBackup, renameOnCaption,
-      detectTask, detectPrompt, detectUseCaptions, detectOverwrite, additionalSteps]);
+  useDebouncedPersist(CAPTIONING_WORKFLOW_KEY, {
+    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
+    targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
+    stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
+    saveBackup, renameOnCaption,
+    detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
+    additionalSteps,
+  });
 
   // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
-  useEffect(() => {
-    if (!datasetId) return;
-    const t = setTimeout(() => {
-      savePersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId), {
-        activeSubfolder: activeSubfolder ?? null,
-        minAestheticScore,
-        excludeFlags: [...excludeFlags],
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [datasetId, activeSubfolder, minAestheticScore, excludeFlags]);
+  useDebouncedPersist(
+    datasetId ? datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId) : null,
+    {
+      activeSubfolder: activeSubfolder ?? null,
+      minAestheticScore,
+      excludeFlags: [...excludeFlags],
+    },
+  );
 
   // Reload the "filters" blob when datasetId changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);

@@ -16,7 +16,8 @@ import LutForm from "../components/lut/LutForm";
 import BulkRenameForm from "../components/image/BulkRenameForm";
 import BulkDeleteForm from "../components/image/BulkDeleteForm";
 import { BULK_EDIT_WORKFLOW_KEY, BULK_EDIT_FILTERS_PREFIX } from "../constants/storage";
-import { loadPersisted, savePersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Scope = "all" | "flags" | "selected";
 type Tab = "captions" | "upscale" | "crop" | "detections" | "lut" | "rename" | "delete";
@@ -95,24 +96,16 @@ export default function BulkEditPage() {
   };
 
   // Persist "workflow" config (tab/scope) — global, debounced.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      savePersisted(BULK_EDIT_WORKFLOW_KEY, { tab, scope });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [tab, scope]);
+  useDebouncedPersist(BULK_EDIT_WORKFLOW_KEY, { tab, scope });
 
   // Persist "filters" config (selected flags/subfolder) — per-dataset, debounced.
-  useEffect(() => {
-    if (!datasetId) return;
-    const t = setTimeout(() => {
-      savePersisted(datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId), {
-        selectedFlags: [...selectedFlags],
-        activeSubfolder: activeSubfolder ?? null,
-      });
-    }, 350);
-    return () => clearTimeout(t);
-  }, [datasetId, selectedFlags, activeSubfolder]);
+  useDebouncedPersist(
+    datasetId ? datasetScopedKey(BULK_EDIT_FILTERS_PREFIX, datasetId) : null,
+    {
+      selectedFlags: [...selectedFlags],
+      activeSubfolder: activeSubfolder ?? null,
+    },
+  );
 
   // Reload the "filters" blob when datasetId changes without a remount (pane mode).
   const prevDatasetId = useRef(datasetId);

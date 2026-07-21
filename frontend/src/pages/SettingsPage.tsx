@@ -11,8 +11,11 @@ import {
   CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
   CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_WORKFLOW_KEY, CAPTIONING_FILTERS_PREFIX,
+  GALLERY_CHECKBOX_SIZE_MIN, GALLERY_CHECKBOX_SIZE_MAX,
   getGalleryPageSize, getGalleryDefaultSort,
 } from "../constants/storage";
+import { useUiPrefsStore } from "../store/uiPrefsStore";
+import GalleryCheckbox from "../components/gallery/GalleryCheckbox";
 import { clearPersisted } from "../utils/persistentState";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
@@ -225,6 +228,11 @@ export default function SettingsPage() {
 
   const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers" | "comfyui">("gallery");
 
+  // Gallery checkbox size lives in uiPrefsStore (not local state) so dragging the
+  // slider re-renders gallery cards live, including a GalleryPage in another pane.
+  const checkboxSize = useUiPrefsStore((s) => s.galleryCheckboxSize);
+  const setGalleryCheckboxSize = useUiPrefsStore((s) => s.setGalleryCheckboxSize);
+
   // ComfyUI connection test
   const [pingResult, setPingResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [pinging, setPinging] = useState(false);
@@ -424,6 +432,28 @@ export default function SettingsPage() {
                 <option value={100}>100</option>
                 <option value={200}>200</option>
               </select>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Selection checkbox size</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Size of the selection checkbox on gallery thumbnails. Increase it if the checkbox is
+                hard to hit. Applies immediately.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input
+                  type="range"
+                  min={GALLERY_CHECKBOX_SIZE_MIN}
+                  max={GALLERY_CHECKBOX_SIZE_MAX}
+                  step={1}
+                  value={checkboxSize}
+                  onChange={(e) => setGalleryCheckboxSize(parseInt(e.target.value, 10))}
+                  style={{ width: 180 }}
+                />
+                <span className="mono" style={{ fontSize: 12, minWidth: 44 }}>{checkboxSize}px</span>
+                {/* Live preview — the actual gallery component, not a copy of it. */}
+                <GalleryCheckbox size={checkboxSize} selected />
+              </div>
             </div>
 
             <div>

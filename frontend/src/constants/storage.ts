@@ -3,6 +3,7 @@ export const BRANCH_SNAPSHOT_KEY = "branch-snapshot-behavior"; // "ask" | "auto"
 export const VERSIONS_BRANCH_KEY = "versions-branch"; // prefix; append `-${datasetId}` for the full key
 export const GALLERY_PAGE_SIZE_KEY = "gallery-page-size"; // 25 | 50 | 100 | 200
 export const SUBFOLDER_RENAME_KEY = "subfolder-auto-rename"; // "on" | "off"
+export const GALLERY_CHECKBOX_SIZE_KEY = "gallery-checkbox-size"; // px, 14..32
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]
 
 import { SORT_OPTIONS } from "./galleryOptions";
@@ -43,6 +44,24 @@ const GALLERY_PAGE_SIZE_DEFAULT = 100;
 export function getGalleryPageSize(): number {
   const v = parseInt(localStorage.getItem(GALLERY_PAGE_SIZE_KEY) ?? "", 10);
   return Number.isNaN(v) ? GALLERY_PAGE_SIZE_DEFAULT : v;
+}
+
+// Gallery selection checkbox size, in px. The stored value is clamped on read as
+// well as on write so a hand-edited localStorage entry can't produce a checkbox
+// that covers the thumbnail.
+export const GALLERY_CHECKBOX_SIZE_DEFAULT = 18;
+export const GALLERY_CHECKBOX_SIZE_MIN = 14;
+export const GALLERY_CHECKBOX_SIZE_MAX = 32;
+
+export function clampGalleryCheckboxSize(v: number): number {
+  if (Number.isNaN(v)) return GALLERY_CHECKBOX_SIZE_DEFAULT;
+  return Math.min(GALLERY_CHECKBOX_SIZE_MAX, Math.max(GALLERY_CHECKBOX_SIZE_MIN, Math.round(v)));
+}
+
+export function getGalleryCheckboxSize(): number {
+  const raw = localStorage.getItem(GALLERY_CHECKBOX_SIZE_KEY);
+  if (raw === null) return GALLERY_CHECKBOX_SIZE_DEFAULT;
+  return clampGalleryCheckboxSize(parseInt(raw, 10));
 }
 
 export function getGalleryDefaultSort(): number {

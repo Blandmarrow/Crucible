@@ -6,10 +6,15 @@ import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
+import { useUiPrefsStore } from "../../store/uiPrefsStore";
+import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+
+/** Invisible padding around the checkbox that widens its click target. */
+const CB_PAD = 4;
 
 function scoreClass(score: number | null) {
   if (score === null) return "";
@@ -35,6 +40,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const { go } = usePaneNavigate();
   const { toggle, isSelected } = useSelectionStore();
   const selected = isSelected(image.id);
+  const cbSize = useUiPrefsStore((s) => s.galleryCheckboxSize);
   const [captionDragOver, setCaptionDragOver] = useState(false);
 
   // Drag a .txt file onto a card to apply it as that image's caption.
@@ -128,25 +134,14 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           loading="lazy"
         />
 
-        {/* Checkbox */}
+        {/* Checkbox — size is user-configurable (Settings → Gallery). The 4px pad
+            extends the click target past the visual box; the matching negative
+            offset keeps the box itself pinned at the card's 8px corner inset. */}
         <div
-          style={{ position: "absolute", top: 8, left: 8, zIndex: 3 }}
+          style={{ position: "absolute", top: 8 - CB_PAD, left: 8 - CB_PAD, padding: CB_PAD, zIndex: 3 }}
           onClick={(e) => { e.stopPropagation(); onSelect ? onSelect(image.id, e.shiftKey, true) : toggle(image.id, datasetId ?? ""); }}
         >
-          <div style={{
-            width: 18, height: 18,
-            background: selected ? "var(--accent)" : "rgba(7,9,11,.55)",
-            border: selected ? "1.5px solid var(--accent)" : "1.5px solid rgba(255,255,255,.5)",
-            borderRadius: 4,
-            display: "grid", placeContent: "center",
-            backdropFilter: "blur(4px)",
-          }}>
-            {selected && (
-              <svg viewBox="0 0 12 10" width="9" height="9" fill="none">
-                <path d="M1 5l3 4L11 1" stroke="#03130d" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            )}
-          </div>
+          <GalleryCheckbox size={cbSize} selected={selected} />
         </div>
 
         {/* Quality flags */}

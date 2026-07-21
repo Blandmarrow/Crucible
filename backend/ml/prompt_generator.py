@@ -11,6 +11,7 @@ diverge from it. One big single-call list collapses into near-duplicates.
 import json
 import logging
 import re
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,80 @@ _SYSTEM = (
 
 # Fallback line parsing: leading list markers "1.", "2)", "-", "*", "•"
 _LIST_MARKER_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
-_COMMENTARY_RE = re.compile(r"^(here (are|is)\b|sure\b|certainly\b|of course\b)", re.IGNORECASE)
+# Conversational openers. High precision by construction: every single-word
+# opener must be followed by whitespace/end (optionally after punctuation), so
+# "sure-footed mountain goat on a ridge" is NOT chatter — a bare \b after
+# "sure" would match the hyphen and silently eat a real prompt.
+_COMMENTARY_RE = re.compile(
+    r"^(?:"
+    r"(?:sure|certainly|absolutely|of course|got it|understood)[,.!:]?(?:\s|$)"
+    r"|here (?:are|is|you go)\b"
+    r"|below (?:are|is)\b"
+    r"|i(?:'ve| have) (?:generated|created|written|made|prepared)\b"
+    r"|let me know\b"
+    r"|hope (?:these|this|that)\b"
+    r"|note:"
+    r")",
+    re.IGNORECASE,
+)
+# Self-referential lines about the output itself ("These prompts vary in mood as
+# requested."). Both branches require the word "prompt(s)" to co-occur — a bare
+# leading "these" would reject "these towering cliffs at dawn, volumetric light".
+# Applied ONLY to the first and last surviving line (see _split_lines): a
+# preamble or a sign-off, never a legitimate prompt in the middle of a list.
+_META_LINE_RE = re.compile(
+    r"^(?:these|those|the above|all|each)\b[^\n]{0,120}?\bprompts?\b"
+    r"|\bprompts?\b[^\n]{0,120}?\b(?:as requested|as you asked|above|listed)\b",
+    re.IGNORECASE,
+)
 
 
-def parse_prompts(raw: str) -> list[str]:
-    """Parse LLM output into a list of prompts.
+class ParsedPrompts(NamedTuple):
+    """`prompts` plus how many lines the fallback dropped as chatter/meta.
+
+    The count is reported (`result_data["filtered"]`) rather than discarded
+    because a background job inserts rows directly — there is no review
+    textarea in which an over-filter would be visible.
+    """
+
+    prompts: list[str]
+    filtered: int
+
+
+def _split_lines(text: str) -> ParsedPrompts:
+    """Line-splitting fallback: one prompt per line, chatter removed.
+
+    Over- and under-filtering are NOT symmetric here. A surviving junk line
+    becomes a queue row that may be rendered on GPU time; an over-filtered line
+    is a paid generation silently thrown away. Both regexes are therefore
+    precision-first, and neither is applied to the JSON branch — a JSON array
+    element is a deliberate unit, and filtering there would make the reliable
+    path lossy.
+    """
+    prompts: list[str] = []
+    filtered = 0
+    for line in text.splitlines():
+        line = _LIST_MARKER_RE.sub("", line).strip().strip("\"'")
+        if not line or line.startswith("```"):
+            continue
+        if _COMMENTARY_RE.match(line):
+            logger.info("prompt_generator: dropped commentary line %r", line[:120])
+            filtered += 1
+            continue
+        prompts.append(line)
+    for edge in ("first", "last"):
+        if not prompts:
+            break
+        idx = 0 if edge == "first" else -1
+        if _META_LINE_RE.search(prompts[idx]):
+            logger.info("prompt_generator: dropped %s-line meta text %r", edge, prompts[idx][:120])
+            filtered += 1
+            prompts.pop(idx)
+    return ParsedPrompts(prompts, filtered)
+
+
+def parse_prompts(raw: str) -> ParsedPrompts:
+    """Parse LLM output into prompts + a dropped-line count.
 
     Strips inline <think> blocks (thinking models that don't separate
     reasoning_content), then prefers JSON — either a bare array of strings or
@@ -54,16 +124,10 @@ def parse_prompts(raw: str) -> list[str]:
         if isinstance(parsed, dict):
             parsed = parsed.get("prompts")
         if isinstance(parsed, list):
-            return [str(p).strip() for p in parsed if str(p).strip()]
+            return ParsedPrompts([str(p).strip() for p in parsed if str(p).strip()], 0)
     except ValueError:
         pass
-    prompts = []
-    for line in text.splitlines():
-        line = _LIST_MARKER_RE.sub("", line).strip().strip("\"'")
-        if not line or _COMMENTARY_RE.match(line) or line.startswith("```"):
-            continue
-        prompts.append(line)
-    return prompts
+    return _split_lines(text)
 
 
 async def generate_prompts(
@@ -76,7 +140,7 @@ async def generate_prompts(
     existing: list[str] | None = None,
     temperature: float = 0.9,
     max_tokens: int = 2048,
-) -> list[str]:
+) -> ParsedPrompts:
     """One chat-completion call → one batch of prompts. Raises on provider errors.
 
     `system_instructions` are the user's standing rules for HOW prompts are
@@ -132,28 +196,31 @@ async def generate_prompts(
         },
     }
 
-    def _extract(resp) -> tuple[list[str], str | None]:
+    def _extract(resp) -> tuple[ParsedPrompts, str | None]:
         choice = resp.choices[0] if resp.choices else None
         raw = (choice.message.content or "") if choice else ""
         return parse_prompts(raw), (choice.finish_reason if choice else None)
 
-    prompts: list[str] = []
+    parsed = ParsedPrompts([], 0)
     finish_reason: str | None = None
     try:
         resp = await client.chat.completions.create(
             **kwargs, response_format={"type": "json_schema", "json_schema": schema}
         )
-        prompts, finish_reason = _extract(resp)
+        parsed, finish_reason = _extract(resp)
     except Exception as e:
         logger.info("prompt_generator: json_schema attempt failed (%s) — falling back to plain", e)
-    if not prompts:
+    if not parsed.prompts:
         resp = await client.chat.completions.create(**kwargs)
-        prompts, finish_reason = _extract(resp)
+        parsed, finish_reason = _extract(resp)
 
-    if not prompts and finish_reason == "length":
+    if not parsed.prompts and finish_reason == "length":
         raise RuntimeError(
             "the model ran out of tokens before finishing (thinking model?) — "
             "raise the provider's max tokens in Settings → LLM Providers"
         )
-    logger.info("prompt_generator: model %s returned %d prompts", model_name, len(prompts))
-    return prompts
+    logger.info(
+        "prompt_generator: model %s returned %d prompts (%d lines filtered)",
+        model_name, len(parsed.prompts), parsed.filtered,
+    )
+    return parsed

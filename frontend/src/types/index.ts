@@ -208,6 +208,13 @@ export interface JobProgress {
   current_item?: string;
   message?: string;
   image_id?: string;
+  /** comfy_prompts: the plan rows are being written into. Emitters pass extra keys
+   *  through the raw dict; jobStore merges by job id, so these survive onto the
+   *  worker's terminal event, which carries neither. */
+  plan_id?: string;
+  /** comfy_prompts: prompts asked for. `total` becomes the created count when the
+   *  job completes, so the shortfall is only visible by comparing against this. */
+  requested?: number;
   throughput_ips?: number;
   vram_used_mb?: number;
 }

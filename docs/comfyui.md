@@ -61,7 +61,9 @@ From the **Rows** toolbar:
 - **+ Add row** — one empty row.
 - **Paste prompts…** — one row per line of pasted text.
 - **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces).
-- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and persist with the plan, while **Request** describes *what* to generate this time. Generate a batch at a time, or run *generate until N* and let it loop; the model is told which prompts already exist so it diverges from them, and duplicates are dropped. Review and edit the results before adding them as rows.
+- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and persist with the plan, while **Request** describes *what* to generate this time. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
+  - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
+  - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
 - **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
 

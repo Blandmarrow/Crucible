@@ -8,7 +8,9 @@ into the dataset. See docs/dev/comfyui.md.
 import asyncio
 import json
 import logging
+import math
 import time
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 INT_MODES = ("fixed", "random", "increment")
 ROW_STATUSES = ("pending", "running", "completed", "failed")
+NO_PROMPT_PIN_MSG = "No pinned parameter is marked as the prompt — pin one first"
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -140,6 +143,32 @@ class GeneratePromptsRequest(BaseModel):
     temperature: float = Field(default=0.9, ge=0.0, le=2.0)
 
 
+class GeneratePromptsJobRequest(BaseModel):
+    """Body of the background 'generate until N' job.
+
+    Mirrors GeneratePromptsRequest's bounds, but deliberately has **no
+    `existing` field**: the server derives the anti-similarity context from the
+    plan itself. Every field here is bounded, which is what makes persisting
+    `model_dump()` into `BackgroundJob.config` safe — `JobOut.config` is
+    returned to the client verbatim, so the provider's api_key must never be
+    able to reach it.
+    """
+
+    provider_id: str
+    model_name: str = ""  # empty → provider default_model
+    system_instructions: str = Field(default="", max_length=4000)
+    instruction: str = Field(min_length=1, max_length=4000)
+    batch_size: int = Field(default=5, ge=1, le=10)
+    temperature: float = Field(default=0.9, ge=0.0, le=2.0)
+    # Absolute ("until the plan holds N prompts"), not "N more" — so resuming
+    # after a stop or a partial run is idempotent.
+    target_count: int = Field(ge=1, le=200)
+    # Controls only what the LLM is *shown*. Dedupe against existing rows is
+    # unconditional (see the job's `seen` set).
+    use_existing_context: bool = True
+    label: str | None = Field(default=None, max_length=200)
+
+
 BULK_EDIT_OPS = ("prepend", "append", "remove", "find_replace")
 
 
@@ -191,6 +220,11 @@ async def _get_plan(db: AsyncSession, plan_id: str) -> ComfyPlan:
     if not plan:
         raise HTTPException(404, "Plan not found")
     return plan
+
+
+def _prompt_alias(plan: ComfyPlan) -> str | None:
+    """The alias of the pin marked as the prompt, if any (at most one exists)."""
+    return next((p["alias"] for p in (plan.pinned_params or []) if p.get("is_prompt")), None)
 
 
 def _validate_pins(pins: list[PinnedParam]) -> list[dict]:
@@ -563,6 +597,36 @@ async def list_rows(plan_id: str, db: AsyncSession = Depends(get_db)):
     return [_row_out(r) for r in rows]
 
 
+def _plan_prompt_texts(plan: ComfyPlan, rows: Iterable[ComfyRow]) -> list[tuple[ComfyRow, str]]:
+    """(row, effective prompt) for every row whose prompt is non-empty.
+
+    The single definition of "what prompt does this row run with" outside the
+    run itself: row value → run default → template, the same chain
+    `patch_workflow` resolves. Used by the prompts listing and by the
+    prompt-generation job's existing-context/dedupe seed.
+    """
+    workflow = plan.workflow_json or {}
+    pinned = plan.pinned_params or []
+    out: list[tuple[ComfyRow, str]] = []
+    for r in rows:
+        prompt = effective_prompt(workflow, pinned, r.values or {}) or ""
+        if prompt.strip():
+            out.append((r, prompt))
+    return out
+
+
+async def _plan_rows(db: AsyncSession, plan_id: str) -> list[ComfyRow]:
+    return list(
+        (
+            await db.execute(
+                select(ComfyRow)
+                .where(ComfyRow.plan_id == plan_id)
+                .order_by(ComfyRow.sort_order, ComfyRow.created_at)
+            )
+        ).scalars().all()
+    )
+
+
 @router.get("/plans/{plan_id}/prompts")
 async def list_plan_prompts(plan_id: str, db: AsyncSession = Depends(get_db)):
     """Effective prompt text of each row — used to reuse prompts across plans/datasets.
@@ -573,19 +637,13 @@ async def list_plan_prompts(plan_id: str, db: AsyncSession = Depends(get_db)):
     prompt is empty are omitted.
     """
     plan = await _get_plan(db, plan_id)
-    workflow = plan.workflow_json or {}
-    pinned = plan.pinned_params or []
-    rows = (
-        await db.execute(
-            select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
-        )
-    ).scalars().all()
-    out = []
-    for r in rows:
-        prompt = effective_prompt(workflow, pinned, r.values or {}) or ""
-        if prompt.strip():
-            out.append({"row_id": r.id, "prompt": prompt, "status": r.status})
-    return {"prompts": out}
+    rows = await _plan_rows(db, plan_id)
+    return {
+        "prompts": [
+            {"row_id": r.id, "prompt": prompt, "status": r.status}
+            for r, prompt in _plan_prompt_texts(plan, rows)
+        ]
+    }
 
 
 async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
@@ -607,9 +665,9 @@ async def create_row(plan_id: str, body: RowCreate, db: AsyncSession = Depends(g
 @router.post("/plans/{plan_id}/rows/bulk")
 async def bulk_add_rows(plan_id: str, body: BulkLinesRequest, db: AsyncSession = Depends(get_db)):
     plan = await _get_plan(db, plan_id)
-    prompt_alias = next((p["alias"] for p in (plan.pinned_params or []) if p.get("is_prompt")), None)
+    prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
-        raise HTTPException(400, "No pinned parameter is marked as the prompt — pin one first")
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
     lines = [ln.strip() for ln in body.lines if ln.strip()]
     order = await _next_sort_order(db, plan_id)
     for i, line in enumerate(lines):
@@ -713,7 +771,7 @@ async def generate_prompts_endpoint(body: GeneratePromptsRequest, db: AsyncSessi
     if not model_name:
         raise HTTPException(400, "No model given and the provider has no default model")
     try:
-        prompts = await generate_prompts(
+        parsed = await generate_prompts(
             base_url=provider.base_url,
             api_key=provider.api_key,
             model_name=model_name,
@@ -726,7 +784,254 @@ async def generate_prompts_endpoint(body: GeneratePromptsRequest, db: AsyncSessi
         )
     except Exception as e:
         raise HTTPException(502, f"Prompt generation failed: {e}")
-    return {"prompts": prompts, "model": model_name}
+    return {"prompts": parsed.prompts, "model": model_name}
+
+
+@router.post("/plans/{plan_id}/generate-prompts")
+async def generate_prompts_job(
+    plan_id: str, body: GeneratePromptsJobRequest, db: AsyncSession = Depends(get_db)
+):
+    """Background 'generate until N': loop LLM batches, inserting rows per batch.
+
+    Durable counterpart of POST /comfy/generate-prompts. Because rows are
+    committed as each batch lands, closing the modal (or navigating away, or a
+    Stop) never discards LLM calls already paid for. Runs on the shared
+    job_queue, so it serialises behind captioning/ComfyUI runs — see
+    docs/dev/comfyui.md.
+
+    Everything that could fail predictably is checked here rather than minutes
+    later inside the job.
+    """
+    from backend.models.openai_provider import OpenAIProvider
+
+    plan = await _get_plan(db, plan_id)
+    if not _prompt_alias(plan):
+        # Without this you could burn a full generation run and then be unable
+        # to insert a single row.
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if not (body.model_name.strip() or provider.default_model):
+        raise HTTPException(400, "No model given and the provider has no default model")
+
+    # One prompt-generation job at a time per plan (mirrors the run guard).
+    active = (
+        await db.execute(
+            select(BackgroundJob).where(
+                BackgroundJob.job_type == "comfy_prompts",
+                BackgroundJob.status.in_(("pending", "running")),
+            )
+        )
+    ).scalars().all()
+    if any((j.config or {}).get("plan_id") == plan_id for j in active):
+        raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+
+    existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
+    if existing_count >= body.target_count:
+        raise HTTPException(
+            400,
+            f"The plan already holds {existing_count} prompt{'s' if existing_count != 1 else ''} — "
+            f"raise the target above that to generate more",
+        )
+    to_generate = body.target_count - existing_count
+
+    # plan_id is a path param, so model_dump() omits it — but the 409 guard above
+    # reads config["plan_id"], so inject it explicitly.
+    config = body.model_dump()
+    config["plan_id"] = plan_id
+    auto_label = f"Prompts: {plan.name} — {to_generate} more (to {body.target_count})"
+    job = BackgroundJob(
+        job_type="comfy_prompts",
+        label=body.label or auto_label,
+        dataset_id=plan.dataset_id,
+        total_items=to_generate,
+        config=config,
+    )
+    db.add(job)
+    await db.commit()
+
+    dataset_id = plan.dataset_id
+    provider_id = body.provider_id
+    requested_model = body.model_name.strip()
+    instruction = body.instruction
+    system_instructions = body.system_instructions
+    batch_size = body.batch_size
+    temperature = body.temperature
+    target_count = body.target_count
+    use_existing_context = body.use_existing_context
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.ml.prompt_generator import generate_prompts
+        from backend.models.openai_provider import OpenAIProvider as Provider
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            # Re-check on dequeue: the plan, its prompt pin and the provider can
+            # all change while the job waits behind others in the queue. Raise
+            # rather than return — a silent return is reported as success.
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted before this job started")
+            alias = _prompt_alias(plan_row)
+            if not alias:
+                raise RuntimeError("The plan's prompt pin was removed before this job started")
+            prov = await session.get(Provider, provider_id)
+            if not prov:
+                raise RuntimeError("The LLM provider was deleted before this job started")
+            model_name = requested_model or prov.default_model
+            if not model_name:
+                raise RuntimeError("The provider no longer has a default model")
+
+            existing = [t for _, t in _plan_prompt_texts(plan_row, await _plan_rows(session, plan_id))]
+            total = target_count - len(existing)
+            if total <= 0:
+                # Rows were added while the job waited in the queue. Fail loudly
+                # rather than "complete" having created nothing.
+                raise RuntimeError(
+                    f"The plan already holds {len(existing)} prompts (target was {target_count}) — "
+                    f"nothing to generate"
+                )
+            # Dedupe covers existing rows AND everything generated this run — the
+            # old client-side loop only deduped against the review textarea.
+            seen = {t.strip().lower() for t in existing}
+            generated: list[str] = []
+            created = 0
+            filtered_total = 0
+            calls = 0
+            stop_reason = "target"
+            error_note = ""
+            # Every iteration is a paid call and duplicates are dropped, so a
+            # model trickling near-duplicates must not loop forever.
+            max_calls = max(12, math.ceil(total / batch_size) * 3)
+
+            async def _emit(done: int, message: str) -> None:
+                await broadcaster.emit(job_id, {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "job_type": "comfy_prompts",
+                    "status": "running",
+                    "done": done,
+                    "total": total,
+                    "percent": round(done / total * 100, 1) if total else 100.0,
+                    "message": message,
+                    "dataset_id": dataset_id,
+                    # plan_id/requested ride the running events only; the
+                    # worker's terminal event carries neither, but jobStore
+                    # merges by job id so they persist client-side.
+                    "plan_id": plan_id,
+                    "requested": total,
+                })
+
+            # Emitted BEFORE the first call, which can take 120 s: this is the
+            # first event carrying plan_id, and TopBar's invalidation needs it.
+            await _emit(0, f"Generating prompts (0/{total})")
+
+            while created < total and calls < max_calls:
+                if job_queue.cancel_requested(job_id):
+                    stop_reason = "cancelled"
+                    break
+                calls += 1
+                context = (existing if use_existing_context else []) + generated
+                try:
+                    parsed = await generate_prompts(
+                        base_url=prov.base_url,
+                        api_key=prov.api_key,
+                        model_name=model_name,
+                        instruction=instruction,
+                        system_instructions=system_instructions,
+                        batch_size=batch_size,
+                        existing=context,
+                        temperature=temperature,
+                        max_tokens=prov.max_tokens,
+                    )
+                except Exception as e:
+                    # Rows already committed are real. Discarding them because
+                    # call 8 of 10 timed out is the worse error.
+                    if created:
+                        logger.warning("comfy_prompts: stopping after provider error", exc_info=True)
+                        stop_reason = "provider_error"
+                        error_note = str(e)
+                        break
+                    raise RuntimeError(f"Prompt generation failed: {e}")
+
+                filtered_total += parsed.filtered
+                new: list[str] = []
+                for p in parsed.prompts:
+                    text = p.strip()
+                    key = text.lower()
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    new.append(text)
+                    if created + len(new) >= total:
+                        break  # don't overshoot the target within a batch
+                if not new:
+                    stop_reason = "no_new"
+                    break
+
+                order = await _next_sort_order(session, plan_id)
+                for i, text in enumerate(new):
+                    session.add(ComfyRow(plan_id=plan_id, sort_order=order + i, values={alias: text}))
+                generated.extend(new)
+                created += len(new)
+                await session.commit()
+                await _emit(created, f"Generated {created}/{total} prompts")
+
+                # A Stop arriving during an LLM call still yields prompts that
+                # were paid for, so check again after committing them. Guarded on
+                # created < total because only a cancel that actually cut the run
+                # short is a cancel: reaching the target on the same iteration a
+                # Stop lands is a completed job, and the loop condition ends it
+                # either way — this keeps the reported outcome honest.
+                if created < total and job_queue.cancel_requested(job_id):
+                    stop_reason = "cancelled"
+                    break
+
+            if created < total and stop_reason == "target":
+                stop_reason = "call_cap"
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = {
+                    "created": created,
+                    "requested": total,
+                    "filtered": filtered_total,
+                    "calls": calls,
+                    "stop_reason": stop_reason,
+                    "plan_id": plan_id,
+                }
+                # The worker re-reads total_items after _run and emits it as both
+                # done and total; leaving it at the request would render 20/20
+                # for a run that made 7. The shortfall lives in result_data.
+                job_row.total_items = created
+            await session.commit()
+
+            # Commit first, THEN raise: a plain return here would let the worker
+            # overwrite the user's cancel with "completed".
+            if stop_reason == "cancelled":
+                job_queue.raise_if_cancelled(job_id)
+
+            if created == 0:
+                # PM-004: "_run returned without raising" is a proxy for
+                # "prompts were generated" — generate_prompts returns [] without
+                # raising when the model emits unparseable prose. Report the
+                # actual state, and keep the prefix identical to the sync path's
+                # 502 so both read the same.
+                reasons = {
+                    "no_new": "the model returned no new prompts — try rephrasing the request "
+                              "or lowering the temperature",
+                    "call_cap": f"the model kept returning duplicates ({calls} calls, no new prompts)",
+                    "provider_error": error_note,
+                }
+                raise RuntimeError(
+                    f"Prompt generation failed: {reasons.get(stop_reason) or 'no prompts were generated'}"
+                )
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": to_generate}
 
 
 @router.post("/plans/{plan_id}/rows/bulk-edit")
@@ -741,9 +1046,9 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
         raise HTTPException(400, f"operation must be one of {BULK_EDIT_OPS}")
     plan = await _get_plan(db, plan_id)
     pinned = plan.pinned_params or []
-    prompt_alias = next((p["alias"] for p in pinned if p.get("is_prompt")), None)
+    prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
-        raise HTTPException(400, "No pinned parameter is marked as the prompt — pin one first")
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
     workflow = plan.workflow_json or {}
 
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)

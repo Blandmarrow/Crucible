@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useMatch } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import { datasetsApi } from "../../api/datasets";
 import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
@@ -21,6 +22,10 @@ const RESTART_SLOW_MS = 25_000;
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
 const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
+// Deliberately in neither set above: comfy_prompts writes queue rows, not images,
+// so the image/dataset invalidations would all be pointless. It gets its own
+// branch below because its whole point is surviving the modal that started it.
+const PROMPT_JOB_TYPE = "comfy_prompts";
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -99,8 +104,47 @@ export default function TopBar() {
   // TopBar is always mounted, making it the right place for this side effect.
   const processedJobsRef = useRef<Set<string>>(new Set());
   const captionDoneRef = useRef<Map<string, number>>(new Map());
+  const promptDoneRef = useRef<Map<string, number>>(new Map());
+  const promptTerminalRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
+      // Prompt-generation jobs (ComfyUI "generate until N"): rows land per batch,
+      // and the modal that started the job may be closed — so the refresh and the
+      // outcome toast both have to live here, in a component that never unmounts.
+      if (progress.job_type === PROMPT_JOB_TYPE) {
+        const done = progress.done ?? 0;
+        const terminal = ["completed", "failed", "cancelled"].includes(progress.status);
+        const advanced = done > (promptDoneRef.current.get(jobId) ?? -1);
+        if (progress.status === "running" && advanced) promptDoneRef.current.set(jobId, done);
+        if ((progress.status === "running" && advanced) || terminal) {
+          if (progress.plan_id) {
+            qc.invalidateQueries({ queryKey: ["comfy", "rows", progress.plan_id] });
+            // GeneratePromptsModal may still be open showing its "N in queue"
+            // count off this key, and rows land per batch.
+            qc.invalidateQueries({ queryKey: ["comfy", "prompts", progress.plan_id] });
+          }
+          if (progress.dataset_id) qc.invalidateQueries({ queryKey: ["comfy", "plans", progress.dataset_id] });
+        }
+        if (terminal && !promptTerminalRef.current.has(jobId)) {
+          promptTerminalRef.current.add(jobId);
+          promptDoneRef.current.delete(jobId);
+          const requested = progress.requested;
+          if (progress.status === "completed") {
+            if (requested !== undefined && done < requested) {
+              // Rows genuinely exist, so this is not a failure — but it is a
+              // shortfall the user must not discover by counting rows.
+              toast(`Added ${done} of ${requested} prompts — the model stopped producing new ones`,
+                { icon: "⚠️", duration: 6000 });
+            } else {
+              toast.success(`Added ${done} generated prompt${done !== 1 ? "s" : ""} to the queue`);
+            }
+          } else if (progress.status === "failed") {
+            toast.error(progress.message || "Prompt generation failed");
+          } else {
+            toast(`Prompt generation stopped — ${done} prompt${done !== 1 ? "s" : ""} kept`);
+          }
+        }
+      }
       if (progress.status === "completed" && !processedJobsRef.current.has(jobId)) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);

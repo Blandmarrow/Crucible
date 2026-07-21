@@ -35,10 +35,21 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await db.get(BackgroundJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.status in ("running", "pending"):
+    if job.status not in ("running", "pending"):
+        return
+    if job.status == "pending":
+        # Only a queued job is terminal the moment it is cancelled: the worker's
+        # dequeue check reads this status to skip it, and nothing is running to
+        # report a different outcome.
         job.status = "cancelled"
         await db.commit()
-        job_queue.request_cancel(job_id)
+    # A running job stops cooperatively — loops poll the flag between items, so
+    # the job keeps working until its next check (for comfy_prompts that is a
+    # whole LLM call, up to 120 s). Writing "cancelled" here would put a terminal
+    # badge on the Logs page for a job still doing work, and would be wrong
+    # outright when the job goes on to finish what was asked. The worker writes
+    # the real final status in its CancelledError and completion paths.
+    job_queue.request_cancel(job_id)
 
 
 @router.get("/stream/{job_id}")

@@ -87,10 +87,9 @@ This file covers conventions that apply across the whole codebase: commands, the
 
 ## Documentation Map
 
-Each file below covers one subsystem in depth. Read the relevant file(s) with the Read tool
-when your task touches that subsystem — do not read all of them up front. Do NOT use `@`-paths
-to reference these files anywhere — `@path` syntax causes Claude Code to auto-load the target
-file into every conversation, defeating the purpose of this split. Use plain relative paths.
+Each file below covers one subsystem in depth. Read the relevant file(s) with the Read tool when
+your task touches that subsystem — do not read all of them up front. Do NOT use `@`-paths to reference
+these files anywhere — `@path` auto-loads the target into every conversation, defeating this split.
 
 | File | Contents | Read this when... | Lines |
 |---|---|---|---|
@@ -103,7 +102,8 @@ file into every conversation, defeating the purpose of this split. Use plain rel
 | `docs/dev/dashboard-pages.md` | Datasets page (categories, category rail, density toggle, persisted UI state, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~241 |
 | `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console | ~149 |
 | `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~80 |
-| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, LLM prompt generation, or the `comfy_generate` job | ~250 |
+| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, or the `comfy_generate` job | ~232 |
+| `docs/dev/comfy-prompts.md` | LLM prompt generation for the ComfyUI queue: one-shot endpoint, the durable `comfy_prompts` job (per-batch row commits, cancel/PM-004 discipline), `parse_prompts` output filtering, `GeneratePromptsModal` job re-attach | Working on generating prompts with an LLM, `comfy_prompts`, `prompt_generator.py`, or `GeneratePromptsModal` | ~162 |
 | `docs/dev/comfyui-sync.md` | Workflow sync: "Sync from canvas" button, `GET /comfy/canvas-workflow`, `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop on sync, ComfyUI API constraints | Working on workflow sync, the sync button, the bridge extension, `canvas-workflow`, or pulling workflows from ComfyUI | ~85 |
 | `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~18 |
 

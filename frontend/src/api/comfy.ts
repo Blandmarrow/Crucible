@@ -131,11 +131,21 @@ export const comfyApi = {
   setValueAllRows: (planId: string, alias: string, value: string | number | boolean | null) =>
     client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-value`, { alias, value }).then((r) => r.data),
 
+  /** One batch, synchronously. `signal` lets the caller abandon a call that can run
+   *  for the provider's full timeout (120 s) — without it the UI has to sit on it. */
   generatePrompts: (body: {
     provider_id: string; model_name?: string; system_instructions?: string; instruction: string;
     batch_size?: number; existing?: string[]; temperature?: number;
+  }, signal?: AbortSignal) =>
+    client.post<{ prompts: string[]; model: string }>("/comfy/generate-prompts", body, { signal }).then((r) => r.data),
+  /** Durable "generate until N": a background job that inserts rows per batch.
+   *  `target_count` is absolute (until the plan holds N prompts), and the server
+   *  derives the diverge-from context from the plan — hence no `existing`. */
+  generatePromptsJob: (planId: string, body: {
+    provider_id: string; model_name?: string; system_instructions?: string; instruction: string;
+    batch_size?: number; temperature?: number; target_count: number; use_existing_context?: boolean;
   }) =>
-    client.post<{ prompts: string[]; model: string }>("/comfy/generate-prompts", body).then((r) => r.data),
+    client.post<{ job_id: string; total: number }>(`/comfy/plans/${planId}/generate-prompts`, body).then((r) => r.data),
   bulkEditRows: (planId: string, body: {
     operation: "prepend" | "append" | "remove" | "find_replace";
     text: string; replacement?: string; use_regex?: boolean; row_ids?: string[];

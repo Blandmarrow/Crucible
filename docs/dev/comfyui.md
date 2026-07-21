@@ -70,22 +70,10 @@ completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
 kept). `workflow_json` is returned only by `GET /comfy/plans/{id}` — never in the plan list
 or row responses.
 
-Prompt tooling: `POST /comfy/generate-prompts` (`{provider_id, model_name?,
-system_instructions?, instruction, batch_size≤10, existing, temperature}`) makes **one** LLM
-batch call via
-`ml/prompt_generator.py` (text-only `AsyncOpenAI` sibling of the captioner; not
-model-manager-tracked) and returns `{prompts}` — `existing` is the anti-similarity context
-(the model is told those already exist and to diverge). Structure is enforced decoder-level
-via `response_format: json_schema` **with a mandatory plain-call fallback whenever that
-attempt errors OR parses to zero prompts** — LM Studio + Qwen3 (thinking) returns *empty
-content* under a schema constraint, so error-only fallback is not enough. `max_tokens` is
-floored at 8192 (the provider's captioning-tuned value truncates thinking models
-mid-reasoning; a zero-prompt `finish_reason=="length"` raises a "raise max tokens" hint).
-`parse_prompts` (unit of truth for splitting) strips closed AND unclosed `<think>` blocks,
-then prefers JSON (bare array or `{"prompts": []}`), falling back to line splitting with
-list-marker/commentary stripping. The client loops batches for "generate until N"
-(call cap scales with the target: `max(12, ceil(remaining/batch) × 3)` — a guard against a
-model trickling near-duplicates forever, since duplicates are dropped client-side).
+Prompt tooling — `POST /comfy/generate-prompts` (one LLM batch call),
+`POST /comfy/plans/{id}/generate-prompts` (the durable `comfy_prompts` job), the output
+parser and `GeneratePromptsModal`: `docs/dev/comfy-prompts.md`.
+
 `POST /comfy/plans/{id}/rows/bulk-edit` (`{operation: prepend|append|remove|find_replace,
 text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on the prompt
 column: base = effective prompt (row → default → template), result written into row values
@@ -224,13 +212,7 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
 - Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
   disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
   **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
-  *✨ Generate prompts…* (`GeneratePromptsModal`: provider select + `ModelPicker`; two text
-  fields — standing *Instructions* (HOW prompts are written → `system_instructions`, persisted
-  per plan in localStorage via `loadPersisted`, along with provider/model/batch/temperature)
-  and the per-call *Request* (WHAT to generate); *Generate N more* = one batch call appending
-  to a review textarea, *Generate until N* loops batches client-side with a Stop button and a
-  target-scaled call cap (see backend section); every call sends queue
-  prompts + current textarea lines as diverge-from context; *Add N rows* → `rows/bulk`),
+  *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfy-prompts.md`),
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
   scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*, *Reset failed
   (n)*, *Delete selected (n)* (`ConfirmDialog`).

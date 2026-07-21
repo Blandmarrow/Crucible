@@ -11,6 +11,7 @@ import ComfyRowsTable from "../components/comfy/ComfyRowsTable";
 import ComfyRunBar from "../components/comfy/ComfyRunBar";
 import ComfyDefaultsStrip from "../components/comfy/ComfyDefaultsStrip";
 import GeneratePromptsModal from "../components/comfy/GeneratePromptsModal";
+import type { GeneratePromptsJobBody } from "../components/comfy/GeneratePromptsModal";
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
@@ -51,6 +52,9 @@ export default function ComfyPage() {
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [showGenerate, setShowGenerate] = useState(false);
+  // Last prompt-generation job started from this page — handed to the modal so it
+  // can attach to a job it launched. The modal persists it per plan from there.
+  const [promptJobId, setPromptJobId] = useState<string | null>(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
@@ -84,6 +88,7 @@ export default function ComfyPage() {
     setSelected(new Set());
     setSubfolder("");
     setActiveRuns(new Map());
+    setPromptJobId(null);
   }, [datasetId]);
 
   const { data: plans = [] } = useQuery({
@@ -186,6 +191,10 @@ export default function ComfyPage() {
     onSuccess: (data, { source }) => {
       qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+      // GeneratePromptsModal reads its "N in queue" count from this key, and it
+      // gates a target the server re-validates — a stale count offers a run the
+      // server rejects.
+      qc.invalidateQueries({ queryKey: ["comfy", "prompts", effectivePlanId] });
       if (source === "paste") {
         setShowPaste(false);
         setPasteText("");
@@ -217,6 +226,20 @@ export default function ComfyPage() {
     onError: () => toast.error("Failed to reset rows"),
   });
 
+  // Durable "generate until N". planId travels through the variables (as in
+  // runMutation) rather than being read from effectivePlanId at call time.
+  // No cache invalidation here: TopBar owns it, because this job outlives both
+  // the modal and this page.
+  const generateJobMutation = useMutation({
+    mutationFn: (vars: { planId: string; body: GeneratePromptsJobBody }) =>
+      comfyApi.generatePromptsJob(vars.planId, vars.body),
+    onSuccess: (data) => {
+      setPromptJobId(data.job_id);
+      toast.success(`Generating ${data.total} prompt${data.total !== 1 ? "s" : ""} in the background`);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to start prompt generation")),
+  });
+
   const runMutation = useMutation({
     // planId travels through the variables so it's captured at mutate time —
     // switching the plan select while the POST is in flight must not retag the run.
@@ -246,10 +269,6 @@ export default function ComfyPage() {
   const jobProgress = viewingJobId ? activeJobs.get(viewingJobId) : undefined;
   const isRunning = runMutation.isPending || !!viewingJobId;
   const hasPromptPin = plan?.pinned_params.some((p) => p.is_prompt) ?? false;
-  const promptAlias = plan?.pinned_params.find((p) => p.is_prompt)?.alias;
-  const queuePrompts = promptAlias
-    ? rows.map((r) => r.values[promptAlias]).filter((v): v is string => typeof v === "string" && v.trim() !== "")
-    : [];
 
   function toggleRow(id: string) {
     setSelected((prev) => {
@@ -285,7 +304,7 @@ export default function ComfyPage() {
           <select
             className="select"
             value={effectivePlanId ?? ""}
-            onChange={(e) => { setPlanId(e.target.value); setSelected(new Set()); }}
+            onChange={(e) => { setPlanId(e.target.value); setSelected(new Set()); setPromptJobId(null); }}
             style={{ minWidth: 220 }}
           >
             {plans.map((p) => (
@@ -490,10 +509,15 @@ export default function ComfyPage() {
 
       {showGenerate && plan && (
         <GeneratePromptsModal
+          // Per-plan persisted settings and the attached job id are read in state
+          // initializers, so the modal must remount when the plan changes.
+          key={plan.id}
           planId={plan.id}
-          queuePrompts={queuePrompts}
           adding={bulkAddMutation.isPending}
           onAdd={(prompts) => bulkAddMutation.mutate({ lines: prompts, source: "generate" })}
+          onStartJob={(body) => generateJobMutation.mutate({ planId: plan.id, body })}
+          startingJob={generateJobMutation.isPending}
+          startedJobId={promptJobId}
           onClose={() => setShowGenerate(false)}
         />
       )}

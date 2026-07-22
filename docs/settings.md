@@ -9,7 +9,7 @@ Browser-local preferences, each taking effect immediately:
 - Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
 - Selection checkbox size: 14–32 px (default 18) — the size of the selection checkbox on gallery thumbnails. A live preview sits next to the slider, and open galleries update as you drag
 - Subfolder rename on move: *Rename to subfolder name* (default) or *Keep original filenames* — when disabled, moving images to a subfolder updates their subfolder metadata only, without renaming the files
-- License badge on cards (off by default) — shows each image's effective license on its gallery card. Off by default because most datasets are single-source, where a badge on every card is noise → [details](provenance.md)
+- License badge on cards (off by default) — shows each image's effective license on its gallery card, including a muted **No license** badge for images with none at either the image or dataset level. Off by default because most datasets are single-source, where a badge on every card is noise → [details](provenance.md)
 - **Gallery defaults** — applied on first visit to a dataset (session state takes precedence on subsequent visits): default sort order, default caption filter (All / Captioned only / Uncaptioned only), default quality flag filter
 
 ## Captioning

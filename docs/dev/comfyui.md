@@ -115,6 +115,11 @@ assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`)
 `completed`, commit per row. `refresh_stats` + `result_data`
 (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
 
+Imported rows are stamped with **concrete** source/license provenance rather than inheriting the
+dataset default — `license="synthetic"`, `source_name="ComfyUI"`, and `source_meta` from
+`_comfy_source_meta` (plan/checkpoint identity). See `docs/dev/gallery-and-images.md`
+§ Source & license provenance.
+
 Failure/cancel semantics:
 
 - Per-row failures (`ComfyRowError`, httpx errors, OSError) mark the row `failed` with a

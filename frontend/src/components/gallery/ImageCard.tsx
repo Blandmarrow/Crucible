@@ -92,8 +92,10 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const hasAiArtifacts = image.quality_flags?.has_ai_artifacts as boolean | undefined;
   // Off by default (Settings → Gallery): most datasets are single-source, where
-  // a badge on every card is noise. `license` here is already the effective value.
-  const showLicense = getGalleryLicenseBadge() && !!image.license;
+  // a badge on every card is noise. `license` here is already the effective value;
+  // an empty one renders the muted "No license" badge, which is the whole point of
+  // switching the preference on.
+  const showLicense = getGalleryLicenseBadge();
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 

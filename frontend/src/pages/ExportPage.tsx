@@ -356,6 +356,12 @@ export default function ExportPage() {
   const isDone = jobProgress?.status === "completed";
   const showConcept = format === "kohya" || format === "aitoolkit";
 
+  // `preview.unlicensed_count` is deliberately whole-dataset scope, so the
+  // warning below must not claim those images export when a license filter
+  // would drop them. Selecting "No license recorded" explicitly keeps them.
+  const unlicensedExcluded =
+    excludeUnlicensed || commercialOnly || (licenseFilter.size > 0 && !licenseFilter.has(""));
+
   const exclusionRows = [
     { label: "Low aesthetic", count: preview?.excluded_low_aesthetic, show: filterAesthetic },
     { label: "No caption",    count: preview?.excluded_uncaptioned,   show: filterCaptioned },
@@ -801,7 +807,9 @@ export default function ExportPage() {
                     >
                       {preview.unlicensed_count.toLocaleString()} image
                       {preview.unlicensed_count !== 1 ? "s have" : " has"} no license recorded.
-                      They still export, but are listed as unlicensed in CREDITS.md.
+                      {unlicensedExcluded
+                        ? " They are excluded from this export by the active license filters."
+                        : " They still export, but are listed as unlicensed in CREDITS.md."}
                     </div>
                   )}
 

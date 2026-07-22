@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { ScrollText } from "lucide-react";
 
-import { INHERIT_SENTINEL, LICENSE_OPTIONS } from "../../constants/licenses";
+import { INHERIT_SENTINEL } from "../../constants/licenses";
 import type { ProvenanceEdit } from "../../api/images";
+import LicenseSelect, { isBlankLicense } from "../common/LicenseSelect";
 
 interface Props {
   count: number;
@@ -50,7 +51,11 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
   // A blank "Set" would reach the backend as "" and be stored as NULL — i.e. it
   // would silently clear the field across the whole selection, which is what
   // "Inherit" is for. Block it rather than let a forgotten dropdown wipe data.
-  const isBlankSet = (field: string) => modes[field] === "set" && !values[field].trim();
+  // A pending `other:` with an empty body counts as blank too — it normalises
+  // back to "" server-side, so "Set" would clear the license across the selection.
+  const isBlankSet = (field: string) =>
+    modes[field] === "set" &&
+    (field === "license" ? isBlankLicense(values[field]) : !values[field].trim());
   const hasBlankSet = Object.keys(modes).some(isBlankSet);
 
   const ModeToggle = ({ field }: { field: string }) => (
@@ -85,17 +90,13 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
             <label className="label !mb-0">License</label>
             <ModeToggle field="license" />
           </div>
-          <select
+          <LicenseSelect
             value={values.license}
-            onChange={(e) => setValues({ ...values, license: e.target.value })}
+            onChange={(license) => setValues({ ...values, license })}
+            emptyLabel="— choose —"
             disabled={modes.license !== "set"}
             className="input w-full disabled:opacity-40"
-          >
-            <option value="">— choose —</option>
-            {LICENSE_OPTIONS.map((l) => (
-              <option key={l.id} value={l.id}>{l.label}</option>
-            ))}
-          </select>
+          />
           {isBlankSet("license") && <BlankSetHint />}
         </div>
 

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
-import { LICENSE_OPTIONS, licenseInfo } from "../../constants/licenses";
+import { licenseInfo } from "../../constants/licenses";
 import type { DatasetProvenance } from "../../api/datasets";
+import LicenseSelect from "./LicenseSelect";
 
 interface Props {
   value: DatasetProvenance;
@@ -53,21 +54,14 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note }:
           {note && <p className="text-xs text-gray-500">{note}</p>}
           <div>
             <label className="label">License</label>
-            <select
-              className="select"
-              style={{ width: "100%" }}
+            <LicenseSelect
               value={value.license}
-              onChange={(e) => onChange({ ...value, license: e.target.value })}
-            >
-              <option value="">Not recorded</option>
-              {LICENSE_OPTIONS.map((l) => (
-                <option key={l.id} value={l.id}>{l.label}</option>
-              ))}
-              {/* Keep an existing other:<free text> value selectable. */}
-              {value.license.startsWith("other:") && (
-                <option value={value.license}>{licenseInfo(value.license).label}</option>
-              )}
-            </select>
+              onChange={(license) => onChange({ ...value, license })}
+              emptyLabel="Not recorded"
+              className="select"
+              inputClassName="input"
+              style={{ width: "100%" }}
+            />
           </div>
           {TEXT_FIELDS.map(({ key, label, placeholder }) => (
             <div key={key}>

@@ -1,5 +1,5 @@
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.schemas import UtcDatetime
 from backend.schemas.detection import DetectionOut
@@ -184,10 +184,13 @@ INHERIT_SENTINEL = "__inherit__"
 class BulkProvenanceRequest(BulkFilterBase):
     """Set source/license on a selection. Each field: None = leave unchanged,
     "__inherit__" = clear to NULL (inherit the dataset default), any other
-    string = set that value."""
-    source_name: str | None = None
-    source_url: str | None = None
-    license: str | None = None
+    string = set that value.
+
+    Caps mirror the column widths (see ProvenanceDefaults); INHERIT_SENTINEL is
+    11 chars and fits under every one of them."""
+    source_name: str | None = Field(None, max_length=255)
+    source_url: str | None = Field(None, max_length=1024)
+    license: str | None = Field(None, max_length=64)
     attribution: str | None = None
 
 
@@ -196,10 +199,10 @@ class BulkProvenanceResult(BaseModel):
 
 
 class ImageProvenanceUpdate(BaseModel):
-    """Per-image provenance edit; same sentinel semantics as the bulk form."""
-    source_name: str | None = None
-    source_url: str | None = None
-    license: str | None = None
+    """Per-image provenance edit; same sentinel semantics and caps as the bulk form."""
+    source_name: str | None = Field(None, max_length=255)
+    source_url: str | None = Field(None, max_length=1024)
+    license: str | None = Field(None, max_length=64)
     attribution: str | None = None
 
 

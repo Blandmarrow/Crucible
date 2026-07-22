@@ -1416,8 +1416,8 @@ export default function StatsPage() {
             {unlicensedCount > 0 && (
               <p style={{ padding: "10px 16px 0", fontSize: 12, color: "var(--fg-mute)" }}>
                 {unlicensedCount.toLocaleString()} image{unlicensedCount !== 1 ? "s have" : " has"} no
-                license recorded at either the image or dataset level. Exports still include them, but
-                they are listed as unlicensed in <code>CREDITS.md</code>.
+                license recorded at either the image or dataset level. Exports include them by
+                default, listed as unlicensed in <code>CREDITS.md</code>.
               </p>
             )}
             <div style={{ padding: "10px 16px 14px" }}>

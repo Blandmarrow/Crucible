@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import undefer
@@ -32,7 +33,14 @@ from backend.licenses import (
 from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.models.threshold_settings import ThresholdSettings
-from backend.schemas.image import ImageListItem, ImageOut
+from backend.routers.images import _provenance_values
+from backend.schemas.image import (
+    INHERIT_SENTINEL,
+    BulkProvenanceRequest,
+    ImageListItem,
+    ImageOut,
+    ImageProvenanceUpdate,
+)
 from backend.services import export_service, version_service
 from backend.services.image_service import read_provenance_sidecar
 from backend.utils import parse_license_filter_param
@@ -498,3 +506,45 @@ def test_parse_license_filter_param_json_array():
             assert exc.status_code == 400
         else:
             raise AssertionError(f"expected HTTP 400 for {bad!r}")
+
+
+# --- image-level provenance edits ---------------------------------------
+
+
+def test_provenance_values_round_trips_other_free_text():
+    """The `other:<free text>` license a user types must survive PATCH intact.
+
+    Exercises the router helper the endpoint is built from — the whole body of
+    `PATCH /images/{id}/provenance` past validation is this call plus an UPDATE.
+    """
+    body = ImageProvenanceUpdate(license="other:Client X, Ltd — internal use")
+    values = _provenance_values(body)
+    assert values == {"license": "other:Client X, Ltd — internal use"}
+
+    # An unrecognised bare string is bucketed rather than dropped...
+    assert _provenance_values(ImageProvenanceUpdate(license="Weird Studio EULA")) == {
+        "license": "other:Weird Studio EULA"
+    }
+    # ...but an `other:` with no body carries no information: clear to inherit.
+    assert _provenance_values(ImageProvenanceUpdate(license="other:")) == {"license": None}
+
+    # Sentinel and omission keep their distinct meanings.
+    assert _provenance_values(ImageProvenanceUpdate(license=INHERIT_SENTINEL)) == {"license": None}
+    assert _provenance_values(ImageProvenanceUpdate()) == {}
+
+
+def test_image_provenance_schemas_cap_field_lengths():
+    """Caps mirror the column widths, so an over-long value 422s instead of
+    being silently truncated by a non-SQLite backend."""
+    for schema, extra in ((ImageProvenanceUpdate, {}), (BulkProvenanceRequest, {"dataset_id": "d1"})):
+        for field, limit in (("source_name", 255), ("source_url", 1024), ("license", 64)):
+            schema(**extra, **{field: "x" * limit})          # at the cap: fine
+            try:
+                schema(**extra, **{field: "x" * (limit + 1)})
+            except ValidationError:
+                pass
+            else:
+                raise AssertionError(f"{schema.__name__}.{field} accepted {limit + 1} chars")
+
+    # The sentinel must fit under every cap or "inherit" would stop validating.
+    assert len(INHERIT_SENTINEL) <= 64

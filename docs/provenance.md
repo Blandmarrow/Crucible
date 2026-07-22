@@ -12,7 +12,7 @@ Four fields travel with every image:
 |---|---|
 | **Source name** | Where it came from — `Danbooru`, `Unsplash`, `Client X` |
 | **Source URL** | Link back to the original post or page |
-| **License** | One entry from the vocabulary below, or your own free text |
+| **License** | One entry from the vocabulary below, or your own free text — pick **Other (free text)…** in any license dropdown and type it (up to ~58 characters) |
 | **Attribution** | Who to credit — `Photo by Jane Doe` |
 
 A fifth, **scrape metadata**, is captured automatically from scraper sidecars
@@ -38,7 +38,9 @@ immediately changes every image that has not overridden that field — no
 migration, no rebuild. The image detail page marks each inherited field so you
 can tell which values are the image's own.
 
-To go back to inheriting, clear the field (leave the input empty and save).
+To go back to inheriting, clear the field: empty the text input and save, or —
+for License, which is a dropdown — choose **Inherit from dataset**. In the bulk
+**Set source/license** action the equivalent is the **Inherit** mode.
 
 **One exception:** copying or moving images to a *different* dataset writes the
 inherited values out as real values first. Otherwise an image that inherited
@@ -52,7 +54,7 @@ dataset you moved it into.
 | Unknown | Unknown — treated as no | No |
 | Owned / self-created | Yes | No |
 | Public domain | Yes | No |
-| CC0 1.0 | Yes | No |
+| CC0 1.0 (no rights reserved) | Yes | No |
 | CC BY 4.0 | Yes | Yes |
 | CC BY-SA 4.0 | Yes (share-alike) | Yes |
 | CC BY-NC 4.0 | **No** | Yes |
@@ -62,8 +64,12 @@ dataset you moved it into.
 | Research / non-commercial only | **No** | Yes |
 | Synthetic (AI-generated) | Yes | No |
 
-Anything outside this list is stored as free text and shown as-is. Type it into
-a sidecar's `license` field and Crucible keeps it rather than dropping it.
+Anything outside this list is stored as free text and shown as-is. Choose
+**Other (free text)…** at the bottom of any license dropdown — on the image
+detail page, in the dataset Edit modal, in the import dialog, or in the bulk
+**Set source/license** action — and a text box appears for you to type it
+(roughly 58 characters). A license Crucible doesn't recognise in a scraper
+sidecar's `license` field is kept the same way rather than dropped.
 
 "Commercial use" filters are deliberately conservative: **unknown counts as no**.
 An image whose rights were never established must not slip into an export you
@@ -78,8 +84,10 @@ supplies a field wins:
 2. **A scraper sidecar** next to the image — either `pic.png.json` (what
    gallery-dl writes by default) or `pic.json`. gallery-dl and Grabber layouts
    are understood: `category` → source name, `post_url`/`file_url` → source URL,
-   `author`/`uploader`/`user` → attribution, `license` → license. The whole file
-   is kept as scrape metadata, so nothing is lost.
+   `author`/`uploader`/`user` → attribution, `license` → license. Several
+   alternative key names are accepted for each field; the ones listed are just
+   the common ones. The whole file is kept as scrape metadata, so nothing is
+   lost.
 3. **The image's EXIF** — `Artist` and `Copyright` become the attribution.
    Deliberately never the license: a copyright notice is a rights claim, not a
    license id, and guessing one would put unverified images into the
@@ -130,16 +138,20 @@ in all three formats (Kohya, AI Toolkit, plain):
   license, so an image that inherited its license from the dataset shows the
   real value, not a blank.
 
-Two optional filters live in the Export page's filter panel:
+Three optional filters live in the Export page's filter panel:
 
 - **Commercial-use only** — keeps only images whose license is known to permit
   commercial use.
 - **Exclude unlicensed images** — drops images with no license at either level.
-  Free-text licenses count as licensed, so this keeps them. You can also pick
-  specific licenses individually.
+  Free-text licenses count as licensed, so this keeps them.
+- **Specific licenses** — a collapsible checklist of the vocabulary; tick the
+  ones to keep. It includes a **No license recorded** entry, so you can build an
+  export of exactly the images you still need to label. Ticking nothing means no
+  filter.
 
 If any images have no license, the export summary warns you before you build.
-It never blocks the export — the warning tells you what you're shipping, and the
-call is yours.
+The warning tells you how many there are either way; if one of the filters above
+would drop them, it says so, otherwise it reminds you they will ship listed as
+unlicensed in `CREDITS.md`. It never blocks the export — the call is yours.
 
 See [Export](export.md) for the rest of the export options.

@@ -4,8 +4,9 @@ import { ChevronDown, ChevronRight, ExternalLink, Pencil, ScrollText, X } from "
 import toast from "react-hot-toast";
 
 import { imagesApi } from "../../api/images";
-import { INHERIT_SENTINEL, LICENSE_OPTIONS, licenseInfo } from "../../constants/licenses";
+import { INHERIT_SENTINEL, licenseInfo } from "../../constants/licenses";
 import type { ImageDetail } from "../../types";
+import LicenseSelect from "../common/LicenseSelect";
 
 interface Props {
   image: ImageDetail;
@@ -147,20 +148,12 @@ export default function ProvenancePanel({ image }: Props) {
             <div className="space-y-2">
               <label className="block">
                 <span className="text-gray-500">License</span>
-                <select
+                <LicenseSelect
                   value={draft.license}
-                  onChange={(e) => setDraft({ ...draft, license: e.target.value })}
+                  onChange={(license) => setDraft({ ...draft, license })}
+                  emptyLabel="Inherit from dataset"
                   className="input w-full mt-0.5"
-                >
-                  <option value="">Inherit from dataset</option>
-                  {LICENSE_OPTIONS.map((l) => (
-                    <option key={l.id} value={l.id}>{l.label}</option>
-                  ))}
-                  {/* An existing other:<free text> value must stay selectable. */}
-                  {draft.license.startsWith("other:") && (
-                    <option value={draft.license}>{licenseInfo(draft.license).label}</option>
-                  )}
-                </select>
+                />
               </label>
               {FIELDS.map(({ key, label }) => (
                 <label key={key} className="block">

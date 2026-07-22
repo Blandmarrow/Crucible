@@ -115,10 +115,21 @@ assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`)
 `completed`, commit per row. `refresh_stats` + `result_data`
 (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
 
-Imported rows are stamped with **concrete** source/license provenance rather than inheriting the
-dataset default — `license="synthetic"`, `source_name="ComfyUI"`, and `source_meta` from
-`_comfy_source_meta` (plan/checkpoint identity). See `docs/dev/gallery-and-images.md`
-§ Source & license provenance.
+Imported rows get their provenance from `_comfy_output_provenance(ds, plan.output_is_synthetic)`.
+`ComfyPlan.output_is_synthetic` (bool, `NOT NULL DEFAULT true`, migration `c3f7a9e1d4b6`) is the
+plan's own declaration that its output is self-created — nothing about the workflow or the dataset
+can answer that, and one dataset holds both kinds of plan. True stamps **concrete**
+`license="synthetic"`, `source_name="ComfyUI"`; false returns `{}` so all four fields stay NULL and
+inherit the dataset's defaults together (never a partial stamp — that would mix a "synthetic"
+license onto an inherited real credit). Residual documented in the helper's docstring: under
+`true`, a dataset default `source_url`/`attribution` still inherits, since "" reads as "inherit"
+and neither has an honest concrete value for a generated image.
+
+`source_meta` comes from `_comfy_source_meta(plan_row, row, wf)` — built from `wf`, the graph
+actually submitted, not the plan template, and computed **once per row** next to `wf` (deep-copied
+per image so multi-output rows never share one JSON dict). `_workflow_checkpoints` reads
+`ckpt_name` / `unet_name` / `model_name` so Flux/SD3 `UNETLoader` graphs record a model too. See
+`docs/dev/gallery-and-images.md` § Source & license provenance.
 
 Failure/cancel semantics:
 

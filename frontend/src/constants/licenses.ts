@@ -12,41 +12,64 @@ export interface LicenseOption {
   allowsCommercial: boolean | null; // null = unknown / unverifiable
   requiresAttribution: boolean;
   shareAlike: boolean;
+  /** Redistributing a modified version is not permitted (a resized export is one). */
+  noDerivatives: boolean;
   url?: string;
   /** Tailwind classes for the badge — see index.css badge utilities. */
   badge: string;
 }
 
 export const LICENSE_OPTIONS: LicenseOption[] = [
-  { id: "unknown", label: "Unknown", allowsCommercial: null, requiresAttribution: false, shareAlike: false, badge: "bg-gray-600/30 text-gray-300" },
-  { id: "owned", label: "Owned / self-created", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-green-600/30 text-green-300" },
-  { id: "public-domain", label: "Public domain", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-green-600/30 text-green-300" },
-  { id: "CC0-1.0", label: "CC0 1.0 (no rights reserved)", allowsCommercial: true, requiresAttribution: false, shareAlike: false, url: "https://creativecommons.org/publicdomain/zero/1.0/", badge: "bg-green-600/30 text-green-300" },
-  { id: "CC-BY-4.0", label: "CC BY 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: false, url: "https://creativecommons.org/licenses/by/4.0/", badge: "bg-blue-600/30 text-blue-300" },
-  { id: "CC-BY-SA-4.0", label: "CC BY-SA 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: true, url: "https://creativecommons.org/licenses/by-sa/4.0/", badge: "bg-blue-600/30 text-blue-300" },
-  { id: "CC-BY-NC-4.0", label: "CC BY-NC 4.0", allowsCommercial: false, requiresAttribution: true, shareAlike: false, url: "https://creativecommons.org/licenses/by-nc/4.0/", badge: "bg-amber-600/30 text-amber-300" },
-  { id: "CC-BY-NC-SA-4.0", label: "CC BY-NC-SA 4.0", allowsCommercial: false, requiresAttribution: true, shareAlike: true, url: "https://creativecommons.org/licenses/by-nc-sa/4.0/", badge: "bg-amber-600/30 text-amber-300" },
-  { id: "CC-BY-ND-4.0", label: "CC BY-ND 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: false, url: "https://creativecommons.org/licenses/by-nd/4.0/", badge: "bg-blue-600/30 text-blue-300" },
-  { id: "licensed-commercial", label: "Licensed for commercial use", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-green-600/30 text-green-300" },
-  { id: "research-only", label: "Research / non-commercial only", allowsCommercial: false, requiresAttribution: true, shareAlike: false, badge: "bg-amber-600/30 text-amber-300" },
-  { id: "synthetic", label: "Synthetic (AI-generated)", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-purple-600/30 text-purple-300" },
+  { id: "unknown", label: "Unknown", allowsCommercial: null, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-gray-600/30 text-gray-300" },
+  { id: "owned", label: "Owned / self-created", allowsCommercial: true, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-green-600/30 text-green-300" },
+  { id: "public-domain", label: "Public domain", allowsCommercial: true, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-green-600/30 text-green-300" },
+  { id: "CC0-1.0", label: "CC0 1.0 (no rights reserved)", allowsCommercial: true, requiresAttribution: false, shareAlike: false, noDerivatives: false, url: "https://creativecommons.org/publicdomain/zero/1.0/", badge: "bg-green-600/30 text-green-300" },
+  { id: "CC-BY-4.0", label: "CC BY 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: false, noDerivatives: false, url: "https://creativecommons.org/licenses/by/4.0/", badge: "bg-blue-600/30 text-blue-300" },
+  { id: "CC-BY-SA-4.0", label: "CC BY-SA 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: true, noDerivatives: false, url: "https://creativecommons.org/licenses/by-sa/4.0/", badge: "bg-blue-600/30 text-blue-300" },
+  { id: "CC-BY-NC-4.0", label: "CC BY-NC 4.0", allowsCommercial: false, requiresAttribution: true, shareAlike: false, noDerivatives: false, url: "https://creativecommons.org/licenses/by-nc/4.0/", badge: "bg-amber-600/30 text-amber-300" },
+  { id: "CC-BY-NC-SA-4.0", label: "CC BY-NC-SA 4.0", allowsCommercial: false, requiresAttribution: true, shareAlike: true, noDerivatives: false, url: "https://creativecommons.org/licenses/by-nc-sa/4.0/", badge: "bg-amber-600/30 text-amber-300" },
+  { id: "CC-BY-ND-4.0", label: "CC BY-ND 4.0", allowsCommercial: true, requiresAttribution: true, shareAlike: false, noDerivatives: true, url: "https://creativecommons.org/licenses/by-nd/4.0/", badge: "bg-blue-600/30 text-blue-300" },
+  { id: "licensed-commercial", label: "Licensed for commercial use", allowsCommercial: true, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-green-600/30 text-green-300" },
+  { id: "research-only", label: "Research / non-commercial only", allowsCommercial: false, requiresAttribution: true, shareAlike: false, noDerivatives: false, badge: "bg-amber-600/30 text-amber-300" },
+  { id: "synthetic", label: "Synthetic (AI-generated)", allowsCommercial: true, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-purple-600/30 text-purple-300" },
   // A recorded "nothing is granted", distinct from "" ("no license recorded") —
   // an image with this does NOT inherit the dataset default.
-  { id: "no-license", label: "No license granted", allowsCommercial: false, requiresAttribution: false, shareAlike: false, badge: "bg-red-600/30 text-red-300" },
+  { id: "no-license", label: "No license granted", allowsCommercial: false, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-red-600/30 text-red-300" },
 ];
 
 export const OTHER_PREFIX = "other:";
+
+/**
+ * Key of the synthetic bucket the stats license breakdown collapses its tail
+ * into (backend dataset_service.LICENSE_BREAKDOWN_OTHER_KEY). Not a license id —
+ * the counts still sum to the dataset total, so it must be excluded from any
+ * per-license listing and reported separately.
+ */
+export const OTHER_LICENSES_KEY = "__other_licenses__";
+
+/**
+ * Mirrors backend/licenses.py FIELD_MAX_LEN — the Image/Dataset column widths.
+ * The API *rejects* an over-long value rather than truncating it, so an input
+ * without a matching `maxLength` produces a 422 the user cannot see the cause
+ * of. Kept in sync by the vocabulary parity test, which parses this file.
+ */
+export const FIELD_MAX_LEN = {
+  source_name: 255,
+  source_url: 1024,
+  license: 64,
+  attribution: 2000,
+} as const;
 
 const BY_ID = new Map(LICENSE_OPTIONS.map((l) => [l.id, l]));
 
 /** Descriptor for a stored license value; unknown-shaped fallback for "" and `other:`. */
 export function licenseInfo(value: string | null | undefined): LicenseOption {
   const v = (value ?? "").trim();
-  if (!v) return { id: "", label: "No license", allowsCommercial: null, requiresAttribution: false, shareAlike: false, badge: "bg-gray-700/40 text-gray-400" };
+  if (!v) return { id: "", label: "No license", allowsCommercial: null, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-gray-700/40 text-gray-400" };
   const known = BY_ID.get(v);
   if (known) return known;
   if (v.toLowerCase().startsWith(OTHER_PREFIX)) {
-    return { id: v, label: v.slice(OTHER_PREFIX.length).trim() || "Other", allowsCommercial: null, requiresAttribution: false, shareAlike: false, badge: "bg-gray-600/30 text-gray-300" };
+    return { id: v, label: v.slice(OTHER_PREFIX.length).trim() || "Other", allowsCommercial: null, requiresAttribution: false, shareAlike: false, noDerivatives: false, badge: "bg-gray-600/30 text-gray-300" };
   }
   return BY_ID.get("unknown")!;
 }

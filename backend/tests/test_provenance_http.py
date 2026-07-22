@@ -7,8 +7,11 @@ captured license made an image's provenance permanently unsaveable. Both are
 router-shaped failures that no service-level test can reach.
 """
 import csv
+import shutil
 import io
 import json
+import os
+from pathlib import Path
 
 from PIL import Image as PilImage
 from sqlalchemy import select
@@ -125,12 +128,38 @@ def test_comfy_run_imports_images_through_the_real_router(tmp_path, monkeypatch)
     run(scenario())
 
 
-def test_comfy_output_inherits_a_dataset_that_records_a_license(tmp_path, monkeypatch):
-    """An img2img plan over a licensed source dataset must not launder the license.
+async def _run_one_row_plan(env, ds_id: str, **plan_fields) -> dict:
+    """Create a one-row plan, run it, and return the imported image's detail JSON."""
+    before = {
+        i["id"]
+        for i in (await env.client.get(f"{API}/images/", params={"dataset_id": ds_id})).json()
+    }
+    r = await env.client.post(f"{API}/comfy/plans", json={
+        "dataset_id": ds_id, "name": plan_fields.pop("name", "p"),
+        "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
+        "output_node_ids": ["9"], **plan_fields,
+    })
+    assert r.status_code == 200, r.text
+    plan_id = r.json()["id"]
+    await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
+    r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
+    job = await wait_for_job(env, r.json()["job_id"])
+    assert job["status"] == "completed", job
+    images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds_id})).json()
+    new = [i for i in images if i["id"] not in before]
+    assert len(new) == 1, new
+    return (await env.client.get(f"{API}/images/{new[0]['id']}")).json()
 
-    Stamping `license="synthetic"` unconditionally hid a CC-BY-NC source from the
-    commercial-use export filter, and left `attribution` inheriting a real
-    photographer's credit next to a "synthetic" license.
+
+def test_comfy_output_provenance_follows_the_plans_synthetic_toggle(tmp_path, monkeypatch):
+    """Whether ComfyUI output is self-created is the *plan's* declaration.
+
+    It was inferred from the dataset instead: a dataset recording any provenance
+    default switched every plan to full inheritance, so a text2img plan on a
+    licensed dataset produced generated images carrying a real photographer's
+    credit — while stamping `license="synthetic"` unconditionally would instead
+    launder a genuinely derived image's CC-BY-NC source past the commercial-use
+    export filter. Neither is inferable at run time; only the plan knows.
     """
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -139,66 +168,56 @@ def test_comfy_output_inherits_a_dataset_that_records_a_license(tmp_path, monkey
             await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fake:8188"})
 
             ds = await env.create_dataset(
-                "licensed", license="CC-BY-NC-4.0", attribution="Photo by Jane Doe")
-            r = await env.client.post(f"{API}/comfy/plans", json={
-                "dataset_id": ds["id"], "name": "p",
-                "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
-                "output_node_ids": ["9"],
-            })
-            plan_id = r.json()["id"]
-            await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
-            r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
-            job = await wait_for_job(env, r.json()["job_id"])
-            assert job["status"] == "completed", job
+                "licensed", license="CC-BY-NC-4.0", source_name="Flickr",
+                source_url="https://flickr.test/p/1", attribution="Photo by Jane Doe")
 
-            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
-            detail = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()
+            # Toggle on (the default): the run's own license and source win over
+            # the dataset's, so the export can tell this from a licensed image.
+            detail = await _run_one_row_plan(env, ds["id"], name="synthetic")
+            prov = detail["provenance"]
+            assert prov["license"] == "synthetic"
+            assert prov["source_name"] == "ComfyUI"
+            # Documented residual: NULL means inherit and there is no honest
+            # concrete `attribution` for an AI image, so a dataset that records
+            # one still supplies it. See `_comfy_output_provenance`.
+            assert prov["inherited"] == ["source_url", "attribution"]
+
+            # Toggle off: derived output keeps the source's whole story. All four
+            # fields inherit together — "" cannot opt one out, because
+            # `resolve_provenance` reads "" and NULL alike as "inherit".
+            detail = await _run_one_row_plan(
+                env, ds["id"], name="derived", output_is_synthetic=False)
             prov = detail["provenance"]
             assert prov["license"] == "CC-BY-NC-4.0"
             assert prov["attribution"] == "Photo by Jane Doe"
-            # All four inherited together — never "synthetic" over a real credit.
-            assert set(prov["inherited"]) >= {"license", "attribution"}
+            assert prov["source_url"] == "https://flickr.test/p/1"
+            assert set(prov["inherited"]) == {
+                "source_name", "source_url", "license", "attribution"}
 
     run(scenario())
 
 
-def test_comfy_output_does_not_credit_a_photographer_for_an_ai_image(tmp_path, monkeypatch):
-    """A dataset with *no* license but a real credit line must not leak it.
-
-    The all-or-nothing gate used to test `ds.license` alone, and then tried to
-    block inheritance by stamping `source_url=""`/`attribution=""` — which does
-    nothing, because `resolve_provenance` treats "" and NULL alike as "inherit".
-    So a dataset recording only an attribution produced a `license=synthetic`
-    image carrying the photographer's credit, straight into CREDITS.md.
-    """
+def test_comfy_plan_synthetic_toggle_round_trips_through_the_api(tmp_path):
+    """Default on, PATCHable to off and back — `False` is not "absent"."""
     async def scenario():
         async with api_env(tmp_path) as env:
-            import backend.routers.comfy as comfy_router
-            monkeypatch.setattr(comfy_router, "ComfyClient", _FakeComfyClient)
-            await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fake:8188"})
-
-            ds = await env.create_dataset(
-                "credited", source_name="Flickr", source_url="https://flickr.test/p/1",
-                attribution="Photo by Jane Doe")
+            ds = await env.create_dataset("toggle")
             r = await env.client.post(f"{API}/comfy/plans", json={
-                "dataset_id": ds["id"], "name": "p",
-                "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
-                "output_node_ids": ["9"],
+                "dataset_id": ds["id"], "name": "p", "workflow_json": {},
             })
-            plan_id = r.json()["id"]
-            await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
-            r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
-            job = await wait_for_job(env, r.json()["job_id"])
-            assert job["status"] == "completed", job
+            assert r.status_code == 200, r.text
+            plan = r.json()
+            assert plan["output_is_synthetic"] is True
 
-            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
-            prov = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()["provenance"]
-            # The dataset records provenance, so it owns the whole story: the
-            # output inherits every field rather than mixing "synthetic" in.
-            assert prov["attribution"] == "Photo by Jane Doe"
-            assert prov["source_url"] == "https://flickr.test/p/1"
-            assert prov["license"] == ""
-            assert set(prov["inherited"]) >= {"source_name", "source_url", "attribution"}
+            r = await env.client.patch(
+                f"{API}/comfy/plans/{plan['id']}", json={"output_is_synthetic": False})
+            assert r.json()["output_is_synthetic"] is False
+            # An unrelated PATCH must not silently flip it back on.
+            r = await env.client.patch(f"{API}/comfy/plans/{plan['id']}", json={"name": "p2"})
+            assert r.json()["output_is_synthetic"] is False
+            r = await env.client.patch(
+                f"{API}/comfy/plans/{plan['id']}", json={"output_is_synthetic": True})
+            assert r.json()["output_is_synthetic"] is True
 
     run(scenario())
 
@@ -514,6 +533,103 @@ def test_crop_copies_parent_provenance(tmp_path):
     run(scenario())
 
 
+def test_lut_and_upscale_derivatives_copy_provenance_over_the_async_session(tmp_path, monkeypatch):
+    """`copy_provenance` reads the **deferred** `source_meta`.
+
+    Both jobs `undefer` it when building their query. A `_Stub`-based unit test
+    cannot see that: a missing `undefer` is a lazy load on an async session, which
+    raises MissingGreenlet only on the live path. Only the pixel work is faked —
+    the query, the copy and the insert are the real ones.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            import backend.routers.lut as lut_router
+            import backend.routers.upscaling as upscale_router
+            from backend.ml import lut_processor, upscaler
+
+            def _fake_process(src, out_path, *a, **kw):
+                # Same contract as the real helpers: write the file, return the
+                # {width, height, file_size_bytes, format, out_path} dict.
+                shutil.copy2(src, out_path)
+                with PilImage.open(out_path) as probe:
+                    w, h = probe.size
+                return {
+                    "width": w, "height": h, "format": "PNG",
+                    "file_size_bytes": os.path.getsize(out_path), "out_path": out_path,
+                }
+
+            monkeypatch.setattr(lut_processor, "apply_lut_sync", _fake_process)
+            monkeypatch.setattr(lut_router, "apply_lut_sync", _fake_process)
+            monkeypatch.setattr(upscaler, "upscale_image_sync", _fake_process)
+            monkeypatch.setattr(upscale_router, "upscale_image_sync", _fake_process)
+            monkeypatch.setattr(upscaler, "_detect_scale", lambda *a, **kw: 1)
+
+            ds = await env.create_dataset("derive")
+            img = await _upload(env, ds["id"], "a.png", _png_bytes(size=(32, 32)))
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+                row.license, row.source_name, row.source_meta = "CC-BY-SA-4.0", "Flickr", {"post_id": 7}
+                await db.commit()
+
+            for path, body in (
+                ("/lut/run", {"dataset_id": ds["id"], "image_ids": [img["id"]],
+                              "lut_path": str(tmp_path / "fake.cube"), "replace": False}),
+                ("/upscaling/run", {"dataset_id": ds["id"], "image_ids": [img["id"]],
+                                    "model_path": str(tmp_path / "fake.pth"), "replace": False}),
+            ):
+                before = {i["id"] for i in
+                          (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()}
+                r = await env.client.post(f"{API}{path}", json=body)
+                assert r.status_code == 200, (path, r.text)
+                job = await wait_for_job(env, r.json()["job_id"])
+                assert job["status"] == "completed", (path, job)
+
+                images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+                new = [i for i in images if i["id"] not in before]
+                assert len(new) == 1, (path, images)
+                derived = (await env.client.get(f"{API}/images/{new[0]['id']}")).json()
+                assert derived["license"] == "CC-BY-SA-4.0", path
+                assert derived["source_name"] == "Flickr", path
+                # The deferred column specifically: this is the one that raises.
+                assert derived["provenance"]["source_meta"] == {"post_id": 7}, path
+
+    run(scenario())
+
+
+def test_detection_crop_copies_parent_provenance(tmp_path):
+    """The detection-crop worker's own `undefer` + `copy_provenance`, live."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("dets")
+            img = await _upload(env, ds["id"], "a.png", _png_bytes(size=(64, 64)))
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+                row.license, row.source_name, row.source_meta = "CC-BY-NC-4.0", "Danbooru", {"post_id": 3}
+                await db.commit()
+
+            r = await env.client.post(f"{API}/detection/manual", json={
+                "image_id": img["id"], "label": "face", "bbox": [0.1, 0.1, 0.5, 0.5],
+            })
+            assert r.status_code in (200, 201), r.text
+
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]], "labels": ["face"],
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            crops = [i for i in images if i["id"] != img["id"]]
+            assert len(crops) == 1, images
+            crop = (await env.client.get(f"{API}/images/{crops[0]['id']}")).json()
+            assert crop["license"] == "CC-BY-NC-4.0"
+            assert crop["source_name"] == "Danbooru"
+            assert crop["provenance"]["source_meta"] == {"post_id": 3}
+
+    run(scenario())
+
+
 # --- capture paths -------------------------------------------------------
 
 
@@ -632,6 +748,174 @@ def test_snapshot_and_restore_round_trip_through_the_router(tmp_path):
             assert got["license"] == "CC-BY-SA-4.0"
             assert got["source_name"] == "Flickr"
             assert got["source_meta"] == {"post_id": 7}
+
+    run(scenario())
+
+
+def test_version_diff_reports_every_provenance_field(tmp_path):
+    """`diff_versions` had zero coverage, and its field lists are hand-synced.
+
+    `_DIFF_COLS` selects the columns and a separate tuple decides which are
+    compared; a field present in one and missing from the other silently reports
+    "unchanged" for a value that did change. That drift already happened once on
+    this branch, so this pins all five provenance fields end to end.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import version_service
+
+            r = await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "manual"})
+            assert r.status_code == 200, r.text
+
+            ds = await env.create_dataset("diffme")
+            img = await _upload(env, ds["id"])
+
+            async def snapshot(name: str) -> str:
+                r = await env.client.post(f"{API}/datasets/{ds['id']}/versions",
+                                          json={"name": name, "description": ""})
+                assert r.status_code in (200, 201), r.text
+                if "job_id" in r.json():
+                    await wait_for_job(env, r.json()["job_id"])
+                    versions = (await env.client.get(f"{API}/datasets/{ds['id']}/versions")).json()
+                    return next(v["id"] for v in versions if v["name"] == name)
+                return r.json()["id"]
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+                row.source_name, row.source_url = "Flickr", "https://flickr.test/p/1"
+                row.license, row.attribution = "CC-BY-4.0", "Photo by Jane Doe"
+                row.source_meta = {"post_id": 1}
+                await db.commit()
+            before = await snapshot("v1")
+
+            await env.client.patch(f"{API}/images/{img['id']}/provenance", json={
+                "source_name": "Me", "source_url": "https://mine.test/x",
+                "license": "owned", "attribution": "Me",
+            })
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+                row.source_meta = {"post_id": 2}
+                await db.commit()
+            after = await snapshot("v2")
+
+            r = await env.client.get(f"{API}/datasets/{ds['id']}/versions/diff",
+                                     params={"v1": before, "v2": after})
+            assert r.status_code == 200, r.text
+            changes = r.json()["modified"][0]["changes"]
+            assert changes["source_name"] == {"from": "Flickr", "to": "Me"}
+            assert changes["source_url"] == {"from": "https://flickr.test/p/1", "to": "https://mine.test/x"}
+            assert changes["license"] == {"from": "CC-BY-4.0", "to": "owned"}
+            assert changes["attribution"] == {"from": "Photo by Jane Doe", "to": "Me"}
+            # A heavy JSON column — diffed, but reported as a marker.
+            assert changes["source_meta"] == {"changed": True}
+
+            # Structural: everything the comparison loop reads must be selected.
+            selected = {c.key for c in version_service._DIFF_COLS}
+            compared = version_service._DIFF_COMPARE_FIELDS
+            assert set(compared) <= selected, sorted(set(compared) - selected)
+
+    run(scenario())
+
+
+def test_patch_dataset_provenance_defaults_on_both_branches(tmp_path):
+    """`PATCH /datasets/{id}` was never exercised — only POST.
+
+    `update_dataset` applies the defaults through two separate paths (the rename
+    branch commits first, then re-applies; the normal branch does not), and a
+    dataset default is what every non-overriding image inherits, so a field
+    silently dropped on one branch changes the license of a whole dataset.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d1")
+            img = await _upload(env, ds["id"])
+
+            async def prov():
+                return (await env.client.get(f"{API}/images/{img['id']}")).json()["provenance"]
+
+            # Normal branch: set all four.
+            r = await env.client.patch(f"{API}/datasets/{ds['id']}", json={
+                "source_name": "Flickr", "source_url": "https://flickr.test/p/1",
+                "license": "cc-by-4.0", "attribution": "Photo by Jane Doe",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["license"] == "CC-BY-4.0"     # normalized by the schema
+            assert await prov() == {
+                "source_name": "Flickr", "source_url": "https://flickr.test/p/1",
+                "license": "CC-BY-4.0", "attribution": "Photo by Jane Doe",
+                "source_meta": None,
+                "inherited": ["source_name", "source_url", "license", "attribution"],
+            }
+
+            # None leaves a field alone; "" clears it. The two are not the same.
+            r = await env.client.patch(f"{API}/datasets/{ds['id']}", json={"attribution": ""})
+            assert r.status_code == 200, r.text
+            after = await prov()
+            assert after["attribution"] == ""            # cleared
+            assert after["license"] == "CC-BY-4.0"       # untouched by omission
+
+            # Rename branch: the rename commits first, so the provenance write has
+            # to survive it — in the same request.
+            r = await env.client.patch(f"{API}/datasets/{ds['id']}", json={
+                "name": "d2", "license": "owned", "source_name": "Me",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["name"] == "d2"
+            after = await prov()
+            assert after["license"] == "owned"
+            assert after["source_name"] == "Me"
+            assert after["source_url"] == "https://flickr.test/p/1"   # not clobbered
+
+    run(scenario())
+
+
+def test_stats_license_breakdown_matches_the_gallery_filter(tmp_path):
+    """The breakdown resolves inheritance, and its buckets are bounded.
+
+    Nothing tested this at any level. It is the only aggregate that runs the
+    COALESCE in SQL rather than through `resolve_provenance`, so it is the one
+    place where the two can disagree about what an image's license is.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services.dataset_service import (
+                LICENSE_BREAKDOWN_LIMIT,
+                LICENSE_BREAKDOWN_OTHER_KEY,
+            )
+
+            ds = await env.create_dataset("stats", license="CC-BY-NC-4.0")
+            for n in range(3):
+                await _upload(env, ds["id"], f"inh{n}.png", _png_bytes((n * 30, 1, 2)))
+            owned = await _upload(env, ds["id"], "owned.png", _png_bytes((9, 9, 9)))
+            await env.client.patch(
+                f"{API}/images/{owned['id']}/provenance", json={"license": "owned"})
+
+            stats = (await env.client.get(f"{API}/datasets/{ds['id']}/stats")).json()
+            breakdown = stats["license_breakdown"]
+            # NULL license buckets under the dataset default, not under "".
+            assert breakdown == {"CC-BY-NC-4.0": 3, "owned": 1}
+            assert sum(breakdown.values()) == stats["image_count"]
+
+            # …and each bucket count is what the gallery filter returns for that id.
+            for lic, count in breakdown.items():
+                r = await env.client.get(f"{API}/images/", params={
+                    "dataset_id": ds["id"], "license_filter": json.dumps([lic])})
+                assert r.status_code == 200, r.text
+                assert len(r.json()) == count, lic
+
+            # Unbounded `other:` free text is one bucket per distinct value, so the
+            # tail collapses instead of growing the response without limit.
+            for n in range(LICENSE_BREAKDOWN_LIMIT + 5):
+                extra = await _upload(env, ds["id"], f"o{n}.png", _png_bytes((n, 200, 7)))
+                await env.client.patch(f"{API}/images/{extra['id']}/provenance",
+                                       json={"license": f"other:terms {n}"})
+
+            stats = (await env.client.get(f"{API}/datasets/{ds['id']}/stats")).json()
+            breakdown = stats["license_breakdown"]
+            assert len(breakdown) == LICENSE_BREAKDOWN_LIMIT + 1
+            assert LICENSE_BREAKDOWN_OTHER_KEY in breakdown
+            # The collapsed bucket keeps the totals honest.
+            assert sum(breakdown.values()) == stats["image_count"]
 
     run(scenario())
 
@@ -964,6 +1248,180 @@ def test_comfy_row_cleanup_survives_a_db_error(tmp_path, monkeypatch):
             ds_dir = next(p for p in env.datasets_dir.iterdir() if p.is_dir())
             assert len(list((ds_dir / "images").glob("*.png"))) == 2
             assert len(list((ds_dir / "thumbnails").glob("*.webp"))) == 2
+
+    run(scenario())
+
+
+def test_re_export_into_the_same_directory_supersedes_its_manifest(tmp_path):
+    """A second full export of the same subtree must own `CREDITS.md`.
+
+    `_manifest_dest` never overwrote, so re-exporting after adding an image left
+    `CREDITS.md` describing the old, smaller set and stranded the current one on
+    `CREDITS.2.md` — the wrong file is the one a redistributor opens. Superseding
+    is safe only when every file the old manifest lists is under this run's
+    output directory, which is what distinguishes it from kohya's `10_x/` beside
+    `20_x/` case below.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("re-export", license="CC-BY-4.0")
+            await _upload(env, ds["id"], "one.png")
+            out = tmp_path / "out"
+
+            async def export(**extra):
+                r = await env.client.post(f"{API}/export/kohya", json={
+                    "dataset_id": ds["id"], "output_dir": str(out),
+                    "n_repeats": 10, "concept_token": "concept", **extra,
+                })
+                assert r.status_code == 200, r.text
+                job = await wait_for_job(env, r.json()["job_id"])
+                assert job["status"] == "completed", job
+                return job
+
+            job = await export()
+            assert job["result_data"]["manifest_files"] == ["CREDITS.md", "licenses.csv"]
+
+            await _upload(env, ds["id"], "two.png", _png_bytes((5, 6, 7)))
+            job = await export()
+            # Same names again — overwritten in place, not chained.
+            assert job["result_data"]["manifest_files"] == ["CREDITS.md", "licenses.csv"]
+            assert not (out / "CREDITS.2.md").exists()
+            rows = list(csv.DictReader((out / "licenses.csv").open(encoding="utf-8")))
+            assert {r["file"] for r in rows} == {"10_concept/one.png", "10_concept/two.png"}
+
+            # A *different* subtree in the same directory is an addition, not a
+            # replacement, so it must not destroy the manifest describing 10_concept.
+            job = await export(n_repeats=20)
+            # licenses.csv chains because its `file` column differs. CREDITS.md is
+            # byte-identical (it groups by license/source and names no files), so
+            # the existing one already describes this run and is left alone.
+            assert job["result_data"]["manifest_files"] == ["licenses.2.csv"]
+            rows = list(csv.DictReader((out / "licenses.csv").open(encoding="utf-8")))
+            assert {r["file"] for r in rows} == {"10_concept/one.png", "10_concept/two.png"}
+
+    run(scenario())
+
+
+def test_manifest_file_column_is_not_formula_guarded(tmp_path):
+    """The `file` column is a path this code generated, not scraped input.
+
+    Prefixing it with `'` corrupted every filename starting with `-`, `=` or `@`,
+    so the manifest named a file that does not exist. The four provenance columns
+    keep the guard — those are the untrusted ones.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("csv")
+            img = await _upload(env, ds["id"], "a.png")
+            # Ingest slugifies, so force the name the writer has to handle.
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+                old = Path(row.file_path)
+                new = old.with_name("-leading-dash.png")
+                old.rename(new)
+                row.filename, row.file_path = new.name, str(new)
+                await db.commit()
+            await env.client.patch(f"{API}/images/{img['id']}/provenance", json={
+                "attribution": "=HYPERLINK(\"http://evil.test\")",
+            })
+            out = tmp_path / "out"
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            row = next(iter(csv.DictReader((out / "licenses.csv").open(encoding="utf-8"))))
+            assert row["file"] == "images/-leading-dash.png"    # no `'` prefix
+            assert (out / row["file"]).exists()
+            assert row["attribution"].startswith("'=")           # still guarded
+
+    run(scenario())
+
+
+def test_exclude_no_derivatives_drops_only_known_nd_licenses(tmp_path):
+    """An export ships resized/cropped copies, which is what ND forbids.
+
+    Unlike `commercial_only` this is *not* conservative about unknowns: only a
+    license known to be ND is dropped, so an `other:` free-text license — which
+    may well permit derivatives — is not silently excluded.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("nd")
+            nd = await _upload(env, ds["id"], "nd.png")
+            free = await _upload(env, ds["id"], "free.png", _png_bytes((1, 2, 3)))
+            other = await _upload(env, ds["id"], "other.png", _png_bytes((4, 5, 6)))
+            await env.client.patch(f"{API}/images/{nd['id']}/provenance",
+                                   json={"license": "CC-BY-ND-4.0"})
+            await env.client.patch(f"{API}/images/{free['id']}/provenance",
+                                   json={"license": "CC-BY-4.0"})
+            await env.client.patch(f"{API}/images/{other['id']}/provenance",
+                                   json={"license": "other:ask first"})
+
+            r = await env.client.get(f"{API}/export/preview/{ds['id']}",
+                                     params={"exclude_no_derivatives": True})
+            assert r.status_code == 200, r.text
+            assert r.json()["will_export"] == 2
+            assert r.json()["excluded_license"] == 1
+
+            out = tmp_path / "out"
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+                "exclude_no_derivatives": True,
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            rows = list(csv.DictReader((out / "licenses.csv").open(encoding="utf-8")))
+            assert {r["file"] for r in rows} == {"images/free.png", "images/other.png"}
+
+            # And the manifest states the obligations rather than leaving a
+            # redistributor to look the license up.
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(tmp_path / "all"),
+            })
+            await wait_for_job(env, r.json()["job_id"])
+            credits = (tmp_path / "all" / "CREDITS.md").read_text(encoding="utf-8")
+            assert "CC BY-ND 4.0 — attribution required, no derivatives" in credits
+            # A free-text license cannot pass itself off as a vocabulary entry.
+            assert "ask first (unrecognised license, recorded as free text)" in credits
+
+    run(scenario())
+
+
+def test_unlicensed_will_export_accounts_for_every_filter(tmp_path):
+    """Not just the license ones.
+
+    `unlicensed_count` is whole-dataset scope on purpose, so the client used to
+    guess whether those images ship from the three license flags — and claimed
+    "they still export" whenever a caption or aesthetic filter had already
+    dropped them.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("mix")
+            await _upload(env, ds["id"], "bare.png")
+            captioned = await _upload(env, ds["id"], "cap.png", _png_bytes((1, 2, 3)))
+            r = await env.client.put(f"{API}/captions/image/{captioned['id']}",
+                                     json={"caption_text": "a cat"})
+            assert r.status_code == 200, r.text
+
+            async def preview(**params):
+                r = await env.client.get(f"{API}/export/preview/{ds['id']}", params=params)
+                assert r.status_code == 200, r.text
+                return r.json()
+
+            p = await preview()
+            assert p["unlicensed_count"] == 2 and p["unlicensed_will_export"] == 2
+
+            # A non-license filter drops the unlicensed image; the counter follows.
+            p = await preview(captioned_only=True)
+            assert p["unlicensed_count"] == 2          # still whole-dataset scope
+            assert p["unlicensed_will_export"] == 1
+            assert p["will_export"] == 1
+
+            p = await preview(exclude_unlicensed=True)
+            assert p["unlicensed_will_export"] == 0
 
     run(scenario())
 

@@ -1,4 +1,4 @@
-import { LICENSE_OPTIONS, OTHER_PREFIX } from "../../constants/licenses";
+import { FIELD_MAX_LEN, LICENSE_OPTIONS, OTHER_PREFIX } from "../../constants/licenses";
 
 interface Props {
   /** Stored value: "", a known id, or `other:<free text>`. */
@@ -56,8 +56,8 @@ export default function LicenseSelect({
           value={freeText}
           onChange={(e) => onChange(OTHER_PREFIX + e.target.value)}
           disabled={disabled}
-          // Image.license / Dataset.license are String(64); "other:" eats 6.
-          maxLength={58}
+          // The column holds the *normalized* value, and "other:" eats 6 of it.
+          maxLength={FIELD_MAX_LEN.license - OTHER_PREFIX.length}
           placeholder="License name or terms"
           className={inputClassName ?? className}
           style={{ ...style, marginTop: 4 }}

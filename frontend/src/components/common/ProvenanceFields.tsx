@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
-import { licenseInfo } from "../../constants/licenses";
+import { FIELD_MAX_LEN, licenseInfo } from "../../constants/licenses";
 import type { DatasetProvenance } from "../../api/datasets";
 import LicenseSelect from "./LicenseSelect";
 
@@ -73,6 +73,9 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note }:
                 className="input"
                 placeholder={placeholder}
                 value={value[key]}
+                // The API rejects an over-long value (it never truncates), and a
+                // 422 here is invisible — so bound the input at the column width.
+                maxLength={FIELD_MAX_LEN[key]}
                 onChange={(e) => onChange({ ...value, [key]: e.target.value })}
               />
             </div>

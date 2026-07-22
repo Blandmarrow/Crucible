@@ -119,11 +119,18 @@ The other two ways images arrive capture less, because less is available:
   folders** — dragging one in loses its provenance silently.
 
 Images generated on the **ComfyUI** page are recorded as `Synthetic
-(AI-generated)` from source `ComfyUI`, with the plan and checkpoint noted in
-scrape metadata — but only when the target dataset has no license default of its
-own. If it does, the output inherits it instead: an img2img run over a CC BY-NC
-dataset is derived from that source, and calling the result "synthetic" would
-hide it from the commercial-use filter.
+(AI-generated)` from source `ComfyUI`, with the plan and model noted in scrape
+metadata. Each plan carries an **Output is synthetic (self-created)** checkbox in
+*Workflow & Pins*, on by default. Turn it off for a plan that derives from
+licensed material: the output then inherits the dataset's source, URL, license
+and attribution defaults instead, so a run over a CC BY-NC dataset stays visible
+to the commercial-use filter rather than being relabelled "synthetic".
+
+One thing the toggle cannot do: with it **on**, a dataset that records a default
+`source_url` or `attribution` still supplies those two, because a blank image
+field means "inherit" and there is no honest URL or credit line to write for a
+generated image. Set them per image, or keep generated and sourced material in
+separate datasets.
 
 Derived images — crops, upscales, LUT-graded copies, detection crops — carry
 their parent's source and license. A derivative of a CC BY-SA image is still
@@ -166,27 +173,36 @@ in all three formats (Kohya, AI Toolkit, plain):
 Both record the *resolved* license, so an image that inherited its license from
 the dataset shows the real value, not a blank.
 
-They are written even if you cancel an export partway. A cancelled run writes
+They are written whenever an export stops early, not only when it succeeds — if
+you cancel it, or it fails on an unreadable image or a full disk, the files
+already on disk still get a manifest. Such a run writes
 **`CREDITS.partial.md`** and **`licenses.partial.csv`** instead — the entries
 cover only the files that were actually written, and the file says so at the top.
-The separate name matters: if the cancelled run took `CREDITS.md`, the later
+The separate name matters: if the interrupted run took `CREDITS.md`, the later
 complete export would land beside it (see below) and the incomplete manifest
 would stay the one a redistributor opens.
 
-Manifests are never overwritten. If a directory already holds manifests
-describing a *different* set of files, the new ones are written alongside as
-`CREDITS.2.md` / `licenses.2.csv`. One consequence worth knowing: **`CREDITS.md`
-describes the first export written into a directory, not the newest.** Re-running
-an export into the same directory overwrites the images but leaves the original
-`CREDITS.md` in place, with the new manifest at `CREDITS.2.md`. Export into a
-fresh directory when you want the manifests to match what is there.
+**Re-exporting the same output folder replaces its manifests.** When every file
+the existing `licenses.csv` lists sits inside the folder this run is writing, the
+new run is describing the same material again, so it takes `CREDITS.md` /
+`licenses.csv` and the old ones are gone.
 
-Three optional filters live in the Export page's filter panel:
+A manifest describing *other* files is never destroyed. Exports routinely share
+a directory — Kohya's `10_concept/` beside an earlier `20_concept/`, with the
+manifests in their common parent — and there the new manifest is written
+alongside as `CREDITS.2.md` / `licenses.2.csv`. Identical content is left alone
+entirely. The Export page names the files each run actually wrote when it
+finishes, so you never have to guess which case you got.
+
+Four optional filters live in the Export page's filter panel:
 
 - **Commercial-use only** — keeps only images whose license is known to permit
   commercial use.
 - **Exclude unlicensed images** — drops images with no license at either level.
   Free-text licenses count as licensed, so this keeps them.
+- **Exclude no-derivatives** — drops CC BY-ND. An export ships resized, cropped
+  or re-encoded copies, which is what "no derivatives" forbids redistributing.
+  Only licenses *known* to be ND are dropped, so a free-text license is kept.
 - **Specific licenses** — a collapsible checklist of the vocabulary; tick the
   ones to keep. It includes a **No license recorded** entry, so you can build an
   export of exactly the images you still need to label. Ticking nothing means no

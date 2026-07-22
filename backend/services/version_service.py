@@ -475,6 +475,19 @@ _DIFF_COLS = (
 # sidecar payload).
 _HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata", "source_meta"})
 
+# The fields the comparison loop actually reads. A name here that is missing from
+# `_DIFF_COLS` is not selected, so the attribute is absent and the diff silently
+# reports "unchanged" for a value that did change — the two lists are hand-synced,
+# and a test asserts this one is a subset of the columns above.
+_DIFF_COMPARE_FIELDS = (
+    "caption_text", "quality_flags", "subfolder",
+    "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "watermark_score", "color_score", "style_similarity_score",
+    "dino_layer_scores", "generation_metadata", "processing_history",
+    "source_name", "source_url", "license", "attribution",
+    "source_meta", "sort_order",
+)
+
 
 async def diff_versions(
     db: AsyncSession,
@@ -522,12 +535,7 @@ async def diff_versions(
         sb = states_b[k]
         changes: dict[str, dict] = {}
 
-        for field in ("caption_text", "quality_flags", "subfolder",
-                      "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-                      "watermark_score", "color_score", "style_similarity_score",
-                      "dino_layer_scores", "generation_metadata", "processing_history",
-                      "source_name", "source_url", "license", "attribution",
-                      "source_meta", "sort_order"):
+        for field in _DIFF_COMPARE_FIELDS:
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
                 # Heavy JSON columns (full ComfyUI workflow payloads, per-layer

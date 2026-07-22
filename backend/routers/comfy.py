@@ -6,6 +6,7 @@ to the ComfyUI server sequentially, downloads the outputs, and ingests them
 into the dataset. See docs/dev/comfyui.md.
 """
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -21,7 +22,6 @@ from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.services.comfy_service import (
@@ -79,6 +79,8 @@ class PlanCreate(BaseModel):
     workflow_json: dict = Field(default_factory=dict)
     pinned_params: list[PinnedParam] = Field(default_factory=list)
     output_node_ids: list[str] = Field(default_factory=list)
+    # Is this plan's output self-created? See `_comfy_output_provenance`.
+    output_is_synthetic: bool = True
 
 
 class PlanUpdate(BaseModel):
@@ -87,6 +89,7 @@ class PlanUpdate(BaseModel):
     pinned_params: list[PinnedParam] | None = None
     # [] clears back to auto (import all SaveImage outputs); absent = unchanged.
     output_node_ids: list[str] | None = None
+    output_is_synthetic: bool | None = None
 
 
 class RowCreate(BaseModel):
@@ -197,6 +200,7 @@ def _plan_out(plan: ComfyPlan) -> dict:
         "workflow_json": plan.workflow_json or {},
         "pinned_params": plan.pinned_params or [],
         "output_node_ids": plan.output_node_ids or [],
+        "output_is_synthetic": bool(plan.output_is_synthetic),
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
     }
@@ -216,23 +220,33 @@ def _row_out(row: ComfyRow) -> dict:
     }
 
 
+_MODEL_LOADER_INPUTS = ("ckpt_name", "unet_name", "model_name")
+
+
 def _workflow_checkpoints(workflow: dict | None) -> list[str]:
-    """Checkpoint names loaded by an API-format workflow, in node order.
+    """Model names loaded by an API-format workflow, in node order.
 
     Read from the workflow itself rather than from the PNG's embedded metadata:
     ComfyUI's own output carries the whole prompt graph under `prompt`/`workflow`
     and never a flat `checkpoint` key, so scanning `generation_metadata` for one
     finds nothing for genuine ComfyUI images.
+
+    Not only `CheckpointLoader*`: Flux and SD3 workflows load their model through
+    `UNETLoader` (`unet_name`) or a `*ModelLoader` (`model_name`), so matching on
+    the class name alone recorded no model at all for them.
     """
     out: list[str] = []
     for node in (workflow or {}).values():
         if not isinstance(node, dict):
             continue
-        if "checkpoint" not in str(node.get("class_type", "")).lower():
+        cls = str(node.get("class_type", "")).lower()
+        if not any(k in cls for k in ("checkpoint", "unet", "model")):
             continue
-        name = (node.get("inputs") or {}).get("ckpt_name")
-        if isinstance(name, str) and name and name not in out:
-            out.append(name)
+        inputs = node.get("inputs") or {}
+        for key in _MODEL_LOADER_INPUTS:
+            name = inputs.get(key)
+            if isinstance(name, str) and name and name not in out:
+                out.append(name)
     return out
 
 
@@ -250,28 +264,33 @@ def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, workflow: dict | None) ->
     return meta
 
 
-def _comfy_output_provenance(ds) -> dict:
+def _comfy_output_provenance(ds, synthetic: bool) -> dict:
     """Provenance columns to stamp on images imported from a ComfyUI run.
 
-    All-or-nothing on purpose. ComfyUI output is self-created, but an img2img plan
-    over a licensed source dataset is *derived* from that source — so a dataset
-    that records *any* provenance default keeps ownership of the whole story and
-    the output inherits every field (returning `{}` leaves them NULL). Stamping
-    only `license`/`source_name` would instead mix a "synthetic" license onto an
-    inherited real-photographer credit, and would hide a CC-BY-NC source from the
-    commercial-use export filter.
+    `synthetic` is the plan's own declaration that its output is self-created —
+    the only thing that can answer this, since nothing about the workflow or the
+    dataset does. It is a per-plan choice because a dataset holds both kinds of
+    plan at once, and no run-time inspection can tell them apart.
 
-    The gate is *any* dataset provenance field, not just `license`: a dataset that
-    records only an `attribution` still owns the credit line, and there is no way
-    to opt one field out of inheritance — `resolve_provenance` treats "" and NULL
-    alike as "inherit", so stamping `source_url=""`/`attribution=""` would not
-    stop them falling through to the dataset.
+    On (the default): record the run's own provenance and leave
+    `source_url`/`attribution` NULL — the honest value for a generated image with
+    no URL and nobody to credit. The stamped `license` wins over the dataset
+    default, which is the point: the export must be able to tell a generated image
+    from a licensed one.
 
-    Only when the dataset asserts nothing at all do we record the run's own
-    provenance, leaving `source_url`/`attribution` NULL — the honest value for a
-    synthetic image with no URL and nobody to credit.
+    Off: return `{}` so every field stays NULL and inherits the dataset's defaults
+    — all four together. A derived image keeps its source's whole story, which is
+    what stops a CC-BY-NC source hiding from the commercial-use export filter.
+
+    Known residual, on by design rather than by oversight: with the toggle **on**
+    over a dataset that records a `source_url`/`attribution` default, those two
+    still inherit, so a generated image can show a real photographer's credit.
+    Blocking that needs a concrete value, because `resolve_provenance` reads ""
+    and NULL alike as "inherit" — and there is no honest concrete `attribution`
+    for an AI image to write. Set the two fields per-image (or clear the dataset
+    defaults) when a dataset holds both generated and sourced material.
     """
-    if any((getattr(ds, f, None) or "").strip() for f in PROVENANCE_FIELDS):
+    if not synthetic:
         return {}
     return {"license": "synthetic", "source_name": "ComfyUI"}
 
@@ -603,6 +622,7 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
         workflow_json=body.workflow_json,
         pinned_params=_validate_pins(body.pinned_params),
         output_node_ids=body.output_node_ids,
+        output_is_synthetic=body.output_is_synthetic,
     )
     db.add(plan)
     await db.commit()
@@ -634,6 +654,8 @@ async def update_plan(plan_id: str, body: PlanUpdate, db: AsyncSession = Depends
         plan.pinned_params = _validate_pins(body.pinned_params)
     if body.output_node_ids is not None:
         plan.output_node_ids = list(body.output_node_ids)
+    if body.output_is_synthetic is not None:
+        plan.output_is_synthetic = body.output_is_synthetic
     await db.commit()
     return _plan_out(plan)
 
@@ -1275,7 +1297,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             planned_thumb_stems: set[str] = set()
             stem_slug = slugify_filename(plan_row.name) or "comfy"
 
-            output_provenance = _comfy_output_provenance(ds)
+            output_provenance = _comfy_output_provenance(ds, plan_row.output_is_synthetic)
 
             client = ComfyClient(comfy_url)
             loop = asyncio.get_running_loop()
@@ -1319,6 +1341,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 row_id = row.id
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
+                    # Built from `wf` — the graph actually submitted, with this row's
+                    # values patched in — not the plan template, whose model loader may
+                    # be overridden by a pin. Computed once per row, not per output image.
+                    row_source_meta = _comfy_source_meta(plan_row, row, wf)
                     prompt_id = await client.submit(wf, client_id=job_id)
                     consecutive_connect_errors = 0
                     row.prompt_id = prompt_id
@@ -1384,7 +1410,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,
-                            source_meta=_comfy_source_meta(plan_row, row, workflow),
+                            source_meta=copy.deepcopy(row_source_meta),
                             **output_provenance,
                             **reg.info,
                         )

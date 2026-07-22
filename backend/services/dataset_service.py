@@ -30,6 +30,13 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff
 # Cap on how many per-file error details we retain in a job summary (failed_count keeps the full tally).
 _MAX_FAILED_DETAILS = 50
 
+# Largest license buckets returned by get_dataset_stats; the remainder collapses
+# into LICENSE_BREAKDOWN_OTHER_KEY so the counts still sum to the dataset total.
+# Comfortably above the curated vocabulary (13 ids) — the cap only ever bites on
+# `other:<free text>` values, which are unbounded.
+LICENSE_BREAKDOWN_LIMIT = 20
+LICENSE_BREAKDOWN_OTHER_KEY = "__other_licenses__"
+
 
 def remove_dataset_dir(folder: Path) -> None:
     """Recursively remove a dataset's on-disk folder, logging (not swallowing) any failure.
@@ -933,13 +940,23 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     # License breakdown over the *effective* license (image value coalesced over
     # the dataset default). Aggregated in SQL alongside flag_counts rather than
     # in _aggregate_dataset_stats — no reason to pull the rows into Python.
+    #
+    # Bounded, like get_tag_cooccurrence: the curated vocabulary is a dozen ids,
+    # but `other:<free text>` is unbounded and comes from scrapers, so a dataset
+    # of scraped images can produce one bucket per image — an unbounded response
+    # body and an unbounded list in the Stats panel. Everything past the cap
+    # collapses into one bucket so the counts still sum to the dataset total.
     effective_license = func.coalesce(func.nullif(Image.license, ""), ds.license or "", "")
     license_rows = (await db.execute(
-        select(effective_license.label("lic"), func.count(Image.id))
+        select(effective_license.label("lic"), func.count(Image.id).label("n"))
         .where(*_base_where)
         .group_by(effective_license)
+        .order_by(func.count(Image.id).desc())
     )).all()
-    license_breakdown = {(r.lic or ""): r[1] for r in license_rows}
+    license_breakdown = {(r.lic or ""): r.n for r in license_rows[:LICENSE_BREAKDOWN_LIMIT]}
+    rest = license_rows[LICENSE_BREAKDOWN_LIMIT:]
+    if rest:
+        license_breakdown[LICENSE_BREAKDOWN_OTHER_KEY] = sum(r.n for r in rest)
 
     stats = await asyncio.get_running_loop().run_in_executor(
         None, _aggregate_dataset_stats, rows, ds, subfolder, score_cov, flag_counts

@@ -10,7 +10,7 @@ import { imagesApi, type ImageListParams } from "../api/images";
 import { detectionApi, type DetectionStats } from "../api/detection";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
-import { licenseInfo } from "../constants/licenses";
+import { OTHER_LICENSES_KEY, licenseInfo } from "../constants/licenses";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, datasetScopedKey } from "../utils/persistentState";
@@ -1219,10 +1219,15 @@ export default function StatsPage() {
   if (!stats) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>No data</div>;
 
   // Effective-license breakdown, largest bucket first; "" = no license recorded.
+  // The backend caps how many buckets it returns and collapses the tail into
+  // OTHER_LICENSES_KEY (unbounded `other:` free text would otherwise be one
+  // bucket per image), so that entry is a count, not a license id.
   const licenseBreakdown = stats.license_breakdown ?? {};
   const licenseRows = Object.entries(licenseBreakdown)
+    .filter(([id]) => id !== OTHER_LICENSES_KEY)
     .map(([id, count]) => ({ id, count }))
     .sort((a, b) => b.count - a.count);
+  const otherLicensesCount = licenseBreakdown[OTHER_LICENSES_KEY] ?? 0;
   const unlicensedCount = licenseBreakdown[""] ?? 0;
 
   // ── Chart data ──
@@ -1470,6 +1475,13 @@ export default function StatsPage() {
                     })}
                   </tbody>
                 </table>
+              )}
+              {otherLicensesCount > 0 && (
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 8 }}>
+                  + {otherLicensesCount.toLocaleString()} image
+                  {otherLicensesCount !== 1 ? "s" : ""} across smaller license buckets, not listed
+                  individually. Filter the gallery by license to see them.
+                </p>
               )}
             </div>
           </div>

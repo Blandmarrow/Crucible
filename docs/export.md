@@ -40,10 +40,12 @@ Both record the **resolved** license — an image that inherits its license from
 its dataset shows the real value, not a blank. They are always written, even
 when nothing carries a license: a missing attribution file reads as "no
 attribution needed", which is exactly the claim an unlabeled dataset cannot
-make. A cancelled export writes `CREDITS.partial.md` / `licenses.partial.csv`,
-and a manifest is never overwritten — so `CREDITS.md` describes the *first*
-export written into a directory. See
-[Source & License Provenance](provenance.md) for the full lifecycle.
+make. An export that stops early — cancelled, or failed on an unreadable image —
+writes `CREDITS.partial.md` / `licenses.partial.csv` for what it did write.
+Re-exporting into the same output folder replaces its manifests; a manifest
+describing a *different* set of files is never destroyed and the new one lands
+beside it as `CREDITS.2.md`. The page names the files each run wrote when it
+finishes. See [Source & License Provenance](provenance.md) for the full lifecycle.
 
 ## Loss masks (masked training loss)
 

@@ -48,6 +48,9 @@ class KohyaExportRequest(BaseModel):
     # Drops images with no effective license. Separate from license_filter, which
     # is an allowlist of known ids and would also drop `other:<free text>` values.
     exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -79,6 +82,9 @@ class AIToolkitExportRequest(BaseModel):
     # Drops images with no effective license. Separate from license_filter, which
     # is an allowlist of known ids and would also drop `other:<free text>` values.
     exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -108,6 +114,9 @@ class PlainExportRequest(BaseModel):
     # Drops images with no effective license. Separate from license_filter, which
     # is an allowlist of known ids and would also drop `other:<free text>` values.
     exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -196,6 +205,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 license_filter=license_filter,
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -255,6 +265,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 license_filter=license_filter,
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -312,6 +323,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 license_filter=license_filter,
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -340,6 +352,7 @@ async def preview(
     license_filter: str = Query(default="", description="JSON array of effective license ids; empty = no filter"),
     commercial_only: bool = Query(default=False),
     exclude_unlicensed: bool = Query(default=False),
+    exclude_no_derivatives: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
@@ -360,4 +373,5 @@ async def preview(
         license_filter=parse_license_filter_param(license_filter),
         commercial_only=commercial_only,
         exclude_unlicensed=exclude_unlicensed,
+        exclude_no_derivatives=exclude_no_derivatives,
     )

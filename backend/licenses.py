@@ -24,6 +24,10 @@ class LicenseInfo:
     requires_attribution: bool
     share_alike: bool
     url: str = ""
+    # Redistribution of a modified version is not permitted. Surfaced in CREDITS.md
+    # and behind the export's "Exclude no-derivatives" filter, because a training
+    # dataset ships resized/cropped copies — which is exactly what ND forbids.
+    no_derivatives: bool = False
 
 
 _ALL: tuple[LicenseInfo, ...] = (
@@ -41,7 +45,7 @@ _ALL: tuple[LicenseInfo, ...] = (
     LicenseInfo("CC-BY-NC-SA-4.0", "CC BY-NC-SA 4.0", False, True, True,
                 "https://creativecommons.org/licenses/by-nc-sa/4.0/"),
     LicenseInfo("CC-BY-ND-4.0", "CC BY-ND 4.0", True, True, False,
-                "https://creativecommons.org/licenses/by-nd/4.0/"),
+                "https://creativecommons.org/licenses/by-nd/4.0/", no_derivatives=True),
     LicenseInfo("licensed-commercial", "Licensed for commercial use", True, False, False),
     LicenseInfo("research-only", "Research / non-commercial only", False, True, False),
     LicenseInfo("synthetic", "Synthetic (AI-generated)", True, False, False),
@@ -61,16 +65,16 @@ _UNKNOWN = LICENSES["unknown"]
 # Case-insensitive lookup for sidecar values that use different capitalisation
 # ("cc-by-4.0", "CC0-1.0", "cc0"). Sidecars are not authored by us.
 _BY_LOWER: dict[str, str] = {lid.lower(): lid for lid in LICENSES}
+# Deliberately no version-less Creative Commons tokens ("by", "cc-by", "by-nc",
+# …). An Openverse payload carries `"license": "by"` with the version in a
+# *separate* field, so mapping it to `CC-BY-4.0` invents a version nobody stated
+# and makes CREDITS.md link the 4.0 deed for what may be a 2.0 image. Without an
+# alias they fall through to `other:<raw>`: the license is still recorded, just
+# not upgraded to a claim the source never made. `cc0` is safe (one version
+# exists); every versioned long form is already covered by `_BY_LOWER`.
 _ALIASES: dict[str, str] = {
     "cc0": "CC0-1.0",
     "cc0-1.0": "CC0-1.0",
-    "cc-by": "CC-BY-4.0",
-    "cc-by-4.0": "CC-BY-4.0",
-    "by": "CC-BY-4.0",
-    "by-sa": "CC-BY-SA-4.0",
-    "by-nc": "CC-BY-NC-4.0",
-    "by-nc-sa": "CC-BY-NC-SA-4.0",
-    "by-nd": "CC-BY-ND-4.0",
     "publicdomain": "public-domain",
     "public domain": "public-domain",
     "pd": "public-domain",

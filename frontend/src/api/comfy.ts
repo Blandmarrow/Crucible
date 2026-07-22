@@ -45,6 +45,8 @@ export interface ComfyPlan {
   pinned_params: PinnedParam[];
   /** Import images from these nodes' outputs (any type, incl. previews); [] = all SaveImage outputs. */
   output_node_ids: string[];
+  /** True = stamp imported images as self-created (synthetic/ComfyUI); false = inherit the dataset's provenance defaults. */
+  output_is_synthetic: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -109,7 +111,7 @@ export const comfyApi = {
     client.post<ComfyPlan>("/comfy/plans", data).then((r) => r.data),
   getPlan: (planId: string) =>
     client.get<ComfyPlan>(`/comfy/plans/${planId}`).then((r) => r.data),
-  updatePlan: (planId: string, data: Partial<Pick<ComfyPlan, "name" | "workflow_json" | "pinned_params" | "output_node_ids">>) =>
+  updatePlan: (planId: string, data: Partial<Pick<ComfyPlan, "name" | "workflow_json" | "pinned_params" | "output_node_ids" | "output_is_synthetic">>) =>
     client.patch<ComfyPlan>(`/comfy/plans/${planId}`, data).then((r) => r.data),
   deletePlan: (planId: string) => client.delete(`/comfy/plans/${planId}`),
 

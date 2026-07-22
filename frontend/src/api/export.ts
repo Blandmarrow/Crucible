@@ -22,6 +22,8 @@ interface ExportFilters {
   /** Drop images with no effective license. Not expressible via license_filter,
    *  which is an allowlist of known ids and would also drop `other:` values. */
   exclude_unlicensed?: boolean;
+  /** Drop CC BY-ND and friends — an export ships resized/cropped copies. */
+  exclude_no_derivatives?: boolean;
   label?: string;
 }
 
@@ -35,6 +37,9 @@ export interface ExportPreview {
   excluded_style_sim: number;
   excluded_license: number;
   unlicensed_count: number;
+  /** How many of those actually ship under the *current* filters — every filter,
+   *  not just the license ones. The client cannot derive this. */
+  unlicensed_will_export: number;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }
@@ -82,6 +87,7 @@ export const exportApi = {
       license_filter?: string[] | null;
       commercial_only?: boolean;
       exclude_unlicensed?: boolean;
+      exclude_no_derivatives?: boolean;
     },
   ) =>
     client
@@ -101,6 +107,7 @@ export const exportApi = {
           ...(filters?.license_filter?.length && { license_filter: JSON.stringify(filters.license_filter) }),
           ...(filters?.commercial_only && { commercial_only: true }),
           ...(filters?.exclude_unlicensed && { exclude_unlicensed: true }),
+          ...(filters?.exclude_no_derivatives && { exclude_no_derivatives: true }),
         },
       })
       .then((r) => r.data),

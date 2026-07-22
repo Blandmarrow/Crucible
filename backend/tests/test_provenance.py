@@ -614,24 +614,60 @@ def _is_excluded_license(effective: str, **flags) -> bool:
 
 
 def test_frontend_license_vocabulary_matches_backend():
-    """The two id lists are mirrored by hand with nothing enforcing it.
+    """The two vocabularies are mirrored by hand with nothing enforcing it.
 
     frontend/src/constants/licenses.ts carries the UI-only concerns (badge colour,
-    display order); the ids and labels must not drift from backend/licenses.py, or
-    a stored id renders as "Unknown" in every dropdown that should offer it.
+    display order); everything else must not drift from backend/licenses.py, or a
+    stored id renders as "Unknown" in every dropdown that should offer it.
+
+    Every field is compared, not just id and label. `allowsCommercial` decides
+    what the export ships and `noDerivatives`/`shareAlike` decide what CREDITS.md
+    claims, so a divergence there is a rights error the UI would show as fine.
     """
     import re
 
     ts = (Path(__file__).parents[2] / "frontend" / "src" / "constants" / "licenses.ts").read_text(encoding="utf-8")
     block = ts.split("export const LICENSE_OPTIONS", 1)[1].split("];", 1)[0]
-    entries = dict(re.findall(r'\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"', block))
+
+    _TS_SCALAR = {"true": True, "false": False, "null": None}
+
+    def _entry(line: str) -> tuple[str, dict[str, str]]:
+        # `key: "quoted"` or `key: bareword` — one object literal per line.
+        raw = {k: (quoted if bare == "" else bare)
+               for k, quoted, bare in re.findall(r'(\w+):\s*(?:"([^"]*)"|([\w./:-]+))', line)}
+        return raw["id"], raw
+
+    entries = dict(_entry(line) for line in block.splitlines() if line.strip().startswith("{ id:"))
 
     assert set(entries) == set(LICENSE_IDS), (
         f"only in backend: {sorted(set(LICENSE_IDS) - set(entries))}; "
         f"only in frontend: {sorted(set(entries) - set(LICENSE_IDS))}"
     )
-    for lid, label in entries.items():
-        assert label == LICENSES[lid].label, f"{lid}: {label!r} != {LICENSES[lid].label!r}"
+    ts_to_py = {
+        "label": "label",
+        "allowsCommercial": "allows_commercial",
+        "requiresAttribution": "requires_attribution",
+        "shareAlike": "share_alike",
+        "noDerivatives": "no_derivatives",
+        "url": "url",
+    }
+    for lid, raw in entries.items():
+        info = LICENSES[lid]
+        for ts_key, py_key in ts_to_py.items():
+            expected = getattr(info, py_key)
+            if py_key == "url" and not expected:
+                assert ts_key not in raw, f"{lid}: frontend has a url the backend does not"
+                continue
+            assert ts_key in raw, f"{lid}: frontend entry is missing {ts_key}"
+            actual = _TS_SCALAR.get(raw[ts_key], raw[ts_key])
+            assert actual == expected, f"{lid}.{ts_key}: {actual!r} != {expected!r}"
+
+    # The column-width caps the inputs bound themselves to (see ProvenanceFields /
+    # LicenseSelect). The API rejects over-long values, so a stale cap here is a
+    # 422 the user cannot see the cause of.
+    caps_block = ts.split("export const FIELD_MAX_LEN", 1)[1].split("}", 1)[0]
+    caps = {k: int(v) for k, v in re.findall(r"(\w+):\s*(\d+)", caps_block)}
+    assert caps == FIELD_MAX_LEN
 
 
 def test_url_guard_matches_the_frontend_over_the_whole_unicode_range():

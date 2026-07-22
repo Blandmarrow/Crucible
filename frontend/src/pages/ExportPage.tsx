@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { exportApi } from "../api/export";
 import { datasetsApi } from "../api/datasets";
 import { detectionApi } from "../api/detection";
+import { jobsApi } from "../api/jobs";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
@@ -75,6 +76,7 @@ interface ExportFilters {
   licenseFilter: string[];
   commercialOnly: boolean;
   excludeUnlicensed: boolean;
+  excludeNoDerivatives: boolean;
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -91,6 +93,7 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   licenseFilter: [],
   commercialOnly: false,
   excludeUnlicensed: false,
+  excludeNoDerivatives: false,
 };
 
 export default function ExportPage() {
@@ -123,6 +126,7 @@ export default function ExportPage() {
   const [licenseFilter, setLicenseFilter] = useState<Set<string>>(new Set(filters.licenseFilter));
   const [commercialOnly, setCommercialOnly] = useState(filters.commercialOnly);
   const [excludeUnlicensed, setExcludeUnlicensed] = useState(filters.excludeUnlicensed);
+  const [excludeNoDerivatives, setExcludeNoDerivatives] = useState(filters.excludeNoDerivatives);
   const [filterStyleSim, setFilterStyleSim] = useState(filters.filterStyleSim);
   const [styleSimMin, setStyleSimMin] = useState(filters.styleSimMin);
   const [subfolderFilterActive, setSubfolderFilterActive] = useState(filters.subfolderFilterActive);
@@ -166,6 +170,7 @@ export default function ExportPage() {
     license_filter: null as string[] | null,
     commercial_only: false,
     exclude_unlicensed: false,
+    exclude_no_derivatives: false,
   });
 
   useEffect(() => {
@@ -183,13 +188,14 @@ export default function ExportPage() {
         license_filter: licenseFilter.size > 0 ? [...licenseFilter] : null,
         commercial_only: commercialOnly,
         exclude_unlicensed: excludeUnlicensed,
+        exclude_no_derivatives: excludeNoDerivatives,
       });
     }, 350);
     // Cancel, not flush: this timer only drives the preview query, which should
     // not fire for a state the user has already navigated away from. Persistence
     // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives]);
 
   // Persist "filters" config — per-dataset, debounced.
   useDebouncedPersist(
@@ -205,6 +211,7 @@ export default function ExportPage() {
       licenseFilter: [...licenseFilter],
       commercialOnly,
       excludeUnlicensed,
+      excludeNoDerivatives,
     },
   );
 
@@ -236,6 +243,7 @@ export default function ExportPage() {
     setLicenseFilter(new Set(next.licenseFilter));
     setCommercialOnly(next.commercialOnly);
     setExcludeUnlicensed(next.excludeUnlicensed);
+    setExcludeNoDerivatives(next.excludeNoDerivatives);
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -262,6 +270,7 @@ export default function ExportPage() {
     license_filter: licenseFilter.size > 0 ? [...licenseFilter] : null,
     commercial_only: commercialOnly,
     exclude_unlicensed: excludeUnlicensed,
+    exclude_no_derivatives: excludeNoDerivatives,
   });
 
   const exportMutation = useMutation({
@@ -342,6 +351,7 @@ export default function ExportPage() {
     setLicenseFilter(new Set(EXPORT_FILTERS_DEFAULTS.licenseFilter));
     setCommercialOnly(EXPORT_FILTERS_DEFAULTS.commercialOnly);
     setExcludeUnlicensed(EXPORT_FILTERS_DEFAULTS.excludeUnlicensed);
+    setExcludeNoDerivatives(EXPORT_FILTERS_DEFAULTS.excludeNoDerivatives);
     setFilterStyleSim(EXPORT_FILTERS_DEFAULTS.filterStyleSim);
     setStyleSimMin(EXPORT_FILTERS_DEFAULTS.styleSimMin);
     setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
@@ -354,20 +364,24 @@ export default function ExportPage() {
 
   const isRunning = exportMutation.isPending || jobProgress?.status === "running";
   const isDone = jobProgress?.status === "completed";
+
+  // The SSE progress event carries no result_data, so read the finished job row
+  // for the manifest filenames it actually wrote.
+  const { data: finishedJob } = useQuery({
+    queryKey: ["job", activeJobId],
+    queryFn: () => jobsApi.get(activeJobId!),
+    enabled: !!activeJobId && isDone,
+  });
+  const manifestFiles: string[] = (finishedJob?.result_data?.manifest_files as string[]) ?? [];
   const showConcept = format === "kohya" || format === "aitoolkit";
 
-  // `preview.unlicensed_count` is deliberately whole-dataset scope, so the
-  // warning below must not claim those images export when a license filter
-  // would drop them. Selecting "No license recorded" explicitly keeps them.
-  const unlicensedExcluded =
-    excludeUnlicensed || commercialOnly || (licenseFilter.size > 0 && !licenseFilter.has(""));
 
   const exclusionRows = [
     { label: "Low aesthetic", count: preview?.excluded_low_aesthetic, show: filterAesthetic },
     { label: "No caption",    count: preview?.excluded_uncaptioned,   show: filterCaptioned },
     { label: "Flagged",       count: preview?.excluded_flagged,       show: excludeFlags.size > 0 },
     { label: "Low style sim", count: preview?.excluded_style_sim,     show: filterStyleSim },
-    { label: "License",       count: preview?.excluded_license,      show: commercialOnly || excludeUnlicensed || licenseFilter.size > 0 },
+    { label: "License",       count: preview?.excluded_license,      show: commercialOnly || excludeUnlicensed || excludeNoDerivatives || licenseFilter.size > 0 },
   ].filter((r) => r.show);
 
   return (
@@ -476,6 +490,17 @@ export default function ExportPage() {
                     />
                     <span style={{ fontSize: 12.5 }}>Exclude unlicensed images</span>
                   </label>
+                  <label className="row-flex" style={{ gap: 8, marginTop: 7 }}>
+                    <input
+                      type="checkbox" className="checkbox"
+                      checked={excludeNoDerivatives}
+                      onChange={(e) => setExcludeNoDerivatives(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 12.5 }}>Exclude no-derivatives</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: "var(--fg-mute)", paddingLeft: 24, marginTop: 2 }}>
+                    An export ships resized/cropped copies — which CC BY-ND forbids redistributing.
+                  </div>
                   <details style={{ marginTop: 7 }}>
                     <summary style={{ fontSize: 12, color: "var(--fg-mute)", cursor: "pointer" }}>
                       Specific licenses{licenseFilter.size > 0 ? ` (${licenseFilter.size} selected)` : ""}
@@ -807,9 +832,16 @@ export default function ExportPage() {
                     >
                       {preview.unlicensed_count.toLocaleString()} image
                       {preview.unlicensed_count !== 1 ? "s have" : " has"} no license recorded.
-                      {unlicensedExcluded
-                        ? " They are excluded from this export by the active license filters."
-                        : " They still export, but are listed as unlicensed in CREDITS.md."}
+                      {/* From the backend, which applied *every* filter. Deriving
+                          this from the license flags alone claimed "they still
+                          export" even when a caption or aesthetic filter had
+                          already dropped them. */}
+                      {preview.unlicensed_will_export === 0
+                        ? " None of them are included in this export."
+                        : preview.unlicensed_will_export === preview.unlicensed_count
+                          ? " They still export, and are listed as unlicensed in CREDITS.md."
+                          : ` ${preview.unlicensed_will_export.toLocaleString()} of them still export,` +
+                            " listed as unlicensed in CREDITS.md."}
                     </div>
                   )}
 
@@ -875,7 +907,22 @@ export default function ExportPage() {
                 <div style={{ height: 5, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${jobProgress.percent ?? 0}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", transition: "width .4s" }} />
                 </div>
-                {isDone && <p style={{ color: "var(--good)", fontSize: 12, marginTop: 8 }}>✓ Export complete → {outputDir}</p>}
+                {isDone && (
+                  <p style={{ color: "var(--good)", fontSize: 12, marginTop: 8 }}>
+                    ✓ Export complete → {outputDir}
+                    {/* Named by the backend, not hardcoded: a manifest can supersede
+                        the existing one, land on CREDITS.2.md, or be skipped as
+                        byte-identical, so only the job knows what was written. */}
+                    {manifestFiles.length > 0 && (
+                      <>
+                        <br />
+                        <span style={{ color: "var(--fg-mute)" }}>
+                          Manifests: {manifestFiles.join(", ")}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
             </div>
           )}

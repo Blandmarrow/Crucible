@@ -10,7 +10,13 @@ from PIL import Image as PilImage, ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.licenses import allows_commercial, license_info, license_label, resolve_provenance
+from backend.licenses import (
+    OTHER_PREFIX,
+    allows_commercial,
+    license_info,
+    license_label,
+    resolve_provenance,
+)
 from backend.models import Dataset, Image
 from backend.models.detection import Detection
 from backend.utils import chunked, safe_external_url
@@ -48,6 +54,7 @@ def _is_excluded(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
     effective_license: str = "",
 ) -> bool:
     if aesthetic_min is not None and (img.aesthetic_score is None or img.aesthetic_score < aesthetic_min):
@@ -70,6 +77,12 @@ def _is_excluded(
     if license_filter and effective_license not in license_filter:
         return True
     if commercial_only and not allows_commercial(effective_license):
+        return True
+    # An export ships resized/cropped/re-encoded copies, which is precisely what a
+    # no-derivatives license forbids redistributing. Unlike commercial_only this is
+    # *not* conservative about unknowns: only a license known to be ND is dropped,
+    # so an `other:` free-text license is not silently excluded.
+    if exclude_no_derivatives and license_info(effective_license).no_derivatives:
         return True
     return False
 
@@ -299,7 +312,47 @@ def _write_atomic(path: Path, payload: bytes) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _manifest_dest(dest_dir: Path, name: str, payload: bytes) -> Path | None:
+def _supersedes_existing_manifest(manifest_dir: Path, dest_dir: Path) -> bool:
+    """True when this run replaces, rather than adds to, the manifest already there.
+
+    Read from `licenses.csv` (the machine-readable half) so one decision covers
+    both files and the pair can never diverge. If every file the existing manifest
+    lists sits under this run's `dest_dir`, this run is describing the same subtree
+    again and overwriting is the correct outcome — otherwise the second export into
+    a directory would strand its complete manifest on `CREDITS.2.md` while
+    `CREDITS.md` kept describing a subset.
+
+    Conservative on anything unexpected: an unreadable, malformed or empty
+    `licenses.csv` returns False and the caller falls back to the numbered chain.
+    Never destroying an attribution document is worth an occasional stray file.
+    """
+    import csv
+
+    existing = manifest_dir / "licenses.csv"
+    if not existing.exists():
+        return False
+    try:
+        prefix = _manifest_rel(dest_dir, manifest_dir)
+        with existing.open(encoding="utf-8", newline="") as fh:
+            rows = list(csv.reader(fh))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return False
+    if len(rows) < 2 or not rows[0] or rows[0][0] != "file":
+        return False
+    listed = [r[0] for r in rows[1:] if r]
+    if not listed:
+        return False
+    # `prefix` is "." when the images sit in the manifest directory itself — then
+    # every relative path is trivially "under" it and the check says nothing, so
+    # the run supersedes only when it is writing to that same flat directory.
+    if prefix in ("", "."):
+        return dest_dir.resolve() == manifest_dir.resolve()
+    return all(f == prefix or f.startswith(f"{prefix}/") for f in listed)
+
+
+def _manifest_dest(
+    dest_dir: Path, name: str, payload: bytes, supersede: bool = False
+) -> Path | None:
     """Where to write a manifest — or None when an identical one is already there.
 
     Exports routinely share an output directory (kohya writes `10_concept/` beside
@@ -307,8 +360,13 @@ def _manifest_dest(dest_dir: Path, name: str, payload: bytes) -> Path | None:
     overwriting `CREDITS.md` would silently replace an attribution document
     describing one set of files with one that never mentions them. Identical
     content is a no-op; differing content lands on `CREDITS.2.md`, `CREDITS.3.md`, …
+
+    `supersede` is the exception: this run covers everything the existing manifest
+    covers (see `_supersedes_existing_manifest`), so it takes the canonical name.
     """
     base = dest_dir / name
+    if supersede:
+        return base
     for cand in [base] + [dest_dir / f"{base.stem}.{n}{base.suffix}" for n in range(2, _MANIFEST_MAX_ALTERNATES + 1)]:
         if not cand.exists():
             return cand
@@ -360,7 +418,21 @@ def _render_credits_md(credits: list[dict], partial: bool) -> str:
     for lic, rows in sorted(by_license.items(), key=_sort_key):
         info = license_info(lic)
         heading = _md_inline(license_label(lic)) if lic else "No license recorded"
-        note = " — attribution required" if info.requires_attribution else ""
+        if lic and lic.lower().startswith(OTHER_PREFIX):
+            # An `other:` license is free text from a scraper and could otherwise
+            # render a heading byte-identical to a curated one ("other:CC BY 4.0"),
+            # making an unverified claim look like a vocabulary entry.
+            heading = f"{heading} (unrecognised license, recorded as free text)"
+        # Every obligation this license carries, so a redistributor sees them
+        # without having to look the license up.
+        duties = [
+            label for flag, label in (
+                (info.requires_attribution, "attribution required"),
+                (info.share_alike, "share-alike"),
+                (info.no_derivatives, "no derivatives"),
+            ) if flag
+        ]
+        note = f" — {', '.join(duties)}" if duties else ""
         lines.append(f"## {heading}{note} ({len(rows)} image(s))")
         if info.url:
             lines.append(_md_link(info.url))
@@ -389,15 +461,21 @@ def _render_licenses_csv(credits: list[dict]) -> str:
     writer = csv.writer(buf)
     writer.writerow(["file", "source_name", "source_url", "license", "attribution"])
     for row in credits:
+        # `file` is deliberately not formula-guarded: it is a path this code
+        # generated, not scraped input, and the `'` prefix would corrupt a
+        # legitimate filename starting with `-`, `=` or `@`. The four provenance
+        # columns are the untrusted ones.
         writer.writerow([
-            _csv_cell(row["file"]), _csv_cell(row["source_name"]),
+            row["file"], _csv_cell(row["source_name"]),
             _csv_cell(row["source_url"]), _csv_cell(row["license"]),
             _csv_cell(row["attribution"]),
         ])
     return buf.getvalue()
 
 
-def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -> list[str]:
+def _write_credits(
+    dest_dir: Path, credits: list[dict], partial: bool = False, image_dir: Path | None = None
+) -> list[str]:
     """Write CREDITS.md + licenses.csv for an export; returns the filenames written.
 
     Always written (even when nothing carries a license, and even when the export
@@ -415,16 +493,27 @@ def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -
     Otherwise it would claim `CREDITS.md` with its "did not finish" banner and
     push the later successful run's complete manifest onto `CREDITS.2.md` —
     permanently leaving the wrong file as the one a redistributor opens.
+
+    `image_dir` is where this run wrote its images; given it, a complete run that
+    covers everything the existing manifest covers overwrites in place instead of
+    starting a numbered chain. Omitted (or on a partial run) the chain applies.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".partial" if partial else ""
+    # One decision from licenses.csv, applied to both files, so the pair can never
+    # end up with one superseded and the other chained.
+    supersede = (
+        not partial
+        and image_dir is not None
+        and _supersedes_existing_manifest(dest_dir, image_dir)
+    )
     written: list[str] = []
     for name, text in (
         (f"CREDITS{suffix}.md", _render_credits_md(credits, partial)),
         (f"licenses{suffix}.csv", _render_licenses_csv(credits)),
     ):
         payload = text.encode("utf-8")
-        target = _manifest_dest(dest_dir, name, payload)
+        target = _manifest_dest(dest_dir, name, payload, supersede=supersede)
         if target is None:
             continue
         _write_atomic(target, payload)
@@ -468,6 +557,7 @@ async def _run_export_loop(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
     manifest_dir: Path | None = None,
 ) -> dict:
     """
@@ -526,6 +616,7 @@ async def _run_export_loop(
                 license_filter=license_filter,
                 commercial_only=commercial_only,
                 exclude_unlicensed=exclude_unlicensed,
+                exclude_no_derivatives=exclude_no_derivatives,
                 effective_license=prov["license"],
             ):
                 continue
@@ -600,14 +691,18 @@ async def _run_export_loop(
             pass
         raise
 
-    await asyncio.get_event_loop().run_in_executor(
-        None, _write_credits, manifest_target, credits
+    manifest_files = await asyncio.get_event_loop().run_in_executor(
+        None, _write_credits, manifest_target, credits, False, dest_dir
     )
 
     loop_result: dict = {
         "exported": exported,
         "jsonl_entries": jsonl_entries,
         "unlicensed_count": sum(1 for c in credits if not c["license"]),
+        # The names actually written — a supersede, a numbered alternate and an
+        # unchanged no-op all produce something other than CREDITS.md/licenses.csv,
+        # so the completion message must not hardcode those two.
+        "manifest_files": manifest_files,
     }
     if export_masks:
         loop_result["masks_written"] = masks_written
@@ -655,6 +750,7 @@ async def export_kohya(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -673,6 +769,7 @@ async def export_kohya(
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
         license_filter=license_filter, commercial_only=commercial_only,
+        exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
         manifest_dir=Path(output_dir),
     )
@@ -687,6 +784,7 @@ async def export_kohya(
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
     result["unlicensed_count"] = loop_result["unlicensed_count"]
+    result["manifest_files"] = loop_result["manifest_files"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -716,6 +814,7 @@ async def export_aitoolkit(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -734,6 +833,7 @@ async def export_aitoolkit(
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
         license_filter=license_filter, commercial_only=commercial_only,
+        exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
         manifest_dir=Path(output_dir),
     )
@@ -748,6 +848,7 @@ async def export_aitoolkit(
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
     result["unlicensed_count"] = loop_result["unlicensed_count"]
+    result["manifest_files"] = loop_result["manifest_files"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -775,6 +876,7 @@ async def export_plain(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -795,6 +897,7 @@ async def export_plain(
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
         license_filter=license_filter, commercial_only=commercial_only,
+        exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
         manifest_dir=Path(output_dir),
     )
@@ -808,6 +911,7 @@ async def export_plain(
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
     result["unlicensed_count"] = loop_result["unlicensed_count"]
+    result["manifest_files"] = loop_result["manifest_files"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -827,6 +931,7 @@ async def preview_export(
     license_filter: list[str] | None = None,
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
+    exclude_no_derivatives: bool = False,
 ) -> dict:
     exclude_flags = exclude_flags or []
 
@@ -875,6 +980,7 @@ async def preview_export(
     excl_uncaptioned = 0
     excl_flagged = 0
     excl_style_sim = 0
+    unlicensed_will_export = 0
     without_detections = 0
     sample_files: list[dict] = []
 
@@ -894,6 +1000,7 @@ async def preview_export(
             (exclude_unlicensed and not lic)
             or (bool(license_filter) and lic not in (license_filter or []))
             or (commercial_only and not allows_commercial(lic))
+            or (exclude_no_derivatives and license_info(lic).no_derivatives)
         )
         if bad_license:
             excl_license += 1
@@ -915,6 +1022,8 @@ async def preview_export(
                 if mask_missing == "skip":
                     continue
             will_export += 1
+            if not lic:
+                unlicensed_will_export += 1
             if len(sample_files) < 5:
                 caption = r.caption_text or ""
                 sample_files.append({"image": r.filename, "caption_preview": caption[:80]})
@@ -932,6 +1041,11 @@ async def preview_export(
         # point of the warning is "you have unlicensed images", which stays true
         # whether or not the current filters happen to drop them.
         "unlicensed_count": unlicensed,
+        # …but whether they *ship* depends on every filter, not just the license
+        # ones. Derived here rather than in the client, which could only guess
+        # from the license flags and so claimed "they still export" whenever a
+        # caption or aesthetic filter had already dropped them.
+        "unlicensed_will_export": unlicensed_will_export,
         "sample_files": sample_files,
     }
     if export_masks:

@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -1315,6 +1315,8 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 # Image rows if the row fails partway through (see the except handler).
                 row_images: list[Image] = []
                 row_files: list[Path] = []
+                row_image_ids: list[str] = []
+                row_id = row.id
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     prompt_id = await client.submit(wf, client_id=job_id)
@@ -1355,7 +1357,6 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     # file + Image created for this row so a failure partway through a
                     # multi-output row leaves no stray files on disk and no orphan Image rows
                     # (which would otherwise surface in the gallery under a "failed" row).
-                    row_image_ids: list[str] = []
                     for ref in image_refs:
                         data = await client.fetch_image(
                             ref["filename"], ref.get("subfolder", ""), ref.get("type", "output")
@@ -1435,20 +1436,56 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     # this row already wrote and leave the row wedged at "running".
                     # CancelledError is handled above and re-raised; it is a
                     # BaseException on 3.8+ so it never reaches here.
-                    # Discard any images/files this row produced before it failed.
-                    for img_obj in row_images:
-                        await session.delete(img_obj)
+                    #
+                    # Order matters, and it is DB-error-first: after a failed flush the
+                    # session is unusable until it is rolled back, so any DB work done
+                    # before the rollback raises *inside the handler* and the cleanup
+                    # never happens — files orphaned, row wedged at "running", run
+                    # aborted. So: rollback, then the files (which no DB failure can
+                    # affect), then the DB half guarded on its own.
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        logger.warning("comfy_generate: rollback failed for row %s", row_id, exc_info=True)
                     for f in row_files:
                         try:
                             f.unlink(missing_ok=True)
                         except OSError:
                             pass
-                    row.image_id = None
-                    row.image_ids = []
-                    row.status = "failed"
-                    row.error_msg = str(e)[:2000]
-                    failed_row_ids.append(row.id)
-                    logger.warning("comfy_generate: row %s failed", row.id, exc_info=True)
+                    # The rollback discarded the flushed-but-uncommitted Image rows and
+                    # expired `row`, so re-fetch it and delete by id — a no-op when the
+                    # rollback already took the images, and the real cleanup if some
+                    # later commit had made them durable.
+                    try:
+                        if row_image_ids:
+                            await session.execute(sa_delete(Image).where(Image.id.in_(row_image_ids)))
+                        row = await session.get(ComfyRow, row_id) or row
+                        row.image_id = None
+                        row.image_ids = []
+                        row.status = "failed"
+                        row.error_msg = str(e)[:2000]
+                        await session.commit()
+                    except Exception:
+                        # Second failure: the files are already gone, which is the half
+                        # that cannot be repaired later. Leave the row for the operator.
+                        logger.warning("comfy_generate: cleanup DB write failed for row %s", row_id, exc_info=True)
+                    # A rollback expires every object in this session, and the loop
+                    # keeps reading them: `row.values` next iteration, `plan_row.id`
+                    # in `_comfy_source_meta`, `ds.id` in `_emit`/`refresh_stats`. An
+                    # expired attribute load on an async session raises MissingGreenlet
+                    # — so re-load them here, where the awaits are legal.
+                    try:
+                        await session.refresh(ds)
+                        await session.refresh(plan_row)
+                        await session.execute(
+                            select(ComfyRow)
+                            .where(ComfyRow.id.in_(row_ids))
+                            .execution_options(populate_existing=True)
+                        )
+                    except Exception:
+                        logger.warning("comfy_generate: reload after rollback failed", exc_info=True)
+                    failed_row_ids.append(row_id)
+                    logger.warning("comfy_generate: row %s failed", row_id, exc_info=True)
                     if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
                         consecutive_connect_errors += 1
                         if consecutive_connect_errors >= MAX_CONSECUTIVE_CONNECT_ERRORS:

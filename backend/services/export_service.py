@@ -352,9 +352,9 @@ def _render_credits_md(credits: list[dict], partial: bool) -> str:
     if partial:
         lines.append("")
         lines.append(
-            "**This export was cancelled before it finished.** The entries below cover "
-            "only the files written before it stopped; anything else in this directory "
-            "is not described here."
+            "**This export did not finish** (it was cancelled or failed part-way). The "
+            "entries below cover only the files written before it stopped; anything else "
+            "in this directory is not described here."
         )
     lines.append("")
     for lic, rows in sorted(by_license.items(), key=_sort_key):
@@ -401,8 +401,8 @@ def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -
     """Write CREDITS.md + licenses.csv for an export; returns the filenames written.
 
     Always written (even when nothing carries a license, and even when the export
-    was cancelled partway) so a published dataset always ships an attribution file
-    — a missing one reads as "no attribution needed", which is exactly the claim we
+    stopped partway) so a published dataset always ships an attribution file — a
+    missing one reads as "no attribution needed", which is exactly the claim we
     can't make. Attribution-required licenses are listed first because those are
     the entries a redistributor must act on.
 
@@ -410,11 +410,11 @@ def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -
     `_csv_cell`. The `file` column names a file this export actually wrote,
     relative to the manifest directory.
 
-    A cancelled run writes `CREDITS.partial.md` / `licenses.partial.csv` instead
-    of the canonical names. Otherwise a cancelled export would claim `CREDITS.md`
-    with its "cancelled before it finished" banner and push the later successful
-    run's complete manifest onto `CREDITS.2.md` — permanently leaving the wrong
-    file as the one a redistributor opens.
+    A run that did not finish — cancelled *or* failed — writes
+    `CREDITS.partial.md` / `licenses.partial.csv` instead of the canonical names.
+    Otherwise it would claim `CREDITS.md` with its "did not finish" banner and
+    push the later successful run's complete manifest onto `CREDITS.2.md` —
+    permanently leaving the wrong file as the one a redistributor opens.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".partial" if partial else ""
@@ -583,12 +583,21 @@ async def _run_export_loop(
                     "percent": round((i + 1) / len(images) * 100, 1),
                     "current_item": img.filename, "message": f"Exporting {img.filename}",
                 })
-    except asyncio.CancelledError:
-        # A cancelled export leaves the files written so far on disk. Ship the
-        # manifests for that partial set rather than an unattributed pile — the
-        # exact state this feature exists to prevent. Written synchronously: a real
-        # task cancellation is not obliged to schedule another await.
-        _write_credits(manifest_target, credits, partial=True)
+    except BaseException:
+        # Any non-completion — cancellation, a truncated image, ENOSPC, EACCES —
+        # leaves the files written so far on disk. Ship the manifests for that
+        # partial set rather than an unattributed pile: the exact state this
+        # feature exists to prevent. `BaseException`, not `Exception`, because
+        # `CancelledError` is the most common way to land here.
+        #
+        # Written synchronously (a real task cancellation is not obliged to
+        # schedule another await) and best-effort: if the manifest write itself
+        # fails — a full disk is exactly what raised the original error — that
+        # must not mask the exception the caller needs to see.
+        try:
+            _write_credits(manifest_target, credits, partial=True)
+        except Exception:
+            pass
         raise
 
     await asyncio.get_event_loop().run_in_executor(

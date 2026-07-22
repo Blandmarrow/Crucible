@@ -825,7 +825,7 @@ def test_a_cancelled_export_leaves_the_canonical_manifest_to_the_real_run(tmp_pa
 
             assert not (out / "CREDITS.md").exists()
             partial = (out / "CREDITS.partial.md").read_text(encoding="utf-8")
-            assert "cancelled before it finished" in partial
+            assert "did not finish" in partial
             assert "CC BY 4.0" in partial
             partial_rows = list(csv.DictReader((out / "licenses.partial.csv").open(encoding="utf-8")))
             # Only what actually reached disk before the stop.
@@ -840,11 +840,130 @@ def test_a_cancelled_export_leaves_the_canonical_manifest_to_the_real_run(tmp_pa
             assert job["status"] == "completed", job
 
             complete = (out / "CREDITS.md").read_text(encoding="utf-8")
-            assert "cancelled before it finished" not in complete
+            assert "did not finish" not in complete
             rows = list(csv.DictReader((out / "licenses.csv").open(encoding="utf-8")))
             assert len(rows) == 4
             # The partial one is still there, still clearly labelled as partial.
             assert (out / "CREDITS.partial.md").exists()
+
+    run(scenario())
+
+
+def test_a_failed_export_still_ships_a_partial_manifest(tmp_path, monkeypatch):
+    """A *failed* export must ship its manifest too, not only a cancelled one.
+
+    The loop wrote the partial manifest from `except asyncio.CancelledError`
+    alone, so every other way an export can stop — a truncated image, ENOSPC,
+    EACCES — left the files it had already written on disk with no CREDITS.md at
+    all: the unattributed pile this whole feature exists to prevent.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import export_service
+
+            ds = await env.create_dataset(
+                "failme", license="CC-BY-4.0", attribution="Photo by Jane Doe")
+            for n in range(4):
+                await _upload(env, ds["id"], f"{n}.png", _png_bytes((n * 20, 30, 40)))
+
+            out = tmp_path / "out"
+            real_write_image = export_service._write_image
+            written: list[str] = []
+
+            def _fail_on_third(src, dest_img, *a, **kw):
+                written.append(dest_img.name)
+                if len(written) == 3:
+                    raise OSError(28, "No space left on device")
+                return real_write_image(src, dest_img, *a, **kw)
+
+            monkeypatch.setattr(export_service, "_write_image", _fail_on_third)
+
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "failed", job
+
+            # The failure keeps the canonical names free for a later good run.
+            assert not (out / "CREDITS.md").exists()
+            partial = (out / "CREDITS.partial.md").read_text(encoding="utf-8")
+            assert "did not finish" in partial
+            assert "Photo by Jane Doe" in partial
+
+            rows = list(csv.DictReader((out / "licenses.partial.csv").open(encoding="utf-8")))
+            # Exactly the files that reached disk before the failure — the third
+            # image raised before it was written, so it is not claimed here.
+            assert len(rows) == 2, rows
+            for row in rows:
+                assert (out / row["file"]).exists(), row["file"]
+                assert row["license"] == "CC-BY-4.0"      # inherited from the dataset
+
+    run(scenario())
+
+
+def test_comfy_row_cleanup_survives_a_db_error(tmp_path, monkeypatch):
+    """A DB failure mid-row must still run the per-row cleanup.
+
+    The `except Exception` handler did its DB work *before* its file work and
+    without a `rollback()`. After a failed `flush()` the session is unusable, so
+    the one error class the handler's own comment claims to cover made the
+    handler itself raise `PendingRollbackError`: files orphaned on disk, the row
+    committed as "running", and the run aborted with the later rows never tried.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            import backend.routers.comfy as comfy_router
+            monkeypatch.setattr(comfy_router, "ComfyClient", _FakeComfyClient)
+            await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fake:8188"})
+
+            ds = await env.create_dataset("comfy-db-error")
+            r = await env.client.post(f"{API}/comfy/plans", json={
+                "dataset_id": ds["id"], "name": "plan",
+                "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
+                "output_node_ids": ["9"],
+            })
+            assert r.status_code == 200, r.text
+            plan_id = r.json()["id"]
+            for _ in range(3):
+                await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
+
+            # Fail the *second* row inside `session.flush()`. A value the JSON
+            # serializer cannot encode fails at the same point a colliding
+            # filename's IntegrityError would, and leaves the session in the same
+            # state: every further statement raises until someone rolls back.
+            calls = {"n": 0}
+            real_source_meta = comfy_router._comfy_source_meta
+
+            def _poison_second_row(plan, row, workflow):
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    return {"generator": object()}
+                return real_source_meta(plan, row, workflow)
+
+            monkeypatch.setattr(comfy_router, "_comfy_source_meta", _poison_second_row)
+
+            r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            # The run survives the bad row and still finishes the ones after it.
+            assert job["status"] == "completed", job
+            assert job["result_data"]["failed"] == 1
+            assert job["result_data"]["completed"] == 2
+
+            rows = (await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()
+            assert sorted(row["status"] for row in rows) == ["completed", "completed", "failed"]
+            failed = next(row for row in rows if row["status"] == "failed")
+            assert failed["error_msg"]                    # not wedged at "running"
+            assert failed["image_id"] is None
+            assert failed["image_ids"] == []
+
+            # Two good images, and the failed row left nothing behind on disk.
+            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            assert len(images) == 2
+            ds_dir = next(p for p in env.datasets_dir.iterdir() if p.is_dir())
+            assert len(list((ds_dir / "images").glob("*.png"))) == 2
+            assert len(list((ds_dir / "thumbnails").glob("*.webp"))) == 2
 
     run(scenario())
 

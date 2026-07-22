@@ -779,14 +779,14 @@ def test_a_partial_manifest_never_claims_the_canonical_name(tmp_path):
         tmp_path, [_credit(license="CC-BY-4.0")], partial=True)
     assert partial == ["CREDITS.partial.md", "licenses.partial.csv"]
     assert not (tmp_path / "CREDITS.md").exists()
-    assert "cancelled before it finished" in (
+    assert "did not finish" in (
         tmp_path / "CREDITS.partial.md").read_text(encoding="utf-8")
 
     # The successful re-run into the same directory takes the canonical name.
     complete = export_service._write_credits(
         tmp_path, [_credit(license="CC-BY-4.0"), _credit(file="images/2.png", license="CC0-1.0")])
     assert complete == ["CREDITS.md", "licenses.csv"]
-    assert "cancelled before it finished" not in (
+    assert "did not finish" not in (
         tmp_path / "CREDITS.md").read_text(encoding="utf-8")
 
     # Two cancelled runs alternate within their own name, not onto CREDITS.md.

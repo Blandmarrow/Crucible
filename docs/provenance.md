@@ -126,11 +126,15 @@ licensed material: the output then inherits the dataset's source, URL, license
 and attribution defaults instead, so a run over a CC BY-NC dataset stays visible
 to the commercial-use filter rather than being relabelled "synthetic".
 
-One thing the toggle cannot do: with it **on**, a dataset that records a default
-`source_url` or `attribution` still supplies those two, because a blank image
-field means "inherit" and there is no honest URL or credit line to write for a
-generated image. Set them per image, or keep generated and sourced material in
-separate datasets.
+With the toggle **on**, the run also writes the credit line itself — *Generated
+by ComfyUI plan "your plan"* — so a dataset whose default attribution names a
+photographer does not end up crediting them for an AI image.
+
+One thing it still cannot do: the dataset's default **source URL** is inherited,
+because a generated image has no URL of its own and inventing one would be worse.
+So `CREDITS.md` can list that URL under the generated image's entry. If your
+dataset holds both generated and sourced material and records a default source
+URL, set the URL per image or keep the two kinds in separate datasets.
 
 Derived images — crops, upscales, LUT-graded copies, detection crops — carry
 their parent's source and license. A derivative of a CC BY-SA image is still

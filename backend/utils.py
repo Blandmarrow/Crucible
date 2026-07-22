@@ -107,9 +107,18 @@ def safe_external_url(value: str | None) -> str:
     which would otherwise break out of a markdown link) is rejected outright
     rather than stripped — a URL with a space in the middle is not a URL.
     Callers render a rejected value as escaped plain text, never as a link.
+
+    Kept character-for-character in step with
+    `frontend/src/utils/url.ts::safeExternalUrl`: the two guards decide whether the
+    *same* URL becomes a link in the UI and in `CREDITS.md`, so a character one
+    side rejects and the other accepts is a silent divergence between what a user
+    sees and what the export ships. The two sets agree over the whole Unicode
+    range only with the odd ones out spelled explicitly — ``U+FEFF`` matches JS
+    ``\\s`` but not Python's ``isspace()``, and ``U+0085`` is the reverse (the JS
+    side names it in its character class for the same reason).
     """
     s = (value or "").strip()
-    if not s or any(c.isspace() or ord(c) < 0x20 for c in s):
+    if not s or any(c.isspace() or ord(c) < 0x20 or ord(c) in (0x7F, 0xFEFF) for c in s):
         return ""
     scheme = s.split(":", 1)[0].lower() if ":" in s else ""
     return s if scheme in ("http", "https") else ""

@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.services.comfy_service import (
@@ -254,19 +255,25 @@ def _comfy_output_provenance(ds) -> dict:
 
     All-or-nothing on purpose. ComfyUI output is self-created, but an img2img plan
     over a licensed source dataset is *derived* from that source — so a dataset
-    that records a license default keeps ownership of the whole story and the
-    output inherits every field (returning `{}` leaves them NULL). Stamping only
-    `license`/`source_name` would instead mix a "synthetic" license onto an
+    that records *any* provenance default keeps ownership of the whole story and
+    the output inherits every field (returning `{}` leaves them NULL). Stamping
+    only `license`/`source_name` would instead mix a "synthetic" license onto an
     inherited real-photographer credit, and would hide a CC-BY-NC source from the
     commercial-use export filter.
 
-    Only when the dataset asserts no license do we record the run's own
-    provenance, and then all four fields together so `source_url`/`attribution`
-    cannot inherit and credit a photographer for an AI image.
+    The gate is *any* dataset provenance field, not just `license`: a dataset that
+    records only an `attribution` still owns the credit line, and there is no way
+    to opt one field out of inheritance — `resolve_provenance` treats "" and NULL
+    alike as "inherit", so stamping `source_url=""`/`attribution=""` would not
+    stop them falling through to the dataset.
+
+    Only when the dataset asserts nothing at all do we record the run's own
+    provenance, leaving `source_url`/`attribution` NULL — the honest value for a
+    synthetic image with no URL and nobody to credit.
     """
-    if (getattr(ds, "license", None) or "").strip():
+    if any((getattr(ds, f, None) or "").strip() for f in PROVENANCE_FIELDS):
         return {}
-    return {"license": "synthetic", "source_name": "ComfyUI", "source_url": "", "attribution": ""}
+    return {"license": "synthetic", "source_name": "ComfyUI"}
 
 
 async def _get_plan(db: AsyncSession, plan_id: str) -> ComfyPlan:

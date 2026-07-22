@@ -35,7 +35,6 @@ export interface ExportPreview {
   excluded_style_sim: number;
   excluded_license: number;
   unlicensed_count: number;
-  license_breakdown: Record<string, number>;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }

@@ -2,7 +2,8 @@
 
 The single source of truth for what license ids exist and what they permit.
 `frontend/src/constants/licenses.ts` mirrors this list — keep the two in sync
-(the `GET /api/v1/licenses` endpoint serves this module so the UI can verify).
+(`backend/tests/test_provenance.py::test_frontend_license_vocabulary_matches_backend`
+parses that file and enforces the match).
 
 Deliberately not a plain free-text field: `license` is filtered and grouped on
 (gallery filter, export filters, stats breakdown), so it needs a closed

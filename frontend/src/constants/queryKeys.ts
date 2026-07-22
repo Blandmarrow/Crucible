@@ -16,6 +16,7 @@ import type { QueryClient } from "@tanstack/react-query";
  */
 const PROVENANCE_SCOPE = [
   ["datasets"],
+  ["dataset"],
   ["images"],
   ["image"],
   ["dataset-stats"],

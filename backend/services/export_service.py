@@ -409,12 +409,19 @@ def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -
     Every interpolated value is untrusted: see `_md_inline` / `_md_link` /
     `_csv_cell`. The `file` column names a file this export actually wrote,
     relative to the manifest directory.
+
+    A cancelled run writes `CREDITS.partial.md` / `licenses.partial.csv` instead
+    of the canonical names. Otherwise a cancelled export would claim `CREDITS.md`
+    with its "cancelled before it finished" banner and push the later successful
+    run's complete manifest onto `CREDITS.2.md` — permanently leaving the wrong
+    file as the one a redistributor opens.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".partial" if partial else ""
     written: list[str] = []
     for name, text in (
-        ("CREDITS.md", _render_credits_md(credits, partial)),
-        ("licenses.csv", _render_licenses_csv(credits)),
+        (f"CREDITS{suffix}.md", _render_credits_md(credits, partial)),
+        (f"licenses{suffix}.csv", _render_licenses_csv(credits)),
     ):
         payload = text.encode("utf-8")
         target = _manifest_dest(dest_dir, name, payload)
@@ -855,7 +862,6 @@ async def preview_export(
     will_export = 0
     excl_license = 0
     unlicensed = 0
-    license_counts: dict[str, int] = {}
     excl_aesthetic = 0
     excl_uncaptioned = 0
     excl_flagged = 0
@@ -869,9 +875,10 @@ async def preview_export(
         flagged = bool(exclude_flags) and any((r.quality_flags or {}).get(f) for f in exclude_flags)
         low_sim = style_sim_min is not None and (r.style_similarity_score is None or r.style_similarity_score < style_sim_min)
 
-        # Effective license drives both the breakdown and the license filters.
+        # The license filters operate on the *effective* value, so inheritance is
+        # resolved here rather than reading `r.license`. A per-license breakdown is
+        # deliberately not returned — Stats owns that view, via its Licenses panel.
         lic = resolve_provenance(r, ds_defaults)["license"]
-        license_counts[lic] = license_counts.get(lic, 0) + 1
         if not lic:
             unlicensed += 1
         bad_license = (
@@ -916,7 +923,6 @@ async def preview_export(
         # point of the warning is "you have unlicensed images", which stays true
         # whether or not the current filters happen to drop them.
         "unlicensed_count": unlicensed,
-        "license_breakdown": license_counts,
         "sample_files": sample_files,
     }
     if export_masks:

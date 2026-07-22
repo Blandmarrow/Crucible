@@ -162,6 +162,78 @@ def test_comfy_output_inherits_a_dataset_that_records_a_license(tmp_path, monkey
     run(scenario())
 
 
+def test_comfy_output_does_not_credit_a_photographer_for_an_ai_image(tmp_path, monkeypatch):
+    """A dataset with *no* license but a real credit line must not leak it.
+
+    The all-or-nothing gate used to test `ds.license` alone, and then tried to
+    block inheritance by stamping `source_url=""`/`attribution=""` — which does
+    nothing, because `resolve_provenance` treats "" and NULL alike as "inherit".
+    So a dataset recording only an attribution produced a `license=synthetic`
+    image carrying the photographer's credit, straight into CREDITS.md.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            import backend.routers.comfy as comfy_router
+            monkeypatch.setattr(comfy_router, "ComfyClient", _FakeComfyClient)
+            await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fake:8188"})
+
+            ds = await env.create_dataset(
+                "credited", source_name="Flickr", source_url="https://flickr.test/p/1",
+                attribution="Photo by Jane Doe")
+            r = await env.client.post(f"{API}/comfy/plans", json={
+                "dataset_id": ds["id"], "name": "p",
+                "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
+                "output_node_ids": ["9"],
+            })
+            plan_id = r.json()["id"]
+            await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
+            r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            prov = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()["provenance"]
+            # The dataset records provenance, so it owns the whole story: the
+            # output inherits every field rather than mixing "synthetic" in.
+            assert prov["attribution"] == "Photo by Jane Doe"
+            assert prov["source_url"] == "https://flickr.test/p/1"
+            assert prov["license"] == ""
+            assert set(prov["inherited"]) >= {"source_name", "source_url", "attribution"}
+
+    run(scenario())
+
+
+def test_comfy_output_leaves_url_and_attribution_null_on_a_bare_dataset(tmp_path, monkeypatch):
+    """With nothing recorded anywhere, the run stamps only what it actually knows."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            import backend.routers.comfy as comfy_router
+            monkeypatch.setattr(comfy_router, "ComfyClient", _FakeComfyClient)
+            await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fake:8188"})
+
+            ds = await env.create_dataset("bare")
+            r = await env.client.post(f"{API}/comfy/plans", json={
+                "dataset_id": ds["id"], "name": "p",
+                "workflow_json": {"9": {"class_type": "SaveImage", "inputs": {}}},
+                "output_node_ids": ["9"],
+            })
+            plan_id = r.json()["id"]
+            await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
+            r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            detail = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()
+            assert detail["provenance"]["license"] == "synthetic"
+            assert detail["provenance"]["source_name"] == "ComfyUI"
+            # NULL, not "": nobody to credit and no URL is the honest record.
+            assert detail["source_url"] is None
+            assert detail["attribution"] is None
+
+    run(scenario())
+
+
 # --- B3: capture truncates, the API rejects ------------------------------
 
 
@@ -607,6 +679,86 @@ def test_export_license_filters_run_on_the_effective_license(tmp_path):
     run(scenario())
 
 
+def test_gallery_license_filter_runs_on_the_effective_license(tmp_path):
+    """`GET /images/` joins Dataset and coalesces — the branch's only new SQL join.
+
+    An image with a NULL license carries its dataset's default, so both the badge
+    value and every filter have to resolve inheritance rather than testing
+    `Image.license` alone.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("gal", license="CC-BY-NC-4.0")
+            inherits = await _upload(env, ds["id"], "inherits.png")
+            owned = await _upload(env, ds["id"], "owned.png", _png_bytes((1, 2, 3)))
+            custom = await _upload(env, ds["id"], "custom.png", _png_bytes((4, 5, 6)))
+            await env.client.patch(f"{API}/images/{owned['id']}/provenance", json={"license": "owned"})
+            # A free-text id containing a comma — the reason the param is a JSON
+            # array and never a comma-separated string.
+            free_text = "other:Internal use, no redistribution"
+            await env.client.patch(
+                f"{API}/images/{custom['id']}/provenance", json={"license": free_text})
+
+            async def names(**params):
+                r = await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"], **params})
+                assert r.status_code == 200, r.text
+                return {i["filename"] for i in r.json()}
+
+            # The badge value is the *effective* license, inherited included.
+            listing = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            by_name = {i["filename"]: i for i in listing}
+            assert by_name["inherits.png"]["license"] == "CC-BY-NC-4.0"   # inherited
+            assert by_name["owned.png"]["license"] == "owned"             # own value
+
+            # The filter matches on an inherited value too.
+            assert await names(license_filter=json.dumps(["CC-BY-NC-4.0"])) == {"inherits.png"}
+            assert await names(license_filter=json.dumps(["owned"])) == {"owned.png"}
+            # ...and an `other:` id survives the JSON-array round trip with its comma.
+            assert await names(license_filter=json.dumps([free_text])) == {"custom.png"}
+            assert await names(license_filter=json.dumps(["owned", free_text])) == {
+                "owned.png", "custom.png"}
+            # Empty list means "no filter", never "match nothing".
+            assert len(await names(license_filter=json.dumps([]))) == 3
+
+            # license_missing, both directions. Everything here resolves to a
+            # license, so "missing only" is empty.
+            assert await names(license_missing=True) == set()
+            assert len(await names(license_missing=False)) == 3
+
+            unl_ds = await env.create_dataset("unl")
+            await _upload(env, unl_ds["id"], "bare.png", _png_bytes((7, 8, 9)))
+            r = await env.client.get(
+                f"{API}/images/", params={"dataset_id": unl_ds["id"], "license_missing": True})
+            assert {i["filename"] for i in r.json()} == {"bare.png"}
+            assert inherits["filename"] == "inherits.png"
+
+    run(scenario())
+
+
+def test_gallery_license_filter_rejects_malformed_and_all_blank_lists(tmp_path):
+    """Two ways a client can silently get *every* image back instead of a filter."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("gal")
+            await _upload(env, ds["id"], "a.png")
+
+            async def status(value):
+                r = await env.client.get(
+                    f"{API}/images/", params={"dataset_id": ds["id"], "license_filter": value})
+                return r.status_code
+
+            assert await status("CC0-1.0,owned") == 400        # not JSON at all
+            assert await status(json.dumps({"a": 1})) == 400   # JSON, but not a list
+            assert await status(json.dumps([1, 2])) == 400     # list, but not of strings
+            # `""` is a meaningful entry for the *export* filters ("no license
+            # recorded"), so a client can reasonably send it here — applying no
+            # filter and returning everything would be a silent lie.
+            assert await status(json.dumps([""])) == 400
+            assert await status(json.dumps(["  ", ""])) == 400
+
+    run(scenario())
+
+
 def test_kohya_export_puts_manifests_beside_the_image_folder(tmp_path):
     """Manifests live in the export root; images live one level down, so the
     manifest `file` column has to be relative to the root, not a basename."""
@@ -629,6 +781,70 @@ def test_kohya_export_puts_manifests_beside_the_image_folder(tmp_path):
             by_file = {r["file"]: r for r in rows}
             assert by_file["10_concept/inherits.png"]["license"] == "CC-BY-NC-4.0"  # inherited
             assert by_file["10_concept/owned.png"]["license"] == "owned"            # own value
+
+    run(scenario())
+
+
+def test_a_cancelled_export_leaves_the_canonical_manifest_to_the_real_run(tmp_path, monkeypatch):
+    """Cancel mid-run, then re-export to completion into the same directory.
+
+    The cancelled run must ship its own partial manifest — an unattributed pile of
+    files is exactly what this feature exists to prevent — but it must not claim
+    `CREDITS.md`, because `_manifest_dest` never overwrites, so the later complete
+    manifest would be stranded on `CREDITS.2.md` forever.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import export_service
+            from backend.workers.job_queue import job_queue
+
+            ds = await env.create_dataset("cancelme", license="CC-BY-4.0")
+            for n in range(4):
+                await _upload(env, ds["id"], f"{n}.png", _png_bytes((n * 20, 30, 40)))
+
+            out = tmp_path / "out"
+            real_write_image = export_service._write_image
+            written: list[str] = []
+
+            def _cancel_after_first(src, dest_img, *a, **kw):
+                # Cancel from inside the loop so the check at the top of the next
+                # iteration fires — deterministic, unlike racing a DELETE.
+                written.append(dest_img.name)
+                if len(written) == 1 and job_queue._current_job_id:
+                    job_queue.request_cancel(job_queue._current_job_id)
+                return real_write_image(src, dest_img, *a, **kw)
+
+            monkeypatch.setattr(export_service, "_write_image", _cancel_after_first)
+
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "cancelled", job
+
+            assert not (out / "CREDITS.md").exists()
+            partial = (out / "CREDITS.partial.md").read_text(encoding="utf-8")
+            assert "cancelled before it finished" in partial
+            assert "CC BY 4.0" in partial
+            partial_rows = list(csv.DictReader((out / "licenses.partial.csv").open(encoding="utf-8")))
+            # Only what actually reached disk before the stop.
+            assert len(partial_rows) == 1
+
+            # Now the same export, uninterrupted, into the same directory.
+            monkeypatch.setattr(export_service, "_write_image", real_write_image)
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            complete = (out / "CREDITS.md").read_text(encoding="utf-8")
+            assert "cancelled before it finished" not in complete
+            rows = list(csv.DictReader((out / "licenses.csv").open(encoding="utf-8")))
+            assert len(rows) == 4
+            # The partial one is still there, still clearly labelled as partial.
+            assert (out / "CREDITS.partial.md").exists()
 
     run(scenario())
 

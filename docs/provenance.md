@@ -164,12 +164,22 @@ in all three formats (Kohya, AI Toolkit, plain):
   relative to the output directory, since images sit one level down.
 
 Both record the *resolved* license, so an image that inherited its license from
-the dataset shows the real value, not a blank. They are written even if you
-cancel an export partway — the entries then cover only the files that were
-actually written, and `CREDITS.md` says so at the top. If an earlier export left
-manifests in the same directory describing a different set of files, the new ones
-are written alongside as `CREDITS.2.md` / `licenses.2.csv` rather than replacing
-them.
+the dataset shows the real value, not a blank.
+
+They are written even if you cancel an export partway. A cancelled run writes
+**`CREDITS.partial.md`** and **`licenses.partial.csv`** instead — the entries
+cover only the files that were actually written, and the file says so at the top.
+The separate name matters: if the cancelled run took `CREDITS.md`, the later
+complete export would land beside it (see below) and the incomplete manifest
+would stay the one a redistributor opens.
+
+Manifests are never overwritten. If a directory already holds manifests
+describing a *different* set of files, the new ones are written alongside as
+`CREDITS.2.md` / `licenses.2.csv`. One consequence worth knowing: **`CREDITS.md`
+describes the first export written into a directory, not the newest.** Re-running
+an export into the same directory overwrites the images but leaves the original
+`CREDITS.md` in place, with the new manifest at `CREDITS.2.md`. Export into a
+fresh directory when you want the manifests to match what is there.
 
 Three optional filters live in the Export page's filter panel:
 

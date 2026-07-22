@@ -391,7 +391,6 @@ def test_export_commercial_only_excludes_nc_and_unknown(tmp_path):
                 db, ds_id, commercial_only=True)
             assert preview["will_export"] == 2
             assert preview["excluded_license"] == 2
-            assert preview["license_breakdown"]["CC-BY-NC-4.0"] == 1
         await engine.dispose()
 
     run(scenario())
@@ -436,7 +435,6 @@ def test_export_exclude_unlicensed_keeps_other_licenses(tmp_path):
                 db, ds_id, exclude_unlicensed=True)
             assert preview["will_export"] == 3
             assert preview["excluded_license"] == 1
-            assert preview["license_breakdown"]["other:Studio internal use only"] == 1
         await engine.dispose()
 
     run(scenario())
@@ -460,7 +458,9 @@ def test_export_preview_counts_unlicensed(tmp_path):
 
             preview = await export_service.preview_export(db, ds_id)
             assert preview["unlicensed_count"] == 1
-            assert preview["license_breakdown"][""] == 1
+            # No per-license breakdown here: Stats owns that view (its Licenses
+            # panel), and nothing in the Export UI ever rendered this one.
+            assert "license_breakdown" not in preview
             # Never hard-blocks: the unlicensed image still exports.
             assert preview["will_export"] == 2
         await engine.dispose()
@@ -634,6 +634,52 @@ def test_frontend_license_vocabulary_matches_backend():
         assert label == LICENSES[lid].label, f"{lid}: {label!r} != {LICENSES[lid].label!r}"
 
 
+def test_url_guard_matches_the_frontend_over_the_whole_unicode_range():
+    """`safe_external_url` and `safeExternalUrl` must reject exactly the same characters.
+
+    They decide whether the *same* provenance URL becomes a link in the UI and in
+    CREDITS.md, so any character one accepts and the other rejects silently splits
+    what a user sees from what the export ships. The two are mirrored by hand and
+    their whitespace notions genuinely differ: JS `\\s` matches U+FEFF and Python's
+    `isspace()` does not, while U+0085 is the reverse — both are therefore spelled
+    out explicitly, and this test is what keeps that true.
+    """
+    import re
+    import unicodedata
+
+    from backend.utils import safe_external_url
+
+    ts = (Path(__file__).parents[2] / "frontend" / "src" / "utils" / "url.ts").read_text(encoding="utf-8")
+    cls = re.search(r"/\[(.*?)\]/\.test\(s\)", ts).group(1)
+
+    # ECMA-262 `\s` = WhiteSpace + LineTerminator. Zs is computed rather than
+    # listed so a future Unicode version doesn't quietly age this out.
+    js_ws = {0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x2028, 0x2029, 0xFEFF}
+    js_ws |= {cp for cp in range(0x110000) if unicodedata.category(chr(cp)) == "Zs"}
+
+    rest = cls.replace(r"\s", "")
+    assert r"\s" in cls and "\\" not in rest.replace(r"\u", ""), f"unhandled escape in {cls!r}"
+    js_rejects = set(js_ws)
+    for lo, hi in re.findall(r"\\u([0-9a-fA-F]{4})-\\u([0-9a-fA-F]{4})", rest):
+        js_rejects |= set(range(int(lo, 16), int(hi, 16) + 1))
+    rest = re.sub(r"\\u[0-9a-fA-F]{4}-\\u[0-9a-fA-F]{4}", "", rest)
+    js_rejects |= {int(h, 16) for h in re.findall(r"\\u([0-9a-fA-F]{4})", rest)}
+
+    py_rejects = {
+        cp for cp in range(0x110000)
+        if not 0xD800 <= cp <= 0xDFFF
+        # Embedded mid-string: the guard strips the ends before checking.
+        and safe_external_url("https://a" + chr(cp) + "b") == ""
+    }
+
+    assert js_rejects == py_rejects, (
+        f"UI rejects but export accepts: {['U+%04X' % c for c in sorted(js_rejects - py_rejects)]}; "
+        f"export rejects but UI accepts: {['U+%04X' % c for c in sorted(py_rejects - js_rejects)]}"
+    )
+    # Sanity: the guard is not simply rejecting everything.
+    assert safe_external_url("https://ex-am.ple/a_b-c?d=1&e=2#f") != ""
+
+
 # --- CREDITS.md / licenses.csv are built from untrusted strings ----------
 
 
@@ -719,6 +765,34 @@ def test_manifests_never_silently_clobber_a_different_file_set(tmp_path):
     assert second == ["CREDITS.2.md", "licenses.2.csv"]
     assert "CC BY 4.0" in (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
     assert "CC0 1.0" in (tmp_path / "CREDITS.2.md").read_text(encoding="utf-8")
+
+
+def test_a_partial_manifest_never_claims_the_canonical_name(tmp_path):
+    """A cancelled run must not leave its banner on the file a redistributor opens.
+
+    `_manifest_dest` never overwrites a differing manifest, so a cancelled export
+    landing on `CREDITS.md` would push the *later successful* run onto
+    `CREDITS.2.md` — permanently making the incomplete one canonical. Partial runs
+    therefore get their own base name.
+    """
+    partial = export_service._write_credits(
+        tmp_path, [_credit(license="CC-BY-4.0")], partial=True)
+    assert partial == ["CREDITS.partial.md", "licenses.partial.csv"]
+    assert not (tmp_path / "CREDITS.md").exists()
+    assert "cancelled before it finished" in (
+        tmp_path / "CREDITS.partial.md").read_text(encoding="utf-8")
+
+    # The successful re-run into the same directory takes the canonical name.
+    complete = export_service._write_credits(
+        tmp_path, [_credit(license="CC-BY-4.0"), _credit(file="images/2.png", license="CC0-1.0")])
+    assert complete == ["CREDITS.md", "licenses.csv"]
+    assert "cancelled before it finished" not in (
+        tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+
+    # Two cancelled runs alternate within their own name, not onto CREDITS.md.
+    second_partial = export_service._write_credits(
+        tmp_path, [_credit(file="images/9.png", license="CC0-1.0")], partial=True)
+    assert second_partial == ["CREDITS.partial.2.md", "licenses.partial.2.csv"]
 
 
 # --- derived images keep the parent's provenance -------------------------

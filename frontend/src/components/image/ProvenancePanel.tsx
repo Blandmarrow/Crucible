@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Pencil, ScrollText, X } from "
 import toast from "react-hot-toast";
 
 import { imagesApi } from "../../api/images";
-import { licenseInfo } from "../../constants/licenses";
+import { OTHER_PREFIX, isBlankLicense, licenseInfo } from "../../constants/licenses";
 import { invalidateProvenanceScope } from "../../constants/queryKeys";
 import { safeExternalUrl } from "../../utils/url";
 import type { ImageDetail } from "../../types";
@@ -82,6 +82,13 @@ export default function ProvenancePanel({ image }: Props) {
     },
     onError: () => toast.error("Saving source/license failed"),
   });
+
+  // "Other (free text)…" picked but nothing typed. That sends a bare `other:`,
+  // which normalises to "" server-side and *clears* the license — the opposite of
+  // what picking a license means. Clearing stays available through the explicit
+  // "Inherit from dataset" option, which is what it is for.
+  const blankOther =
+    draft.license.toLowerCase().startsWith(OTHER_PREFIX) && isBlankLicense(draft.license);
 
   const sourceMeta = resolved?.source_meta ?? image.source_meta;
   const hasAnyProvenance = ["license", "source_name", "source_url", "attribution"].some(
@@ -188,10 +195,15 @@ export default function ProvenancePanel({ image }: Props) {
               <p className="text-gray-500 text-[10px]">
                 Leave a field empty to inherit the dataset default.
               </p>
+              {blankOther && (
+                <p className="text-amber-400/90 text-[10px]">
+                  Type the license name, or pick “Inherit from dataset” to clear it.
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={() => save.mutate()}
-                  disabled={save.isPending}
+                  disabled={save.isPending || blankOther}
                   className="btn btn-primary btn-sm"
                 >
                   {save.isPending ? "Saving…" : "Save"}

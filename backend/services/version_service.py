@@ -527,7 +527,7 @@ async def diff_versions(
                       "watermark_score", "color_score", "style_similarity_score",
                       "dino_layer_scores", "generation_metadata", "processing_history",
                       "source_name", "source_url", "license", "attribution",
-                      "sort_order"):
+                      "source_meta", "sort_order"):
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
                 # Heavy JSON columns (full ComfyUI workflow payloads, per-layer

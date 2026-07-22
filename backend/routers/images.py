@@ -319,7 +319,17 @@ async def list_images(
         if license_filter:
             # JSON array, not comma-separated: an `other:<free text>` id may
             # contain commas. Same encoding as the export preview.
-            wanted = [v for v in (parse_license_filter_param(license_filter) or []) if v]
+            parsed = parse_license_filter_param(license_filter) or []
+            wanted = [v for v in parsed if v]
+            if parsed and not wanted:
+                # `""` is a meaningful entry for the *export* filters ("no license
+                # recorded"), so a client can reasonably send `[""]` here too.
+                # Silently applying no filter would return every image — reject.
+                raise HTTPException(
+                    400,
+                    "license_filter contains only empty entries; use license_missing=true "
+                    "to select images with no license recorded",
+                )
             if wanted:
                 q = q.where(effective_license.in_(wanted))
 

@@ -5,6 +5,7 @@ import shutil
 import statistics
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 from sqlalchemy import case, func, select, update as sa_update
@@ -15,7 +16,7 @@ from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenanc
 from backend.models import Dataset, Image
 from backend.services.image_service import (
     extract_generation_metadata,
-    extract_iptc_provenance,
+    extract_embedded_provenance,
     generate_thumbnail,
     get_image_info,
     read_provenance_sidecar,
@@ -93,15 +94,15 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
 
 
 def _capture_provenance(src_file: Path, dest_file: Path) -> dict:
-    """Provenance captured from a file being ingested: sidecar JSON, then EXIF.
+    """Provenance captured from a file being ingested: sidecar JSON, then embedded.
 
-    Sidecar wins over EXIF per field. The caller layers request-supplied values
-    on top of this, and leaves anything still unset NULL so it inherits the
-    dataset default (see backend/licenses.py).
+    Sidecar wins over embedded (EXIF / PNG text) per field. The caller layers
+    request-supplied values on top of this, and leaves anything still unset NULL
+    so it inherits the dataset default (see backend/licenses.py).
     """
     captured = read_provenance_sidecar(src_file) or {}
-    exif = extract_iptc_provenance(str(dest_file)) or {}
-    for field, value in exif.items():
+    embedded = extract_embedded_provenance(str(dest_file)) or {}
+    for field, value in embedded.items():
         if not captured.get(field):
             captured[field] = value
     return captured
@@ -127,12 +128,26 @@ def _ingest_file_sync(
     return info, gen_meta, caption, provenance
 
 
-def _register_file_sync(f: Path, thumb_path: str) -> tuple[dict, dict | None, dict]:
+class RegisteredFile(NamedTuple):
+    """Result of `_register_file_sync`.
+
+    A NamedTuple rather than a plain tuple so callers use attribute access: this
+    return value grew a third field once already and silently broke a caller that
+    still unpacked two (the ComfyUI import crash). Adding a fourth must not be
+    able to do that again.
+    """
+
+    info: dict
+    gen_meta: dict | None
+    provenance: dict
+
+
+def _register_file_sync(f: Path, thumb_path: str) -> RegisteredFile:
     """Derive metadata + thumbnail + provenance for a file already on disk (rescan)."""
     info = get_image_info(str(f))
     gen_meta = extract_generation_metadata(str(f))
     generate_thumbnail(str(f), thumb_path)
-    return info, gen_meta, _capture_provenance(f, f)
+    return RegisteredFile(info, gen_meta, _capture_provenance(f, f))
 
 
 def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb: Path) -> None:
@@ -198,7 +213,21 @@ def _p95(sorted_vals: list[float]) -> float:
     return sorted_vals[min(idx, len(sorted_vals) - 1)]
 
 
-async def create_dataset(db: AsyncSession, name: str, description: str = "", category: str = "") -> Dataset:
+async def create_dataset(
+    db: AsyncSession,
+    name: str,
+    description: str = "",
+    category: str = "",
+    provenance: dict | None = None,
+) -> Dataset:
+    """Create a dataset row + its on-disk folders in one commit.
+
+    `provenance` carries the dataset-level defaults (source_name/source_url/
+    license/attribution). They are set before the single commit on purpose: with a
+    second commit for them, a failure in between left a committed dataset with
+    empty provenance and returned a 500, and the client's retry then 400'd on the
+    duplicate name.
+    """
     ds_id = str(uuid4())
     slug = _name_to_slug(name)
     folder = settings.datasets_dir / slug
@@ -208,7 +237,11 @@ async def create_dataset(db: AsyncSession, name: str, description: str = "", cat
     (folder / "images").mkdir(exist_ok=True)
     (folder / "thumbnails").mkdir(exist_ok=True)
 
-    ds = Dataset(id=ds_id, name=name, description=description, category=category, folder_path=str(folder))
+    ds = Dataset(
+        id=ds_id, name=name, description=description, category=category,
+        folder_path=str(folder),
+        **{f: v for f, v in (provenance or {}).items() if f in PROVENANCE_FIELDS},
+    )
     db.add(ds)
     await db.commit()
     await db.refresh(ds)
@@ -473,7 +506,7 @@ async def rescan_dataset(
             existing_img = by_filename.get(f.name)
             if existing_img is None:
                 thumb_path = thumbnail_path_for(f)
-                info, gen_meta, captured = await asyncio.get_event_loop().run_in_executor(
+                reg = await asyncio.get_event_loop().run_in_executor(
                     None, _register_file_sync, f, thumb_path
                 )
                 img = Image(
@@ -483,9 +516,9 @@ async def rescan_dataset(
                     subfolder="",
                     file_path=str(f),
                     thumbnail_path=thumb_path,
-                    generation_metadata=gen_meta,
-                    **merge_provenance(captured),
-                    **info,
+                    generation_metadata=reg.gen_meta,
+                    **merge_provenance(reg.provenance),
+                    **reg.info,
                 )
                 if caption:
                     img.caption_text = caption

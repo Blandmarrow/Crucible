@@ -62,7 +62,10 @@ class Image(Base):
     license: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attribution: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Long tail from scraper sidecars: scrape date, post id, uploader, raw payload.
-    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Deferred like the embedding blobs — it can be several KB per row and only the
+    # single-image endpoints and snapshot creation read it. Every reader must
+    # `undefer` it: a lazy load on an async session raises MissingGreenlet.
+    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
 
     # Log of destructive replace operations: [{op, params..., at}]
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
@@ -93,7 +96,9 @@ class Image(Base):
         Index("ix_images_dataset_subfolder", "dataset_id", "subfolder"),
         Index("ix_images_dataset_sort_order", "dataset_id", "sort_order"),
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),
-        Index("ix_images_dataset_license", "dataset_id", "license"),
+        # No index on (dataset_id, license): every license filter runs on the
+        # *effective* license, COALESCE(images.license, datasets.license), which is
+        # not sargable against one. See migration b5e8d2a7c9f4.
         UniqueConstraint("dataset_id", "filename", name="uq_dataset_filename"),
     )
 

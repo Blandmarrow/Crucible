@@ -81,7 +81,7 @@ export interface ImageListParams {
 
 /**
  * One provenance field in an edit request. undefined/null = leave unchanged,
- * INHERIT_SENTINEL = clear so the dataset default applies, anything else = set.
+ * "" = clear so the dataset default applies, anything else = set that value.
  */
 export interface ProvenanceEdit {
   source_name?: string | null;

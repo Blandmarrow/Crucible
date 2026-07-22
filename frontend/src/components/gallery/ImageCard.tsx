@@ -6,7 +6,6 @@ import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
-import { getGalleryLicenseBadge } from "../../constants/storage";
 import { licenseInfo } from "../../constants/licenses";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
@@ -94,8 +93,9 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   // Off by default (Settings → Gallery): most datasets are single-source, where
   // a badge on every card is noise. `license` here is already the effective value;
   // an empty one renders the muted "No license" badge, which is the whole point of
-  // switching the preference on.
-  const showLicense = getGalleryLicenseBadge();
+  // switching the preference on. Read from the store, not localStorage, so toggling
+  // it in a Settings pane updates a gallery pane that is already mounted.
+  const showLicense = useUiPrefsStore((s) => s.galleryLicenseBadge);
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 

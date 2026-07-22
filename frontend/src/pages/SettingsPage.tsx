@@ -8,7 +8,6 @@ import { captioningApi } from "../api/captioning";
 import {
   CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY,
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
-  GALLERY_LICENSE_BADGE_KEY, getGalleryLicenseBadge,
   CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
   CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_WORKFLOW_KEY, CAPTIONING_FILTERS_PREFIX,
@@ -153,7 +152,10 @@ export default function SettingsPage() {
   const [galleryDefaultQuality, setGalleryDefaultQuality] = useState(
     () => localStorage.getItem(GALLERY_DEFAULT_QUALITY_KEY) ?? ""
   );
-  const [galleryLicenseBadge, setGalleryLicenseBadge] = useState(getGalleryLicenseBadge);
+  // Store-backed, not local state: a gallery pane mounted alongside this one must
+  // re-render its cards the moment the toggle flips.
+  const galleryLicenseBadge = useUiPrefsStore((s) => s.galleryLicenseBadge);
+  const setGalleryLicenseBadge = useUiPrefsStore((s) => s.setGalleryLicenseBadge);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -476,6 +478,26 @@ export default function SettingsPage() {
             </div>
 
             <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>License badge on cards</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Deliberately not one of the "Gallery defaults" below: this is a global display
+                setting that applies immediately to every open gallery, and the gallery toolbar's
+                reset button does not clear it.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+                <input
+                  type="checkbox"
+                  checked={galleryLicenseBadge}
+                  onChange={(e) => {
+                    setGalleryLicenseBadge(e.target.checked);
+                    toast.success("Preference saved");
+                  }}
+                />
+                Show each image's effective source license on its gallery card
+              </label>
+            </div>
+
+            <div>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Gallery defaults</div>
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 12px" }}>
                 Applied the first time you open a dataset's gallery, before anything has been remembered for it.
@@ -538,21 +560,6 @@ export default function SettingsPage() {
                     <option value="has_watermark">Watermarked</option>
                     <option value="is_duplicate">Duplicate</option>
                   </select>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <label style={{ fontSize: 12.5, minWidth: 140 }}>License badge on cards</label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
-                    <input
-                      type="checkbox"
-                      checked={galleryLicenseBadge}
-                      onChange={(e) => {
-                        setGalleryLicenseBadge(e.target.checked);
-                        localStorage.setItem(GALLERY_LICENSE_BADGE_KEY, String(e.target.checked));
-                        toast.success("Preference saved");
-                      }}
-                    />
-                    Show each image's effective license on its gallery card
-                  </label>
                 </div>
               </div>
             </div>

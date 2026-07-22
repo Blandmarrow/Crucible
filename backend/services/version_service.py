@@ -28,6 +28,7 @@ from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.dataset import Dataset
@@ -335,9 +336,11 @@ async def create_snapshot(
         existing_names = {r[0] for r in existing.all() if r[0]}
         name = _auto_snapshot_name(existing_names)
 
-    # Load all images for this dataset
+    # Load all images for this dataset. undefer: VersionImageState mirrors every
+    # provenance column including source_meta, which is deferred — without this the
+    # snapshot build lazy-loads it on an async session (MissingGreenlet).
     result = await db.execute(
-        select(Image).where(Image.dataset_id == dataset_id)
+        select(Image).where(Image.dataset_id == dataset_id).options(undefer(Image.source_meta))
     )
     images = result.scalars().all()
 
@@ -462,13 +465,15 @@ _DIFF_COLS = (
     VersionImageState.source_url,
     VersionImageState.license,
     VersionImageState.attribution,
+    VersionImageState.source_meta,
     VersionImageState.sort_order,
     VersionImageState.processing_history,
 )
 
 # Diffed but reported only as {"changed": true} — the values can be tens of KB
-# per image (full ComfyUI workflow JSON / per-layer score dicts).
-_HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata"})
+# per image (full ComfyUI workflow JSON / per-layer score dicts / a scraper's raw
+# sidecar payload).
+_HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata", "source_meta"})
 
 
 async def diff_versions(

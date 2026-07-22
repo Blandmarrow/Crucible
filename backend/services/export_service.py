@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.licenses import allows_commercial, license_info, license_label, resolve_provenance
 from backend.models import Dataset, Image
 from backend.models.detection import Detection
-from backend.utils import chunked
+from backend.utils import chunked, safe_external_url
 from backend.workers.job_queue import job_queue
 
 # Only the columns the export loop actually reads — avoids loading multi-MB blob fields
@@ -163,9 +165,12 @@ def _dest_img_path(dest_dir: Path, img: Any, output_format: str) -> Path:
     return dest_dir / img.filename
 
 
-def _write_sidecar(dest_dir: Path, stem: str, caption: str, caption_format: str) -> None:
+def _write_sidecar(dest_dir: Path, stem: str, caption: str, caption_format: str) -> Path:
+    """Write a caption sidecar and return the path written (named by the manifests)."""
     ext = ".caption" if caption_format == "caption" else ".txt"
-    (dest_dir / f"{stem}{ext}").write_text(caption, encoding="utf-8")
+    path = dest_dir / f"{stem}{ext}"
+    path.write_text(caption, encoding="utf-8")
+    return path
 
 
 def _write_mask(
@@ -223,17 +228,113 @@ async def _fetch_detections_by_image(
     return include_by_image, exclude_by_image
 
 
-def _write_credits(dest_dir: Path, credits: list[dict]) -> None:
-    """Write CREDITS.md + licenses.csv for an export.
+# Bounded length for one value interpolated into CREDITS.md. The manifest is a
+# human-readable summary; licenses.csv carries the untruncated strings.
+_MD_MAX_LEN = 300
 
-    Always written (even when nothing carries a license) so a published dataset
-    always ships an attribution file — a missing one reads as "no attribution
-    needed", which is exactly the claim we can't make. Attribution-required
-    licenses are listed first because those are the entries a redistributor must
-    act on.
+# Markdown specials that change document structure in an inline context, plus the
+# angle brackets (autolinks / raw HTML) and the pipe (would forge a table cell).
+_MD_ESCAPE = re.compile(r"([\\`*_\[\]<>#|])")
+
+# Leading characters Excel/LibreOffice/Sheets interpret as the start of a formula.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+# `CREDITS.2.md`, `CREDITS.3.md`, … before giving up on a differing manifest.
+_MANIFEST_MAX_ALTERNATES = 99
+
+
+def _md_inline(value: str | None) -> str:
+    """Escape an untrusted string for interpolation into a single line of CREDITS.md.
+
+    CREDITS.md is a legal attribution document assembled by interpolation, and
+    every value in it comes from a scraper, a sidecar or an EXIF tag. A newline in
+    `attribution` would otherwise forge a `## <license>` section claiming rights
+    the export does not carry. So: all whitespace and control characters collapse
+    to single spaces, markdown specials are backslash-escaped, and the result is
+    length-bounded (truncated before escaping, so an escape can never be split
+    from the character it escapes).
     """
-    import csv
+    s = "".join(
+        " " if (c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F) else c
+        for c in (value or "")
+    )
+    s = " ".join(s.split())
+    if len(s) > _MD_MAX_LEN:
+        s = s[: _MD_MAX_LEN - 1].rstrip() + "…"
+    return _MD_ESCAPE.sub(r"\\\1", s)
 
+
+def _md_link(url: str | None, text: str | None = None) -> str:
+    """A markdown link for a provenance URL, or escaped plain text if it isn't safe.
+
+    Only `http`/`https` become links (see `utils.safe_external_url`); anything else
+    renders as inert text so a `javascript:` source URL scraped off a page cannot
+    become a clickable target in a document we tell people to trust.
+    """
+    safe = safe_external_url(url)
+    if not safe:
+        return _md_inline(url)
+    # The URL has no whitespace by construction; parens would still end the target.
+    target = safe.replace("(", "%28").replace(")", "%29")
+    return f"[{_md_inline(text or safe)}]({target})"
+
+
+def _csv_cell(value: str | None) -> str:
+    """A CSV cell that a spreadsheet will not execute as a formula.
+
+    The `csv` module already quotes correctly — this guards only the leading
+    character, which decides whether a cell is data or code on open.
+    """
+    s = value or ""
+    return "'" + s if s[:1] in _CSV_FORMULA_PREFIXES else s
+
+
+def _write_atomic(path: Path, payload: bytes) -> None:
+    """Write bytes via a temp file + `os.replace` so a reader never sees a partial manifest."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp.write_bytes(payload)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _manifest_dest(dest_dir: Path, name: str, payload: bytes) -> Path | None:
+    """Where to write a manifest — or None when an identical one is already there.
+
+    Exports routinely share an output directory (kohya writes `10_concept/` beside
+    an earlier `20_concept/`, and manifests live in their common parent), so
+    overwriting `CREDITS.md` would silently replace an attribution document
+    describing one set of files with one that never mentions them. Identical
+    content is a no-op; differing content lands on `CREDITS.2.md`, `CREDITS.3.md`, …
+    """
+    base = dest_dir / name
+    for cand in [base] + [dest_dir / f"{base.stem}.{n}{base.suffix}" for n in range(2, _MANIFEST_MAX_ALTERNATES + 1)]:
+        if not cand.exists():
+            return cand
+        try:
+            if cand.read_bytes() == payload:
+                return None
+        except OSError:
+            return cand
+    return dest_dir / f"{base.stem}.{_MANIFEST_MAX_ALTERNATES}{base.suffix}"
+
+
+def _manifest_rel(path: Path, manifest_dir: Path) -> str:
+    """A manifest `file` value: `path` relative to the manifest directory, POSIX-style.
+
+    Not a bare basename — images sit one level below the manifests (kohya's
+    `10_concept/`, plain's `images/`) and a loss mask shares its image's basename,
+    so a basename alone does not identify a file in the export.
+    """
+    try:
+        rel = path.resolve().relative_to(manifest_dir.resolve())
+    except (ValueError, OSError):
+        return path.name
+    return rel.as_posix()
+
+
+def _render_credits_md(credits: list[dict], partial: bool) -> str:
     by_license: dict[str, list[dict]] = {}
     for row in credits:
         by_license.setdefault(row["license"], []).append(row)
@@ -248,34 +349,80 @@ def _write_credits(dest_dir: Path, credits: list[dict]) -> None:
     total = len(credits)
     unlicensed = sum(1 for r in credits if not r["license"])
     lines.append(f"{total} image(s) exported; {unlicensed} with no license recorded.")
+    if partial:
+        lines.append("")
+        lines.append(
+            "**This export was cancelled before it finished.** The entries below cover "
+            "only the files written before it stopped; anything else in this directory "
+            "is not described here."
+        )
     lines.append("")
     for lic, rows in sorted(by_license.items(), key=_sort_key):
         info = license_info(lic)
-        heading = license_label(lic) if lic else "No license recorded"
+        heading = _md_inline(license_label(lic)) if lic else "No license recorded"
         note = " — attribution required" if info.requires_attribution else ""
         lines.append(f"## {heading}{note} ({len(rows)} image(s))")
         if info.url:
-            lines.append(f"<{info.url}>")
+            lines.append(_md_link(info.url))
         lines.append("")
         by_source: dict[str, list[dict]] = {}
         for row in rows:
             by_source.setdefault(row["source_name"] or "Unknown source", []).append(row)
         for source, srows in sorted(by_source.items()):
-            url = next((r["source_url"] for r in srows if r["source_url"]), "")
-            lines.append(f"- **{source}**{f' — <{url}>' if url else ''} ({len(srows)} image(s))")
+            lines.append(f"- **{_md_inline(source)}** ({len(srows)} image(s))")
+            # Per-image URLs, not one per source group: the primary ingest path
+            # records a site-level source_name with a per-post source_url, so a
+            # single representative URL would drop every citable page but one.
+            for url in sorted({r["source_url"] for r in srows if r["source_url"]}):
+                lines.append(f"  - {_md_link(url)}")
             for attribution in sorted({r["attribution"] for r in srows if r["attribution"]}):
-                lines.append(f"  - {attribution}")
+                lines.append(f"  - {_md_inline(attribution)}")
         lines.append("")
-    (dest_dir / "CREDITS.md").write_text("\n".join(lines), encoding="utf-8")
+    return "\n".join(lines)
 
-    with (dest_dir / "licenses.csv").open("w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["file", "source_name", "source_url", "license", "attribution"])
-        for row in credits:
-            writer.writerow([
-                row["file"], row["source_name"], row["source_url"],
-                row["license"], row["attribution"],
-            ])
+
+def _render_licenses_csv(credits: list[dict]) -> str:
+    import csv
+    import io
+
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf)
+    writer.writerow(["file", "source_name", "source_url", "license", "attribution"])
+    for row in credits:
+        writer.writerow([
+            _csv_cell(row["file"]), _csv_cell(row["source_name"]),
+            _csv_cell(row["source_url"]), _csv_cell(row["license"]),
+            _csv_cell(row["attribution"]),
+        ])
+    return buf.getvalue()
+
+
+def _write_credits(dest_dir: Path, credits: list[dict], partial: bool = False) -> list[str]:
+    """Write CREDITS.md + licenses.csv for an export; returns the filenames written.
+
+    Always written (even when nothing carries a license, and even when the export
+    was cancelled partway) so a published dataset always ships an attribution file
+    — a missing one reads as "no attribution needed", which is exactly the claim we
+    can't make. Attribution-required licenses are listed first because those are
+    the entries a redistributor must act on.
+
+    Every interpolated value is untrusted: see `_md_inline` / `_md_link` /
+    `_csv_cell`. The `file` column names a file this export actually wrote,
+    relative to the manifest directory.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+    for name, text in (
+        ("CREDITS.md", _render_credits_md(credits, partial)),
+        ("licenses.csv", _render_licenses_csv(credits)),
+    ):
+        payload = text.encode("utf-8")
+        target = _manifest_dest(dest_dir, name, payload)
+        if target is None:
+            continue
+        _write_atomic(target, payload)
+        written.append(target.name)
+    return written
 
 
 async def _dataset_defaults(db: AsyncSession, dataset_id: str):
@@ -352,72 +499,91 @@ async def _run_export_loop(
     masks_full_white = 0
     excluded_no_mask = 0
 
-    for i, img in enumerate(images):
-        if job_id:
-            job_queue.raise_if_cancelled(job_id)
-        src = Path(img.file_path)
-        if not captions_only and not src.exists():
-            continue
-        prov = resolve_provenance(img, ds_defaults)
-        if _is_excluded(
-            img, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
-            license_filter, commercial_only, exclude_unlicensed, prov["license"],
-        ):
-            continue
-        if export_masks and mask_missing == "skip" and not detections_by_image.get(img.id):
-            excluded_no_mask += 1
-            continue
-
-        if captions_only:
-            # Don't read or write image files; use original filename for any manifest entries.
-            dest_img = dest_dir / img.filename
-            dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
-        else:
-            dest_img = _dest_img_path(dest_dir, img, output_format)
-            # Uniquify within this run so two source images sharing a stem don't
-            # clobber each other's image/caption/mask (all derive from dest_img).
-            dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
-            final_size = await asyncio.get_event_loop().run_in_executor(
-                None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata, export_masks
-            )
-            if export_masks:
-                dets = detections_by_image.get(img.id) or []
-                excl = exclude_by_image.get(img.id) or []
-                await asyncio.get_event_loop().run_in_executor(
-                    None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, excl, final_size, mask_invert
-                )
-                masks_written += 1
-                if not dets:
-                    masks_full_white += 1
-
-        caption = _caption_text(img)
-
-        if accumulate_plain:
-            jsonl_entries.append({"file": dest_img.name, "caption": caption})
-        elif caption_format == "jsonl":
-            jsonl_entries.append({"file": dest_img.name, "caption": caption})
-        else:
-            _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
-
-        credits.append({
-            "file": dest_img.name,
-            "source_name": prov["source_name"],
-            "source_url": prov["source_url"],
-            "license": prov["license"],
-            "attribution": prov["attribution"],
-        })
-        exported += 1
-
-        if job_id and i % 5 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": job_type,
-                "status": "running", "done": exported, "total": len(images),
-                "percent": round((i + 1) / len(images) * 100, 1),
-                "current_item": img.filename, "message": f"Exporting {img.filename}",
-            })
-
     manifest_target = manifest_dir or dest_dir
     manifest_target.mkdir(parents=True, exist_ok=True)
+
+    try:
+        for i, img in enumerate(images):
+            if job_id:
+                job_queue.raise_if_cancelled(job_id)
+            src = Path(img.file_path)
+            if not captions_only and not src.exists():
+                continue
+            prov = resolve_provenance(img, ds_defaults)
+            if _is_excluded(
+                img,
+                aesthetic_min=aesthetic_min,
+                captioned_only=captioned_only,
+                exclude_flags=exclude_flags,
+                style_sim_min=style_sim_min,
+                license_filter=license_filter,
+                commercial_only=commercial_only,
+                exclude_unlicensed=exclude_unlicensed,
+                effective_license=prov["license"],
+            ):
+                continue
+            if export_masks and mask_missing == "skip" and not detections_by_image.get(img.id):
+                excluded_no_mask += 1
+                continue
+
+            if captions_only:
+                # Don't read or write image files; use original filename for any manifest entries.
+                dest_img = dest_dir / img.filename
+                dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
+            else:
+                dest_img = _dest_img_path(dest_dir, img, output_format)
+                # Uniquify within this run so two source images sharing a stem don't
+                # clobber each other's image/caption/mask (all derive from dest_img).
+                dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
+                final_size = await asyncio.get_event_loop().run_in_executor(
+                    None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata, export_masks
+                )
+                if export_masks:
+                    dets = detections_by_image.get(img.id) or []
+                    excl = exclude_by_image.get(img.id) or []
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, excl, final_size, mask_invert
+                    )
+                    masks_written += 1
+                    if not dets:
+                        masks_full_white += 1
+
+            caption = _caption_text(img)
+
+            sidecar: Path | None = None
+            if accumulate_plain or caption_format == "jsonl":
+                jsonl_entries.append({"file": dest_img.name, "caption": caption})
+            else:
+                sidecar = _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
+
+            # Name a file this export actually wrote. A captions-only run never
+            # writes `dest_img`, so it lists the caption sidecar instead (or, when
+            # captions go to captions.jsonl, that file's own entry key).
+            listed = (sidecar or dest_img) if captions_only else dest_img
+            credits.append({
+                "file": _manifest_rel(listed, manifest_target),
+                "source_name": prov["source_name"],
+                "source_url": prov["source_url"],
+                "license": prov["license"],
+                "attribution": prov["attribution"],
+            })
+            exported += 1
+
+            if job_id and i % 5 == 0:
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": job_type,
+                    "status": "running", "done": exported, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename, "message": f"Exporting {img.filename}",
+                })
+    except asyncio.CancelledError:
+        # A cancelled export leaves the files written so far on disk. Ship the
+        # manifests for that partial set rather than an unattributed pile — the
+        # exact state this feature exists to prevent. Written synchronously: a real
+        # task cancellation is not obliged to schedule another await.
+        _write_credits(manifest_target, credits, partial=True)
+        raise
+
     await asyncio.get_event_loop().run_in_executor(
         None, _write_credits, manifest_target, credits
     )

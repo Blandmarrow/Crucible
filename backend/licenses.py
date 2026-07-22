@@ -44,6 +44,11 @@ _ALL: tuple[LicenseInfo, ...] = (
     LicenseInfo("licensed-commercial", "Licensed for commercial use", True, False, False),
     LicenseInfo("research-only", "Research / non-commercial only", False, True, False),
     LicenseInfo("synthetic", "Synthetic (AI-generated)", True, False, False),
+    # A *recorded* answer, not a missing one: the source explicitly grants nothing.
+    # Distinct from "" ("no license recorded") on purpose — as "" it would be
+    # dropped at normalization and the image would inherit the dataset's default,
+    # so a scrape that declares "all rights reserved" could ship as CC-BY.
+    LicenseInfo("no-license", "No license granted", False, False, False),
 )
 
 LICENSES: dict[str, LicenseInfo] = {li.id: li for li in _ALL}
@@ -68,7 +73,10 @@ _ALIASES: dict[str, str] = {
     "publicdomain": "public-domain",
     "public domain": "public-domain",
     "pd": "public-domain",
-    "none": "",
+    "none": "no-license",
+    "no license": "no-license",
+    "all rights reserved": "no-license",
+    "copyright": "no-license",
 }
 
 
@@ -92,6 +100,31 @@ def normalize_license(v: str | None) -> str:
     if low in _ALIASES:
         return _ALIASES[low]
     return f"{OTHER_PREFIX}{s}"
+
+
+def normalize_license_input(v: str | None) -> str | None:
+    """Normalize a client-supplied license id and enforce the column width.
+
+    Must run as a Pydantic **validator**, never as a `max_length` constraint:
+    `normalize_license` prepends the 6-char `other:` prefix *after* a `max_length`
+    check would already have passed, so a 64-char free-text license validates and
+    then stores 70 characters. That value is over the column width, so reading the
+    row back fails the response schema — which is how an image's provenance
+    becomes permanently uneditable (422 on every save).
+
+    Rejects rather than truncates: this is the API direction. Ingest capture
+    truncates instead, via `clamp_provenance`.
+    """
+    if v is None:
+        return None
+    normalized = normalize_license(v)
+    limit = FIELD_MAX_LEN["license"]
+    if len(normalized) > limit:
+        raise ValueError(
+            f"license is too long: {len(normalized)} characters after normalization "
+            f"(the 'other:' prefix counts), maximum {limit}"
+        )
+    return normalized
 
 
 def license_info(v: str | None) -> LicenseInfo:
@@ -131,6 +164,37 @@ PROVENANCE_FIELDS = ("source_name", "source_url", "license", "attribution")
 # image-only raw payload.
 IMAGE_PROVENANCE_FIELDS = (*PROVENANCE_FIELDS, "source_meta")
 
+# Per-field caps, matching the Image/Dataset column widths. `attribution` is a
+# TEXT column with no width of its own, so the cap here is the only bound on it —
+# generous, because a credit line can legitimately name several rights holders.
+# `license` is capped *after* normalization, since `normalize_license` prepends
+# the 6-char `other:` prefix.
+FIELD_MAX_LEN: dict[str, int] = {
+    "source_name": 255,
+    "source_url": 1024,
+    "license": 64,
+    "attribution": 2000,
+}
+
+
+def clamp_provenance(values: dict) -> dict:
+    """Truncate captured provenance strings to their column widths.
+
+    Ingest **truncates** where the API **rejects**: an import must not fail on one
+    over-long sidecar value, but a value longer than its column also must not be
+    written — SQLite does not enforce `String(n)`, so an over-long value stores
+    fine and then makes that image's provenance permanently unsaveable, since the
+    edit endpoint validates what it reads back.
+
+    Returns a new dict; non-string values (`source_meta`) pass through untouched.
+    """
+    out = dict(values)
+    for field, limit in FIELD_MAX_LEN.items():
+        value = out.get(field)
+        if isinstance(value, str) and len(value) > limit:
+            out[field] = value[:limit].rstrip()
+    return out
+
 
 def merge_provenance(*layers: dict | None) -> dict:
     """Merge provenance dicts with left-to-right precedence, keeping only real values.
@@ -139,6 +203,9 @@ def merge_provenance(*layers: dict | None) -> dict:
     EXIF-derived. Fields absent from every layer are simply omitted, so the
     resulting `Image(**merged)` leaves them NULL and they inherit the dataset
     default.
+
+    The single ingest choke point, so the result is `clamp_provenance`d here and
+    every capture path (import, rescan, upload) is covered by one cap.
     """
     out: dict = {}
     for layer in layers:
@@ -147,7 +214,7 @@ def merge_provenance(*layers: dict | None) -> dict:
         for field in IMAGE_PROVENANCE_FIELDS:
             if not out.get(field) and layer.get(field):
                 out[field] = layer[field]
-    return out
+    return clamp_provenance(out)
 
 
 def copy_provenance(img) -> dict:

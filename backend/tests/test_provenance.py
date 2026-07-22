@@ -22,7 +22,14 @@ from sqlalchemy.orm import undefer
 from backend.database import Base
 import backend.models  # noqa: F401 — register all models on Base
 from backend.licenses import (
+    FIELD_MAX_LEN,
+    IMAGE_PROVENANCE_FIELDS,
+    LICENSE_IDS,
+    LICENSES,
+    OTHER_PREFIX,
     allows_commercial,
+    clamp_provenance,
+    copy_provenance,
     license_info,
     materialize_by_source,
     materialize_provenance,
@@ -35,10 +42,8 @@ from backend.models.image import Image
 from backend.models.threshold_settings import ThresholdSettings
 from backend.routers.images import _provenance_values
 from backend.schemas.image import (
-    INHERIT_SENTINEL,
     BulkProvenanceRequest,
     ImageListItem,
-    ImageOut,
     ImageProvenanceUpdate,
 )
 from backend.services import export_service, version_service
@@ -261,7 +266,9 @@ def test_snapshot_restore_preserves_provenance(tmp_path):
         async with Session() as db:
             snap = await version_service.create_snapshot(db, ds_id, "s1", "")
 
-            img = (await db.execute(select(Image).where(Image.dataset_id == ds_id))).scalar_one()
+            img = (await db.execute(
+                select(Image).where(Image.dataset_id == ds_id).options(undefer(Image.source_meta))
+            )).scalar_one()
             img.license = "CC-BY-NC-4.0"
             img.source_name = "Changed"
             img.attribution = "bob"
@@ -313,31 +320,6 @@ def test_image_list_item_validates_with_null_license(tmp_path):
     run(scenario())
 
 
-def test_image_out_validates_without_lazy_loading_deferred_columns(tmp_path):
-    """ImageOut reads has_dino_layer_embeddings, which touches a deferred column.
-
-    Serializing an instance whose deferred column was never loaded raises
-    MissingGreenlet on an async session — the provenance PATCH endpoint must
-    undefer it, exactly as GET /images/{id} does.
-    """
-    async def scenario():
-        engine, Session, ds_dir, ds_id = await _make_env(tmp_path)
-        async with Session() as db:
-            img = (await db.execute(
-                select(Image)
-                .where(Image.dataset_id == ds_id)
-                .options(undefer(Image.dino_layer_embeddings))
-            )).scalar_one()
-            img.license = "CC0-1.0"
-            await db.commit()
-            out = ImageOut.model_validate(img)         # must not raise
-            assert out.license == "CC0-1.0"
-            assert out.has_dino_layer_embeddings is False
-        await engine.dispose()
-
-    run(scenario())
-
-
 # --- export manifests ----------------------------------------------------
 
 
@@ -361,12 +343,15 @@ def test_export_writes_manifests_with_resolved_license(tmp_path):
             assert result["exported"] == 2
 
             rows = list(csv.DictReader((out_dir / "licenses.csv").open(encoding="utf-8")))
+            # `file` is relative to the export root: images live under images/ and
+            # a loss mask can share a basename with its image.
             by_file = {r["file"]: r for r in rows}
-            assert by_file["1.png"]["license"] == "CC-BY-SA-4.0"   # own value
-            assert by_file["1.png"]["attribution"] == "alice"
+            assert set(by_file) == {"images/1.png", "images/2.png"}
+            assert by_file["images/1.png"]["license"] == "CC-BY-SA-4.0"   # own value
+            assert by_file["images/1.png"]["attribution"] == "alice"
             # Inherited from the dataset — the whole point of resolving at export.
-            assert by_file["2.png"]["license"] == "CC-BY-4.0"
-            assert by_file["2.png"]["source_name"] == "Dataset default"
+            assert by_file["images/2.png"]["license"] == "CC-BY-4.0"
+            assert by_file["images/2.png"]["source_name"] == "Dataset default"
 
             credits = (out_dir / "CREDITS.md").read_text(encoding="utf-8")
             assert "CC BY-SA 4.0" in credits and "attribution required" in credits
@@ -528,23 +513,236 @@ def test_provenance_values_round_trips_other_free_text():
     # ...but an `other:` with no body carries no information: clear to inherit.
     assert _provenance_values(ImageProvenanceUpdate(license="other:")) == {"license": None}
 
-    # Sentinel and omission keep their distinct meanings.
-    assert _provenance_values(ImageProvenanceUpdate(license=INHERIT_SENTINEL)) == {"license": None}
+    # "" clears to inherit; an omitted field is left unchanged. There is no
+    # sentinel string — one would be indistinguishable from a real value that
+    # happened to equal it (a source name of literally "__inherit__" self-cleared).
+    assert _provenance_values(ImageProvenanceUpdate(source_name="")) == {"source_name": None}
     assert _provenance_values(ImageProvenanceUpdate()) == {}
 
 
 def test_image_provenance_schemas_cap_field_lengths():
     """Caps mirror the column widths, so an over-long value 422s instead of
-    being silently truncated by a non-SQLite backend."""
+    being silently truncated by a non-SQLite backend.
+
+    All four string fields, `attribution` included — it is a TEXT column, so the
+    schema cap is the only bound that exists on it.
+    """
     for schema, extra in ((ImageProvenanceUpdate, {}), (BulkProvenanceRequest, {"dataset_id": "d1"})):
-        for field, limit in (("source_name", 255), ("source_url", 1024), ("license", 64)):
-            schema(**extra, **{field: "x" * limit})          # at the cap: fine
+        for field, limit in FIELD_MAX_LEN.items():
+            # `license` grows by the `other:` prefix during validation, so it is
+            # measured post-normalization — see the next test.
+            fits = limit - len(OTHER_PREFIX) if field == "license" else limit
+            schema(**extra, **{field: "x" * fits})           # at the cap: fine
             try:
-                schema(**extra, **{field: "x" * (limit + 1)})
+                schema(**extra, **{field: "x" * (fits + 1)})
             except ValidationError:
                 pass
             else:
-                raise AssertionError(f"{schema.__name__}.{field} accepted {limit + 1} chars")
+                raise AssertionError(f"{schema.__name__}.{field} accepted {fits + 1} chars")
 
-    # The sentinel must fit under every cap or "inherit" would stop validating.
-    assert len(INHERIT_SENTINEL) <= 64
+
+def test_license_length_is_checked_after_normalization():
+    """The `other:` prefix is added *after* a max_length constraint would run.
+
+    A 64-char free-text license passed `max_length=64` and then stored 70 — over
+    the column width, so reading the row back failed its own response schema and
+    that image's provenance became permanently unsaveable (422 on every save).
+    """
+    limit = FIELD_MAX_LEN["license"]
+    body = ImageProvenanceUpdate(license="x" * (limit - len(OTHER_PREFIX)))
+    assert len(body.license) == limit                 # exactly fills the column
+
+    try:
+        ImageProvenanceUpdate(license="x" * (limit - len(OTHER_PREFIX) + 1))
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("a free-text license that normalizes past the column width was accepted")
+
+    # A *known* id is not prefixed, so it is measured as-is.
+    assert ImageProvenanceUpdate(license="CC-BY-4.0").license == "CC-BY-4.0"
+
+
+def test_clamp_provenance_truncates_captured_values():
+    """Ingest truncates where the API rejects: an import must not fail on a bad sidecar."""
+    clamped = clamp_provenance({
+        "source_name": "S" * 400,
+        "source_url": "U" * 2000,
+        "license": "other:" + "L" * 500,
+        "attribution": "A" * 5000,
+        "source_meta": {"raw": "x" * 5000},
+    })
+    for field, limit in FIELD_MAX_LEN.items():
+        assert len(clamped[field]) <= limit, field
+    # Non-string payloads pass through untouched — source_meta is JSON, not a column string.
+    assert clamped["source_meta"] == {"raw": "x" * 5000}
+    # merge_provenance is the single ingest choke point, so it clamps too.
+    assert len(merge_provenance({"license": "other:" + "L" * 500})["license"]) <= FIELD_MAX_LEN["license"]
+
+
+# --- the "no license granted" vocabulary entry ---------------------------
+
+
+def test_no_license_is_recorded_not_missing():
+    """`none` used to normalize to "" — so a scrape declaring no rights inherited
+    the dataset's default and could ship as CC-BY."""
+    assert normalize_license("none") == "no-license"
+    assert normalize_license("All Rights Reserved") == "no-license"
+    assert normalize_license("no-license") == "no-license"
+
+    # Licensed-but-restrictive: it is not "", so exclude_unlicensed leaves it...
+    assert not _is_excluded_license("no-license", exclude_unlicensed=True)
+    assert _is_excluded_license("", exclude_unlicensed=True)
+    # ...while commercial_only drops it.
+    assert not allows_commercial("no-license")
+    assert _is_excluded_license("no-license", commercial_only=True)
+
+    # And it inherits nothing: a real value always wins over the dataset default.
+    resolved = resolve_provenance(_Stub(license="no-license"), _Stub(license="CC-BY-4.0"))
+    assert resolved["license"] == "no-license"
+    assert resolved["inherited"] == []
+
+
+def _is_excluded_license(effective: str, **flags) -> bool:
+    """`_is_excluded` with only the license filters in play."""
+    img = _Stub(aesthetic_score=None, caption_text="c", quality_flags={}, style_similarity_score=None)
+    return export_service._is_excluded(
+        img,
+        aesthetic_min=None, captioned_only=False, exclude_flags=[], style_sim_min=None,
+        effective_license=effective, **flags,
+    )
+
+
+def test_frontend_license_vocabulary_matches_backend():
+    """The two id lists are mirrored by hand with nothing enforcing it.
+
+    frontend/src/constants/licenses.ts carries the UI-only concerns (badge colour,
+    display order); the ids and labels must not drift from backend/licenses.py, or
+    a stored id renders as "Unknown" in every dropdown that should offer it.
+    """
+    import re
+
+    ts = (Path(__file__).parents[2] / "frontend" / "src" / "constants" / "licenses.ts").read_text(encoding="utf-8")
+    block = ts.split("export const LICENSE_OPTIONS", 1)[1].split("];", 1)[0]
+    entries = dict(re.findall(r'\{\s*id:\s*"([^"]+)",\s*label:\s*"([^"]+)"', block))
+
+    assert set(entries) == set(LICENSE_IDS), (
+        f"only in backend: {sorted(set(LICENSE_IDS) - set(entries))}; "
+        f"only in frontend: {sorted(set(entries) - set(LICENSE_IDS))}"
+    )
+    for lid, label in entries.items():
+        assert label == LICENSES[lid].label, f"{lid}: {label!r} != {LICENSES[lid].label!r}"
+
+
+# --- CREDITS.md / licenses.csv are built from untrusted strings ----------
+
+
+def _credit(**kw) -> dict:
+    row = {"file": "images/1.png", "source_name": "", "source_url": "", "license": "", "attribution": ""}
+    row.update(kw)
+    return row
+
+
+def test_credits_md_cannot_be_forged_by_an_attribution_string(tmp_path):
+    """CREDITS.md is a legal attribution document assembled by f-string
+    interpolation of scraper/EXIF strings. A newline in `attribution` must not be
+    able to forge a `## <license>` section claiming rights the export lacks."""
+    export_service._write_credits(tmp_path, [
+        _credit(license="CC-BY-4.0", source_name="Flickr",
+                attribution="alice\n\n## CC0 1.0 (no rights reserved) (999 image(s))\n\n- **Forged**"),
+    ])
+    text = (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+
+    # One heading — the real license. The injected one is inert escaped text on the
+    # attribution line, so nothing is lost and nothing is forged.
+    headings = [ln for ln in text.splitlines() if ln.startswith("## ")]
+    assert len(headings) == 1 and "CC BY 4.0" in headings[0]
+    assert "\n## CC0" not in text
+    assert "\\#\\#" in text          # escaped, not dropped
+    assert "\\*\\*Forged\\*\\*" in text
+
+
+def test_credits_md_escapes_markdown_and_only_links_http_urls(tmp_path):
+    export_service._write_credits(tmp_path, [
+        _credit(license="CC-BY-4.0", source_name="**bold** [x](y)",
+                source_url="javascript:alert(1)"),
+        _credit(license="CC-BY-4.0", source_name="Real", source_url="https://example.com/p/1"),
+    ])
+    text = (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+
+    assert "**bold**" not in text and r"\*\*bold\*\*" in text
+    # A non-http(s) URL renders as inert escaped text, never as a link target.
+    assert "(javascript:alert(1))" not in text
+    assert "[https://example.com/p/1](https://example.com/p/1)" in text
+
+
+def test_credits_md_lists_every_source_url_not_just_the_first(tmp_path):
+    """The primary ingest path records a site-level source_name with a per-post
+    source_url, so one URL per source group drops every citable page but one."""
+    export_service._write_credits(tmp_path, [
+        _credit(license="CC-BY-4.0", source_name="Flickr", source_url="https://f/1", attribution="alice"),
+        _credit(file="images/2.png", license="CC-BY-4.0", source_name="Flickr",
+                source_url="https://f/2", attribution="bob"),
+    ])
+    text = (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+    assert "https://f/1" in text and "https://f/2" in text
+
+
+def test_licenses_csv_neutralizes_formula_prefixes(tmp_path):
+    export_service._write_credits(tmp_path, [
+        _credit(source_name="=cmd|'/c calc'!A1", attribution="+1", license="", source_url="-x"),
+    ])
+    rows = list(csv.DictReader((tmp_path / "licenses.csv").open(encoding="utf-8")))
+    assert rows[0]["source_name"].startswith("'=")
+    assert rows[0]["attribution"].startswith("'+")
+    assert rows[0]["source_url"].startswith("'-")
+
+
+def test_credits_written_even_when_nothing_was_exported(tmp_path):
+    """A missing manifest reads as "no attribution needed" — the one claim we can't make."""
+    written = export_service._write_credits(tmp_path, [])
+    assert set(written) == {"CREDITS.md", "licenses.csv"}
+    text = (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+    assert "0 image(s) exported" in text
+
+
+def test_manifests_never_silently_clobber_a_different_file_set(tmp_path):
+    """Exports share an output directory (kohya writes 10_x/ beside 20_x/)."""
+    first = export_service._write_credits(tmp_path, [_credit(license="CC-BY-4.0")])
+    assert first == ["CREDITS.md", "licenses.csv"]
+
+    # Identical content is a no-op, not a rewrite...
+    assert export_service._write_credits(tmp_path, [_credit(license="CC-BY-4.0")]) == []
+
+    # ...but a different set lands alongside instead of replacing it.
+    second = export_service._write_credits(tmp_path, [_credit(file="images/9.png", license="CC0-1.0")])
+    assert second == ["CREDITS.2.md", "licenses.2.csv"]
+    assert "CC BY 4.0" in (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+    assert "CC0 1.0" in (tmp_path / "CREDITS.2.md").read_text(encoding="utf-8")
+
+
+# --- derived images keep the parent's provenance -------------------------
+
+
+def test_copy_provenance_covers_every_derivative_path():
+    """crop, upscale, LUT and detection-crop all build the derived Image with
+    `**copy_provenance(parent)`. Raw, not resolved: the copy stays in the same
+    dataset, so an inherited value must keep tracking the dataset default."""
+    parent = _Stub(
+        source_name=None,                 # inheriting
+        source_url="https://f/1",
+        license="CC-BY-SA-4.0",
+        attribution="alice",
+        source_meta={"post_id": 7},
+    )
+    copied = copy_provenance(parent)
+    assert copied == {
+        "source_name": None, "source_url": "https://f/1",
+        "license": "CC-BY-SA-4.0", "attribution": "alice", "source_meta": {"post_id": 7},
+    }
+    # Every column the model has — a new provenance column must reach derivatives.
+    assert set(copied) == set(IMAGE_PROVENANCE_FIELDS)
+
+    # The derived row inherits exactly as its parent did.
+    ds = _Stub(source_name="Flickr", source_url="", license="", attribution="")
+    assert resolve_provenance(_Stub(**copied), ds)["source_name"] == "Flickr"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Integer, and_, cast, delete, func, select
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -990,7 +991,11 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
         async with AsyncSessionLocal() as session:
             images = []
             for chunk in chunked(matched_ids):
-                result = await session.execute(select(Image).where(Image.id.in_(chunk)))
+                # undefer: each crop copies its parent's provenance, source_meta
+                # included, and a deferred lazy load on an async session raises.
+                result = await session.execute(
+                    select(Image).where(Image.id.in_(chunk)).options(undefer(Image.source_meta))
+                )
                 images.extend(result.scalars().all())
             bboxes_by_image = await _fetch_bboxes_by_image(session, matched_ids, cfg["labels"])
             loop = asyncio.get_running_loop()

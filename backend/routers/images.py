@@ -17,7 +17,6 @@ from backend.licenses import (
     copy_provenance,
     materialize_by_source,
     merge_provenance,
-    normalize_license,
     resolve_provenance,
 )
 from backend.models import BackgroundJob, Dataset, Image
@@ -30,7 +29,6 @@ from backend.schemas.image import (
     BatchMoveSubfolderRequest,
     BatchResizeRequest,
     BatchReorderRequest,
-    INHERIT_SENTINEL,
     BulkCountRequest,
     BulkDeleteRequest,
     BulkProvenanceRequest,
@@ -51,7 +49,7 @@ from backend.services.image_service import (
     crop_image_to_dest,
     crop_to_aspect,
     extract_generation_metadata,
-    extract_iptc_provenance,
+    extract_embedded_provenance,
     generate_thumbnail,
     get_image_info,
     resize_image,
@@ -74,7 +72,7 @@ def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, 
     info = get_image_info(str(dest))
     gen_meta = extract_generation_metadata(str(dest))
     generate_thumbnail(str(dest), thumb_path)
-    return info, gen_meta, extract_iptc_provenance(str(dest)) or {}
+    return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
 
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
@@ -417,7 +415,10 @@ async def upload_images(
 
 @router.get("/{image_id}", response_model=ImageOut)
 async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id, options=[undefer(Image.dino_layer_embeddings)])
+    img = await db.get(
+        Image, image_id,
+        options=[undefer(Image.dino_layer_embeddings), undefer(Image.source_meta)],
+    )
     if not img:
         raise HTTPException(404, "Image not found")
     if img.generation_metadata is None and img.file_path and Path(img.file_path).exists():
@@ -500,40 +501,47 @@ async def bulk_count(body: BulkCountRequest, db: AsyncSession = Depends(get_db))
 
 
 def _provenance_values(body) -> dict:
-    """Turn a provenance edit request into SQL values, honouring the sentinel.
+    """Turn a provenance edit request into SQL values.
 
     None → the field is absent from the result (left unchanged).
-    INHERIT_SENTINEL → NULL (clear the override so the dataset default applies).
-    Anything else → that value; `license` is normalized to a known id or
-    `other:<free text>` first.
+    "" (or whitespace) → NULL (clear the override so the dataset default applies).
+    Anything else → that value; `license` has already been normalized to a known
+    id or `other:<free text>` by the schema validator.
     """
     values: dict = {}
     for field in ("source_name", "source_url", "license", "attribution"):
         raw = getattr(body, field)
         if raw is None:
             continue
-        if raw == INHERIT_SENTINEL:
-            values[field] = None
-            continue
-        cleaned = normalize_license(raw) if field == "license" else raw.strip()
-        values[field] = cleaned or None
+        values[field] = raw.strip() or None
     return values
 
 
 @router.post("/bulk-provenance", response_model=BulkProvenanceResult)
 async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depends(get_db)):
     """Set source/license on a selection — how an existing library gets labeled."""
-    ensure_not_busy(body.dataset_id)
     values = _provenance_values(body)
     if not values:
+        ensure_not_busy(body.dataset_id)
         return BulkProvenanceResult(updated=0)
 
     subq = _apply_bulk_filters(
-        select(Image.id).where(Image.dataset_id == body.dataset_id),
+        select(Image.id, Image.dataset_id),
         body.image_ids, body.subfolder, body.quality_flags,
-        include_flagged=True,
+        include_flagged=body.include_flagged,
     )
-    ids = [r[0] for r in (await db.execute(subq)).all()]
+    # An explicit image_ids selection can span datasets — the gallery toolbar shows
+    # a per-dataset breakdown precisely because of that — so scope by dataset_id
+    # only when the selection is a whole-dataset/subfolder one, and guard every
+    # dataset actually touched rather than just body.dataset_id.
+    if not body.image_ids:
+        subq = subq.where(Image.dataset_id == body.dataset_id)
+    rows = (await db.execute(subq)).all()
+    touched = {r.dataset_id for r in rows} or {body.dataset_id}
+    for ds_id in touched:
+        ensure_not_busy(ds_id)
+
+    ids = [r.id for r in rows]
     updated = 0
     # Chunked so the bind-parameter count stays under SQLite's 999 limit.
     for batch in chunked(ids):
@@ -542,6 +550,8 @@ async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depend
         )
         updated += result.rowcount or 0
     await db.commit()
+    # No refresh_stats: it recomputes counts/sizes, none of which provenance
+    # touches. The license breakdown is computed live by GET /datasets/{id}/stats.
     return BulkProvenanceResult(updated=updated)
 
 
@@ -551,9 +561,16 @@ async def update_image_provenance(
 ):
     # undefer as in get_image: ImageOut reads has_dino_layer_embeddings, and a
     # deferred column would lazy-load mid-serialization (MissingGreenlet).
-    img = await db.get(Image, image_id, options=[undefer(Image.dino_layer_embeddings)])
+    # source_meta is deferred too and is part of the provenance response.
+    img = await db.get(
+        Image, image_id,
+        options=[undefer(Image.dino_layer_embeddings), undefer(Image.source_meta)],
+    )
     if not img:
         raise HTTPException(404, "Image not found")
+    # Guards like every sibling write: restore_snapshot writes provenance, so an
+    # unguarded save would race a running restore.
+    ensure_not_busy(img.dataset_id)
     for field, value in _provenance_values(body).items():
         setattr(img, field, value)
     # No refresh: the session is expire_on_commit=False, so the instance keeps
@@ -562,6 +579,12 @@ async def update_image_provenance(
     ds = await db.get(Dataset, img.dataset_id)
     img_out = ImageOut.model_validate(img)
     img_out.provenance = resolve_provenance(img, ds)
+    # Populated as in get_image, so the client can seed its per-image cache from
+    # this response instead of showing an image that has lost its detections.
+    dets = (await db.execute(
+        select(Detection).where(Detection.image_id == image_id).order_by(Detection.id)
+    )).scalars().all()
+    img_out.detections = [DetectionOut.model_validate(d) for d in dets]
     return img_out
 
 
@@ -781,7 +804,9 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
 
 @router.post("/{image_id}/crop")
 async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id)
+    # undefer: the new-file path copies this image's provenance onto the crop, and
+    # source_meta is a deferred column (a lazy load here would be a MissingGreenlet).
+    img = await db.get(Image, image_id, options=[undefer(Image.source_meta)])
     if not img:
         raise HTTPException(404, "Image not found")
     ensure_not_busy(img.dataset_id)

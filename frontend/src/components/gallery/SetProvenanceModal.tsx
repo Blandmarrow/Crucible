@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ScrollText } from "lucide-react";
 
-import { INHERIT_SENTINEL } from "../../constants/licenses";
+import { isBlankLicense } from "../../constants/licenses";
 import type { ProvenanceEdit } from "../../api/images";
-import LicenseSelect, { isBlankLicense } from "../common/LicenseSelect";
+import LicenseSelect from "../common/LicenseSelect";
 
 interface Props {
   count: number;
@@ -17,6 +17,15 @@ interface Props {
 /** Per-field mode: only "set" and "inherit" send anything to the server. */
 type Mode = "keep" | "set" | "inherit";
 
+const MODES: Mode[] = ["keep", "set", "inherit"];
+
+const MODE_LABEL: Record<Mode, string> = { keep: "Keep", set: "Set", inherit: "Inherit" };
+const MODE_TITLE: Record<Mode, string> = {
+  keep: "Leave this field as it is",
+  set: "Set this field on every selected image",
+  inherit: "Clear this field so it inherits the dataset default",
+};
+
 const TEXT_FIELDS = [
   { key: "source_name", label: "Source name", placeholder: "e.g. Danbooru, Unsplash, Client X" },
   { key: "source_url", label: "Source URL", placeholder: "https://…" },
@@ -29,7 +38,37 @@ const BlankSetHint = () => (
   </p>
 );
 
+/**
+ * Keep/Set/Inherit segmented control for one field.
+ *
+ * Defined at module scope, not inside the modal body: a component declared during
+ * render is a new type on every render, so React unmounts and remounts all four
+ * toggle groups on each keystroke — which drops keyboard focus to `<body>`.
+ */
+function ModeToggle({
+  field, label, mode, onSelect,
+}: { field: string; label: string; mode: Mode; onSelect: (m: Mode) => void }) {
+  return (
+    <div className="flex gap-1 text-[10px]" role="group" aria-label={`${label} mode`}>
+      {MODES.map((m) => (
+        <button
+          key={m}
+          type="button"
+          aria-pressed={mode === m}
+          onClick={() => onSelect(m)}
+          className={`px-1.5 py-0.5 rounded ${mode === m ? "bg-accent text-white" : "bg-surface-2 text-gray-400 hover:text-gray-200"}`}
+          title={MODE_TITLE[m]}
+          data-field={field}
+        >
+          {MODE_LABEL[m]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function SetProvenanceModal({ count, isPending, onConfirm, onClose, sourceInfo }: Props) {
+  const uid = useId();
   const [modes, setModes] = useState<Record<string, Mode>>({
     license: "keep", source_name: "keep", source_url: "keep", attribution: "keep",
   });
@@ -41,8 +80,8 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
     const edit: ProvenanceEdit = {};
     for (const key of ["license", "source_name", "source_url", "attribution"] as const) {
       const mode = modes[key];
-      if (mode === "keep") continue;                       // omit → leave unchanged
-      edit[key] = mode === "inherit" ? INHERIT_SENTINEL : values[key];
+      if (mode === "keep") continue;         // omit → leave unchanged
+      edit[key] = mode === "inherit" ? "" : values[key];   // "" → clear to inherit
     }
     return edit;
   };
@@ -58,25 +97,6 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
     (field === "license" ? isBlankLicense(values[field]) : !values[field].trim());
   const hasBlankSet = Object.keys(modes).some(isBlankSet);
 
-  const ModeToggle = ({ field }: { field: string }) => (
-    <div className="flex gap-1 text-[10px]">
-      {(["keep", "set", "inherit"] as Mode[]).map((m) => (
-        <button
-          key={m}
-          onClick={() => setModes({ ...modes, [field]: m })}
-          className={`px-1.5 py-0.5 rounded ${modes[field] === m ? "bg-accent text-white" : "bg-surface-2 text-gray-400 hover:text-gray-200"}`}
-          title={
-            m === "keep" ? "Leave this field as it is"
-              : m === "set" ? "Set this field on every selected image"
-              : "Clear this field so it inherits the dataset default"
-          }
-        >
-          {m === "keep" ? "Keep" : m === "set" ? "Set" : "Inherit"}
-        </button>
-      ))}
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="card p-5 w-full max-w-md space-y-3 max-h-[90vh] overflow-auto">
@@ -87,15 +107,22 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
 
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <label className="label !mb-0">License</label>
-            <ModeToggle field="license" />
+            <label className="label !mb-0" htmlFor={`${uid}-license`}>License</label>
+            <ModeToggle
+              field="license"
+              label="License"
+              mode={modes.license}
+              onSelect={(m) => setModes({ ...modes, license: m })}
+            />
           </div>
           <LicenseSelect
+            id={`${uid}-license`}
             value={values.license}
             onChange={(license) => setValues({ ...values, license })}
             emptyLabel="— choose —"
             disabled={modes.license !== "set"}
-            className="input w-full disabled:opacity-40"
+            className="select w-full disabled:opacity-40"
+            inputClassName="input w-full disabled:opacity-40"
           />
           {isBlankSet("license") && <BlankSetHint />}
         </div>
@@ -103,10 +130,16 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
         {TEXT_FIELDS.map(({ key, label, placeholder }) => (
           <div key={key} className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="label !mb-0">{label}</label>
-              <ModeToggle field={key} />
+              <label className="label !mb-0" htmlFor={`${uid}-${key}`}>{label}</label>
+              <ModeToggle
+                field={key}
+                label={label}
+                mode={modes[key]}
+                onSelect={(m) => setModes({ ...modes, [key]: m })}
+              />
             </div>
             <input
+              id={`${uid}-${key}`}
               value={values[key]}
               onChange={(e) => setValues({ ...values, [key]: e.target.value })}
               disabled={modes[key] !== "set"}

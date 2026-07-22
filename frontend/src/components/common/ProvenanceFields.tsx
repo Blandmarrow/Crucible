@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { licenseInfo } from "../../constants/licenses";
@@ -14,10 +14,6 @@ interface Props {
   note?: string;
 }
 
-export const EMPTY_PROVENANCE: DatasetProvenance = {
-  source_name: "", source_url: "", license: "", attribution: "",
-};
-
 const TEXT_FIELDS = [
   { key: "source_name", label: "Source name", placeholder: "e.g. Danbooru, Unsplash, Client X" },
   { key: "source_url", label: "Source URL", placeholder: "https://…" },
@@ -32,6 +28,8 @@ const TEXT_FIELDS = [
 export default function ProvenanceFields({ value, onChange, defaultOpen, note }: Props) {
   const hasAny = Object.values(value).some(Boolean);
   const [open, setOpen] = useState(defaultOpen ?? hasAny);
+  // Unique per instance: the create and edit modals can both be in the tree.
+  const uid = useId();
 
   return (
     <div>
@@ -53,8 +51,9 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note }:
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
           {note && <p className="text-xs text-gray-500">{note}</p>}
           <div>
-            <label className="label">License</label>
+            <label className="label" htmlFor={`${uid}-license`}>License</label>
             <LicenseSelect
+              id={`${uid}-license`}
               value={value.license}
               onChange={(license) => onChange({ ...value, license })}
               emptyLabel="Not recorded"
@@ -65,11 +64,12 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note }:
           </div>
           {TEXT_FIELDS.map(({ key, label, placeholder }) => (
             <div key={key}>
-              <label className="label">
+              <label className="label" htmlFor={`${uid}-${key}`}>
                 {label}{" "}
                 <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span>
               </label>
               <input
+                id={`${uid}-${key}`}
                 className="input"
                 placeholder={placeholder}
                 value={value[key]}

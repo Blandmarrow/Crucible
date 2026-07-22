@@ -98,6 +98,23 @@ def normalize_subfolder(s: str) -> str:
     return "/".join(parts)
 
 
+def safe_external_url(value: str | None) -> str:
+    """A provenance URL if it is safe to put behind a link, else ``""``.
+
+    Only ``http``/``https`` survive: source URLs come from scrapers, sidecars and
+    EXIF, so a ``javascript:``/``data:``/``file:`` value must never reach an
+    ``href`` or a markdown link target. Whitespace (including embedded newlines,
+    which would otherwise break out of a markdown link) is rejected outright
+    rather than stripped — a URL with a space in the middle is not a URL.
+    Callers render a rejected value as escaped plain text, never as a link.
+    """
+    s = (value or "").strip()
+    if not s or any(c.isspace() or ord(c) < 0x20 for c in s):
+        return ""
+    scheme = s.split(":", 1)[0].lower() if ":" in s else ""
+    return s if scheme in ("http", "https") else ""
+
+
 def normalize_license_filter(values: list[str] | None) -> list[str] | None:
     """Strip entries and drop an all-empty list; None means "no license filter".
 

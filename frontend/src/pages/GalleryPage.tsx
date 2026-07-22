@@ -26,7 +26,7 @@ import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
-import { LICENSE_OPTIONS } from "../constants/licenses";
+import { LICENSE_OPTIONS, isKnownLicenseValue } from "../constants/licenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
@@ -114,7 +114,15 @@ export default function GalleryPage() {
   );
   // "" = no license filter; "__missing__" = only images with no license at
   // either level; anything else = that effective license id.
-  const [licenseFilter, setLicenseFilter] = useState(String(saved?.licenseFilter ?? ""));
+  // Bounds-checked against the vocabulary the way getGalleryDefaultSort bounds-checks
+  // its index: this comes back from localStorage, possibly written by a build whose
+  // vocabulary has since changed, and an unknown id silently filters to zero images
+  // with no dropdown option showing why.
+  const [licenseFilter, setLicenseFilter] = useState(() => {
+    const restored = String(saved?.licenseFilter ?? "");
+    if (restored === MISSING_LICENSE || isKnownLicenseValue(restored)) return restored;
+    return "";
+  });
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
@@ -940,6 +948,7 @@ export default function GalleryPage() {
         </select>
 
         <select className="select" style={{ width: "auto" }} value={licenseFilter}
+          aria-label="Filter by license"
           onChange={(e) => { setLicenseFilter(e.target.value); resetPage(); }}>
           <option value="">All licenses</option>
           <option value={MISSING_LICENSE}>Missing license only</option>

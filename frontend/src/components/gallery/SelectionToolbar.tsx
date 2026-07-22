@@ -18,6 +18,7 @@ import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import SetProvenanceModal from "./SetProvenanceModal";
+import { invalidateProvenanceScope } from "../../constants/queryKeys";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -261,9 +262,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     mutationFn: (edit: ProvenanceEdit) =>
       imagesApi.bulkProvenance(datasetId, { imageIds: ids, ...edit }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["image"] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      // The whole provenance scope, not just this dataset: the selection can span
+      // datasets, and an open Export page previews license counts of its own.
+      invalidateProvenanceScope(qc);
       setShowProvenance(false);
       clear();
       toast.success(`Updated ${data.updated} image${data.updated !== 1 ? "s" : ""}`);

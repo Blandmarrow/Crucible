@@ -196,15 +196,6 @@ export interface ResolvedProvenance {
   inherited: string[];
 }
 
-export interface LicenseInfoOut {
-  id: string;
-  label: string;
-  allows_commercial: boolean | null;
-  requires_attribution: boolean;
-  share_alike: boolean;
-  url: string;
-}
-
 export interface CaptionData {
   image_id: string;
   caption_text: string;

@@ -215,19 +215,58 @@ def _row_out(row: ComfyRow) -> dict:
     }
 
 
-def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, gen_meta: dict | None) -> dict:
+def _workflow_checkpoints(workflow: dict | None) -> list[str]:
+    """Checkpoint names loaded by an API-format workflow, in node order.
+
+    Read from the workflow itself rather than from the PNG's embedded metadata:
+    ComfyUI's own output carries the whole prompt graph under `prompt`/`workflow`
+    and never a flat `checkpoint` key, so scanning `generation_metadata` for one
+    finds nothing for genuine ComfyUI images.
+    """
+    out: list[str] = []
+    for node in (workflow or {}).values():
+        if not isinstance(node, dict):
+            continue
+        if "checkpoint" not in str(node.get("class_type", "")).lower():
+            continue
+        name = (node.get("inputs") or {}).get("ckpt_name")
+        if isinstance(name, str) and name and name not in out:
+            out.append(name)
+    return out
+
+
+def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, workflow: dict | None) -> dict:
     """Provenance `source_meta` for an image imported from a ComfyUI run.
 
-    Records which plan/row produced it and the checkpoint it came from, so a
+    Records which plan/row produced it and the checkpoint(s) it came from, so a
     synthetic image can be traced back to its generator. Deliberately compact —
     the full workflow already lives in `generation_metadata`.
     """
     meta: dict = {"generator": "ComfyUI", "plan_id": plan.id, "plan_name": plan.name, "row_id": row.id}
-    for key in ("model", "checkpoint", "sampler"):
-        value = (gen_meta or {}).get(key)
-        if value:
-            meta[key] = value
+    checkpoints = _workflow_checkpoints(workflow)
+    if checkpoints:
+        meta["checkpoint"] = checkpoints[0] if len(checkpoints) == 1 else checkpoints
     return meta
+
+
+def _comfy_output_provenance(ds) -> dict:
+    """Provenance columns to stamp on images imported from a ComfyUI run.
+
+    All-or-nothing on purpose. ComfyUI output is self-created, but an img2img plan
+    over a licensed source dataset is *derived* from that source — so a dataset
+    that records a license default keeps ownership of the whole story and the
+    output inherits every field (returning `{}` leaves them NULL). Stamping only
+    `license`/`source_name` would instead mix a "synthetic" license onto an
+    inherited real-photographer credit, and would hide a CC-BY-NC source from the
+    commercial-use export filter.
+
+    Only when the dataset asserts no license do we record the run's own
+    provenance, and then all four fields together so `source_url`/`attribution`
+    cannot inherit and credit a photographer for an AI image.
+    """
+    if (getattr(ds, "license", None) or "").strip():
+        return {}
+    return {"license": "synthetic", "source_name": "ComfyUI", "source_url": "", "attribution": ""}
 
 
 async def _get_plan(db: AsyncSession, plan_id: str) -> ComfyPlan:
@@ -1194,7 +1233,11 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.services.caption_service import _write_txt_sidecar
-        from backend.services.dataset_service import _register_file_sync, refresh_stats
+        from backend.services.dataset_service import (
+            RegisteredFile,
+            _register_file_sync,
+            refresh_stats,
+        )
         from backend.workers.progress import broadcaster
 
         async with AsyncSessionLocal() as session:
@@ -1225,14 +1268,18 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             planned_thumb_stems: set[str] = set()
             stem_slug = slugify_filename(plan_row.name) or "comfy"
 
+            output_provenance = _comfy_output_provenance(ds)
+
             client = ComfyClient(comfy_url)
             loop = asyncio.get_running_loop()
             created_image_ids: list[str] = []
             failed_row_ids: list[str] = []
             consecutive_connect_errors = 0
 
-            def _write_and_register(data: bytes, dest: Path, thumb: str) -> tuple[dict, dict | None]:
+            def _write_and_register(data: bytes, dest: Path, thumb: str) -> RegisteredFile:
                 dest.write_bytes(data)
+                # `.provenance` is deliberately ignored: ComfyUI output has no
+                # sidecar/EXIF provenance worth capturing and sets its own below.
                 return _register_file_sync(dest, thumb)
 
             async def _emit(done: int, message: str, current: str = "") -> None:
@@ -1317,9 +1364,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         # dest is on disk (corrupt bytes → PIL error during register),
                         # and unlink(missing_ok=True) makes early tracking harmless.
                         row_files.extend((dest, Path(thumb_path)))
-                        info, gen_meta = await loop.run_in_executor(
+                        reg = await loop.run_in_executor(
                             None, _write_and_register, data, dest, thumb_path
                         )
+                        gen_meta = reg.gen_meta
                         img = Image(
                             dataset_id=ds.id,
                             filename=new_name,
@@ -1328,12 +1376,9 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,
-                            # Locally generated output: self-owned by construction,
-                            # so record it concretely rather than inheriting.
-                            license="synthetic",
-                            source_name="ComfyUI",
-                            source_meta=_comfy_source_meta(plan_row, row, gen_meta),
-                            **info,
+                            source_meta=_comfy_source_meta(plan_row, row, workflow),
+                            **output_provenance,
+                            **reg.info,
                         )
                         if set_caption:
                             caption = effective_prompt(workflow, pinned, row.values or {})
@@ -1376,7 +1421,13 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     except Exception:
                         pass  # best-effort; a second CancelledError propagates below
                     raise
-                except (ComfyRowError, httpx.HTTPError, OSError) as e:
+                except Exception as e:
+                    # Deliberately broad: an unexpected error (a refactor breaking a
+                    # helper's signature, a PIL failure, a DB error) must still run the
+                    # per-row cleanup below rather than orphan the files and Image rows
+                    # this row already wrote and leave the row wedged at "running".
+                    # CancelledError is handled above and re-raised; it is a
+                    # BaseException on 3.8+ so it never reaches here.
                     # Discard any images/files this row produced before it failed.
                     for img_obj in row_images:
                         await session.delete(img_obj)

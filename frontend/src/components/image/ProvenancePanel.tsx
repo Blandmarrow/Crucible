@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, ExternalLink, Pencil, ScrollText, X } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { imagesApi } from "../../api/images";
-import { INHERIT_SENTINEL, licenseInfo } from "../../constants/licenses";
+import { licenseInfo } from "../../constants/licenses";
+import { invalidateProvenanceScope } from "../../constants/queryKeys";
+import { safeExternalUrl } from "../../utils/url";
 import type { ImageDetail } from "../../types";
 import LicenseSelect from "../common/LicenseSelect";
 
@@ -28,52 +30,63 @@ const FIELDS = [
   { key: "attribution", label: "Attribution" },
 ] as const;
 
+/** The editable columns of an image, "" where the row is NULL (i.e. inheriting). */
+function draftOf(image: ImageDetail) {
+  return {
+    source_name: image.source_name ?? "",
+    source_url: image.source_url ?? "",
+    license: image.license ?? "",
+    attribution: image.attribution ?? "",
+  };
+}
+
 export default function ProvenancePanel({ image }: Props) {
   const [open, setOpen] = useState(true);
-  const [editing, setEditing] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
   const qc = useQueryClient();
 
   const resolved = image.provenance;
   const inherited = new Set(resolved?.inherited ?? []);
 
-  // Draft holds raw values: "" means "inherit", matching how the row is stored.
-  const [draft, setDraft] = useState({
-    source_name: image.source_name ?? "",
-    source_url: image.source_url ?? "",
-    license: image.license ?? "",
-    attribution: image.attribution ?? "",
-  });
+  // The draft is seeded when the editor opens and never re-synced from props while
+  // it is open. A sync effect here would discard whatever the user had typed every
+  // time a background refetch produced a new `image` object (a job finishing, a
+  // window focus) — and it is unnecessary, because the only moment the draft needs
+  // to match the row is the moment editing starts.
+  //
+  // Editing is tracked by image id rather than a boolean so navigating to another
+  // image closes the editor instead of showing the previous image's draft.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = editingId === image.id;
+  const [draft, setDraft] = useState(() => draftOf(image));
 
-  useEffect(() => {
-    setDraft({
-      source_name: image.source_name ?? "",
-      source_url: image.source_url ?? "",
-      license: image.license ?? "",
-      attribution: image.attribution ?? "",
-    });
-  }, [image.id, image.source_name, image.source_url, image.license, image.attribution]);
+  const startEditing = () => {
+    setDraft(draftOf(image));
+    setEditingId(image.id);
+  };
+  const setEditing = (on: boolean) => setEditingId(on ? image.id : null);
 
   const save = useMutation({
-    // An empty draft field means "clear the override" — send the sentinel, not
-    // "", so the backend can tell it apart from "leave unchanged".
+    // An empty draft field means "clear the override so this field inherits" —
+    // "" carries exactly that, and JSON null (an omitted key) means "unchanged".
     mutationFn: () =>
       imagesApi.setProvenance(image.id, {
-        source_name: draft.source_name || INHERIT_SENTINEL,
-        source_url: draft.source_url || INHERIT_SENTINEL,
-        license: draft.license || INHERIT_SENTINEL,
-        attribution: draft.attribution || INHERIT_SENTINEL,
+        source_name: draft.source_name,
+        source_url: draft.source_url,
+        license: draft.license,
+        attribution: draft.attribution,
       }),
     onSuccess: () => {
       setEditing(false);
-      qc.invalidateQueries({ queryKey: ["image", image.id] });
-      qc.invalidateQueries({ queryKey: ["images"] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats"] });
+      invalidateProvenanceScope(qc);
     },
     onError: () => toast.error("Saving source/license failed"),
   });
 
   const sourceMeta = resolved?.source_meta ?? image.source_meta;
+  const hasAnyProvenance = ["license", "source_name", "source_url", "attribution"].some(
+    (k) => resolved?.[k as keyof typeof resolved],
+  );
 
   return (
     <div className="border-t border-gray-700/50 mt-2 pt-2">
@@ -98,7 +111,7 @@ export default function ProvenancePanel({ image }: Props) {
                   </span>
                 )}
                 <button
-                  onClick={() => setEditing(true)}
+                  onClick={startEditing}
                   className="icon-btn ml-auto"
                   title="Edit source & license"
                   style={{ width: 20, height: 20 }}
@@ -117,9 +130,11 @@ export default function ProvenancePanel({ image }: Props) {
                         {label}
                         {inherited.has(key) && <span className="text-gray-600"> (inherited)</span>}
                       </span>
-                      {key === "source_url" ? (
+                      {/* A source URL is scraped/EXIF data — only http(s) becomes
+                          a link, anything else renders as inert text. */}
+                      {key === "source_url" && safeExternalUrl(value) ? (
                         <a
-                          href={value}
+                          href={safeExternalUrl(value)}
                           target="_blank"
                           rel="noreferrer noopener"
                           className="text-accent hover:underline truncate flex items-center gap-1"
@@ -136,7 +151,10 @@ export default function ProvenancePanel({ image }: Props) {
                 })}
               </div>
 
-              {!resolved?.license && !resolved?.source_name && (
+              {/* Only when *nothing* is recorded — the earlier check looked at
+                  license/source_name alone and so printed "No source recorded"
+                  directly above a populated Attribution or URL row. */}
+              {!hasAnyProvenance && (
                 <p className="text-gray-500">
                   No source recorded. Set a dataset default, or edit this image.
                 </p>
@@ -152,7 +170,8 @@ export default function ProvenancePanel({ image }: Props) {
                   value={draft.license}
                   onChange={(license) => setDraft({ ...draft, license })}
                   emptyLabel="Inherit from dataset"
-                  className="input w-full mt-0.5"
+                  className="select w-full mt-0.5"
+                  inputClassName="input w-full mt-0.5"
                 />
               </label>
               {FIELDS.map(({ key, label }) => (

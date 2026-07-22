@@ -1,6 +1,7 @@
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from backend.licenses import FIELD_MAX_LEN, normalize_license_input
 from backend.schemas import UtcDatetime
 from backend.schemas.detection import DetectionOut
 
@@ -175,41 +176,36 @@ class BulkCountRequest(BulkFilterBase):
     include_flagged: bool = False
 
 
-# Sentinel distinguishing "don't touch this field" (None) from "clear it so the
-# image inherits the dataset default" (INHERIT_SENTINEL). A bare "" cannot carry
-# both meanings, and bulk labeling needs to express each of them.
-INHERIT_SENTINEL = "__inherit__"
+class ProvenanceEdit(BaseModel):
+    """Provenance edit fields: None = leave unchanged, "" = clear to NULL (inherit
+    the dataset default), any other string = set that value.
+
+    JSON `null` and `""` already carry the two meanings a provenance edit needs, so
+    there is no sentinel string: an earlier `"__inherit__"` sentinel was treated
+    exactly like `""` by the router, which meant a source name of literally
+    `__inherit__` silently cleared itself.
+
+    Caps mirror the column widths (`licenses.FIELD_MAX_LEN`). `license` is capped by
+    a validator instead, because normalization can grow the value — see
+    `normalize_license_input`.
+    """
+    source_name: str | None = Field(None, max_length=FIELD_MAX_LEN["source_name"])
+    source_url: str | None = Field(None, max_length=FIELD_MAX_LEN["source_url"])
+    license: str | None = None
+    attribution: str | None = Field(None, max_length=FIELD_MAX_LEN["attribution"])
+
+    _norm_license = field_validator("license")(normalize_license_input)
 
 
-class BulkProvenanceRequest(BulkFilterBase):
-    """Set source/license on a selection. Each field: None = leave unchanged,
-    "__inherit__" = clear to NULL (inherit the dataset default), any other
-    string = set that value.
-
-    Caps mirror the column widths (see ProvenanceDefaults); INHERIT_SENTINEL is
-    11 chars and fits under every one of them."""
-    source_name: str | None = Field(None, max_length=255)
-    source_url: str | None = Field(None, max_length=1024)
-    license: str | None = Field(None, max_length=64)
-    attribution: str | None = None
+class BulkProvenanceRequest(BulkFilterBase, ProvenanceEdit):
+    """Set source/license on a selection — see ProvenanceEdit for the field semantics."""
+    include_flagged: bool = True
 
 
 class BulkProvenanceResult(BaseModel):
     updated: int
 
 
-class ImageProvenanceUpdate(BaseModel):
-    """Per-image provenance edit; same sentinel semantics and caps as the bulk form."""
-    source_name: str | None = Field(None, max_length=255)
-    source_url: str | None = Field(None, max_length=1024)
-    license: str | None = Field(None, max_length=64)
-    attribution: str | None = None
+class ImageProvenanceUpdate(ProvenanceEdit):
+    """Per-image provenance edit; same semantics and caps as the bulk form."""
 
-
-class LicenseOut(BaseModel):
-    id: str
-    label: str
-    allows_commercial: bool | None
-    requires_attribution: bool
-    share_alike: bool
-    url: str = ""

@@ -7,7 +7,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
 import { datasetsApi, type DatasetProvenance } from "../api/datasets";
-import ProvenanceFields, { EMPTY_PROVENANCE } from "../components/common/ProvenanceFields";
+import ProvenanceFields from "../components/common/ProvenanceFields";
+import { EMPTY_PROVENANCE } from "../constants/licenses";
+import { invalidateProvenanceScope } from "../constants/queryKeys";
 import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
@@ -486,7 +488,10 @@ export default function DatasetsPage() {
         ...renameProvenance,
       }),
     onSuccess: (ds) => {
-      qc.invalidateQueries({ queryKey: ["datasets"] });
+      // Not just ["datasets"]: the provenance defaults edited here are the
+      // effective source/license of every image that has not overridden them, so
+      // gallery badges, Stats and any open Export preview are all stale now.
+      invalidateProvenanceScope(qc);
       setRenameTarget(null);
       toast.success(`Updated "${ds.name}"`);
     },

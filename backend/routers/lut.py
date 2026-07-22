@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, select
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -66,7 +67,9 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Image).where(Image.id.in_(image_ids))
+                # undefer: a non-replace grade copies the parent's provenance,
+                # source_meta included, and a deferred lazy load would raise.
+                select(Image).where(Image.id.in_(image_ids)).options(undefer(Image.source_meta))
             )
             images = result.scalars().all()
             loop = asyncio.get_running_loop()

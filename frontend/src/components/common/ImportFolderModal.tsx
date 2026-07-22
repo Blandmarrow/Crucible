@@ -3,7 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import type { Dataset } from "../../types";
 import { datasetsApi, type DatasetProvenance } from "../../api/datasets";
-import ProvenanceFields, { EMPTY_PROVENANCE } from "./ProvenanceFields";
+import ProvenanceFields from "./ProvenanceFields";
+import { EMPTY_PROVENANCE } from "../../constants/licenses";
 import DirPickerModal from "./DirPickerModal";
 
 interface Props {

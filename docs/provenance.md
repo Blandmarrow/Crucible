@@ -12,7 +12,7 @@ Four fields travel with every image:
 |---|---|
 | **Source name** | Where it came from — `Danbooru`, `Unsplash`, `Client X` |
 | **Source URL** | Link back to the original post or page |
-| **License** | One entry from the vocabulary below, or your own free text — pick **Other (free text)…** in any license dropdown and type it (up to ~58 characters) |
+| **License** | One entry from the vocabulary below, or your own free text — pick **Other (free text)…** in any license *editor* and type it (up to ~58 characters) |
 | **Attribution** | Who to credit — `Photo by Jane Doe` |
 
 A fifth, **scrape metadata**, is captured automatically from scraper sidecars
@@ -63,13 +63,25 @@ dataset you moved it into.
 | Licensed for commercial use | Yes | No |
 | Research / non-commercial only | **No** | Yes |
 | Synthetic (AI-generated) | Yes | No |
+| No license granted | **No** | No |
 
 Anything outside this list is stored as free text and shown as-is. Choose
-**Other (free text)…** at the bottom of any license dropdown — on the image
+**Other (free text)…** at the bottom of any license *editor* — on the image
 detail page, in the dataset Edit modal, in the import dialog, or in the bulk
 **Set source/license** action — and a text box appears for you to type it
-(roughly 58 characters). A license Crucible doesn't recognise in a scraper
-sidecar's `license` field is kept the same way rather than dropped.
+(roughly 58 characters). The gallery's license *filter* has no such entry: it
+filters by the values that exist, so a free-text license is not one of its
+options. A license Crucible doesn't recognise in a scraper sidecar's `license`
+field is kept the same way rather than dropped.
+
+**"No license granted" is not the same as "Unknown", and neither is the same as
+blank.** Blank means *nothing recorded* — the image still inherits its dataset's
+default, and "Exclude unlicensed images" drops it. *Unknown* is a recorded answer
+meaning the rights could not be established; it is a real license value, so
+"Exclude unlicensed" does **not** drop it — only the commercial-use filter does.
+*No license granted* is the source explicitly reserving all rights ("all rights
+reserved" in a scraper sidecar maps here); it too is a recorded value, so it
+overrides the dataset default rather than inheriting past it.
 
 "Commercial use" filters are deliberately conservative: **unknown counts as no**.
 An image whose rights were never established must not slip into an export you
@@ -77,7 +89,7 @@ made specifically to be commercially safe.
 
 ## What gets captured automatically
 
-On folder import, each image is checked in this order — the first source that
+**Folder import** checks each image in this order — the first source that
 supplies a field wins:
 
 1. **Values you typed in the import dialog** — applied to every image in the run.
@@ -88,16 +100,30 @@ supplies a field wins:
    alternative key names are accepted for each field; the ones listed are just
    the common ones. The whole file is kept as scrape metadata, so nothing is
    lost.
-3. **The image's EXIF** — `Artist` and `Copyright` become the attribution.
-   Deliberately never the license: a copyright notice is a rights claim, not a
-   license id, and guessing one would put unverified images into the
-   commercial-use bucket.
+3. **Attribution embedded in the image** — EXIF `Artist`/`Copyright` on a JPEG,
+   or the `Author`/`Copyright` text chunks of a PNG. Deliberately never the
+   license: a copyright notice is a rights claim, not a license id, and guessing
+   one would put unverified images into the commercial-use bucket.
 
-Anything still unset stays empty and inherits the dataset default.
+Anything still unset stays empty and inherits the dataset default. A very long
+value from a sidecar is shortened to fit rather than failing the import.
+
+The other two ways images arrive capture less, because less is available:
+
+- **Rescan** (the Datasets page's rescan, and auto-rescan on open) reads the
+  sidecar and the embedded attribution — everything except the import dialog's
+  values, which it has no dialog to read.
+- **Drag-and-drop onto the gallery** reads only the embedded attribution. Your
+  browser uploads the image bytes and nothing else, so a scraper sidecar sitting
+  beside the file on disk is never seen. **Use folder import for scrape
+  folders** — dragging one in loses its provenance silently.
 
 Images generated on the **ComfyUI** page are recorded as `Synthetic
 (AI-generated)` from source `ComfyUI`, with the plan and checkpoint noted in
-scrape metadata.
+scrape metadata — but only when the target dataset has no license default of its
+own. If it does, the output inherits it instead: an img2img run over a CC BY-NC
+dataset is derived from that source, and calling the result "synthetic" would
+hide it from the commercial-use filter.
 
 Derived images — crops, upscales, LUT-graded copies, detection crops — carry
 their parent's source and license. A derivative of a CC BY-SA image is still
@@ -134,9 +160,16 @@ in all three formats (Kohya, AI Toolkit, plain):
   Attribution-required licenses come first, because those are the entries a
   redistributor has to act on.
 - **`licenses.csv`** — one row per exported file:
-  `file,source_name,source_url,license,attribution`. Both record the *resolved*
-  license, so an image that inherited its license from the dataset shows the
-  real value, not a blank.
+  `file,source_name,source_url,license,attribution`. The `file` column is
+  relative to the output directory, since images sit one level down.
+
+Both record the *resolved* license, so an image that inherited its license from
+the dataset shows the real value, not a blank. They are written even if you
+cancel an export partway — the entries then cover only the files that were
+actually written, and `CREDITS.md` says so at the top. If an earlier export left
+manifests in the same directory describing a different set of files, the new ones
+are written alongside as `CREDITS.2.md` / `licenses.2.csv` rather than replacing
+them.
 
 Three optional filters live in the Export page's filter panel:
 

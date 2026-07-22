@@ -1,15 +1,20 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from backend.licenses import FIELD_MAX_LEN, normalize_license_input
 from backend.schemas import UtcDatetime
 
 
 class ProvenanceDefaults(BaseModel):
     """Dataset-level provenance defaults. "" means unset; images with a NULL
     field of the same name inherit these (see backend/licenses.py)."""
-    source_name: str = Field("", max_length=255)
-    source_url: str = Field("", max_length=1024)
-    license: str = Field("", max_length=64)
-    attribution: str = ""
+    source_name: str = Field("", max_length=FIELD_MAX_LEN["source_name"])
+    source_url: str = Field("", max_length=FIELD_MAX_LEN["source_url"])
+    # No max_length: normalization adds the `other:` prefix after Pydantic would
+    # have checked, so the cap has to run after it — see normalize_license_input.
+    license: str = ""
+    attribution: str = Field("", max_length=FIELD_MAX_LEN["attribution"])
+
+    _norm_license = field_validator("license")(normalize_license_input)
 
 
 class DatasetCreate(ProvenanceDefaults):
@@ -23,10 +28,12 @@ class DatasetUpdate(BaseModel):
     description: str | None = None
     category: str | None = None
     # None = leave unchanged; "" = clear the default.
-    source_name: str | None = Field(None, max_length=255)
-    source_url: str | None = Field(None, max_length=1024)
-    license: str | None = Field(None, max_length=64)
-    attribution: str | None = None
+    source_name: str | None = Field(None, max_length=FIELD_MAX_LEN["source_name"])
+    source_url: str | None = Field(None, max_length=FIELD_MAX_LEN["source_url"])
+    license: str | None = None
+    attribution: str | None = Field(None, max_length=FIELD_MAX_LEN["attribution"])
+
+    _norm_license = field_validator("license")(normalize_license_input)
 
 
 class DatasetImport(BaseModel):

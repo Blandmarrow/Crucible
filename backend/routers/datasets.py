@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.licenses import normalize_license
 from backend.models import BackgroundJob, Dataset, Image
 from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
@@ -44,7 +43,7 @@ def _apply_provenance_defaults(ds: Dataset, body: DatasetUpdate) -> None:
     if body.source_url is not None:
         ds.source_url = body.source_url
     if body.license is not None:
-        ds.license = normalize_license(body.license)
+        ds.license = body.license  # normalized + length-checked by the schema validator
     if body.attribution is not None:
         ds.attribution = body.attribution
 
@@ -110,14 +109,16 @@ async def create(body: DatasetCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(Dataset).where(Dataset.name == body.name))
     if existing.scalar():
         raise HTTPException(400, f"Dataset '{body.name}' already exists")
-    ds = await create_dataset(db, body.name, body.description, body.category)
-    ds.source_name = body.source_name
-    ds.source_url = body.source_url
-    ds.license = normalize_license(body.license)
-    ds.attribution = body.attribution
-    await db.commit()
-    await db.refresh(ds)
-    return ds
+    # Provenance goes in with the row, not in a second commit — see create_dataset.
+    return await create_dataset(
+        db, body.name, body.description, body.category,
+        provenance={
+            "source_name": body.source_name,
+            "source_url": body.source_url,
+            "license": body.license,  # already normalized by the schema validator
+            "attribution": body.attribution,
+        },
+    )
 
 
 @router.get("/{dataset_id}", response_model=DatasetOut)
@@ -243,7 +244,7 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 provenance={
                     "source_name": body.source_name,
                     "source_url": body.source_url,
-                    "license": normalize_license(body.license),
+                    "license": body.license,  # normalized by the schema validator
                     "attribution": body.attribution,
                 },
             )

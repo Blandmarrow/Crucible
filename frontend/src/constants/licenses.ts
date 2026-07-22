@@ -1,6 +1,10 @@
 // Mirrors backend/licenses.py — the backend is the authority on which ids exist
-// and what each permits (GET /api/v1/licenses serves it); this file adds the
-// UI-only concerns (badge color, display order). Keep the id list in sync.
+// and what each permits; this file adds the UI-only concerns (badge color,
+// display order). The two id lists are kept in sync by
+// backend/tests/test_provenance.py::test_frontend_license_vocabulary_matches_backend,
+// which parses this file — add an entry here and there in the same change.
+
+import type { DatasetProvenance } from "../api/datasets";
 
 export interface LicenseOption {
   id: string;
@@ -26,6 +30,9 @@ export const LICENSE_OPTIONS: LicenseOption[] = [
   { id: "licensed-commercial", label: "Licensed for commercial use", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-green-600/30 text-green-300" },
   { id: "research-only", label: "Research / non-commercial only", allowsCommercial: false, requiresAttribution: true, shareAlike: false, badge: "bg-amber-600/30 text-amber-300" },
   { id: "synthetic", label: "Synthetic (AI-generated)", allowsCommercial: true, requiresAttribution: false, shareAlike: false, badge: "bg-purple-600/30 text-purple-300" },
+  // A recorded "nothing is granted", distinct from "" ("no license recorded") —
+  // an image with this does NOT inherit the dataset default.
+  { id: "no-license", label: "No license granted", allowsCommercial: false, requiresAttribution: false, shareAlike: false, badge: "bg-red-600/30 text-red-300" },
 ];
 
 export const OTHER_PREFIX = "other:";
@@ -48,9 +55,25 @@ export function licenseLabel(value: string | null | undefined): string {
   return licenseInfo(value).label;
 }
 
+/** True when `value` is empty, or an `other:` with nothing after the prefix. */
+export function isBlankLicense(value: string): boolean {
+  const v = value.trim();
+  if (!v) return true;
+  return v.toLowerCase().startsWith(OTHER_PREFIX) && !v.slice(OTHER_PREFIX.length).trim();
+}
+
 /**
- * Sentinel meaning "clear this field so the image inherits the dataset default".
- * Must match INHERIT_SENTINEL in backend/schemas/image.py — a bare "" cannot
- * distinguish "leave unchanged" from "clear to inherit".
+ * True when `value` is a license this build knows how to render: "" (not
+ * recorded), a vocabulary id, or an `other:` free-text value. Used to bound-check
+ * values restored from localStorage, which may have been written by an older
+ * build whose vocabulary has since changed.
  */
-export const INHERIT_SENTINEL = "__inherit__";
+export function isKnownLicenseValue(value: string): boolean {
+  const v = value.trim();
+  return !v || BY_ID.has(v) || v.toLowerCase().startsWith(OTHER_PREFIX);
+}
+
+/** All four dataset provenance fields, unset. */
+export const EMPTY_PROVENANCE: DatasetProvenance = {
+  source_name: "", source_url: "", license: "", attribution: "",
+};

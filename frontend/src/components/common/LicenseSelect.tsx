@@ -11,6 +11,9 @@ interface Props {
   className?: string;
   inputClassName?: string;
   style?: React.CSSProperties;
+  /** Pair with a `<label htmlFor>`. Callers without a visible label pass `ariaLabel`. */
+  id?: string;
+  ariaLabel?: string;
 }
 
 /**
@@ -23,10 +26,10 @@ interface Props {
  * — an existing `other:<text>` value selects the same option on the way back in.
  * Note a bare `other:` normalises to "" server-side (backend/licenses.py), so
  * callers that guard against accidentally clearing a field must treat it as blank
- * (see `isBlankLicense`).
+ * (see `isBlankLicense` in constants/licenses.ts).
  */
 export default function LicenseSelect({
-  value, onChange, emptyLabel, disabled, className, inputClassName, style,
+  value, onChange, emptyLabel, disabled, className, inputClassName, style, id, ariaLabel,
 }: Props) {
   const isOther = value.toLowerCase().startsWith(OTHER_PREFIX);
   const freeText = isOther ? value.slice(OTHER_PREFIX.length) : "";
@@ -34,6 +37,8 @@ export default function LicenseSelect({
   return (
     <>
       <select
+        id={id}
+        aria-label={ariaLabel}
         value={isOther ? OTHER_PREFIX : value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
@@ -63,9 +68,3 @@ export default function LicenseSelect({
   );
 }
 
-/** True when `value` is empty, or an `other:` with nothing after the prefix. */
-export function isBlankLicense(value: string): boolean {
-  const v = value.trim();
-  if (!v) return true;
-  return v.toLowerCase().startsWith(OTHER_PREFIX) && !v.slice(OTHER_PREFIX.length).trim();
-}

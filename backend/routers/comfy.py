@@ -215,6 +215,21 @@ def _row_out(row: ComfyRow) -> dict:
     }
 
 
+def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, gen_meta: dict | None) -> dict:
+    """Provenance `source_meta` for an image imported from a ComfyUI run.
+
+    Records which plan/row produced it and the checkpoint it came from, so a
+    synthetic image can be traced back to its generator. Deliberately compact —
+    the full workflow already lives in `generation_metadata`.
+    """
+    meta: dict = {"generator": "ComfyUI", "plan_id": plan.id, "plan_name": plan.name, "row_id": row.id}
+    for key in ("model", "checkpoint", "sampler"):
+        value = (gen_meta or {}).get(key)
+        if value:
+            meta[key] = value
+    return meta
+
+
 async def _get_plan(db: AsyncSession, plan_id: str) -> ComfyPlan:
     plan = await db.get(ComfyPlan, plan_id)
     if not plan:
@@ -1313,6 +1328,11 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,
+                            # Locally generated output: self-owned by construction,
+                            # so record it concretely rather than inheriting.
+                            license="synthetic",
+                            source_name="ComfyUI",
+                            source_meta=_comfy_source_meta(plan_row, row, gen_meta),
                             **info,
                         )
                         if set_caption:

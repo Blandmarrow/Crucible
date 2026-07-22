@@ -90,6 +90,14 @@ class VersionImageState(Base):
 
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Provenance mirror — must stay in step with the Image columns of the same
+    # name, or a snapshot restore silently wipes source/license information.
+    source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    license: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attribution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

@@ -8,6 +8,7 @@ import { captioningApi } from "../api/captioning";
 import {
   CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY,
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
+  GALLERY_LICENSE_BADGE_KEY, getGalleryLicenseBadge,
   CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
   CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_WORKFLOW_KEY, CAPTIONING_FILTERS_PREFIX,
@@ -152,6 +153,7 @@ export default function SettingsPage() {
   const [galleryDefaultQuality, setGalleryDefaultQuality] = useState(
     () => localStorage.getItem(GALLERY_DEFAULT_QUALITY_KEY) ?? ""
   );
+  const [galleryLicenseBadge, setGalleryLicenseBadge] = useState(getGalleryLicenseBadge);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -536,6 +538,21 @@ export default function SettingsPage() {
                     <option value="has_watermark">Watermarked</option>
                     <option value="is_duplicate">Duplicate</option>
                   </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <label style={{ fontSize: 12.5, minWidth: 140 }}>License badge on cards</label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+                    <input
+                      type="checkbox"
+                      checked={galleryLicenseBadge}
+                      onChange={(e) => {
+                        setGalleryLicenseBadge(e.target.checked);
+                        localStorage.setItem(GALLERY_LICENSE_BADGE_KEY, String(e.target.checked));
+                        toast.success("Preference saved");
+                      }}
+                    />
+                    Show each image's effective license on its gallery card
+                  </label>
                 </div>
               </div>
             </div>

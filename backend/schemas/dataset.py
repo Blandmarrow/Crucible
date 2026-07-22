@@ -3,7 +3,16 @@ from pydantic import BaseModel, Field
 from backend.schemas import UtcDatetime
 
 
-class DatasetCreate(BaseModel):
+class ProvenanceDefaults(BaseModel):
+    """Dataset-level provenance defaults. "" means unset; images with a NULL
+    field of the same name inherit these (see backend/licenses.py)."""
+    source_name: str = Field("", max_length=255)
+    source_url: str = Field("", max_length=1024)
+    license: str = Field("", max_length=64)
+    attribution: str = ""
+
+
+class DatasetCreate(ProvenanceDefaults):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     category: str = ""
@@ -13,13 +22,20 @@ class DatasetUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     category: str | None = None
+    # None = leave unchanged; "" = clear the default.
+    source_name: str | None = Field(None, max_length=255)
+    source_url: str | None = Field(None, max_length=1024)
+    license: str | None = Field(None, max_length=64)
+    attribution: str | None = None
 
 
 class DatasetImport(BaseModel):
     folder_path: str
 
 
-class DatasetImportWithOptions(BaseModel):
+class DatasetImportWithOptions(ProvenanceDefaults):
+    """Import options. The provenance fields apply to every imported image and
+    take precedence over sidecar/EXIF capture."""
     folder_path: str
     subfolder: str = ""
     preserve_structure: bool = False
@@ -61,6 +77,10 @@ class DatasetOut(BaseModel):
     total_size_bytes: int
     preview_image_ids: list[str] = []
     current_branch_id: str | None = None
+    source_name: str = ""
+    source_url: str = ""
+    license: str = ""
+    attribution: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -94,6 +114,9 @@ class DatasetStats(BaseModel):
     style_similarity_distribution: dict[str, int] = {}
     quality_flag_counts: dict[str, int] = {}
     score_coverage: dict[str, int] = {}
+    # Effective license (image value coalesced over the dataset default) → count.
+    # "" is the bucket for images with no license recorded anywhere.
+    license_breakdown: dict[str, int] = {}
 
 
 class TagCooccurrence(BaseModel):

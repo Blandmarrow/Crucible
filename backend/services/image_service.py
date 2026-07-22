@@ -181,6 +181,112 @@ def extract_generation_metadata(path: str) -> dict | None:
     return None
 
 
+# --- Source & license provenance capture -----------------------------------
+#
+# Both helpers return a dict of Image provenance columns (or None), and are
+# called from the ingest executor hop — never on the event loop. Values are
+# only ever used to fill fields the caller has not already set: request-supplied
+# provenance wins, then the sidecar, then EXIF (see _ingest_file_sync).
+
+_EXIF_ARTIST = 315
+_EXIF_COPYRIGHT = 33432
+
+
+def extract_iptc_provenance(path: str) -> dict | None:
+    """Read EXIF Artist (315) / Copyright (33432) into an `attribution` string.
+
+    Deliberately never sets `license`: a copyright notice is a rights *assertion*,
+    not a license id, and guessing one would put unverified images into the
+    commercial-use bucket. Returns None when neither tag is present.
+    """
+    try:
+        with Image.open(path) as img:
+            exif = img.getexif() or {}
+    except Exception:
+        return None
+
+    def _clean(v) -> str:
+        if isinstance(v, bytes):
+            v = v.decode("utf-8", errors="replace")
+        return str(v).replace("\x00", "").strip() if v else ""
+
+    artist = _clean(exif.get(_EXIF_ARTIST))
+    copyright_ = _clean(exif.get(_EXIF_COPYRIGHT))
+    parts = [p for p in (artist, copyright_) if p]
+    if not parts:
+        return None
+    return {"attribution": " — ".join(dict.fromkeys(parts))}
+
+
+# gallery-dl / Grabber sidecar keys, in precedence order per target field.
+_SIDECAR_KEYS: dict[str, tuple[str, ...]] = {
+    "source_url": ("post_url", "page_url", "file_url", "url", "source"),
+    "attribution": ("author", "uploader", "artist", "creator", "owner", "user"),
+    "license": ("license", "license_name", "rights"),
+}
+# Keys that identify the site rather than the post.
+_SOURCE_NAME_KEYS = ("category", "site", "service", "subcategory")
+
+
+def _sidecar_str(payload: dict, keys: tuple[str, ...]) -> str:
+    """First non-empty value among `keys`; dicts are probed for a name-ish field."""
+    for k in keys:
+        v = payload.get(k)
+        if isinstance(v, dict):  # gallery-dl nests {"user": {"name": ...}}
+            v = v.get("name") or v.get("username") or v.get("title") or ""
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            v = str(v)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def read_provenance_sidecar(image_path: Path | str) -> dict | None:
+    """Read a scraper sidecar (gallery-dl style) into provenance fields.
+
+    Both layouts are accepted, in this order: `pic.png.json` (filename + `.json`,
+    what gallery-dl's metadata postprocessor writes by default) and `pic.json`
+    (extension replaced). Checking only one silently skips half the real-world
+    scrape folders.
+
+    Known keys map onto source_name/source_url/attribution/license; the whole raw
+    payload is kept under `source_meta` so nothing in the long tail (post id,
+    scrape date, tags) is lost. Unparseable or non-object JSON returns None
+    rather than raising — a bad sidecar must never fail an import.
+    """
+    from backend.licenses import normalize_license
+
+    src = Path(image_path)
+    side = next(
+        (p for p in (src.with_name(src.name + ".json"), src.with_suffix(".json")) if p.exists()),
+        None,
+    )
+    if side is None:
+        return None
+    try:
+        payload = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    out: dict = {}
+    source_name = _sidecar_str(payload, _SOURCE_NAME_KEYS)
+    if source_name:
+        out["source_name"] = source_name
+    for field, keys in _SIDECAR_KEYS.items():
+        value = _sidecar_str(payload, keys)
+        if value:
+            out[field] = value
+    if "license" in out:
+        # Unrecognised strings survive as other:<raw> instead of being dropped.
+        out["license"] = normalize_license(out["license"])
+        if not out["license"]:
+            del out["license"]
+    out["source_meta"] = payload
+    return out
+
+
 def get_image_info(path: str) -> dict:
     import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
 

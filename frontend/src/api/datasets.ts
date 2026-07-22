@@ -16,13 +16,24 @@ export interface ScoreValues {
   caption_tokens: number[];
 }
 
+/** The four dataset-level provenance defaults; "" means unset. */
+export interface DatasetProvenance {
+  source_name: string;
+  source_url: string;
+  license: string;
+  attribution: string;
+}
+
 export const datasetsApi = {
   list: () => client.get<Dataset[]>("/datasets/").then((r) => r.data),
   get: (id: string) => client.get<Dataset>(`/datasets/${id}`).then((r) => r.data),
-  create: (name: string, description = "", category = "") =>
-    client.post<Dataset>("/datasets/", { name, description, category }).then((r) => r.data),
-  update: (id: string, data: { name?: string; description?: string; category?: string }) =>
-    client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
+  create: (name: string, description = "", category = "", provenance?: DatasetProvenance) =>
+    client.post<Dataset>("/datasets/", { name, description, category, ...provenance }).then((r) => r.data),
+  update: (
+    id: string,
+    // Provenance fields: omit to leave unchanged, "" to clear the default.
+    data: { name?: string; description?: string; category?: string } & Partial<DatasetProvenance>,
+  ) => client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
   duplicate: (id: string, newName: string, sourceVersionId?: string) =>
     client
@@ -31,8 +42,13 @@ export const datasetsApi = {
         source_version_id: sourceVersionId ?? null,
       })
       .then((r) => r.data),
-  importFolder: (id: string, folder_path: string, subfolder = "", preserve_structure = false, import_captions = true) =>
-    client.post<{ job_id: string }>(`/datasets/${id}/import`, { folder_path, subfolder, preserve_structure, import_captions }).then((r) => r.data),
+  importFolder: (
+    id: string, folder_path: string, subfolder = "", preserve_structure = false,
+    import_captions = true, provenance?: DatasetProvenance,
+  ) =>
+    client.post<{ job_id: string }>(`/datasets/${id}/import`, {
+      folder_path, subfolder, preserve_structure, import_captions, ...provenance,
+    }).then((r) => r.data),
   rescan: (id: string, import_captions = true) =>
     client.post<{ job_id: string }>(`/datasets/${id}/rescan`, { import_captions }).then((r) => r.data),
   importCaptions: (id: string, folder_path: string) =>

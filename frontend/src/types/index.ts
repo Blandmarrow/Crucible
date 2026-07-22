@@ -59,6 +59,11 @@ export interface Dataset {
   total_size_bytes: number;
   preview_image_ids: string[];
   current_branch_id: string | null;
+  /** Provenance defaults inherited by images whose own field is unset. */
+  source_name: string;
+  source_url: string;
+  license: string;
+  attribution: string;
 }
 
 export interface DatasetStats {
@@ -89,6 +94,8 @@ export interface DatasetStats {
   style_similarity_distribution: Record<string, number>;
   quality_flag_counts: Record<string, number>;
   score_coverage: Record<string, number>;
+  /** Effective license id -> count; "" = no license recorded at either level. */
+  license_breakdown: Record<string, number>;
 }
 
 export interface TagCooccurrence {
@@ -125,6 +132,12 @@ export interface ImageListItem {
   is_auto_named: boolean;
   sort_order: number | null;
   updated_at: string;
+  /**
+   * List endpoint: the *effective* license (own value coalesced over the
+   * dataset default). Detail endpoint: the *raw* stored value, where null
+   * means inherited — read `provenance` there for the resolved view.
+   */
+  license: string | null;
 }
 
 export interface GenerationMetadata {
@@ -165,6 +178,31 @@ export interface ImageDetail extends ImageListItem {
   generation_metadata?: GenerationMetadata | null;
   has_dino_layer_embeddings: boolean;
   detections: Detection[];
+  /** Raw provenance as stored — null/"" means the field is inherited. */
+  source_name: string | null;
+  source_url: string | null;
+  attribution: string | null;
+  source_meta: Record<string, unknown> | null;
+  /** Resolved view; `inherited` lists which fields came from the dataset. */
+  provenance: ResolvedProvenance | null;
+}
+
+export interface ResolvedProvenance {
+  source_name: string;
+  source_url: string;
+  license: string;
+  attribution: string;
+  source_meta: Record<string, unknown> | null;
+  inherited: string[];
+}
+
+export interface LicenseInfoOut {
+  id: string;
+  label: string;
+  allows_commercial: boolean | null;
+  requires_attribution: boolean;
+  share_alike: boolean;
+  url: string;
 }
 
 export interface CaptionData {

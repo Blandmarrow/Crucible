@@ -39,6 +39,18 @@ class ImageOut(BaseModel):
     updated_at: UtcDatetime
     detections: list[DetectionOut] = []
 
+    # Raw provenance as stored: NULL/"" means the value is inherited from the
+    # dataset. Sent alongside `provenance` (the resolved view) so the UI can
+    # distinguish "inherited from dataset" from "overridden on this image".
+    source_name: str | None = None
+    source_url: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+    source_meta: dict | None = None
+    # Resolved values + an `inherited` list of field names — see
+    # backend.licenses.resolve_provenance. Populated by the router.
+    provenance: dict | None = None
+
     model_config = {"from_attributes": True}
 
 
@@ -66,6 +78,11 @@ class ImageListItem(BaseModel):
     is_auto_named: bool = False
     sort_order: int | None = None
     updated_at: UtcDatetime
+    # Effective license (own value coalesced over the dataset default), for the
+    # gallery badge. Nullable because validation reads the *raw* Image.license,
+    # which is NULL whenever the image inherits; the router overwrites it with
+    # the resolved value before responding. "" when neither level records one.
+    license: str | None = ""
 
     model_config = {"from_attributes": True}
 
@@ -156,3 +173,40 @@ class BulkDeleteRequest(BulkFilterBase):
 
 class BulkCountRequest(BulkFilterBase):
     include_flagged: bool = False
+
+
+# Sentinel distinguishing "don't touch this field" (None) from "clear it so the
+# image inherits the dataset default" (INHERIT_SENTINEL). A bare "" cannot carry
+# both meanings, and bulk labeling needs to express each of them.
+INHERIT_SENTINEL = "__inherit__"
+
+
+class BulkProvenanceRequest(BulkFilterBase):
+    """Set source/license on a selection. Each field: None = leave unchanged,
+    "__inherit__" = clear to NULL (inherit the dataset default), any other
+    string = set that value."""
+    source_name: str | None = None
+    source_url: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+
+
+class BulkProvenanceResult(BaseModel):
+    updated: int
+
+
+class ImageProvenanceUpdate(BaseModel):
+    """Per-image provenance edit; same sentinel semantics as the bulk form."""
+    source_name: str | None = None
+    source_url: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+
+
+class LicenseOut(BaseModel):
+    id: str
+    label: str
+    allows_commercial: bool | None
+    requires_attribution: bool
+    share_alike: bool
+    url: str = ""

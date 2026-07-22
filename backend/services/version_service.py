@@ -393,6 +393,11 @@ async def create_snapshot(
             style_similarity_score=img.style_similarity_score,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
+            source_name=img.source_name,
+            source_url=img.source_url,
+            license=img.license,
+            attribution=img.attribution,
+            source_meta=img.source_meta,
             processing_history=img.processing_history,
             sort_order=img.sort_order,
             is_present=True,
@@ -453,6 +458,10 @@ _DIFF_COLS = (
     VersionImageState.style_similarity_score,
     VersionImageState.dino_layer_scores,
     VersionImageState.generation_metadata,
+    VersionImageState.source_name,
+    VersionImageState.source_url,
+    VersionImageState.license,
+    VersionImageState.attribution,
     VersionImageState.sort_order,
     VersionImageState.processing_history,
 )
@@ -512,6 +521,7 @@ async def diff_versions(
                       "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
                       "watermark_score", "color_score", "style_similarity_score",
                       "dino_layer_scores", "generation_metadata", "processing_history",
+                      "source_name", "source_url", "license", "attribution",
                       "sort_order"):
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
@@ -828,6 +838,11 @@ async def restore_snapshot(
         img.style_similarity_score = state.style_similarity_score
         img.dino_layer_scores = state.dino_layer_scores
         img.generation_metadata = state.generation_metadata
+        img.source_name = state.source_name
+        img.source_url = state.source_url
+        img.license = state.license
+        img.attribution = state.attribution
+        img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.sort_order = state.sort_order
         if state.width:

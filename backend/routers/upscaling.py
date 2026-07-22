@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
+from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
@@ -183,6 +184,8 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         height=info["height"],
                         file_size_bytes=info["file_size_bytes"],
                         format=info["format"],
+                        # An upscaled derivative keeps its parent's source/license.
+                        **copy_provenance(img),
                     )
                     session.add(new_img)
                     await session.flush()

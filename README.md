@@ -28,7 +28,7 @@ Every step from raw images to a training-ready export, in order:
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/editing.md)
 6. **Version** — capture named snapshots and branches, and restore any prior state → [details](docs/versioning.md)
-7. **Export** — output to Kohya, AI Toolkit, or plain folder format — ready to train Stable Diffusion, SDXL, Flux, and more — with per-export filtering and resizing → [details](docs/export.md)
+7. **Export** — output to Kohya, AI Toolkit, or plain folder format — ready to train Stable Diffusion, SDXL, Flux, and more — with per-export filtering, resizing, and `CREDITS.md` / `licenses.csv` attribution manifests → [details](docs/export.md)
 
 ---
 
@@ -64,6 +64,7 @@ Every step from raw images to a training-ready export, in order:
 ### Versioning & export
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
+- **Track source & license** per image and per dataset — captured automatically from scraper sidecars and EXIF, filterable in the gallery and at export, written out as `CREDITS.md` / `licenses.csv` → [details](docs/provenance.md)
 
 ### Workspace & tooling
 - **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
@@ -277,6 +278,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Tag Consolidation | [docs/tag-consolidation.md](docs/tag-consolidation.md) |
 | Statistics Dashboard | [docs/statistics.md](docs/statistics.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
+| Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
 | Export | [docs/export.md](docs/export.md) |
 | Settings | [docs/settings.md](docs/settings.md) |
 | Workspace — jobs, server control, split view, logs | [docs/workspace.md](docs/workspace.md) |

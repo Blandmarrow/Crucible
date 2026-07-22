@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import normalize_license
 from backend.models import BackgroundJob, Dataset, Image
 from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
@@ -29,6 +30,23 @@ from backend.services.dataset_service import (
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+
+def _apply_provenance_defaults(ds: Dataset, body: DatasetUpdate) -> None:
+    """Apply the dataset-level provenance defaults from a PATCH body.
+
+    None leaves a field alone; "" clears it. Editing these retroactively changes
+    every image that has not overridden the field — that is the intended
+    inheritance behaviour, not a bug.
+    """
+    if body.source_name is not None:
+        ds.source_name = body.source_name
+    if body.source_url is not None:
+        ds.source_url = body.source_url
+    if body.license is not None:
+        ds.license = normalize_license(body.license)
+    if body.attribution is not None:
+        ds.attribution = body.attribution
 
 
 @router.get("/", response_model=list[DatasetOut])
@@ -78,6 +96,10 @@ async def list_datasets(
             total_size_bytes=ds.total_size_bytes,
             preview_image_ids=previews[ds.id],
             current_branch_id=ds.current_branch_id,
+            source_name=ds.source_name,
+            source_url=ds.source_url,
+            license=ds.license,
+            attribution=ds.attribution,
         )
         for ds in datasets
     ]
@@ -88,7 +110,14 @@ async def create(body: DatasetCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(Dataset).where(Dataset.name == body.name))
     if existing.scalar():
         raise HTTPException(400, f"Dataset '{body.name}' already exists")
-    return await create_dataset(db, body.name, body.description, body.category)
+    ds = await create_dataset(db, body.name, body.description, body.category)
+    ds.source_name = body.source_name
+    ds.source_url = body.source_url
+    ds.license = normalize_license(body.license)
+    ds.attribution = body.attribution
+    await db.commit()
+    await db.refresh(ds)
+    return ds
 
 
 @router.get("/{dataset_id}", response_model=DatasetOut)
@@ -110,17 +139,19 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         if conflict.scalar():
             raise HTTPException(400, f"Dataset '{body.name}' already exists")
         ds = await rename_dataset(db, ds, body.name, body.description)
-        # Apply category update after rename (rename already committed)
+        # Apply category + provenance updates after rename (rename already committed)
         if body.category is not None:
             ds.category = body.category
-            await db.commit()
-            await db.refresh(ds)
+        _apply_provenance_defaults(ds, body)
+        await db.commit()
+        await db.refresh(ds)
         return ds
 
     if body.description is not None:
         ds.description = body.description
     if body.category is not None:
         ds.category = body.category
+    _apply_provenance_defaults(ds, body)
     await db.commit()
     await db.refresh(ds)
     return ds
@@ -209,6 +240,12 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
                 import_captions=body.import_captions,
+                provenance={
+                    "source_name": body.source_name,
+                    "source_url": body.source_url,
+                    "license": normalize_license(body.license),
+                    "attribution": body.attribution,
+                },
             )
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import type { Dataset } from "../../types";
-import { datasetsApi } from "../../api/datasets";
+import { datasetsApi, type DatasetProvenance } from "../../api/datasets";
+import ProvenanceFields, { EMPTY_PROVENANCE } from "./ProvenanceFields";
 import DirPickerModal from "./DirPickerModal";
 
 interface Props {
@@ -21,6 +22,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const [subfolder, setSubfolder] = useState("");
   const [preserveStructure, setPreserveStructure] = useState(false);
   const [importCaptions, setImportCaptions] = useState(true);
+  const [provenance, setProvenance] = useState<DatasetProvenance>(EMPTY_PROVENANCE);
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
   const [showSubfolders, setShowSubfolders] = useState(false);
 
@@ -35,7 +37,8 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const subfolderPaths = subfolders.map((s) => s.path).filter(Boolean).sort();
 
   const importMutation = useMutation({
-    mutationFn: () => datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions),
+    mutationFn: () =>
+      datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions, provenance),
     onSuccess: (data) => {
       toast.success("Import started");
       onStarted(data.job_id);
@@ -148,6 +151,13 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
             />
             <span style={{ fontSize: 13 }}>Import captions (.txt sidecars)</span>
           </label>
+          <div style={{ marginBottom: 18 }}>
+            <ProvenanceFields
+              value={provenance}
+              onChange={setProvenance}
+              note="Applied to every imported image, overriding anything read from a {stem}.json scraper sidecar or the file's EXIF. Leave blank to use those, then the dataset default."
+            />
+          </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn ghost" onClick={onClose}>Cancel</button>
             <button className="btn primary" onClick={() => importMutation.mutate()} disabled={!path || !targetId || importMutation.isPending}>Import</button>

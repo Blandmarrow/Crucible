@@ -8,7 +8,8 @@ from PIL import Image as PilImage, ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import Image
+from backend.licenses import allows_commercial, license_info, license_label, resolve_provenance
+from backend.models import Dataset, Image
 from backend.models.detection import Detection
 from backend.utils import chunked
 from backend.workers.job_queue import job_queue
@@ -23,6 +24,12 @@ _EXPORT_COLS = (
     Image.aesthetic_score,
     Image.quality_flags,
     Image.style_similarity_score,
+    # Provenance: resolved against the parent Dataset (fetched once, by the
+    # dataset_id the loop is called with) for the manifests and license filters.
+    Image.source_name,
+    Image.source_url,
+    Image.license,
+    Image.attribution,
 )
 
 
@@ -36,6 +43,10 @@ def _is_excluded(
     captioned_only: bool,
     exclude_flags: list[str],
     style_sim_min: float | None,
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
+    effective_license: str = "",
 ) -> bool:
     if aesthetic_min is not None and (img.aesthetic_score is None or img.aesthetic_score < aesthetic_min):
         return True
@@ -46,6 +57,17 @@ def _is_excluded(
         if any(flags.get(f) for f in exclude_flags):
             return True
     if style_sim_min is not None and (img.style_similarity_score is None or img.style_similarity_score < style_sim_min):
+        return True
+    # License filters run on the *effective* license (image over dataset default).
+    # commercial_only is conservative: unknown rights are treated as "no".
+    # exclude_unlicensed is separate from license_filter on purpose: the filter is
+    # an allowlist of known ids, so using it to express "has any license" would
+    # also drop every `other:<free text>` license, which *is* a recorded license.
+    if exclude_unlicensed and not effective_license:
+        return True
+    if license_filter and effective_license not in license_filter:
+        return True
+    if commercial_only and not allows_commercial(effective_license):
         return True
     return False
 
@@ -201,6 +223,70 @@ async def _fetch_detections_by_image(
     return include_by_image, exclude_by_image
 
 
+def _write_credits(dest_dir: Path, credits: list[dict]) -> None:
+    """Write CREDITS.md + licenses.csv for an export.
+
+    Always written (even when nothing carries a license) so a published dataset
+    always ships an attribution file — a missing one reads as "no attribution
+    needed", which is exactly the claim we can't make. Attribution-required
+    licenses are listed first because those are the entries a redistributor must
+    act on.
+    """
+    import csv
+
+    by_license: dict[str, list[dict]] = {}
+    for row in credits:
+        by_license.setdefault(row["license"], []).append(row)
+
+    def _sort_key(item):
+        lic, _rows = item
+        info = license_info(lic)
+        # attribution-required first, then unlicensed, then the rest
+        return (0 if info.requires_attribution else (1 if not lic else 2), lic)
+
+    lines = ["# Credits", ""]
+    total = len(credits)
+    unlicensed = sum(1 for r in credits if not r["license"])
+    lines.append(f"{total} image(s) exported; {unlicensed} with no license recorded.")
+    lines.append("")
+    for lic, rows in sorted(by_license.items(), key=_sort_key):
+        info = license_info(lic)
+        heading = license_label(lic) if lic else "No license recorded"
+        note = " — attribution required" if info.requires_attribution else ""
+        lines.append(f"## {heading}{note} ({len(rows)} image(s))")
+        if info.url:
+            lines.append(f"<{info.url}>")
+        lines.append("")
+        by_source: dict[str, list[dict]] = {}
+        for row in rows:
+            by_source.setdefault(row["source_name"] or "Unknown source", []).append(row)
+        for source, srows in sorted(by_source.items()):
+            url = next((r["source_url"] for r in srows if r["source_url"]), "")
+            lines.append(f"- **{source}**{f' — <{url}>' if url else ''} ({len(srows)} image(s))")
+            for attribution in sorted({r["attribution"] for r in srows if r["attribution"]}):
+                lines.append(f"  - {attribution}")
+        lines.append("")
+    (dest_dir / "CREDITS.md").write_text("\n".join(lines), encoding="utf-8")
+
+    with (dest_dir / "licenses.csv").open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["file", "source_name", "source_url", "license", "attribution"])
+        for row in credits:
+            writer.writerow([
+                row["file"], row["source_name"], row["source_url"],
+                row["license"], row["attribution"],
+            ])
+
+
+async def _dataset_defaults(db: AsyncSession, dataset_id: str):
+    """Fetch the parent dataset's provenance defaults once, for inheritance."""
+    return (await db.execute(
+        select(
+            Dataset.source_name, Dataset.source_url, Dataset.license, Dataset.attribution
+        ).where(Dataset.id == dataset_id)
+    )).one_or_none()
+
+
 async def _run_export_loop(
     db: AsyncSession,
     dataset_id: str,
@@ -225,12 +311,17 @@ async def _run_export_loop(
     mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
+    manifest_dir: Path | None = None,
 ) -> dict:
     """
     Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
     'jsonl_entries' and 'csv_rows' when accumulate_plain=True. When mask_dir is set
     (and captions_only is not), a grayscale loss-mask PNG is written per exported
-    image and the mask counters are included in the result.
+    image and the mask counters are included in the result. CREDITS.md and
+    licenses.csv are written into manifest_dir (defaulting to dest_dir).
     """
     from backend.workers.progress import broadcaster
 
@@ -251,7 +342,10 @@ async def _run_export_loop(
             db, [img.id for img in images], mask_labels, mask_exclude_labels
         )
 
+    ds_defaults = await _dataset_defaults(db, dataset_id)
+
     jsonl_entries: list[dict] = []
+    credits: list[dict] = []
     used_stems: set[str] = set()
     exported = 0
     masks_written = 0
@@ -264,7 +358,11 @@ async def _run_export_loop(
         src = Path(img.file_path)
         if not captions_only and not src.exists():
             continue
-        if _is_excluded(img, aesthetic_min, captioned_only, exclude_flags, style_sim_min):
+        prov = resolve_provenance(img, ds_defaults)
+        if _is_excluded(
+            img, aesthetic_min, captioned_only, exclude_flags, style_sim_min,
+            license_filter, commercial_only, exclude_unlicensed, prov["license"],
+        ):
             continue
         if export_masks and mask_missing == "skip" and not detections_by_image.get(img.id):
             excluded_no_mask += 1
@@ -301,6 +399,13 @@ async def _run_export_loop(
         else:
             _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
 
+        credits.append({
+            "file": dest_img.name,
+            "source_name": prov["source_name"],
+            "source_url": prov["source_url"],
+            "license": prov["license"],
+            "attribution": prov["attribution"],
+        })
         exported += 1
 
         if job_id and i % 5 == 0:
@@ -311,9 +416,16 @@ async def _run_export_loop(
                 "current_item": img.filename, "message": f"Exporting {img.filename}",
             })
 
+    manifest_target = manifest_dir or dest_dir
+    manifest_target.mkdir(parents=True, exist_ok=True)
+    await asyncio.get_event_loop().run_in_executor(
+        None, _write_credits, manifest_target, credits
+    )
+
     loop_result: dict = {
         "exported": exported,
         "jsonl_entries": jsonl_entries,
+        "unlicensed_count": sum(1 for c in credits if not c["license"]),
     }
     if export_masks:
         loop_result["masks_written"] = masks_written
@@ -358,6 +470,9 @@ async def export_kohya(
     mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -375,6 +490,9 @@ async def export_kohya(
         captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
+        license_filter=license_filter, commercial_only=commercial_only,
+        exclude_unlicensed=exclude_unlicensed,
+        manifest_dir=Path(output_dir),
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -386,6 +504,7 @@ async def export_kohya(
     result = {"exported": loop_result["exported"], "output_dir": str(dest)}
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
+    result["unlicensed_count"] = loop_result["unlicensed_count"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -412,6 +531,9 @@ async def export_aitoolkit(
     mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -429,6 +551,9 @@ async def export_aitoolkit(
         captions_only=captions_only, mask_dir=mask_dir, mask_labels=mask_labels,
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
+        license_filter=license_filter, commercial_only=commercial_only,
+        exclude_unlicensed=exclude_unlicensed,
+        manifest_dir=Path(output_dir),
     )
 
     if caption_format == "jsonl" and loop_result["jsonl_entries"]:
@@ -440,6 +565,7 @@ async def export_aitoolkit(
     result = {"exported": loop_result["exported"], "output_dir": str(dest)}
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
+    result["unlicensed_count"] = loop_result["unlicensed_count"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -464,6 +590,9 @@ async def export_plain(
     mask_exclude_labels: list[str] | None = None,
     mask_invert: bool = False,
     mask_missing: str = "white",
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -483,6 +612,9 @@ async def export_plain(
         mask_dir=mask_dir, mask_labels=mask_labels,
         mask_exclude_labels=mask_exclude_labels,
         mask_invert=mask_invert, mask_missing=mask_missing,
+        license_filter=license_filter, commercial_only=commercial_only,
+        exclude_unlicensed=exclude_unlicensed,
+        manifest_dir=Path(output_dir),
     )
 
     jsonl_path = Path(output_dir) / "captions.jsonl"
@@ -493,6 +625,7 @@ async def export_plain(
     result = {"exported": loop_result["exported"], "output_dir": output_dir}
     if mask_dir is not None:
         result["mask_dir"] = str(mask_dir)
+    result["unlicensed_count"] = loop_result["unlicensed_count"]
     result.update({k: loop_result[k] for k in _MASK_RESULT_KEYS if k in loop_result})
     return result
 
@@ -509,12 +642,16 @@ async def preview_export(
     mask_labels: list[str] | None = None,
     mask_exclude_labels: list[str] | None = None,
     mask_missing: str = "white",
+    license_filter: list[str] | None = None,
+    commercial_only: bool = False,
+    exclude_unlicensed: bool = False,
 ) -> dict:
     exclude_flags = exclude_flags or []
 
     query = select(
         Image.id, Image.filename, Image.caption_text,
         Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
+        Image.source_name, Image.source_url, Image.license, Image.attribution,
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
         query = query.where(Image.subfolder.in_(subfolders))
@@ -546,8 +683,13 @@ async def preview_export(
             det_result = await db.execute(det_query)
             ids_with_detections = {r.image_id for r in det_result.all()}
 
+    ds_defaults = await _dataset_defaults(db, dataset_id)
+
     total = len(rows)
     will_export = 0
+    excl_license = 0
+    unlicensed = 0
+    license_counts: dict[str, int] = {}
     excl_aesthetic = 0
     excl_uncaptioned = 0
     excl_flagged = 0
@@ -561,6 +703,19 @@ async def preview_export(
         flagged = bool(exclude_flags) and any((r.quality_flags or {}).get(f) for f in exclude_flags)
         low_sim = style_sim_min is not None and (r.style_similarity_score is None or r.style_similarity_score < style_sim_min)
 
+        # Effective license drives both the breakdown and the license filters.
+        lic = resolve_provenance(r, ds_defaults)["license"]
+        license_counts[lic] = license_counts.get(lic, 0) + 1
+        if not lic:
+            unlicensed += 1
+        bad_license = (
+            (exclude_unlicensed and not lic)
+            or (bool(license_filter) and lic not in (license_filter or []))
+            or (commercial_only and not allows_commercial(lic))
+        )
+        if bad_license:
+            excl_license += 1
+
         if low_aes:
             excl_aesthetic += 1
         if no_cap:
@@ -570,7 +725,7 @@ async def preview_export(
         if low_sim:
             excl_style_sim += 1
 
-        if not (low_aes or no_cap or flagged or low_sim):
+        if not (low_aes or no_cap or flagged or low_sim or bad_license):
             no_det = export_masks and r.id not in ids_with_detections
             if no_det:
                 without_detections += 1
@@ -590,6 +745,12 @@ async def preview_export(
         "excluded_uncaptioned": excl_uncaptioned,
         "excluded_flagged": excl_flagged,
         "excluded_style_sim": excl_style_sim,
+        "excluded_license": excl_license,
+        # Counted over the whole dataset scope, not just what will export — the
+        # point of the warning is "you have unlicensed images", which stays true
+        # whether or not the current filters happen to drop them.
+        "unlicensed_count": unlicensed,
+        "license_breakdown": license_counts,
         "sample_files": sample_files,
     }
     if export_masks:

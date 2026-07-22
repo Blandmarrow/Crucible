@@ -26,3 +26,6 @@ export const SORT_OPTIONS = [
   { label: "Colorfulness ↓",      sort: "color_score",            order: "desc" },
   { label: "Custom order",       sort: "sort_order",             order: "asc"  },
 ] as const;
+
+/** Sentinel value for the gallery's "missing license only" filter option. */
+export const MISSING_LICENSE = "__missing__";

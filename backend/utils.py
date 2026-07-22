@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import time
@@ -95,6 +96,38 @@ def normalize_subfolder(s: str) -> str:
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
     return "/".join(parts)
+
+
+def normalize_license_filter(values: list[str] | None) -> list[str] | None:
+    """Strip entries and drop an all-empty list; None means "no license filter".
+
+    ``""`` is a meaningful *entry* (images with no license recorded) but an empty
+    list must not be read as "match nothing".
+    """
+    if values is None:
+        return None
+    cleaned = [v.strip() for v in values]
+    return cleaned or None
+
+
+def parse_license_filter_param(value: str) -> list[str] | None:
+    """Parse a JSON-array license_filter query param into normalized ids.
+
+    A JSON array rather than a comma-separated string because an
+    ``other:<free text>`` license id may itself contain commas — splitting on
+    commas would silently match nothing. The single encoding for license id
+    lists across the API (export preview and ``GET /images/``); empty means
+    "no filter".
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(400, "license_filter must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(400, "license_filter must be a JSON array of strings")
+    return normalize_license_filter(parsed)
 
 
 def slugify_filename(name: str) -> str:

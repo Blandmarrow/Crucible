@@ -27,6 +27,13 @@ class Dataset(Base):
 
     current_branch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
+    # Provenance defaults — inherited by any image whose own field is NULL/empty.
+    # "" means unset (see backend/licenses.py::resolve_provenance).
+    source_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    source_url: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")
+    license: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    attribution: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
     images: Mapped[list["Image"]] = relationship(
         "Image", back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
     )

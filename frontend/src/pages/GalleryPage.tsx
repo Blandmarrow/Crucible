@@ -26,7 +26,8 @@ import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
-import { SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
+import { LICENSE_OPTIONS } from "../constants/licenses";
+import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -111,6 +112,9 @@ export default function GalleryPage() {
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
     saved?.captionedFilter == null ? getGalleryDefaultCaptionFilter() : saved.captionedFilter
   );
+  // "" = no license filter; "__missing__" = only images with no license at
+  // either level; anything else = that effective license id.
+  const [licenseFilter, setLicenseFilter] = useState("");
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
@@ -337,8 +341,8 @@ export default function GalleryPage() {
     : undefined;
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter]
   );
 
   const { data: images = [], isLoading, refetch } = useQuery({
@@ -356,6 +360,11 @@ export default function GalleryPage() {
         score_filters: scoreFiltersParam,
         subfolder: activeSubfolder,
         detection_label: detectionLabel || undefined,
+        license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
+        license_filter:
+          licenseFilter && licenseFilter !== MISSING_LICENSE
+            ? JSON.stringify([licenseFilter])
+            : undefined,
       }),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -694,6 +703,7 @@ export default function GalleryPage() {
     setSortIdx(getGalleryDefaultSort());
     setCaptionedFilter(getGalleryDefaultCaptionFilter());
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
+    setLicenseFilter("");
     setActiveSubfolder(undefined);
     hasRestoredScroll.current = true;
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -927,6 +937,15 @@ export default function GalleryPage() {
           <option value="is_duplicate">Flagged: duplicate</option>
           <option value="is_nsfw">Flagged: NSFW</option>
           <option value="has_ai_artifacts">Flagged: AI artifacts</option>
+        </select>
+
+        <select className="select" style={{ width: "auto" }} value={licenseFilter}
+          onChange={(e) => { setLicenseFilter(e.target.value); resetPage(); }}>
+          <option value="">All licenses</option>
+          <option value={MISSING_LICENSE}>Missing license only</option>
+          {LICENSE_OPTIONS.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
         </select>
 
         <button

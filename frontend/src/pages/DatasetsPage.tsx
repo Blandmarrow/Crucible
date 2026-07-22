@@ -6,7 +6,9 @@ import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
-import { datasetsApi } from "../api/datasets";
+import { datasetsApi, type DatasetProvenance } from "../api/datasets";
+import ProvenanceFields, { EMPTY_PROVENANCE } from "../components/common/ProvenanceFields";
+import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
 import { showImportSummaryToast } from "../utils/importToast";
@@ -23,6 +25,30 @@ function formatSize(bytes: number) {
   if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`;
   return `${(bytes / 1_073_741_824).toFixed(2)} GB`;
+}
+
+/**
+ * Dataset-level license badge — the default that images inherit when their own
+ * license is unset. Unlike the per-image gallery badge (opt-in, hidden when
+ * empty) this always renders: there is one per card, and "No license" is itself
+ * the state a user needs to spot at a glance.
+ */
+function LicenseBadge({ ds }: { ds: Dataset }) {
+  const info = licenseInfo(ds.license);
+  const title = [
+    ds.license ? `Default license: ${info.label}` : "No default license set",
+    ds.source_name ? `Source: ${ds.source_name}` : null,
+    info.allowsCommercial === false ? "Non-commercial only" : null,
+    info.requiresAttribution ? "Attribution required" : null,
+  ].filter(Boolean).join(" — ");
+  return (
+    <span
+      className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${info.badge}`}
+      title={title}
+    >
+      {info.label}
+    </span>
+  );
 }
 
 function formatDate(iso: string) {
@@ -188,12 +214,14 @@ export default function DatasetsPage() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newCategory, setNewCategory] = useState("");
+  const [newProvenance, setNewProvenance] = useState<DatasetProvenance>(EMPTY_PROVENANCE);
 
   // ── Edit modal ───────────────────────────────────────────────────────────
   const [renameTarget, setRenameTarget] = useState<Dataset | null>(null);
   const [renameName, setRenameName] = useState("");
   const [renameDesc, setRenameDesc] = useState("");
   const [renameCategory, setRenameCategory] = useState("");
+  const [renameProvenance, setRenameProvenance] = useState<DatasetProvenance>(EMPTY_PROVENANCE);
 
   // ── Delete modal ─────────────────────────────────────────────────────────
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null);
@@ -415,10 +443,11 @@ export default function DatasetsPage() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: () => datasetsApi.create(newName, newDesc, newCategory),
+    mutationFn: () => datasetsApi.create(newName, newDesc, newCategory, newProvenance),
     onSuccess: (ds) => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory("");
+      setNewProvenance(EMPTY_PROVENANCE);
       // Make sure the new dataset is actually reachable before highlighting it: clear
       // any search, drop the rail to "All" only if its section isn't already selected,
       // and expand its section if collapsed.
@@ -452,6 +481,9 @@ export default function DatasetsPage() {
         name: renameName,
         description: renameDesc,
         category: renameCategory,
+        // Editing these retroactively changes every image that hasn't
+        // overridden the field — the intended inheritance behaviour.
+        ...renameProvenance,
       }),
     onSuccess: (ds) => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
@@ -657,6 +689,12 @@ export default function DatasetsPage() {
             setRenameName(ds.name);
             setRenameDesc(ds.description ?? "");
             setRenameCategory(ds.category ?? "");
+            setRenameProvenance({
+              source_name: ds.source_name ?? "",
+              source_url: ds.source_url ?? "",
+              license: ds.license ?? "",
+              attribution: ds.attribution ?? "",
+            });
           }}
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -815,6 +853,13 @@ export default function DatasetsPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--fg-dim)", fontSize: 11.5 }}>
             <span className="mono">{ds.captioned_count}/{ds.image_count} captioned</span>
+            {ds.source_name && (
+              <span style={{
+                minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                color: "var(--fg-soft)",
+              }} title={ds.source_name}>{ds.source_name}</span>
+            )}
+            <span style={{ marginLeft: "auto", display: "flex" }}><LicenseBadge ds={ds} /></span>
           </div>
         </div>
       </div>
@@ -881,6 +926,8 @@ export default function DatasetsPage() {
           fontSize: 12, color: "var(--fg-mute)", flex: 1, minWidth: 0,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{ds.description}</span>
+
+        <LicenseBadge ds={ds} />
 
         <span className="mono" style={{
           display: "flex", gap: 14, flexShrink: 0, fontSize: 11.5,
@@ -1207,7 +1254,11 @@ export default function DatasetsPage() {
   const renameChanged = renameTarget
     ? renameName !== renameTarget.name ||
       renameDesc !== (renameTarget.description ?? "") ||
-      renameCategory !== (renameTarget.category ?? "")
+      renameCategory !== (renameTarget.category ?? "") ||
+      renameProvenance.source_name !== (renameTarget.source_name ?? "") ||
+      renameProvenance.source_url !== (renameTarget.source_url ?? "") ||
+      renameProvenance.license !== (renameTarget.license ?? "") ||
+      renameProvenance.attribution !== (renameTarget.attribution ?? "")
     : false;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1380,6 +1431,11 @@ export default function DatasetsPage() {
                 labelNote="(optional — groups datasets into folders)"
                 autoFocusNew={false}
               />
+              <ProvenanceFields
+                value={renameProvenance}
+                onChange={setRenameProvenance}
+                note="Defaults for every image in this dataset that hasn't set its own. Changing them updates all non-overridden images."
+              />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn ghost" onClick={() => setRenameTarget(null)}>Cancel</button>
@@ -1420,9 +1476,14 @@ export default function DatasetsPage() {
                 labelNote="(optional)"
                 autoFocusNew={false}
               />
+              <ProvenanceFields
+                value={newProvenance}
+                onChange={setNewProvenance}
+                note="Defaults inherited by every image in this dataset unless the image sets its own."
+              />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => { setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory(""); }}>Cancel</button>
+              <button className="btn ghost" onClick={() => { setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory(""); setNewProvenance(EMPTY_PROVENANCE); }}>Cancel</button>
               <button className="btn primary" onClick={() => createMutation.mutate()} disabled={!newName || createMutation.isPending}>Create</button>
             </div>
           </div>

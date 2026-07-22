@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -8,7 +8,7 @@ import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
-import { imagesApi } from "../../api/images";
+import { imagesApi, type ProvenanceEdit } from "../../api/images";
 import { datasetsApi } from "../../api/datasets";
 import { captioningApi, type DelimiterMode } from "../../api/captioning";
 import { tagConsolidationApi } from "../../api/tagConsolidation";
@@ -17,6 +17,7 @@ import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
+import SetProvenanceModal from "./SetProvenanceModal";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -73,6 +74,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showMoveSubfolder, setShowMoveSubfolder] = useState(false);
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
   const [showMoveDataset, setShowMoveDataset] = useState(false);
+  const [showProvenance, setShowProvenance] = useState(false);
   const [showCopyDataset, setShowCopyDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
@@ -253,6 +255,20 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
     },
     onError: () => toast.error("Move failed"),
+  });
+
+  const provenanceMutation = useMutation({
+    mutationFn: (edit: ProvenanceEdit) =>
+      imagesApi.bulkProvenance(datasetId, { imageIds: ids, ...edit }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image"] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+      setShowProvenance(false);
+      clear();
+      toast.success(`Updated ${data.updated} image${data.updated !== 1 ? "s" : ""}`);
+    },
+    onError: () => toast.error("Setting source/license failed"),
   });
 
   const moveDatasetMutation = useMutation({
@@ -482,6 +498,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowProvenance(true)}
+          title="Set source, URL, license and attribution"
+        >
+          <ScrollText size={14} /> Set source/license
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowMoveDataset(true)}>
           <ArrowRightFromLine size={14} /> Move to Dataset
@@ -1060,6 +1083,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           danger
           onConfirm={() => deleteMutation.mutate()}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Set source/license modal */}
+      {showProvenance && (
+        <SetProvenanceModal
+          count={count}
+          isPending={provenanceMutation.isPending}
+          onConfirm={(edit) => provenanceMutation.mutate(edit)}
+          onClose={() => setShowProvenance(false)}
+          sourceInfo={datasetBreakdown}
         />
       )}
 

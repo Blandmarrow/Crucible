@@ -150,6 +150,30 @@ The **AI Generate** collapsible (`showAi` state, gated `enabled: showAi`) uses t
 
 `generation_metadata` is included in both `ImageOut` and `ImageListItem` backend schemas, so it comes back with the gallery list response. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when `image.generation_metadata` is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default.
 
+### Source & license provenance
+
+Model: `Dataset` carries four NOT NULL defaults (`source_name`, `source_url`, `license`, `attribution`; `""` = unset). `Image` carries the same four as **nullable** columns plus `source_meta` (JSON — scraper long tail). `VersionImageState` mirrors all five (see `docs/dev/versioning.md`). Index `ix_images_dataset_license` on `(dataset_id, license)` backs the gallery filter and the stats breakdown.
+
+**Inheritance rule**: a NULL/empty image field means *inherit the dataset default*, resolved at read time by `backend/licenses.py::resolve_provenance(img, ds)`. Editing a dataset default therefore retroactively changes every non-overridden image — intended, not a bug. `resolve_provenance` is duck-typed (works on ORM rows and `select(...)` row tuples) and must never import models, or it re-introduces an import cycle.
+
+**Capture precedence** at ingest — the first source to supply a field wins, and anything still unset stays NULL:
+
+1. request-supplied provenance (import dialog / upload query params)
+2. scraper sidecar — `image_service.read_provenance_sidecar()`, which accepts both
+   `{filename}.json` (`pic.png.json`, gallery-dl's default) and `{stem}.json`, in that
+   order. Checking only one silently skips half the real scrape folders.
+3. EXIF Artist (315) / Copyright (33432) — `image_service.extract_iptc_provenance()`
+
+Both run inside `_capture_provenance` in the existing executor hop (`_ingest_file_sync` / `_register_file_sync` in `dataset_service.py`), never on the event loop. `extract_iptc_provenance` populates **only** `attribution` — a copyright string is not a license id, and inferring one would put unverified images in the commercial-use bucket. Sidecar `license` strings run through `normalize_license`, falling back to `other:<raw>` rather than being dropped. `licenses.merge_provenance(*layers)` is the single left-wins merge.
+
+**Derived-image rule**: crop, upscale, LUT, and detection-crop all copy the parent's provenance verbatim via `licenses.copy_provenance(img)` — a derivative of a CC-BY-SA image is still CC-BY-SA. Raw (not resolved), because the derivative stays in the same dataset and should keep tracking that default. ComfyUI import instead writes concrete values (`license="synthetic"`, `source_name="ComfyUI"`, `source_meta` = plan/checkpoint identity via `_comfy_source_meta`).
+
+**Cross-dataset copy/move**: `batch_move_dataset` and `batch_copy_dataset` call `licenses.materialize_by_source(rows, source_datasets)` — inherited values are written out concretely against the *source* dataset, or the image silently re-inherits the destination's unrelated default. **Per row, against its own source**: a selection can span datasets (that is what the toolbar's `datasetBreakdown` badges exist to show), so both routers derive `source_dataset_ids = {row.dataset_id for row in rows}`, fetch all of them, and drive the busy guard, the materialization and the closing `refresh_stats` off that set — never off `rows[0]`. Materialized values are concrete, so resolving them all against one dataset writes an unrelated license in permanently. `duplicate_dataset` is the exception: it copies the four dataset defaults onto the new dataset, so raw `copy_provenance` keeps inheritance equivalent.
+
+API: `ImageOut` carries the raw columns **plus** a resolved `provenance` dict (`{...fields, source_meta, inherited: [field names]}`) so the UI can show "inherited from dataset" vs "overridden". `ImageListItem.license` is the *effective* value for the gallery badge. `GET /images/` gains `license_filter` and `license_missing`, applied as `COALESCE(NULLIF(images.license,''), datasets.license, '')` over a join. `license_filter` is a **JSON array** of effective ids, parsed by `utils.parse_license_filter_param` — the same encoding as the export preview, because an `other:<free text>` id may contain commas and comma-splitting would silently match nothing (`StatsPage`'s Licenses panel links straight into this param). `POST /images/bulk-provenance` and `PATCH /images/{id}/provenance` share `_provenance_values()`, which honours the `INHERIT_SENTINEL` (`"__inherit__"`) so "don't touch" (field omitted) and "clear to inherit" stay distinguishable — a bare `""` cannot carry both. `GET /licenses/` serves `LICENSES` so the frontend list can't drift.
+
+Frontend: `constants/licenses.ts` mirrors the vocabulary (labels + badge colors); `components/image/ProvenancePanel.tsx` (modeled on `GenerationMetadata.tsx`) renders and edits it on `ImageDetailPage`; `components/common/ProvenanceFields.tsx` is shared by the dataset create/edit modals and `ImportFolderModal`; `components/gallery/SetProvenanceModal.tsx` drives the toolbar's keep/set/inherit bulk action. The `ImageCard` license badge is off by default behind `GALLERY_LICENSE_BADGE_KEY` (Settings → Gallery).
+
 ### AI generation metadata
 
 Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Included in both `ImageOut` and `ImageListItem` schemas.

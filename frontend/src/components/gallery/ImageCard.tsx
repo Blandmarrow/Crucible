@@ -6,6 +6,8 @@ import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
+import { getGalleryLicenseBadge } from "../../constants/storage";
+import { licenseInfo } from "../../constants/licenses";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
@@ -89,6 +91,9 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const hasAiArtifacts = image.quality_flags?.has_ai_artifacts as boolean | undefined;
+  // Off by default (Settings → Gallery): most datasets are single-source, where
+  // a badge on every card is noise. `license` here is already the effective value.
+  const showLicense = getGalleryLicenseBadge() && !!image.license;
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 
@@ -200,6 +205,14 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           <div style={{ fontSize: 11.5, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }} title={image.filename}>
             {image.filename}
           </div>
+          {showLicense && (
+            <span
+              className={`px-1 rounded text-[9px] font-medium shrink-0 ${licenseInfo(image.license).badge}`}
+              title={licenseInfo(image.license).label}
+            >
+              {licenseInfo(image.license).label}
+            </span>
+          )}
           {image.generation_metadata && onShowGenMeta && (
             <button
               className="icon-btn"

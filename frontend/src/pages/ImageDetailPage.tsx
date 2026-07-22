@@ -1586,7 +1586,10 @@ export default function ImageDetailPage() {
           )}
 
           {/* Source & license provenance */}
-          <ProvenancePanel image={image} />
+          {/* Remount on navigation: the panel's draft state is seeded when the
+              editor opens and deliberately never re-synced from props, so without
+              a key an open editor would carry the previous image's draft over. */}
+          <ProvenancePanel key={image.id} image={image} />
         </div>
 
         {/* Caption */}

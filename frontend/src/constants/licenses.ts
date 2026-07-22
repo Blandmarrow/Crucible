@@ -74,10 +74,6 @@ export function licenseInfo(value: string | null | undefined): LicenseOption {
   return BY_ID.get("unknown")!;
 }
 
-export function licenseLabel(value: string | null | undefined): string {
-  return licenseInfo(value).label;
-}
-
 /** True when `value` is empty, or an `other:` with nothing after the prefix. */
 export function isBlankLicense(value: string): boolean {
   const v = value.trim();

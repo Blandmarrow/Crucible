@@ -7,9 +7,12 @@ Create Date: 2026-07-22
 The index was added on the assumption that it would back the license filters, but
 every one of them filters on the *effective* license — `COALESCE(images.license,
 datasets.license)` — which is not sargable against an index on `images.license`.
-`EXPLAIN QUERY PLAN` confirms SQLite never chooses it for the gallery filter, the
-export filters or the stats breakdown, so it is write amplification on every image
-insert/update for no read benefit.
+
+`EXPLAIN QUERY PLAN` does show SQLite picking it for the stats breakdown on a
+fresh database, but only as a covering scan of `(dataset_id, …)`: any of the six
+other `(dataset_id, X)` indexes serves that identically, so the index buys no read
+benefit it does not already have — while costing write amplification on every
+image insert and update.
 
 Dropped separately from the migration that created it so a revert is cheap.
 """

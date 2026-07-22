@@ -287,8 +287,12 @@ def _md_link(url: str | None, text: str | None = None) -> str:
     safe = safe_external_url(url)
     if not safe:
         return _md_inline(url)
-    # The URL has no whitespace by construction; parens would still end the target.
-    target = safe.replace("(", "%28").replace(")", "%29")
+    # The URL has no whitespace by construction, but three characters still end or
+    # escape the target: `(`, `)`, and a trailing `\`, which would escape the
+    # closing paren and swallow the rest of the document into the link.
+    target = (
+        safe.replace("\\", "%5C").replace("(", "%28").replace(")", "%29")
+    )
     return f"[{_md_inline(text or safe)}]({target})"
 
 

@@ -6,7 +6,7 @@ import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
-import { licenseInfo } from "../../constants/licenses";
+import LicenseBadge from "../common/LicenseBadge";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
@@ -207,13 +207,10 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           <div style={{ fontSize: 11.5, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }} title={image.filename}>
             {image.filename}
           </div>
+          {/* Bounded: an `other:<free text>` license is arbitrarily long and was
+              pushing the filename out of the card. The title carries the full text. */}
           {showLicense && (
-            <span
-              className={`px-1 rounded text-[9px] font-medium shrink-0 ${licenseInfo(image.license).badge}`}
-              title={licenseInfo(image.license).label}
-            >
-              {licenseInfo(image.license).label}
-            </span>
+            <LicenseBadge value={image.license} className="shrink-0 max-w-[45%] truncate" />
           )}
           {image.generation_metadata && onShowGenMeta && (
             <button

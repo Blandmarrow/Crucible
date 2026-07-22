@@ -123,7 +123,7 @@ def test_comfy_run_imports_images_through_the_real_router(tmp_path, monkeypatch)
             detail = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()
             assert detail["provenance"]["license"] == "synthetic"
             assert detail["provenance"]["source_name"] == "ComfyUI"
-            assert detail["source_meta"]["checkpoint"] == "sdxl.safetensors"
+            assert detail["provenance"]["source_meta"]["checkpoint"] == "sdxl.safetensors"
 
     run(scenario())
 
@@ -441,6 +441,17 @@ def test_bulk_provenance_include_flagged_comes_from_the_body(tmp_path):
             assert r.json()["updated"] == 1
             assert (await env.client.get(f"{API}/images/{blurry['id']}")).json()["license"] == "research-only"
 
+            # Omitted entirely → the same sense as BulkCountRequest and
+            # bulk_rename, i.e. False. Every assertion above passes the flag
+            # explicitly, so nothing pinned the default it falls back to.
+            r = await env.client.post(f"{API}/images/bulk-provenance", json={
+                "dataset_id": ds["id"], "quality_flags": ["is_blurry"],
+                "license": "public-domain",
+            })
+            assert r.json()["updated"] == 1
+            assert (await env.client.get(f"{API}/images/{clean['id']}")).json()["license"] == "public-domain"
+            assert (await env.client.get(f"{API}/images/{blurry['id']}")).json()["license"] == "research-only"
+
     run(scenario())
 
 
@@ -668,7 +679,7 @@ def test_import_does_not_adopt_an_unrelated_json_file(tmp_path):
 
             images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
             detail = (await env.client.get(f"{API}/images/{images[0]['id']}")).json()
-            assert detail["source_meta"] is None
+            assert detail["provenance"]["source_meta"] is None
             assert detail["source_name"] is None
 
     run(scenario())
@@ -698,12 +709,12 @@ def test_patch_provenance_serializes_every_deferred_column(tmp_path):
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["license"] == "CC0-1.0"
-            assert body["source_meta"] == {"post_id": 7}
+            assert body["provenance"]["source_meta"] == {"post_id": 7}
             assert body["has_dino_layer_embeddings"] is False
 
             # GET must serialize it the same way.
             got = (await env.client.get(f"{API}/images/{img['id']}")).json()
-            assert got["source_meta"] == {"post_id": 7}
+            assert got["provenance"]["source_meta"] == {"post_id": 7}
 
     run(scenario())
 
@@ -747,7 +758,7 @@ def test_snapshot_and_restore_round_trip_through_the_router(tmp_path):
             got = (await env.client.get(f"{API}/images/{img['id']}")).json()
             assert got["license"] == "CC-BY-SA-4.0"
             assert got["source_name"] == "Flickr"
-            assert got["source_meta"] == {"post_id": 7}
+            assert got["provenance"]["source_meta"] == {"post_id": 7}
 
     run(scenario())
 
@@ -1039,6 +1050,12 @@ def test_gallery_license_filter_rejects_malformed_and_all_blank_lists(tmp_path):
             # filter and returning everything would be a silent lie.
             assert await status(json.dumps([""])) == 400
             assert await status(json.dumps(["  ", ""])) == 400
+            # A *mixed* list too: dropping the blank silently narrows the filter
+            # to the non-blank ids and returns fewer images than were asked for.
+            assert await status(json.dumps(["CC0-1.0", ""])) == 400
+            assert await status(json.dumps(["", "owned"])) == 400
+            # …and a well-formed list still works.
+            assert await status(json.dumps(["CC0-1.0", "owned"])) == 200
 
     run(scenario())
 

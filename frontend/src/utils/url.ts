@@ -8,7 +8,15 @@
  * A rejected value is shown as inert text by the caller.
  */
 export function safeExternalUrl(value: string | null | undefined): string {
-  const s = (value ?? "").trim();
+  // Trimmed with the *same* character class the guard below rejects, deliberately
+  // not `String.trim()`. `trim()` strips exactly ECMA `\s` and Python's `strip()`
+  // strips exactly `isspace()`, and the two differ on U+FEFF and U+0085 — the very
+  // characters this guard names. A U+FEFF at the *end* of a URL was therefore
+  // trimmed here and rejected by the export, and U+0085 there did the reverse.
+  // eslint-disable-next-line no-control-regex
+  const s = (value ?? "").replace(/^[\s\u0000-\u001f\u007f\u0085]+/, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\s\u0000-\u001f\u007f\u0085]+$/, "");
   // Whitespace or control characters: a URL with a space in the middle is not a
   // URL, and an embedded newline is how a value breaks out of its context.
   // `\s` for the Unicode whitespace the backend's `isspace()` also rejects

@@ -11,6 +11,7 @@ import { detectionApi, type DetectionStats } from "../api/detection";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { OTHER_LICENSES_KEY, licenseInfo } from "../constants/licenses";
+import LicenseBadge from "../components/common/LicenseBadge";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, datasetScopedKey } from "../utils/persistentState";
@@ -1456,9 +1457,7 @@ export default function StatsPage() {
                           }
                         >
                           <td style={{ padding: "8px" }}>
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${info.badge}`}>
-                              {info.label}
-                            </span>
+                            <LicenseBadge value={id} />
                           </td>
                           <td style={{ padding: "8px", color: "var(--fg-mute)" }}>
                             {info.allowsCommercial === null ? "Unknown" : info.allowsCommercial ? "Allowed" : "Not allowed"}

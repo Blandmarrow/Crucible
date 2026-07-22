@@ -47,7 +47,9 @@ class ImageOut(BaseModel):
     source_url: str | None = None
     license: str | None = None
     attribution: str | None = None
-    source_meta: dict | None = None
+    # Deliberately no top-level `source_meta`: it is a scraper's raw payload (up
+    # to ~512 KB per image), it is already carried by `provenance.source_meta`,
+    # and this response is refetched on every arrow-key navigation.
     # Resolved values + an `inherited` list of field names — see
     # backend.licenses.resolve_provenance. Populated by the router.
     provenance: dict | None = None
@@ -199,7 +201,10 @@ class ProvenanceEdit(BaseModel):
 
 class BulkProvenanceRequest(BulkFilterBase, ProvenanceEdit):
     """Set source/license on a selection — see ProvenanceEdit for the field semantics."""
-    include_flagged: bool = True
+    # False, matching BulkCountRequest and bulk_rename: a bulk op that silently
+    # includes images the user has flagged is the surprising default, and the
+    # frontend already sends the value explicitly, so nothing changes for it.
+    include_flagged: bool = False
 
 
 class BulkProvenanceResult(BaseModel):

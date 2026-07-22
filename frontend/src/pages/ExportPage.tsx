@@ -12,7 +12,7 @@ import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
-import { LICENSE_OPTIONS } from "../constants/licenses";
+import { LICENSE_OPTIONS, isKnownLicenseValue } from "../constants/licenses";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
@@ -123,7 +123,13 @@ export default function ExportPage() {
   const [aestheticMin, setAestheticMin] = useState(filters.aestheticMin);
   const [filterCaptioned, setFilterCaptioned] = useState(filters.filterCaptioned);
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(filters.excludeFlags));
-  const [licenseFilter, setLicenseFilter] = useState<Set<string>>(new Set(filters.licenseFilter));
+  // Bounds-checked the way GalleryPage checks its own restored filter: this comes
+  // back from localStorage, possibly written by a build whose vocabulary has since
+  // changed, and an unknown id silently filters the export to zero images with no
+  // checkbox showing why.
+  const [licenseFilter, setLicenseFilter] = useState<Set<string>>(
+    () => new Set(filters.licenseFilter.filter(isKnownLicenseValue)),
+  );
   const [commercialOnly, setCommercialOnly] = useState(filters.commercialOnly);
   const [excludeUnlicensed, setExcludeUnlicensed] = useState(filters.excludeUnlicensed);
   const [excludeNoDerivatives, setExcludeNoDerivatives] = useState(filters.excludeNoDerivatives);
@@ -240,7 +246,7 @@ export default function ExportPage() {
     setSelectedSubfolders(new Set(next.selectedSubfolders));
     setMaskLabels(new Set(next.maskLabels));
     setMaskExcludeLabels(new Set(next.maskExcludeLabels));
-    setLicenseFilter(new Set(next.licenseFilter));
+    setLicenseFilter(new Set(next.licenseFilter.filter(isKnownLicenseValue)));
     setCommercialOnly(next.commercialOnly);
     setExcludeUnlicensed(next.excludeUnlicensed);
     setExcludeNoDerivatives(next.excludeNoDerivatives);

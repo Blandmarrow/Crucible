@@ -182,8 +182,9 @@ export interface ImageDetail extends ImageListItem {
   source_name: string | null;
   source_url: string | null;
   attribution: string | null;
-  source_meta: Record<string, unknown> | null;
-  /** Resolved view; `inherited` lists which fields came from the dataset. */
+  /** Resolved view; `inherited` lists which fields came from the dataset.
+   *  `source_meta` lives here only — it is a scraper's raw payload and was
+   *  duplicated at the top level, on a response refetched per arrow-key nav. */
   provenance: ResolvedProvenance | null;
 }
 

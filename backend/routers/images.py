@@ -14,6 +14,7 @@ from backend.config import settings
 from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.licenses import (
+    PROVENANCE_FIELDS,
     copy_provenance,
     materialize_by_source,
     merge_provenance,
@@ -320,18 +321,21 @@ async def list_images(
             # JSON array, not comma-separated: an `other:<free text>` id may
             # contain commas. Same encoding as the export preview.
             parsed = parse_license_filter_param(license_filter) or []
-            wanted = [v for v in parsed if v]
-            if parsed and not wanted:
+            if parsed and any(not v for v in parsed):
                 # `""` is a meaningful entry for the *export* filters ("no license
-                # recorded"), so a client can reasonably send `[""]` here too.
-                # Silently applying no filter would return every image — reject.
+                # recorded"), so a client can reasonably send it here too — but
+                # this endpoint expresses that through `license_missing`. Dropping
+                # the blank silently narrows a mixed list to the non-blank ids
+                # (returning fewer images than asked for), and an all-blank list
+                # to no filter at all (returning every image). Both are silent
+                # lies, so any blank entry is a 400.
                 raise HTTPException(
                     400,
-                    "license_filter contains only empty entries; use license_missing=true "
+                    "license_filter contains an empty entry; use license_missing=true "
                     "to select images with no license recorded",
                 )
-            if wanted:
-                q = q.where(effective_license.in_(wanted))
+            if parsed:
+                q = q.where(effective_license.in_(parsed))
 
     q = q.offset((page - 1) * limit).limit(limit)
     result = await db.execute(q)
@@ -519,7 +523,7 @@ def _provenance_values(body) -> dict:
     id or `other:<free text>` by the schema validator.
     """
     values: dict = {}
-    for field in ("source_name", "source_url", "license", "attribution"):
+    for field in PROVENANCE_FIELDS:
         raw = getattr(body, field)
         if raw is None:
             continue
@@ -1239,8 +1243,10 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
 
     _move_cols = (Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
                   Image.sort_order, Image.created_at,
-                  Image.source_name, Image.source_url, Image.license, Image.attribution,
-                  Image.source_meta)
+                  Image.source_name, Image.source_url, Image.license, Image.attribution)
+    # Deliberately no `Image.source_meta`: a move does not change it, and the
+    # materialize step below strips it back out — selecting it would load a
+    # scraper's full raw payload per row only to discard it.
     if body.image_ids:
         result = await db.execute(
             select(*_move_cols).where(Image.id.in_(body.image_ids))

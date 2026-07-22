@@ -11,6 +11,7 @@ vocabulary. The `other:<free text>` escape hatch covers everything else without
 polluting the aggregate buckets.
 """
 
+import copy
 from dataclasses import dataclass
 
 OTHER_PREFIX = "other:"
@@ -229,8 +230,16 @@ def copy_provenance(img) -> dict:
     the dataset default. Use `resolve_provenance` instead when the copy lands in a
     *different* dataset, where inheritance would silently re-point at an unrelated
     default.
+
+    `source_meta` is deep-copied, not aliased: returning the parent's dict would
+    leave parent, derivative and every snapshot of either sharing one mutable JSON
+    object — the exact shape of the "never mutate a loaded JSON column in place"
+    invariant, waiting for the first caller that edits one.
     """
-    return {f: getattr(img, f, None) for f in IMAGE_PROVENANCE_FIELDS}
+    out = {f: getattr(img, f, None) for f in IMAGE_PROVENANCE_FIELDS}
+    if out.get("source_meta") is not None:
+        out["source_meta"] = copy.deepcopy(out["source_meta"])
+    return out
 
 
 def materialize_provenance(img, ds) -> dict:

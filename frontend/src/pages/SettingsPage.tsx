@@ -487,6 +487,7 @@ export default function SettingsPage() {
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
                 <input
                   type="checkbox"
+                  className="checkbox"
                   checked={galleryLicenseBadge}
                   onChange={(e) => {
                     setGalleryLicenseBadge(e.target.checked);

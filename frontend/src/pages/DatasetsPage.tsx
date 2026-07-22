@@ -8,11 +8,13 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
 import { datasetsApi, type DatasetProvenance } from "../api/datasets";
 import ProvenanceFields from "../components/common/ProvenanceFields";
+import SharedLicenseBadge from "../components/common/LicenseBadge";
 import { EMPTY_PROVENANCE } from "../constants/licenses";
 import { invalidateProvenanceScope } from "../constants/queryKeys";
 import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
+import { apiErrorDetail } from "../utils/apiError";
 import { showImportSummaryToast } from "../utils/importToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
@@ -43,14 +45,7 @@ function LicenseBadge({ ds }: { ds: Dataset }) {
     info.allowsCommercial === false ? "Non-commercial only" : null,
     info.requiresAttribution ? "Attribution required" : null,
   ].filter(Boolean).join(" — ");
-  return (
-    <span
-      className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${info.badge}`}
-      title={title}
-    >
-      {info.label}
-    </span>
-  );
+  return <SharedLicenseBadge value={ds.license} title={title} className="shrink-0" />;
 }
 
 function formatDate(iso: string) {
@@ -465,7 +460,7 @@ export default function DatasetsPage() {
       setHighlightId(ds.id);
       toast.success(`Dataset "${ds.name}" created`);
     },
-    onError: () => toast.error("Failed to create dataset"),
+    onError: (err) => toast.error(apiErrorDetail(err, "Failed to create dataset")),
   });
 
   const deleteMutation = useMutation({
@@ -495,7 +490,7 @@ export default function DatasetsPage() {
       setRenameTarget(null);
       toast.success(`Updated "${ds.name}"`);
     },
-    onError: () => toast.error("Failed to update dataset"),
+    onError: (err) => toast.error(apiErrorDetail(err, "Failed to update dataset")),
   });
 
   const rescanMutation = useMutation({

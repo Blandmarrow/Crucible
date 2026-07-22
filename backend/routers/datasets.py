@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
 from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
@@ -38,14 +39,11 @@ def _apply_provenance_defaults(ds: Dataset, body: DatasetUpdate) -> None:
     every image that has not overridden the field — that is the intended
     inheritance behaviour, not a bug.
     """
-    if body.source_name is not None:
-        ds.source_name = body.source_name
-    if body.source_url is not None:
-        ds.source_url = body.source_url
-    if body.license is not None:
-        ds.license = body.license  # normalized + length-checked by the schema validator
-    if body.attribution is not None:
-        ds.attribution = body.attribution
+    # `license` arrives normalized + length-checked by the schema validator.
+    for field in PROVENANCE_FIELDS:
+        value = getattr(body, field)
+        if value is not None:
+            setattr(ds, field, value)
 
 
 @router.get("/", response_model=list[DatasetOut])

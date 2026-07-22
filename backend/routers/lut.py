@@ -66,11 +66,15 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
         from backend.workers.progress import broadcaster
 
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                # undefer: a non-replace grade copies the parent's provenance,
-                # source_meta included, and a deferred lazy load would raise.
-                select(Image).where(Image.id.in_(image_ids)).options(undefer(Image.source_meta))
-            )
+            # undefer only where it is needed: a non-replace grade copies the
+            # parent's provenance, source_meta included, and a deferred lazy load
+            # would raise on this async session. The replace branch never calls
+            # `copy_provenance`, so undeferring there would load a scraper's full
+            # raw payload for the whole batch and discard it.
+            query = select(Image).where(Image.id.in_(image_ids))
+            if not cfg["replace"]:
+                query = query.options(undefer(Image.source_meta))
+            result = await session.execute(query)
             images = result.scalars().all()
             loop = asyncio.get_running_loop()
 

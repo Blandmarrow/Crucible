@@ -8,6 +8,7 @@ import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
+import { apiErrorDetail } from "../../utils/apiError";
 import { imagesApi, type ProvenanceEdit } from "../../api/images";
 import { datasetsApi } from "../../api/datasets";
 import { captioningApi, type DelimiterMode } from "../../api/captioning";
@@ -269,7 +270,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       clear();
       toast.success(`Updated ${data.updated} image${data.updated !== 1 ? "s" : ""}`);
     },
-    onError: () => toast.error("Setting source/license failed"),
+    onError: (err) => toast.error(apiErrorDetail(err, "Setting source/license failed")),
   });
 
   const moveDatasetMutation = useMutation({

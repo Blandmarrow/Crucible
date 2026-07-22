@@ -4,24 +4,16 @@ import { ChevronDown, ChevronRight, ExternalLink, Pencil, ScrollText, X } from "
 import toast from "react-hot-toast";
 
 import { imagesApi } from "../../api/images";
-import { OTHER_PREFIX, isBlankLicense, licenseInfo } from "../../constants/licenses";
+import { OTHER_PREFIX, isBlankLicense } from "../../constants/licenses";
 import { invalidateProvenanceScope } from "../../constants/queryKeys";
+import { apiErrorDetail } from "../../utils/apiError";
 import { safeExternalUrl } from "../../utils/url";
 import type { ImageDetail } from "../../types";
+import LicenseBadge from "../common/LicenseBadge";
 import LicenseSelect from "../common/LicenseSelect";
 
 interface Props {
   image: ImageDetail;
-}
-
-/** Small colored pill for an effective license value. */
-export function LicenseBadge({ value, title }: { value: string | null | undefined; title?: string }) {
-  const info = licenseInfo(value);
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${info.badge}`} title={title ?? info.label}>
-      {info.label}
-    </span>
-  );
 }
 
 const FIELDS = [
@@ -80,7 +72,7 @@ export default function ProvenancePanel({ image }: Props) {
       setEditing(false);
       invalidateProvenanceScope(qc);
     },
-    onError: () => toast.error("Saving source/license failed"),
+    onError: (err) => toast.error(apiErrorDetail(err, "Saving source/license failed")),
   });
 
   // "Other (free text)…" picked but nothing typed. That sends a bare `other:`,
@@ -90,7 +82,7 @@ export default function ProvenancePanel({ image }: Props) {
   const blankOther =
     draft.license.toLowerCase().startsWith(OTHER_PREFIX) && isBlankLicense(draft.license);
 
-  const sourceMeta = resolved?.source_meta ?? image.source_meta;
+  const sourceMeta = resolved?.source_meta;
   const hasAnyProvenance = ["license", "source_name", "source_url", "attribution"].some(
     (k) => resolved?.[k as keyof typeof resolved],
   );

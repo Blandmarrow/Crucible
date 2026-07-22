@@ -10,6 +10,7 @@ Covers the failure classes the feature is most likely to regress into:
 """
 import asyncio
 import csv
+import io
 import json
 from pathlib import Path
 
@@ -704,7 +705,7 @@ def test_url_guard_matches_the_frontend_over_the_whole_unicode_range():
     py_rejects = {
         cp for cp in range(0x110000)
         if not 0xD800 <= cp <= 0xDFFF
-        # Embedded mid-string: the guard strips the ends before checking.
+        # Embedded mid-string: the guard trims the ends before checking.
         and safe_external_url("https://a" + chr(cp) + "b") == ""
     }
 
@@ -712,6 +713,27 @@ def test_url_guard_matches_the_frontend_over_the_whole_unicode_range():
         f"UI rejects but export accepts: {['U+%04X' % c for c in sorted(js_rejects - py_rejects)]}; "
         f"export rejects but UI accepts: {['U+%04X' % c for c in sorted(py_rejects - js_rejects)]}"
     )
+
+    # Probing mid-string alone is why this passed vacuously for exactly the
+    # characters the docstring calls out: it is the *trims* that differed.
+    # `str.strip()` strips `isspace()`, JS `trim()` strips ECMA `\s`, so U+FEFF and
+    # U+0085/U+001C–1F were trimmed by one side and rejected by the other at a
+    # string edge. Both sides now trim the same class they reject.
+    #
+    # JS side: structural, since the class is what the two share. All three
+    # occurrences — the leading trim, the trailing trim, the guard — must be one
+    # and the same character class.
+    js_classes = re.findall(r"/(?:\^)?\[(.*?)\](?:\+\$|\+)?/", ts)
+    assert len(js_classes) == 3, js_classes
+    assert len(set(js_classes)) == 1, f"url.ts trims a different set than it rejects: {js_classes}"
+
+    # Python side: an edge occurrence of a rejected character is *trimmed away*,
+    # leaving the URL intact — never rejected, and never left in place.
+    for cp in sorted(py_rejects):
+        c = chr(cp)
+        assert safe_external_url(c + "https://a.test") == "https://a.test", f"leading U+{cp:04X}"
+        assert safe_external_url("https://a.test" + c) == "https://a.test", f"trailing U+{cp:04X}"
+
     # Sanity: the guard is not simply rejecting everything.
     assert safe_external_url("https://ex-am.ple/a_b-c?d=1&e=2#f") != ""
 
@@ -758,6 +780,29 @@ def test_credits_md_escapes_markdown_and_only_links_http_urls(tmp_path):
     assert "[https://example.com/p/1](https://example.com/p/1)" in text
 
 
+def test_credits_md_link_target_cannot_escape_its_own_parentheses(tmp_path):
+    """`(` and `)` end a markdown link target — and so does a trailing `\\`.
+
+    A URL ending in a backslash escaped the closing paren, so the link swallowed
+    the rest of the document. Percent-encoding all three keeps the target inert
+    while still round-tripping to the same URL.
+    """
+    export_service._write_credits(tmp_path, [
+        _credit(license="CC-BY-4.0", source_name="S", source_url="https://e.test/a\\"),
+        _credit(file="images/2.png", license="CC-BY-4.0", source_name="S",
+                source_url="https://e.test/p_(1)"),
+    ])
+    text = (tmp_path / "CREDITS.md").read_text(encoding="utf-8")
+    assert "https://e.test/a%5C)" in text
+    assert "https://e.test/p_%281%29)" in text
+    # No link target contains a character that could end or escape it early.
+    import re as _re
+    targets = _re.findall(r"\]\((.*?)\)", text)
+    assert targets
+    for t in targets:
+        assert not set(t) & set("()\\"), t
+
+
 def test_credits_md_lists_every_source_url_not_just_the_first(tmp_path):
     """The primary ingest path records a site-level source_name with a per-post
     source_url, so one URL per source group drops every citable page but one."""
@@ -778,6 +823,11 @@ def test_licenses_csv_neutralizes_formula_prefixes(tmp_path):
     assert rows[0]["source_name"].startswith("'=")
     assert rows[0]["attribution"].startswith("'+")
     assert rows[0]["source_url"].startswith("'-")
+    # …but `file` is a path this code generated, not scraped input: guarding it
+    # would corrupt a legitimate filename starting with `-`, `=` or `@`.
+    rows = list(csv.DictReader(io.StringIO(
+        export_service._render_licenses_csv([_credit(file="images/-dash.png")]))))
+    assert rows[0]["file"] == "images/-dash.png"
 
 
 def test_credits_written_even_when_nothing_was_exported(tmp_path):

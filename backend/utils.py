@@ -98,6 +98,21 @@ def normalize_subfolder(s: str) -> str:
     return "/".join(parts)
 
 
+def _is_unsafe_url_char(c: str) -> bool:
+    """The single character predicate `safe_external_url` trims *and* rejects with."""
+    return c.isspace() or ord(c) < 0x20 or ord(c) in (0x7F, 0xFEFF)
+
+
+def _trim_unsafe_url_chars(s: str) -> str:
+    """`str.strip()` over `_is_unsafe_url_char` — which `strip()` itself cannot express."""
+    start, end = 0, len(s)
+    while start < end and _is_unsafe_url_char(s[start]):
+        start += 1
+    while end > start and _is_unsafe_url_char(s[end - 1]):
+        end -= 1
+    return s[start:end]
+
+
 def safe_external_url(value: str | None) -> str:
     """A provenance URL if it is safe to put behind a link, else ``""``.
 
@@ -116,9 +131,16 @@ def safe_external_url(value: str | None) -> str:
     range only with the odd ones out spelled explicitly — ``U+FEFF`` matches JS
     ``\\s`` but not Python's ``isspace()``, and ``U+0085`` is the reverse (the JS
     side names it in its character class for the same reason).
+
+    **The trim uses that same set, deliberately not** ``str.strip()``. ``strip()``
+    strips exactly ``isspace()`` and JS ``trim()`` strips exactly ECMA ``\\s``, and
+    those two differ on the very characters named above — so a ``U+FEFF`` at the
+    *end* of a URL was trimmed away by the UI and rejected by the export, while
+    ``U+0085`` there did the reverse. Trimming the rejected set on both sides makes
+    the two identical by construction, whatever the character's position.
     """
-    s = (value or "").strip()
-    if not s or any(c.isspace() or ord(c) < 0x20 or ord(c) in (0x7F, 0xFEFF) for c in s):
+    s = _trim_unsafe_url_chars(value or "")
+    if not s or any(_is_unsafe_url_char(c) for c in s):
         return ""
     scheme = s.split(":", 1)[0].lower() if ":" in s else ""
     return s if scheme in ("http", "https") else ""

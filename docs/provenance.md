@@ -136,6 +136,10 @@ Derived images — crops, upscales, LUT-graded copies, detection crops — carry
 their parent's source and license. A derivative of a CC BY-SA image is still
 CC BY-SA.
 
+Provenance is part of a dataset's version history: snapshots capture all four
+fields per image, so a restore reverts them and a diff shows what changed. See
+[Dataset Versioning](versioning.md).
+
 ## Labeling images you already have
 
 Select images in the gallery and use **Set source/license** in the selection

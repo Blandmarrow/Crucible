@@ -37,6 +37,8 @@ Four ways to get a workflow into a plan, from the **Workflow & Pins** section:
 
 **Import images from** controls which nodes' images are imported. Left alone (**Auto — SaveImage outputs**) it imports whatever your Save nodes write. Selecting nodes explicitly imports their images even if they are previews — so a workflow whose only output is a **PreviewImage** node still works, and nothing accumulates in ComfyUI's output folder. If your workflow has no Save node and you have not selected an output node, the panel warns you; runs would otherwise produce nothing to import.
 
+**Output is synthetic (self-created)**, just below, decides what source and licence the imported images get. On (the default), they are recorded as source *ComfyUI*, licence *Synthetic (AI-generated)*, attributed to the plan that generated them. Turn it off for a plan that derives from licensed material — an img2img or ControlNet plan working from someone else's photographs — and the output inherits the dataset's source and licence defaults instead, so a restrictive licence still reaches your export's `CREDITS.md`. It is a per-plan setting because nothing about a workflow reveals the answer, and one dataset commonly holds both kinds of plan → [details](provenance.md)
+
 ## Pinning parameters
 
 A pin exposes one workflow input so the queue can drive it. In **Workflow nodes**, search for a node and pin an individual input, or pin every scalar input on a node at once. Each pin gets an **alias** — the name you will see in the queue — and one of two roles:

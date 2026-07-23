@@ -25,6 +25,9 @@ A **plan** (`comfy_plans`, `backend/models/comfy.py`) belongs to a dataset and s
   are downloaded before ComfyUI clears them, and nothing accumulates in ComfyUI's output
   folder). `[]` = auto: all `type=="output"` images (SaveImage nodes). In `PATCH /comfy/plans`
   `[]` clears back to auto (absent = unchanged).
+- `output_is_synthetic` — bool, `NOT NULL DEFAULT true` (migration `c3f7a9e1d4b6`): the plan's own
+  declaration that its output is self-created. `POST` defaults it to `true`, `PATCH` treats
+  `null`/absent as unchanged. Drives `_comfy_output_provenance` — see `docs/dev/provenance.md`.
 
 A **row** (`comfy_rows`) holds `values` (`{alias: json-native value}`; absent/blank → template
 value), `status` (`pending|running|completed|failed`), `error_msg`, `sort_order`, `prompt_id`
@@ -109,31 +112,36 @@ Per row, sequentially (one at a time — ComfyUI's own queue is never stacked): 
 `patch_workflow` → submit → poll history every 1 s (30-min deadline, `PER_ROW_TIMEOUT_S`) →
 download each output image → write into `{dataset}/images/` named
 `{plan_slug}_001.ext` via `unique_filename_with_thumb` → `_register_file_sync` in an executor
+(it returns a `RegisteredFile` NamedTuple `(info, gen_meta, provenance)`, read by **attribute, never
+unpacked** — that was PM-005; the ComfyUI path ignores `.provenance` and stamps its own)
 (metadata + thumbnail; the PNG's embedded `prompt`/`workflow` chunks give `generation_metadata`
 provenance for free) → optional caption (effective prompt = row override or template value,
 assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`) → row
 `completed`, commit per row. `refresh_stats` + `result_data`
 (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
 
-Imported rows get their provenance from `_comfy_output_provenance(ds, plan_row.output_is_synthetic,
-plan_row.name)`, and their `source_meta` from `_comfy_source_meta(plan_row, row, wf)` — built from
-`wf`, the graph actually submitted, not the plan template, and computed **once per row** next to `wf`
-(deep-copied per image so multi-output rows never share one JSON dict). `_workflow_checkpoints` reads
-`ckpt_name` / `unet_name` / `model_name` so Flux/SD3 `UNETLoader` graphs record a model too. What each
-flag stamps, and why the plan rather than the dataset decides it, is in `docs/dev/provenance.md`
-§ ComfyUI synthetic stamping.
+Imported rows get their provenance from `_comfy_output_provenance(plan_row.output_is_synthetic,
+plan_row.name)` and their `source_meta` from `_comfy_source_meta(plan_row, row, wf)` — built from `wf`,
+the graph actually submitted rather than the plan template, computed once per row and deep-copied per
+image. See `docs/dev/provenance.md` § ComfyUI synthetic stamping.
 
 Failure/cancel semantics:
 
-- Per-row failures (`ComfyRowError`, httpx errors, OSError) mark the row `failed` with a
-  readable message (400 `node_errors` are flattened by `_format_node_errors`) and continue.
-  **Per-row atomicity**: `row_files`/`row_images` track every file + Image the row produces
-  — files are tracked *before* they are written (a corrupt download can fail inside
-  `_write_and_register` after the file is on disk) — and the failure handler unlinks the
-  files and deletes the Image rows, so a partly-imported row leaves no orphans. A hard
-  `CancelledError` (server shutdown; normal cancel is cooperative and never reaches here
-  with files written) runs the same cleanup best-effort and resets the row to `pending`
-  before re-raising.
+- Per-row failures are caught by a deliberately broad `except Exception` — a narrow error list
+  let an unexpected exception skip the very cleanup that exists for it (see
+  `docs/dev/postmortems/PM-005-tuple-return-widened-broke-caller.md`). The row is marked
+  `failed` with a readable message (400 `node_errors` are flattened by `_format_node_errors`)
+  and the run continues. **Per-row atomicity**: `row_files`/`row_image_ids` track every file +
+  Image the row produces — files are tracked *before* they are written (a corrupt download can
+  fail inside `_write_and_register` after the file is on disk) — and the handler runs
+  **DB-error-first**: `session.rollback()` (after a failed flush the session is unusable, so any
+  DB work before the rollback would raise inside the handler), then unlink the files, then a
+  separately-guarded delete-by-id plus row update and commit, then `refresh(ds)` /
+  `refresh(plan_row)` and a `populate_existing=True` re-select of the rows — a rollback expires
+  every object, and the loop keeps reading them, so an expired load on an async session would
+  raise `MissingGreenlet`. A hard `CancelledError` (server shutdown; normal cancel is
+  cooperative and never reaches here with files written) is a separate branch: unlink, delete
+  the tracked `Image` objects, reset the row to `pending`, re-raise.
 - **3 consecutive connect errors abort the run** with a job-level error; untouched rows stay
   `pending`.
 - Cancel (`DELETE /jobs/{id}`) is cooperative: checked before each row and inside the poll
@@ -156,7 +164,9 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
   node's `class_type` matches `/save/i` **and** no output node is selected, and when selected
   output nodes no longer exist in the workflow (runs then fail with a review-the-workflow row
   error — deliberate, no auto-heal). *Import images from*: toggle chips for Save/Preview-type
-  nodes plus an "+ other node…" select → `output_node_ids` (none selected = Auto). Pinned
+  nodes plus an "+ other node…" select → `output_node_ids` (none selected = Auto). An **Output is
+  synthetic (self-created)** checkbox (`plan.output_is_synthetic`) sits below those chips, and rides
+  in **both** the Save patch and the *Sync from canvas* patch so a sync never resets it. Pinned
   parameters render **grouped by source node** with per-pin: alias input, run-default value
   editor (placeholder = template value), `int_mode` select on integer params, single ★ prompt
   radio (forces per-row), and a *per row* toggle; *Pin node (n)* in the node browser pins all

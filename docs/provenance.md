@@ -74,11 +74,11 @@ sidecar's `license` field is kept the same way rather than dropped.
 
 You only type it once. Every license control scoped to a dataset then offers the
 free-text licenses **already recorded in that dataset** — including the dataset's
-own default — under a **Used in this dataset** heading: the gallery's license
-filter, the Export page's *Specific licenses* list, the image detail editor, the
-bulk **Set source/license** action, the dataset Edit modal, and the folder-import
+own default: the gallery's license filter, the image detail editor, the bulk
+**Set source/license** action, the dataset Edit modal, and the folder-import
 dialog (which reads the dataset you are importing *into*, and updates when you
-change it). Pick one instead of retyping it; a one-character difference is a
+change it) list them under a **Used in this dataset** heading, and the Export
+page's *Specific licenses* checklist appends them below the standard entries. Pick one instead of retyping it; a one-character difference is a
 second, near-duplicate license. The list is per-dataset, so it never offers a
 license none of that dataset's images have. (The create-dataset dialog has no
 dataset to read yet, so it shows the standard list only.)
@@ -120,8 +120,11 @@ value from a sidecar is shortened to fit rather than failing the import.
 The other two ways images arrive capture less, because less is available:
 
 - **Rescan** (the Datasets page's rescan, and auto-rescan on open) reads the
-  sidecar and the embedded attribution — everything except the import dialog's
-  values, which it has no dialog to read.
+  sidecar and the embedded attribution for files it registers **for the first
+  time** — everything except the import dialog's values, which it has no dialog
+  to read. It does *not* backfill images already in the dataset: dropping a
+  sidecar next to a file that is already imported and rescanning changes
+  nothing. Use **Set source/license** on a selection for those.
 - **Drag-and-drop onto the gallery** reads only the embedded attribution. Your
   browser uploads the image bytes and nothing else, so a scraper sidecar sitting
   beside the file on disk is never seen. **Use folder import for scrape
@@ -220,14 +223,17 @@ Four optional filters live in the Export page's filter panel:
 - **Exclude no-derivatives** — drops CC BY-ND. An export ships resized, cropped
   or re-encoded copies, which is what "no derivatives" forbids redistributing.
   Only licenses *known* to be ND are dropped, so a free-text license is kept.
-- **Specific licenses** — a collapsible checklist of the vocabulary; tick the
-  ones to keep. It includes a **No license recorded** entry, so you can build an
-  export of exactly the images you still need to label. Ticking nothing means no
-  filter.
+- **Specific licenses** — a collapsible checklist: the standard vocabulary, any
+  free-text licenses recorded in this dataset, and a **No license recorded**
+  entry, so you can build an export of exactly the images you still need to
+  label. Tick the ones to keep; ticking nothing means no filter.
 
-If any images have no license, the export summary warns you before you build.
-The warning tells you how many there are either way; if one of the filters above
-would drop them, it says so, otherwise it reminds you they will ship listed as
-unlicensed in `CREDITS.md`. It never blocks the export — the call is yours.
+If any images have no license, the export summary warns you before you build. It
+tells you how many there are, and how many of them this export still ships — a
+count that accounts for **every** filter you have on, not just the license ones,
+so an unlicensed image already dropped by the caption or aesthetic filter is
+counted as not shipping. If none survive it says so; otherwise it reminds you
+they will ship listed as unlicensed in `CREDITS.md`. It never blocks the export
+— the call is yours.
 
 See [Export](export.md) for the rest of the export options.

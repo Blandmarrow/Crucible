@@ -40,6 +40,10 @@ export interface ExportPreview {
   /** How many of those actually ship under the *current* filters — every filter,
    *  not just the license ones. The client cannot derive this. */
   unlicensed_will_export: number;
+  /** Shipping images whose effective license is `other:` free text. "Exclude
+   *  no-derivatives" cannot classify those, so it lets them through — unlike the
+   *  commercial filter, which drops anything it cannot classify. */
+  freetext_will_export: number;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }

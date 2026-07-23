@@ -12,7 +12,7 @@ Four fields travel with every image:
 |---|---|
 | **Source name** | Where it came from — `Danbooru`, `Unsplash`, `Client X` |
 | **Source URL** | Link back to the original post or page |
-| **License** | One entry from the vocabulary below, or your own free text — pick **Other (free text)…** in any license *editor* and type it (up to ~58 characters) |
+| **License** | One entry from the vocabulary below, or your own free text — pick **Other (free text)…** in any license *editor* and type it (up to 58 characters) |
 | **Attribution** | Who to credit — `Photo by Jane Doe` |
 
 A fifth, **scrape metadata**, is captured automatically from scraper sidecars
@@ -69,7 +69,7 @@ Anything outside this list is stored as free text and shown as-is. Choose
 **Other (free text)…** at the bottom of any license *editor* — on the image
 detail page, in the dataset Edit modal, in the import dialog, or in the bulk
 **Set source/license** action — and a text box appears for you to type it
-(roughly 58 characters). A license Crucible doesn't recognise in a scraper
+(up to 58 characters). A license Crucible doesn't recognise in a scraper
 sidecar's `license` field is kept the same way rather than dropped.
 
 You only type it once. Every license control scoped to a dataset then offers the
@@ -222,7 +222,11 @@ Four optional filters live in the Export page's filter panel:
   Free-text licenses count as licensed, so this keeps them.
 - **Exclude no-derivatives** — drops CC BY-ND. An export ships resized, cropped
   or re-encoded copies, which is what "no derivatives" forbids redistributing.
-  Only licenses *known* to be ND are dropped, so a free-text license is kept.
+  Only licenses *known* to be ND are dropped, so a free-text license is kept —
+  including one you typed yourself as, say, "CC BY-ND (custom)" instead of
+  picking the vocabulary entry. With this filter on, the export summary counts
+  how many shipping images carry a license it could not classify, so the ones it
+  waved through are visible before you build.
 - **Specific licenses** — a collapsible checklist: the standard vocabulary, any
   free-text licenses recorded in this dataset, and a **No license recorded**
   entry, so you can build an export of exactly the images you still need to

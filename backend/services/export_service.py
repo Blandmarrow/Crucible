@@ -985,6 +985,7 @@ async def preview_export(
     excl_flagged = 0
     excl_style_sim = 0
     unlicensed_will_export = 0
+    freetext_will_export = 0
     without_detections = 0
     sample_files: list[dict] = []
 
@@ -1028,6 +1029,8 @@ async def preview_export(
             will_export += 1
             if not lic:
                 unlicensed_will_export += 1
+            elif lic.lower().startswith(OTHER_PREFIX):
+                freetext_will_export += 1
             if len(sample_files) < 5:
                 caption = r.caption_text or ""
                 sample_files.append({"image": r.filename, "caption_preview": caption[:80]})
@@ -1050,6 +1053,16 @@ async def preview_export(
         # from the license flags and so claimed "they still export" whenever a
         # caption or aesthetic filter had already dropped them.
         "unlicensed_will_export": unlicensed_will_export,
+        # The two redistribution-safety filters disagree about free text, on
+        # purpose: `commercial_only` treats an unknown license as "no" and drops
+        # it, while `exclude_no_derivatives` drops only licenses *known* to be ND
+        # and keeps it. So an `other:` license reading "CC BY-ND (custom)" ships
+        # from a run that ticked "exclude no-derivatives". Counting it here is
+        # what makes that visible before the export runs, rather than a surprise
+        # afterwards. Only the will-export figure: "this dataset has free-text
+        # licenses" is already on the Stats Licenses panel — what is invisible is
+        # that they survive the ND filter.
+        "freetext_will_export": freetext_will_export,
         "sample_files": sample_files,
     }
     if export_masks:

@@ -1505,6 +1505,58 @@ def test_exclude_no_derivatives_drops_only_known_nd_licenses(tmp_path):
     run(scenario())
 
 
+def test_freetext_will_export_counts_what_the_nd_filter_waved_through(tmp_path):
+    """The preview's counterpart to the asymmetry above.
+
+    `commercial_only` drops a license it cannot classify; `exclude_no_derivatives`
+    keeps it. So a free-text "CC BY-ND (custom)" ships from a run that ticked
+    "exclude no-derivatives", and nothing said so. This counter is what the Export
+    page warns from.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("freetext")
+            nd = await _upload(env, ds["id"], "nd.png")
+            known = await _upload(env, ds["id"], "known.png", _png_bytes((1, 2, 3)))
+            other = await _upload(env, ds["id"], "other.png", _png_bytes((4, 5, 6)))
+            await _upload(env, ds["id"], "bare.png", _png_bytes((7, 8, 9)))
+            await env.client.patch(f"{API}/images/{nd['id']}/provenance",
+                                   json={"license": "CC-BY-ND-4.0"})
+            await env.client.patch(f"{API}/images/{known['id']}/provenance",
+                                   json={"license": "CC-BY-4.0"})
+            await env.client.patch(f"{API}/images/{other['id']}/provenance",
+                                   json={"license": "other:CC BY-ND (custom)"})
+            # Only the free-text image is captioned, so a non-license filter can
+            # be used below to drop exactly it.
+            r = await env.client.put(f"{API}/captions/image/{other['id']}",
+                                     json={"caption_text": "a cat"})
+            assert r.status_code == 200, r.text
+
+            async def preview(**params):
+                r = await env.client.get(f"{API}/export/preview/{ds['id']}", params=params)
+                assert r.status_code == 200, r.text
+                return r.json()
+
+            # The ND filter drops the vocabulary ND image and keeps the free-text
+            # one that says the same thing in prose.
+            p = await preview(exclude_no_derivatives=True)
+            assert p["will_export"] == 3 and p["excluded_license"] == 1
+            assert p["freetext_will_export"] == 1
+            # An unlicensed image is not free text; the two counters are disjoint.
+            assert p["unlicensed_will_export"] == 1
+
+            # The counter is unconditional — the client decides when to surface it.
+            assert (await preview())["freetext_will_export"] == 1
+
+            # ...and it accounts for every filter, not just the license ones.
+            p = await preview(exclude_no_derivatives=True, captioned_only=True)
+            assert p["will_export"] == 1 and p["freetext_will_export"] == 1
+            p = await preview(exclude_no_derivatives=True, license_filter='["CC-BY-4.0"]')
+            assert p["freetext_will_export"] == 0
+
+    run(scenario())
+
+
 def test_unlicensed_will_export_accounts_for_every_filter(tmp_path):
     """Not just the license ones.
 

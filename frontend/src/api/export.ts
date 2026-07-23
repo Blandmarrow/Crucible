@@ -15,7 +15,33 @@ interface ExportFilters {
   mask_exclude_labels?: string[] | null;
   mask_invert?: boolean;
   mask_missing?: "white" | "skip";
+  /** Effective license ids to keep; null/empty = no restriction. "" matches images with no license. */
+  license_filter?: string[] | null;
+  /** Keep only images whose license is *known* to permit commercial use. */
+  commercial_only?: boolean;
+  /** Drop images with no effective license. Not expressible via license_filter,
+   *  which is an allowlist of known ids and would also drop `other:` values. */
+  exclude_unlicensed?: boolean;
+  /** Drop CC BY-ND and friends — an export ships resized/cropped copies. */
+  exclude_no_derivatives?: boolean;
   label?: string;
+}
+
+export interface ExportPreview {
+  image_count: number;
+  will_export: number;
+  captioned_count: number;
+  excluded_low_aesthetic: number;
+  excluded_uncaptioned: number;
+  excluded_flagged: number;
+  excluded_style_sim: number;
+  excluded_license: number;
+  unlicensed_count: number;
+  /** How many of those actually ship under the *current* filters — every filter,
+   *  not just the license ones. The client cannot derive this. */
+  unlicensed_will_export: number;
+  sample_files: { image: string; caption_preview: string }[];
+  images_without_detections?: number;
 }
 
 export const exportApi = {
@@ -58,10 +84,14 @@ export const exportApi = {
       mask_labels?: string[] | null;
       mask_exclude_labels?: string[] | null;
       mask_missing?: "white" | "skip";
+      license_filter?: string[] | null;
+      commercial_only?: boolean;
+      exclude_unlicensed?: boolean;
+      exclude_no_derivatives?: boolean;
     },
   ) =>
     client
-      .get(`/export/preview/${dataset_id}`, {
+      .get<ExportPreview>(`/export/preview/${dataset_id}`, {
         params: {
           ...(filters?.aesthetic_min != null && { aesthetic_min: filters.aesthetic_min }),
           ...(filters?.captioned_only && { captioned_only: true }),
@@ -73,6 +103,11 @@ export const exportApi = {
           ...(filters?.export_masks && filters?.mask_labels?.length && { mask_labels: JSON.stringify(filters.mask_labels) }),
           ...(filters?.export_masks && filters?.mask_exclude_labels?.length && { mask_exclude_labels: JSON.stringify(filters.mask_exclude_labels) }),
           ...(filters?.export_masks && filters?.mask_missing === "skip" && { mask_missing: "skip" }),
+          // JSON array — an other:<free text> license id may contain commas
+          ...(filters?.license_filter?.length && { license_filter: JSON.stringify(filters.license_filter) }),
+          ...(filters?.commercial_only && { commercial_only: true }),
+          ...(filters?.exclude_unlicensed && { exclude_unlicensed: true }),
+          ...(filters?.exclude_no_derivatives && { exclude_no_derivatives: true }),
         },
       })
       .then((r) => r.data),

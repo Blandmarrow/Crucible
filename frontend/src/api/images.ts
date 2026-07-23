@@ -72,7 +72,25 @@ export interface ImageListParams {
   caption_words_max?: number;
   caption_tokens_min?: number;
   caption_tokens_max?: number;
+  /** JSON array of effective license ids, e.g. `JSON.stringify(["CC-BY-4.0"])`.
+   *  Not comma-separated: an `other:<free text>` id may contain commas. */
+  license_filter?: string;
+  /** true = only images with no license at either level. */
+  license_missing?: boolean;
 }
+
+/**
+ * One provenance field in an edit request. undefined/null = leave unchanged,
+ * "" = clear so the dataset default applies, anything else = set that value.
+ */
+export interface ProvenanceEdit {
+  source_name?: string | null;
+  source_url?: string | null;
+  license?: string | null;
+  attribution?: string | null;
+}
+
+export interface BulkProvenanceParams extends BulkFilterParams, ProvenanceEdit {}
 
 export const imagesApi = {
   list: (params: ImageListParams) =>
@@ -159,6 +177,19 @@ export const imagesApi = {
       image_ids: params.imageIds ?? null,
       quality_flags: params.qualityFlags ?? null,
       subfolder: params.subfolder ?? null,
+    }).then((r) => r.data),
+  setProvenance: (id: string, edit: ProvenanceEdit) =>
+    client.patch<ImageDetail>(`/images/${id}/provenance`, edit).then((r) => r.data),
+  bulkProvenance: (datasetId: string, params: BulkProvenanceParams) =>
+    client.post<{ updated: number }>("/images/bulk-provenance", {
+      dataset_id: datasetId,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+      source_name: params.source_name ?? null,
+      source_url: params.source_url ?? null,
+      license: params.license ?? null,
+      attribution: params.attribution ?? null,
     }).then((r) => r.data),
   bulkCount: (datasetId: string, params: BulkCountParams) =>
     client.post<{ count: number }>("/images/bulk-count", {

@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text
+import sqlalchemy as sa
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -29,6 +30,13 @@ class ComfyPlan(Base):
     # Import images from these workflow nodes' history outputs (any type, incl. temp
     # previews) instead of the default "all type=output images" behavior. [] = auto.
     output_node_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # Does this plan's output count as self-created? True (the default) stamps the
+    # imported images `license=synthetic`, `source_name=ComfyUI`; False lets them
+    # inherit the dataset's provenance defaults, which is the honest record when the
+    # plan derives from licensed source material. See routers/comfy._comfy_output_provenance.
+    output_is_synthetic: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sa.true()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

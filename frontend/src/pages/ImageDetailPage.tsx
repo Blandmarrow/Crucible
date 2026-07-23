@@ -20,6 +20,7 @@ import { useSelectionStore } from "../store/selectionStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
+import ProvenancePanel from "../components/image/ProvenancePanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
 import { type ProviderOut } from "../api/providers";
@@ -1583,6 +1584,12 @@ export default function ImageDetailPage() {
           {image.generation_metadata && (
             <GenerationMetadata metadata={image.generation_metadata} />
           )}
+
+          {/* Source & license provenance */}
+          {/* Remount on navigation: the panel's draft state is seeded when the
+              editor opens and deliberately never re-synced from props, so without
+              a key an open editor would carry the previous image's draft over. */}
+          <ProvenancePanel key={image.id} image={image} />
         </div>
 
         {/* Caption */}

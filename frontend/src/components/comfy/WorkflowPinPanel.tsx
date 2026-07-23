@@ -7,7 +7,7 @@ import WorkflowScanModal from "./WorkflowScanModal";
 
 interface Props {
   plan: ComfyPlan;
-  onSave: (patch: Partial<Pick<ComfyPlan, "workflow_json" | "pinned_params" | "output_node_ids">>) => void;
+  onSave: (patch: Partial<Pick<ComfyPlan, "workflow_json" | "pinned_params" | "output_node_ids" | "output_is_synthetic">>) => void;
   saving: boolean;
 }
 
@@ -47,6 +47,7 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
   const [workflowText, setWorkflowText] = useState("");
   const [pins, setPins] = useState<PinnedParam[]>(plan.pinned_params);
   const [outputNodeIds, setOutputNodeIds] = useState<string[]>(plan.output_node_ids);
+  const [outputIsSynthetic, setOutputIsSynthetic] = useState<boolean>(plan.output_is_synthetic);
   const [parseError, setParseError] = useState<string | null>(null);
   const [nodeFilter, setNodeFilter] = useState("");
   const [showScan, setShowScan] = useState(false);
@@ -156,7 +157,9 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
 
   function handleSave() {
     if (!validateAliases(pins)) return;
-    const patch: Parameters<typeof onSave>[0] = { pinned_params: pins, output_node_ids: outputNodeIds };
+    const patch: Parameters<typeof onSave>[0] = {
+      pinned_params: pins, output_node_ids: outputNodeIds, output_is_synthetic: outputIsSynthetic,
+    };
     if (workflowText.trim()) {
       if (!workflow) { toast.error("Fix the workflow JSON before saving"); return; }
       patch.workflow_json = workflow;
@@ -187,7 +190,10 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
   function applySync(snapshot: CanvasWorkflowResponse) {
     const kept = pins.filter((p) => pinResolves(p, snapshot.workflow));
     if (!validateAliases(kept)) return;
-    onSave({ workflow_json: snapshot.workflow, pinned_params: kept, output_node_ids: outputNodeIds });
+    onSave({
+      workflow_json: snapshot.workflow, pinned_params: kept,
+      output_node_ids: outputNodeIds, output_is_synthetic: outputIsSynthetic,
+    });
     setPins(kept);
     setWorkflowText("");
     setSyncSnapshot(null);
@@ -328,6 +334,23 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
               )}
             </div>
           )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={outputIsSynthetic}
+                onChange={(e) => setOutputIsSynthetic(e.target.checked)}
+              />
+              Output is synthetic (self-created)
+            </label>
+            <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+              {outputIsSynthetic
+                ? "Imported images are recorded as ComfyUI / synthetic."
+                : "Imported images inherit this dataset's source & license defaults — for a plan that derives from licensed material."}
+            </span>
+          </div>
 
           {!hasSaveNode && outputNodeIds.length === 0 && (
             <p style={{ color: "var(--warn, #d97706)", fontSize: 12, marginTop: 6 }}>

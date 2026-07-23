@@ -40,6 +40,7 @@ The order images travel through the app:
 
 | Topic | |
 |---|---|
+| Source & license provenance — where images came from, what you may do with them, export credits | [provenance.md](provenance.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
 | Settings reference — all seven tabs | [settings.md](settings.md) |
 | Background jobs, restart & shutdown, hardware meters, split view, logs, file browser, booru lookup | [workspace.md](workspace.md) |

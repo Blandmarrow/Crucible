@@ -6,7 +6,18 @@ name: backend-tests
 # pydantic-settings, fastapi, regex. The detection/mask tests import the ORM
 # models (backend.database creates the async engine at import → aiosqlite +
 # greenlet) and the export_service/utils helpers, so those deps are needed just
-# to collect them. Deliberately NO torch-sized / GPU / cv2 deps: technical_scorer
+# to collect them.
+#
+# The second group — httpx, python-multipart, aiohttp, sse-starlette, psutil,
+# imagehash, tiktoken — is what importing the real app costs. tests/conftest.py
+# drives `backend.main.app` over httpx.ASGITransport, and that import pulls in
+# every router: python-multipart (FastAPI refuses `UploadFile` params without
+# it), sse-starlette (jobs), psutil (system), aiohttp (booru), imagehash and
+# tiktoken (image/caption services). All are small and pure-Python-ish. A
+# missing one fails at *collection*, taking down the whole suite rather than
+# just the HTTP tests — which is exactly how this list was found to be short.
+#
+# Deliberately NO torch-sized / GPU / cv2 deps: technical_scorer
 # imports cv2 lazily inside score_technical_sync, and no test imports torch or an
 # ML model. Keep it that way — if a new test needs torch-sized dependencies,
 # reconsider the test design before growing this install step.
@@ -33,6 +44,6 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install test dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex -r backend/requirements-dev.txt
+        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken -r backend/requirements-dev.txt
       - name: Run backend tests
         run: python -m pytest backend/tests/ -q

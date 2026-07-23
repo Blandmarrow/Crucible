@@ -6,6 +6,7 @@ to the ComfyUI server sequentially, downloads the outputs, and ingests them
 into the dataset. See docs/dev/comfyui.md.
 """
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -17,10 +18,11 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import FIELD_MAX_LEN
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.services.comfy_service import (
@@ -78,6 +80,8 @@ class PlanCreate(BaseModel):
     workflow_json: dict = Field(default_factory=dict)
     pinned_params: list[PinnedParam] = Field(default_factory=list)
     output_node_ids: list[str] = Field(default_factory=list)
+    # Is this plan's output self-created? See `_comfy_output_provenance`.
+    output_is_synthetic: bool = True
 
 
 class PlanUpdate(BaseModel):
@@ -86,6 +90,7 @@ class PlanUpdate(BaseModel):
     pinned_params: list[PinnedParam] | None = None
     # [] clears back to auto (import all SaveImage outputs); absent = unchanged.
     output_node_ids: list[str] | None = None
+    output_is_synthetic: bool | None = None
 
 
 class RowCreate(BaseModel):
@@ -196,6 +201,7 @@ def _plan_out(plan: ComfyPlan) -> dict:
         "workflow_json": plan.workflow_json or {},
         "pinned_params": plan.pinned_params or [],
         "output_node_ids": plan.output_node_ids or [],
+        "output_is_synthetic": bool(plan.output_is_synthetic),
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
     }
@@ -212,6 +218,103 @@ def _row_out(row: ComfyRow) -> dict:
         "image_id": row.image_id,
         "image_ids": row.image_ids or [],
         "prompt_id": row.prompt_id,
+    }
+
+
+_MODEL_LOADER_INPUTS = ("ckpt_name", "unet_name", "model_name")
+
+
+def _workflow_checkpoints(workflow: dict | None) -> list[str]:
+    """Model names loaded by an API-format workflow, in node order.
+
+    Read from the workflow itself rather than from the PNG's embedded metadata:
+    ComfyUI's own output carries the whole prompt graph under `prompt`/`workflow`
+    and never a flat `checkpoint` key, so scanning `generation_metadata` for one
+    finds nothing for genuine ComfyUI images.
+
+    Not only `CheckpointLoader*`: Flux and SD3 workflows load their model through
+    `UNETLoader` (`unet_name`) or a `*ModelLoader` (`model_name`), so matching on
+    the class name alone recorded no model at all for them.
+    """
+    out: list[str] = []
+    for node in (workflow or {}).values():
+        if not isinstance(node, dict):
+            continue
+        cls = str(node.get("class_type", "")).lower()
+        if not any(k in cls for k in ("checkpoint", "unet", "model")):
+            continue
+        inputs = node.get("inputs") or {}
+        for key in _MODEL_LOADER_INPUTS:
+            name = inputs.get(key)
+            if isinstance(name, str) and name and name not in out:
+                out.append(name)
+    return out
+
+
+def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, workflow: dict | None) -> dict:
+    """Provenance `source_meta` for an image imported from a ComfyUI run.
+
+    Records which plan/row produced it and the checkpoint(s) it came from, so a
+    synthetic image can be traced back to its generator. Deliberately compact —
+    the full workflow already lives in `generation_metadata`.
+    """
+    meta: dict = {"generator": "ComfyUI", "plan_id": plan.id, "plan_name": plan.name, "row_id": row.id}
+    checkpoints = _workflow_checkpoints(workflow)
+    if checkpoints:
+        meta["checkpoint"] = checkpoints[0] if len(checkpoints) == 1 else checkpoints
+    return meta
+
+
+def _comfy_output_provenance(synthetic: bool, plan_name: str = "") -> dict:
+    """Provenance columns to stamp on images imported from a ComfyUI run.
+
+    `synthetic` is the plan's own declaration that its output is self-created —
+    the only thing that can answer this, since nothing about the workflow or the
+    dataset does. It is a per-plan choice because a dataset holds both kinds of
+    plan at once, and no run-time inspection can tell them apart.
+
+    On (the default): record the run's own provenance, including a **concrete**
+    `attribution` naming the plan that generated the image. That string is there
+    to be true, not to be pretty: a blank `attribution` is read by
+    `resolve_provenance` as "inherit", so leaving it blank over a dataset that
+    records an attribution default credited a real photographer for an AI image —
+    straight into `CREDITS.md`, which is a legal attribution document. Writing the
+    generator is both an honest statement of origin and the only way to stop the
+    inheritance, since there is no vocabulary to extend here the way `no-license`
+    extends the license one.
+
+    `source_url` is **not** fixed by the same trick and still inherits, because
+    every candidate value would be invented: a generated image has no per-image
+    URL, and the ComfyUI server address is not a source. So a dataset default URL
+    still reaches the manifest, and it is not a subtle artefact — `CREDITS.md`
+    renders it as a bullet directly under the generated image's source group::
+
+        ## Synthetic (AI-generated) (1 image(s))
+
+        - **ComfyUI** (1 image(s))
+          - [https://flickr.test/p/1](https://flickr.test/p/1)
+          - Generated by ComfyUI plan "portraits"
+
+    Closing that needs a way to record "explicitly nothing", which `resolve_provenance`
+    has no vocabulary for on a free-text field — the way `no-license` provides it
+    for the closed `license` vocabulary. Until then: set `source_url` per image,
+    or keep generated and sourced material in separate datasets. Pinned by
+    `test_comfy_output_provenance_follows_the_plans_synthetic_toggle`.
+
+    Off: return `{}` so every field stays NULL and inherits the dataset's defaults
+    — all four together. A derived image keeps its source's whole story, which is
+    what stops a CC-BY-NC source hiding from the commercial-use export filter.
+    """
+    if not synthetic:
+        return {}
+    name = (plan_name or "").strip()
+    attribution = f'Generated by ComfyUI plan "{name}"' if name else "Generated by ComfyUI"
+    return {
+        "license": "synthetic",
+        "source_name": "ComfyUI",
+        # Plan names are capped at 255 and `attribution` at 2000, so this cannot
+        # overflow the column — but clamp anyway rather than rely on that pairing.
+        "attribution": attribution[:FIELD_MAX_LEN["attribution"]],
     }
 
 
@@ -542,6 +645,7 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
         workflow_json=body.workflow_json,
         pinned_params=_validate_pins(body.pinned_params),
         output_node_ids=body.output_node_ids,
+        output_is_synthetic=body.output_is_synthetic,
     )
     db.add(plan)
     await db.commit()
@@ -573,6 +677,8 @@ async def update_plan(plan_id: str, body: PlanUpdate, db: AsyncSession = Depends
         plan.pinned_params = _validate_pins(body.pinned_params)
     if body.output_node_ids is not None:
         plan.output_node_ids = list(body.output_node_ids)
+    if body.output_is_synthetic is not None:
+        plan.output_is_synthetic = body.output_is_synthetic
     await db.commit()
     return _plan_out(plan)
 
@@ -1179,7 +1285,11 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.services.caption_service import _write_txt_sidecar
-        from backend.services.dataset_service import _register_file_sync, refresh_stats
+        from backend.services.dataset_service import (
+            RegisteredFile,
+            _register_file_sync,
+            refresh_stats,
+        )
         from backend.workers.progress import broadcaster
 
         async with AsyncSessionLocal() as session:
@@ -1210,14 +1320,20 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             planned_thumb_stems: set[str] = set()
             stem_slug = slugify_filename(plan_row.name) or "comfy"
 
+            output_provenance = _comfy_output_provenance(
+                plan_row.output_is_synthetic, plan_row.name
+            )
+
             client = ComfyClient(comfy_url)
             loop = asyncio.get_running_loop()
             created_image_ids: list[str] = []
             failed_row_ids: list[str] = []
             consecutive_connect_errors = 0
 
-            def _write_and_register(data: bytes, dest: Path, thumb: str) -> tuple[dict, dict | None]:
+            def _write_and_register(data: bytes, dest: Path, thumb: str) -> RegisteredFile:
                 dest.write_bytes(data)
+                # `.provenance` is deliberately ignored: ComfyUI output has no
+                # sidecar/EXIF provenance worth capturing and sets its own below.
                 return _register_file_sync(dest, thumb)
 
             async def _emit(done: int, message: str, current: str = "") -> None:
@@ -1246,8 +1362,14 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 # Image rows if the row fails partway through (see the except handler).
                 row_images: list[Image] = []
                 row_files: list[Path] = []
+                row_image_ids: list[str] = []
+                row_id = row.id
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
+                    # Built from `wf` — the graph actually submitted, with this row's
+                    # values patched in — not the plan template, whose model loader may
+                    # be overridden by a pin. Computed once per row, not per output image.
+                    row_source_meta = _comfy_source_meta(plan_row, row, wf)
                     prompt_id = await client.submit(wf, client_id=job_id)
                     consecutive_connect_errors = 0
                     row.prompt_id = prompt_id
@@ -1286,7 +1408,6 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     # file + Image created for this row so a failure partway through a
                     # multi-output row leaves no stray files on disk and no orphan Image rows
                     # (which would otherwise surface in the gallery under a "failed" row).
-                    row_image_ids: list[str] = []
                     for ref in image_refs:
                         data = await client.fetch_image(
                             ref["filename"], ref.get("subfolder", ""), ref.get("type", "output")
@@ -1302,9 +1423,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         # dest is on disk (corrupt bytes → PIL error during register),
                         # and unlink(missing_ok=True) makes early tracking harmless.
                         row_files.extend((dest, Path(thumb_path)))
-                        info, gen_meta = await loop.run_in_executor(
+                        reg = await loop.run_in_executor(
                             None, _write_and_register, data, dest, thumb_path
                         )
+                        gen_meta = reg.gen_meta
                         img = Image(
                             dataset_id=ds.id,
                             filename=new_name,
@@ -1313,7 +1435,9 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,
-                            **info,
+                            source_meta=copy.deepcopy(row_source_meta),
+                            **output_provenance,
+                            **reg.info,
                         )
                         if set_caption:
                             caption = effective_prompt(workflow, pinned, row.values or {})
@@ -1356,21 +1480,63 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     except Exception:
                         pass  # best-effort; a second CancelledError propagates below
                     raise
-                except (ComfyRowError, httpx.HTTPError, OSError) as e:
-                    # Discard any images/files this row produced before it failed.
-                    for img_obj in row_images:
-                        await session.delete(img_obj)
+                except Exception as e:
+                    # Deliberately broad: an unexpected error (a refactor breaking a
+                    # helper's signature, a PIL failure, a DB error) must still run the
+                    # per-row cleanup below rather than orphan the files and Image rows
+                    # this row already wrote and leave the row wedged at "running".
+                    # CancelledError is handled above and re-raised; it is a
+                    # BaseException on 3.8+ so it never reaches here.
+                    #
+                    # Order matters, and it is DB-error-first: after a failed flush the
+                    # session is unusable until it is rolled back, so any DB work done
+                    # before the rollback raises *inside the handler* and the cleanup
+                    # never happens — files orphaned, row wedged at "running", run
+                    # aborted. So: rollback, then the files (which no DB failure can
+                    # affect), then the DB half guarded on its own.
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        logger.warning("comfy_generate: rollback failed for row %s", row_id, exc_info=True)
                     for f in row_files:
                         try:
                             f.unlink(missing_ok=True)
                         except OSError:
                             pass
-                    row.image_id = None
-                    row.image_ids = []
-                    row.status = "failed"
-                    row.error_msg = str(e)[:2000]
-                    failed_row_ids.append(row.id)
-                    logger.warning("comfy_generate: row %s failed", row.id, exc_info=True)
+                    # The rollback discarded the flushed-but-uncommitted Image rows and
+                    # expired `row`, so re-fetch it and delete by id — a no-op when the
+                    # rollback already took the images, and the real cleanup if some
+                    # later commit had made them durable.
+                    try:
+                        if row_image_ids:
+                            await session.execute(sa_delete(Image).where(Image.id.in_(row_image_ids)))
+                        row = await session.get(ComfyRow, row_id) or row
+                        row.image_id = None
+                        row.image_ids = []
+                        row.status = "failed"
+                        row.error_msg = str(e)[:2000]
+                        await session.commit()
+                    except Exception:
+                        # Second failure: the files are already gone, which is the half
+                        # that cannot be repaired later. Leave the row for the operator.
+                        logger.warning("comfy_generate: cleanup DB write failed for row %s", row_id, exc_info=True)
+                    # A rollback expires every object in this session, and the loop
+                    # keeps reading them: `row.values` next iteration, `plan_row.id`
+                    # in `_comfy_source_meta`, `ds.id` in `_emit`/`refresh_stats`. An
+                    # expired attribute load on an async session raises MissingGreenlet
+                    # — so re-load them here, where the awaits are legal.
+                    try:
+                        await session.refresh(ds)
+                        await session.refresh(plan_row)
+                        await session.execute(
+                            select(ComfyRow)
+                            .where(ComfyRow.id.in_(row_ids))
+                            .execution_options(populate_existing=True)
+                        )
+                    except Exception:
+                        logger.warning("comfy_generate: reload after rollback failed", exc_info=True)
+                    failed_row_ids.append(row_id)
+                    logger.warning("comfy_generate: row %s failed", row_id, exc_info=True)
                     if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
                         consecutive_connect_errors += 1
                         if consecutive_connect_errors >= MAX_CONSECUTIVE_CONNECT_ERRORS:

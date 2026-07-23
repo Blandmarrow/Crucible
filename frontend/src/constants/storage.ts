@@ -12,6 +12,7 @@ import { SORT_OPTIONS } from "./galleryOptions";
 export const GALLERY_DEFAULT_SORT_KEY    = "gallery-default-sort";    // number (index into SORT_OPTIONS)
 export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" | "captioned" | "uncaptioned"
 export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
+export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -78,4 +79,10 @@ export function getGalleryDefaultCaptionFilter(): boolean | undefined {
 
 export function getGalleryDefaultQualityFilter(): string {
   return localStorage.getItem(GALLERY_DEFAULT_QUALITY_KEY) ?? "";
+}
+
+/** Whether gallery cards show a license badge. Off by default — most datasets
+ *  are single-source, where a badge on every card is pure noise. */
+export function getGalleryLicenseBadge(): boolean {
+  return localStorage.getItem(GALLERY_LICENSE_BADGE_KEY) === "true";
 }

@@ -6,6 +6,7 @@ import type { ImageListItem } from "../../types";
 import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
+import LicenseBadge from "../common/LicenseBadge";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
@@ -89,6 +90,12 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const hasAiArtifacts = image.quality_flags?.has_ai_artifacts as boolean | undefined;
+  // Off by default (Settings → Gallery): most datasets are single-source, where
+  // a badge on every card is noise. `license` here is already the effective value;
+  // an empty one renders the muted "No license" badge, which is the whole point of
+  // switching the preference on. Read from the store, not localStorage, so toggling
+  // it in a Settings pane updates a gallery pane that is already mounted.
+  const showLicense = useUiPrefsStore((s) => s.galleryLicenseBadge);
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 
@@ -200,6 +207,11 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           <div style={{ fontSize: 11.5, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }} title={image.filename}>
             {image.filename}
           </div>
+          {/* Bounded: an `other:<free text>` license is arbitrarily long and was
+              pushing the filename out of the card. The title carries the full text. */}
+          {showLicense && (
+            <LicenseBadge value={image.license} className="shrink-0 max-w-[45%] truncate" />
+          )}
           {image.generation_metadata && onShowGenMeta && (
             <button
               className="icon-btn"

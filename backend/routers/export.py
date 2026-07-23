@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob
-from backend.utils import ALLOWED_FLAG_KEYS
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_license_filter, parse_license_filter_param
 from backend.services.export_service import (
     export_aitoolkit,
     export_kohya,
@@ -41,6 +41,16 @@ class KohyaExportRequest(BaseModel):
     mask_exclude_labels: list[str] | None = None   # regions always painted black
     mask_invert: bool = False
     mask_missing: Literal["white", "skip"] = "white"
+    # None/empty = no license restriction. Values are effective license ids
+    # ("" matches images with no license recorded at either level).
+    license_filter: list[str] | None = None
+    commercial_only: bool = False
+    # Drops images with no effective license. Separate from license_filter, which
+    # is an allowlist of known ids and would also drop `other:<free text>` values.
+    exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -65,6 +75,16 @@ class AIToolkitExportRequest(BaseModel):
     mask_exclude_labels: list[str] | None = None
     mask_invert: bool = False
     mask_missing: Literal["white", "skip"] = "white"
+    # None/empty = no license restriction. Values are effective license ids
+    # ("" matches images with no license recorded at either level).
+    license_filter: list[str] | None = None
+    commercial_only: bool = False
+    # Drops images with no effective license. Separate from license_filter, which
+    # is an allowlist of known ids and would also drop `other:<free text>` values.
+    exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -87,6 +107,16 @@ class PlainExportRequest(BaseModel):
     mask_exclude_labels: list[str] | None = None
     mask_invert: bool = False
     mask_missing: Literal["white", "skip"] = "white"
+    # None/empty = no license restriction. Values are effective license ids
+    # ("" matches images with no license recorded at either level).
+    license_filter: list[str] | None = None
+    commercial_only: bool = False
+    # Drops images with no effective license. Separate from license_filter, which
+    # is an allowlist of known ids and would also drop `other:<free text>` values.
+    exclude_unlicensed: bool = False
+    # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
+    # is what "no derivatives" forbids redistributing.
+    exclude_no_derivatives: bool = False
     label: str | None = None
 
 
@@ -134,6 +164,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
     exclude_flags = _parse_flags(body.exclude_flags)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
+    license_filter = normalize_license_filter(body.license_filter)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -171,6 +202,10 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 mask_exclude_labels=mask_exclude_labels,
                 mask_invert=body.mask_invert,
                 mask_missing=body.mask_missing,
+                license_filter=license_filter,
+                commercial_only=body.commercial_only,
+                exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -190,6 +225,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
     exclude_flags = _parse_flags(body.exclude_flags)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
+    license_filter = normalize_license_filter(body.license_filter)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -226,6 +262,10 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 mask_exclude_labels=mask_exclude_labels,
                 mask_invert=body.mask_invert,
                 mask_missing=body.mask_missing,
+                license_filter=license_filter,
+                commercial_only=body.commercial_only,
+                exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -245,6 +285,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
     exclude_flags = _parse_flags(body.exclude_flags)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
+    license_filter = normalize_license_filter(body.license_filter)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -279,6 +320,10 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 mask_exclude_labels=mask_exclude_labels,
                 mask_invert=body.mask_invert,
                 mask_missing=body.mask_missing,
+                license_filter=license_filter,
+                commercial_only=body.commercial_only,
+                exclude_unlicensed=body.exclude_unlicensed,
+                exclude_no_derivatives=body.exclude_no_derivatives,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -304,6 +349,10 @@ async def preview(
     mask_labels: str = Query(default="", description="JSON array of label strings; empty = all labels"),
     mask_exclude_labels: str = Query(default="", description="JSON array of label strings; regions always painted black"),
     mask_missing: Literal["white", "skip"] = Query(default="white"),
+    license_filter: str = Query(default="", description="JSON array of effective license ids; empty = no filter"),
+    commercial_only: bool = Query(default=False),
+    exclude_unlicensed: bool = Query(default=False),
+    exclude_no_derivatives: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
@@ -321,4 +370,8 @@ async def preview(
         mask_labels=label_list,
         mask_exclude_labels=exclude_label_list,
         mask_missing=mask_missing,
+        license_filter=parse_license_filter_param(license_filter),
+        commercial_only=commercial_only,
+        exclude_unlicensed=exclude_unlicensed,
+        exclude_no_derivatives=exclude_no_derivatives,
     )

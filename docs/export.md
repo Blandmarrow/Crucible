@@ -22,8 +22,31 @@ Three fully implemented export formats, all with identical filter and processing
 - If two images would land on the same output filename (e.g. `same.png` and `same.jpg`, or when converting both to one format), the second is suffixed `_001`, `_002`, … so no image, caption, or mask overwrites another
 - **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested
 - **Captions only** — skip image files entirely and export only caption sidecars / JSONL manifests; useful for updating captions in an existing dataset without re-copying images
-- **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run
+- **Commercial-use only** / **Exclude unlicensed images** / specific-license selection — filter on each image's effective license (its own value, or its dataset's default). The specific-license list includes any free-text licenses recorded in the dataset, so a custom license can be exported or held back like any other. "Commercial use" is conservative: an unknown license counts as *not* permitted → [details](provenance.md)
+- **Exclude no-derivatives** — drops CC BY-ND images. An export ships resized, cropped or re-encoded copies, which is exactly what "no derivatives" forbids redistributing. Unlike the commercial filter this one is not conservative: only licenses *known* to be ND are dropped, so a free-text license is kept → [details](provenance.md)
+- **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run, and warns when any images have no license recorded
 - **Loss masks** — see below
+
+## Provenance manifests
+
+Every export writes two files at the top level of the output directory, in all
+three formats:
+
+| File | Contents |
+|---|---|
+| `CREDITS.md` | Human-readable credits grouped by license, then by source. Attribution-required licenses are listed first. |
+| `licenses.csv` | One row per exported file: `file,source_name,source_url,license,attribution` |
+
+Both record the **resolved** license — an image that inherits its license from
+its dataset shows the real value, not a blank. They are always written, even
+when nothing carries a license: a missing attribution file reads as "no
+attribution needed", which is exactly the claim an unlabeled dataset cannot
+make. An export that stops early — cancelled, or failed on an unreadable image —
+writes `CREDITS.partial.md` / `licenses.partial.csv` for what it did write.
+Re-exporting into the same output folder replaces its manifests; a manifest
+describing a *different* set of files is never destroyed and the new one lands
+beside it as `CREDITS.2.md`. The page names the files each run wrote when it
+finishes. See [Source & License Provenance](provenance.md) for the full lifecycle.
 
 ## Loss masks (masked training loss)
 

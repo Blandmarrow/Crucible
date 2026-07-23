@@ -1,6 +1,7 @@
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
+from backend.licenses import FIELD_MAX_LEN, normalize_license_input
 from backend.schemas import UtcDatetime
 from backend.schemas.detection import DetectionOut
 
@@ -39,6 +40,20 @@ class ImageOut(BaseModel):
     updated_at: UtcDatetime
     detections: list[DetectionOut] = []
 
+    # Raw provenance as stored: NULL/"" means the value is inherited from the
+    # dataset. Sent alongside `provenance` (the resolved view) so the UI can
+    # distinguish "inherited from dataset" from "overridden on this image".
+    source_name: str | None = None
+    source_url: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+    # Deliberately no top-level `source_meta`: it is a scraper's raw payload (up
+    # to the 256 KB sidecar cap), it is already carried by `provenance.source_meta`,
+    # and this response is refetched on every arrow-key navigation.
+    # Resolved values + an `inherited` list of field names — see
+    # backend.licenses.resolve_provenance. Populated by the router.
+    provenance: dict | None = None
+
     model_config = {"from_attributes": True}
 
 
@@ -66,6 +81,11 @@ class ImageListItem(BaseModel):
     is_auto_named: bool = False
     sort_order: int | None = None
     updated_at: UtcDatetime
+    # Effective license (own value coalesced over the dataset default), for the
+    # gallery badge. Nullable because validation reads the *raw* Image.license,
+    # which is NULL whenever the image inherits; the router overwrites it with
+    # the resolved value before responding. "" when neither level records one.
+    license: str | None = ""
 
     model_config = {"from_attributes": True}
 
@@ -156,3 +176,41 @@ class BulkDeleteRequest(BulkFilterBase):
 
 class BulkCountRequest(BulkFilterBase):
     include_flagged: bool = False
+
+
+class ProvenanceEdit(BaseModel):
+    """Provenance edit fields: None = leave unchanged, "" = clear to NULL (inherit
+    the dataset default), any other string = set that value.
+
+    JSON `null` and `""` already carry the two meanings a provenance edit needs, so
+    there is no sentinel string: an earlier `"__inherit__"` sentinel was treated
+    exactly like `""` by the router, which meant a source name of literally
+    `__inherit__` silently cleared itself.
+
+    Caps mirror the column widths (`licenses.FIELD_MAX_LEN`). `license` is capped by
+    a validator instead, because normalization can grow the value — see
+    `normalize_license_input`.
+    """
+    source_name: str | None = Field(None, max_length=FIELD_MAX_LEN["source_name"])
+    source_url: str | None = Field(None, max_length=FIELD_MAX_LEN["source_url"])
+    license: str | None = None
+    attribution: str | None = Field(None, max_length=FIELD_MAX_LEN["attribution"])
+
+    _norm_license = field_validator("license")(normalize_license_input)
+
+
+class BulkProvenanceRequest(BulkFilterBase, ProvenanceEdit):
+    """Set source/license on a selection — see ProvenanceEdit for the field semantics."""
+    # False, matching BulkCountRequest and bulk_rename: a bulk op that silently
+    # includes images the user has flagged is the surprising default, and the
+    # frontend already sends the value explicitly, so nothing changes for it.
+    include_flagged: bool = False
+
+
+class BulkProvenanceResult(BaseModel):
+    updated: int
+
+
+class ImageProvenanceUpdate(ProvenanceEdit):
+    """Per-image provenance edit; same semantics and caps as the bulk form."""
+

@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { comfyApi } from "../../api/comfy";
 import { datasetsApi } from "../../api/datasets";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { apiErrorDetail } from "../../utils/apiError";
 
 interface Props {
   /** The plan prompts are added INTO. */
@@ -22,10 +23,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 const NEW_CATEGORY = "__new__";
-
-function apiErrorDetail(err: unknown, fallback: string): string {
-  return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
-}
 
 /** The global prompt library (categorized) plus cross-plan prompt reuse, in one modal. */
 export default function PromptLibraryModal({ targetPlanId, targetDatasetId, onClose, onImported }: Props) {

@@ -8,14 +8,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
+from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, LicenseUsage, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
     create_dataset,
     declare_subfolder,
     delete_subfolder,
     duplicate_dataset,
     get_dataset_stats,
+    get_licenses_in_use,
     get_score_values,
     get_tag_cooccurrence,
     import_captions_from_folder,
@@ -29,6 +31,20 @@ from backend.services.dataset_service import (
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+
+def _apply_provenance_defaults(ds: Dataset, body: DatasetUpdate) -> None:
+    """Apply the dataset-level provenance defaults from a PATCH body.
+
+    None leaves a field alone; "" clears it. Editing these retroactively changes
+    every image that has not overridden the field — that is the intended
+    inheritance behaviour, not a bug.
+    """
+    # `license` arrives normalized + length-checked by the schema validator.
+    for field in PROVENANCE_FIELDS:
+        value = getattr(body, field)
+        if value is not None:
+            setattr(ds, field, value)
 
 
 @router.get("/", response_model=list[DatasetOut])
@@ -78,6 +94,10 @@ async def list_datasets(
             total_size_bytes=ds.total_size_bytes,
             preview_image_ids=previews[ds.id],
             current_branch_id=ds.current_branch_id,
+            source_name=ds.source_name,
+            source_url=ds.source_url,
+            license=ds.license,
+            attribution=ds.attribution,
         )
         for ds in datasets
     ]
@@ -88,7 +108,16 @@ async def create(body: DatasetCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(Dataset).where(Dataset.name == body.name))
     if existing.scalar():
         raise HTTPException(400, f"Dataset '{body.name}' already exists")
-    return await create_dataset(db, body.name, body.description, body.category)
+    # Provenance goes in with the row, not in a second commit — see create_dataset.
+    return await create_dataset(
+        db, body.name, body.description, body.category,
+        provenance={
+            "source_name": body.source_name,
+            "source_url": body.source_url,
+            "license": body.license,  # already normalized by the schema validator
+            "attribution": body.attribution,
+        },
+    )
 
 
 @router.get("/{dataset_id}", response_model=DatasetOut)
@@ -110,17 +139,19 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         if conflict.scalar():
             raise HTTPException(400, f"Dataset '{body.name}' already exists")
         ds = await rename_dataset(db, ds, body.name, body.description)
-        # Apply category update after rename (rename already committed)
+        # Apply category + provenance updates after rename (rename already committed)
         if body.category is not None:
             ds.category = body.category
-            await db.commit()
-            await db.refresh(ds)
+        _apply_provenance_defaults(ds, body)
+        await db.commit()
+        await db.refresh(ds)
         return ds
 
     if body.description is not None:
         ds.description = body.description
     if body.category is not None:
         ds.category = body.category
+    _apply_provenance_defaults(ds, body)
     await db.commit()
     await db.refresh(ds)
     return ds
@@ -209,6 +240,12 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
                 import_captions=body.import_captions,
+                provenance={
+                    "source_name": body.source_name,
+                    "source_url": body.source_url,
+                    "license": body.license,  # normalized by the schema validator
+                    "attribution": body.attribution,
+                },
             )
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
@@ -345,6 +382,19 @@ async def get_stats(dataset_id: str, subfolder: str | None = Query(None), db: As
     if not stats:
         raise HTTPException(404, "Dataset not found")
     return stats
+
+
+@router.get("/{dataset_id}/licenses-in-use", response_model=list[LicenseUsage])
+async def licenses_in_use(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """The dataset's distinct effective licenses — what the license pickers offer.
+
+    A free-text `other:` license is data, not vocabulary, so a dropdown can only
+    offer one by asking for it. See `get_licenses_in_use`.
+    """
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    return await get_licenses_in_use(db, dataset_id)
 
 
 @router.get("/{dataset_id}/score-values")

@@ -26,7 +26,9 @@ import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
-import { SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
+import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
+import { useCustomLicenses } from "../hooks/useCustomLicenses";
+import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -93,7 +95,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; scrollTop: number; activeSubfolder?: string | null };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null };
   } catch {}
   return null;
 }
@@ -111,6 +113,28 @@ export default function GalleryPage() {
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
     saved?.captionedFilter == null ? getGalleryDefaultCaptionFilter() : saved.captionedFilter
   );
+  // "" = no license filter; "__missing__" = only images with no license at
+  // either level; anything else = that effective license id.
+  // Bounds-checked against the vocabulary the way getGalleryDefaultSort bounds-checks
+  // its index: this comes back from localStorage, possibly written by a build whose
+  // vocabulary has since changed, and an unknown id silently filters to zero images
+  // with no dropdown option showing why.
+  const [licenseFilter, setLicenseFilter] = useState(() => {
+    const restored = String(saved?.licenseFilter ?? "");
+    if (restored === MISSING_LICENSE || isKnownLicenseValue(restored)) return restored;
+    return "";
+  });
+  // Free-text licenses recorded in this dataset — the vocabulary is compiled in,
+  // but an `other:` license exists only in the data, so it can only be offered by
+  // asking. A restored filter that is no longer in use is kept in the list too,
+  // or the `<select>` would show no option for the filter it is applying.
+  const customLicenses = useCustomLicenses(datasetId);
+  const licenseFilterOptions = useMemo(() => {
+    const isCustom = licenseFilter.toLowerCase().startsWith(OTHER_PREFIX);
+    return isCustom && !customLicenses.includes(licenseFilter)
+      ? [...customLicenses, licenseFilter]
+      : customLicenses;
+  }, [customLicenses, licenseFilter]);
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
@@ -147,8 +171,8 @@ export default function GalleryPage() {
   const isCustomOrder = sortOpt.sort === "sort_order";
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, activeSubfolder });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -209,11 +233,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
       );
     }, 350);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, activeSubfolder]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -221,11 +245,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, activeSubfolder } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
         );
       } catch {}
     };
@@ -324,6 +348,9 @@ export default function GalleryPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // An import is a provenance writer: a scraper sidecar is the largest source
+    // of new `other:` licenses, and they are unpickable until this refetches.
+    qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });
     showImportSummaryToast(importJobId);
     setImportJobId(null);
   }, [importProgress?.status, importJobId, datasetId, qc]);
@@ -337,8 +364,8 @@ export default function GalleryPage() {
     : undefined;
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter]
   );
 
   const { data: images = [], isLoading, refetch } = useQuery({
@@ -356,6 +383,11 @@ export default function GalleryPage() {
         score_filters: scoreFiltersParam,
         subfolder: activeSubfolder,
         detection_label: detectionLabel || undefined,
+        license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
+        license_filter:
+          licenseFilter && licenseFilter !== MISSING_LICENSE
+            ? JSON.stringify([licenseFilter])
+            : undefined,
       }),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -694,6 +726,7 @@ export default function GalleryPage() {
     setSortIdx(getGalleryDefaultSort());
     setCaptionedFilter(getGalleryDefaultCaptionFilter());
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
+    setLicenseFilter("");
     setActiveSubfolder(undefined);
     hasRestoredScroll.current = true;
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -927,6 +960,23 @@ export default function GalleryPage() {
           <option value="is_duplicate">Flagged: duplicate</option>
           <option value="is_nsfw">Flagged: NSFW</option>
           <option value="has_ai_artifacts">Flagged: AI artifacts</option>
+        </select>
+
+        <select className="select" style={{ width: "auto" }} value={licenseFilter}
+          aria-label="Filter by license"
+          onChange={(e) => { setLicenseFilter(e.target.value); resetPage(); }}>
+          <option value="">All licenses</option>
+          <option value={MISSING_LICENSE}>Missing license only</option>
+          {LICENSE_OPTIONS.map((l) => (
+            <option key={l.id} value={l.id}>{l.label}</option>
+          ))}
+          {licenseFilterOptions.length > 0 && (
+            <optgroup label="Used in this dataset">
+              {licenseFilterOptions.map((lic) => (
+                <option key={lic} value={lic}>{lic.slice(OTHER_PREFIX.length)}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
 
         <button

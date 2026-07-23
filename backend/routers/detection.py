@@ -6,9 +6,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Integer, and_, cast, delete, func, select
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.licenses import copy_provenance
 from backend.ml.mask_utils import detection_crop_rect, merge_detection_geometry
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
@@ -989,7 +991,11 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
         async with AsyncSessionLocal() as session:
             images = []
             for chunk in chunked(matched_ids):
-                result = await session.execute(select(Image).where(Image.id.in_(chunk)))
+                # undefer: each crop copies its parent's provenance, source_meta
+                # included, and a deferred lazy load on an async session raises.
+                result = await session.execute(
+                    select(Image).where(Image.id.in_(chunk)).options(undefer(Image.source_meta))
+                )
                 images.extend(result.scalars().all())
             bboxes_by_image = await _fetch_bboxes_by_image(session, matched_ids, cfg["labels"])
             loop = asyncio.get_running_loop()
@@ -1132,6 +1138,8 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         file_size_bytes=info["file_size_bytes"],
                         format=info["format"],
                         phash=info["phash"],
+                        # A crop inherits its parent's source and license.
+                        **copy_provenance(img),
                     )
                     session.add(new_img)
                     await session.flush()

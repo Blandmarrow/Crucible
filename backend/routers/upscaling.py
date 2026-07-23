@@ -5,10 +5,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, select
+from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
+from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
@@ -65,9 +67,15 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
         from backend.workers.progress import broadcaster
 
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Image).where(Image.id.in_(image_ids))
-            )
+            # undefer only where it is needed: a non-replace upscale copies the
+            # parent's provenance, source_meta included, and a deferred lazy load
+            # would raise on this async session. The replace branch never calls
+            # `copy_provenance`, so undeferring there would load a scraper's full
+            # raw payload for the whole batch and discard it.
+            query = select(Image).where(Image.id.in_(image_ids))
+            if not cfg["replace"]:
+                query = query.options(undefer(Image.source_meta))
+            result = await session.execute(query)
             images = result.scalars().all()
             loop = asyncio.get_running_loop()
 
@@ -183,6 +191,8 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         height=info["height"],
                         file_size_bytes=info["file_size_bytes"],
                         format=info["format"],
+                        # An upscaled derivative keeps its parent's source/license.
+                        **copy_provenance(img),
                     )
                     session.add(new_img)
                     await session.flush()

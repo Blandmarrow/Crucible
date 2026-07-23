@@ -5,14 +5,22 @@ import shutil
 import statistics
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 from sqlalchemy import case, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
+from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.models import Dataset, Image
-from backend.services.image_service import extract_generation_metadata, generate_thumbnail, get_image_info
+from backend.services.image_service import (
+    extract_generation_metadata,
+    extract_embedded_provenance,
+    generate_thumbnail,
+    get_image_info,
+    read_provenance_sidecar,
+)
 from backend.utils import copy_with_sidecar, read_caption_sidecar, thumbnail_path_for
 
 logger = logging.getLogger(__name__)
@@ -21,6 +29,19 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff
 
 # Cap on how many per-file error details we retain in a job summary (failed_count keeps the full tally).
 _MAX_FAILED_DETAILS = 50
+
+# Largest license buckets returned by get_dataset_stats; the remainder collapses
+# into LICENSE_BREAKDOWN_OTHER_KEY so the counts still sum to the dataset total.
+# Comfortably above the curated vocabulary (13 ids) — the cap only ever bites on
+# `other:<free text>` values, which are unbounded.
+LICENSE_BREAKDOWN_LIMIT = 20
+LICENSE_BREAKDOWN_OTHER_KEY = "__other_licenses__"
+
+# Cap on the distinct licenses get_licenses_in_use reports. Deliberately looser
+# than the breakdown cap: that one only drops rows from a summary panel, while
+# this list *is* the picker — a value that falls off the end cannot be selected
+# or filtered on at all.
+LICENSES_IN_USE_LIMIT = 100
 
 
 def remove_dataset_dir(folder: Path) -> None:
@@ -85,13 +106,28 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     return removed
 
 
+def _capture_provenance(src_file: Path, dest_file: Path) -> dict:
+    """Provenance captured from a file being ingested: sidecar JSON, then embedded.
+
+    Sidecar wins over embedded (EXIF / PNG text) per field. The caller layers
+    request-supplied values on top of this, and leaves anything still unset NULL
+    so it inherits the dataset default (see backend/licenses.py).
+    """
+    captured = read_provenance_sidecar(src_file) or {}
+    embedded = extract_embedded_provenance(str(dest_file)) or {}
+    for field, value in embedded.items():
+        if not captured.get(field):
+            captured[field] = value
+    return captured
+
+
 def _ingest_file_sync(
     src_file: Path,
     dest_file: Path,
     thumb_path: str,
     read_caption: bool,
-) -> tuple[dict, dict | None, str | None]:
-    """Copy an imported file and derive its metadata/thumbnail/caption.
+) -> tuple[dict, dict | None, str | None, dict]:
+    """Copy an imported file and derive its metadata/thumbnail/caption/provenance.
 
     Pure filesystem + CPU work (no DB session) so it can run in a single executor hop,
     keeping the blocking copy/decode/phash/thumbnail off the event loop.
@@ -101,15 +137,30 @@ def _ingest_file_sync(
     gen_meta = extract_generation_metadata(str(dest_file))
     generate_thumbnail(str(dest_file), thumb_path)
     caption = read_caption_sidecar(src_file) if read_caption else None
-    return info, gen_meta, caption
+    provenance = _capture_provenance(src_file, dest_file)
+    return info, gen_meta, caption, provenance
 
 
-def _register_file_sync(f: Path, thumb_path: str) -> tuple[dict, dict | None]:
-    """Derive metadata + thumbnail for a file already on disk (rescan new-file path)."""
+class RegisteredFile(NamedTuple):
+    """Result of `_register_file_sync`.
+
+    A NamedTuple rather than a plain tuple so callers use attribute access: this
+    return value grew a third field once already and silently broke a caller that
+    still unpacked two (the ComfyUI import crash). Adding a fourth must not be
+    able to do that again.
+    """
+
+    info: dict
+    gen_meta: dict | None
+    provenance: dict
+
+
+def _register_file_sync(f: Path, thumb_path: str) -> RegisteredFile:
+    """Derive metadata + thumbnail + provenance for a file already on disk (rescan)."""
     info = get_image_info(str(f))
     gen_meta = extract_generation_metadata(str(f))
     generate_thumbnail(str(f), thumb_path)
-    return info, gen_meta
+    return RegisteredFile(info, gen_meta, _capture_provenance(f, f))
 
 
 def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb: Path) -> None:
@@ -175,7 +226,21 @@ def _p95(sorted_vals: list[float]) -> float:
     return sorted_vals[min(idx, len(sorted_vals) - 1)]
 
 
-async def create_dataset(db: AsyncSession, name: str, description: str = "", category: str = "") -> Dataset:
+async def create_dataset(
+    db: AsyncSession,
+    name: str,
+    description: str = "",
+    category: str = "",
+    provenance: dict | None = None,
+) -> Dataset:
+    """Create a dataset row + its on-disk folders in one commit.
+
+    `provenance` carries the dataset-level defaults (source_name/source_url/
+    license/attribution). They are set before the single commit on purpose: with a
+    second commit for them, a failure in between left a committed dataset with
+    empty provenance and returned a 500, and the client's retry then 400'd on the
+    duplicate name.
+    """
     ds_id = str(uuid4())
     slug = _name_to_slug(name)
     folder = settings.datasets_dir / slug
@@ -185,7 +250,11 @@ async def create_dataset(db: AsyncSession, name: str, description: str = "", cat
     (folder / "images").mkdir(exist_ok=True)
     (folder / "thumbnails").mkdir(exist_ok=True)
 
-    ds = Dataset(id=ds_id, name=name, description=description, category=category, folder_path=str(folder))
+    ds = Dataset(
+        id=ds_id, name=name, description=description, category=category,
+        folder_path=str(folder),
+        **{f: v for f, v in (provenance or {}).items() if f in PROVENANCE_FIELDS},
+    )
     db.add(ds)
     await db.commit()
     await db.refresh(ds)
@@ -292,6 +361,7 @@ async def import_images_from_folder(
     subfolder: str = "",
     preserve_structure: bool = False,
     import_captions: bool = True,
+    provenance: dict | None = None,
 ) -> dict:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -340,7 +410,7 @@ async def import_images_from_folder(
             dest_file = dest_images / new_name
             thumb_path = str(dest_thumbs / (dest_file.stem + ".webp"))
 
-            info, gen_meta, caption = await asyncio.get_event_loop().run_in_executor(
+            info, gen_meta, caption, captured = await asyncio.get_event_loop().run_in_executor(
                 None, _ingest_file_sync, src_file, dest_file, thumb_path, import_captions
             )
 
@@ -352,6 +422,9 @@ async def import_images_from_folder(
                 file_path=str(dest_file),
                 thumbnail_path=thumb_path,
                 generation_metadata=gen_meta,
+                # Request-supplied provenance wins over the sidecar, which wins
+                # over EXIF; anything still unset stays NULL and inherits.
+                **merge_provenance(provenance, captured),
                 **info,
             )
             if caption:
@@ -446,7 +519,7 @@ async def rescan_dataset(
             existing_img = by_filename.get(f.name)
             if existing_img is None:
                 thumb_path = thumbnail_path_for(f)
-                info, gen_meta = await asyncio.get_event_loop().run_in_executor(
+                reg = await asyncio.get_event_loop().run_in_executor(
                     None, _register_file_sync, f, thumb_path
                 )
                 img = Image(
@@ -456,8 +529,9 @@ async def rescan_dataset(
                     subfolder="",
                     file_path=str(f),
                     thumbnail_path=thumb_path,
-                    generation_metadata=gen_meta,
-                    **info,
+                    generation_metadata=reg.gen_meta,
+                    **merge_provenance(reg.provenance),
+                    **reg.info,
                 )
                 if caption:
                     img.caption_text = caption
@@ -869,9 +943,76 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     embed_count = await db.scalar(embed_q)
     score_cov["embeddings"] = embed_count or 0
 
-    return await asyncio.get_running_loop().run_in_executor(
+    # License breakdown over the *effective* license (image value coalesced over
+    # the dataset default). Aggregated in SQL alongside flag_counts rather than
+    # in _aggregate_dataset_stats — no reason to pull the rows into Python.
+    #
+    # Bounded, like get_tag_cooccurrence: the curated vocabulary is a dozen ids,
+    # but `other:<free text>` is unbounded and comes from scrapers, so a dataset
+    # of scraped images can produce one bucket per image — an unbounded response
+    # body and an unbounded list in the Stats panel. Everything past the cap
+    # collapses into one bucket so the counts still sum to the dataset total.
+    effective_license = func.coalesce(func.nullif(Image.license, ""), ds.license or "", "")
+    license_rows = (await db.execute(
+        select(effective_license.label("lic"), func.count(Image.id).label("n"))
+        .where(*_base_where)
+        .group_by(effective_license)
+        .order_by(func.count(Image.id).desc())
+    )).all()
+    license_breakdown = {(r.lic or ""): r.n for r in license_rows[:LICENSE_BREAKDOWN_LIMIT]}
+    rest = license_rows[LICENSE_BREAKDOWN_LIMIT:]
+    if rest:
+        license_breakdown[LICENSE_BREAKDOWN_OTHER_KEY] = sum(r.n for r in rest)
+
+    stats = await asyncio.get_running_loop().run_in_executor(
         None, _aggregate_dataset_stats, rows, ds, subfolder, score_cov, flag_counts
     )
+    stats["license_breakdown"] = license_breakdown
+    return stats
+
+
+async def get_licenses_in_use(db: AsyncSession, dataset_id: str) -> list[dict]:
+    """Distinct *effective* licenses recorded in one dataset, most-used first.
+
+    Exists so an `other:<free text>` license can be *picked* rather than retyped.
+    The curated vocabulary is compiled into the frontend, but a free-text license
+    is data — the only way a dropdown can offer one is to ask which ones exist.
+    Feeds the gallery license filter, the export filter and every license editor
+    scoped to a single dataset.
+
+    The dataset's own default is always included — exempt from the cap below, and
+    carrying its real count whether or not any image resolves to it. Otherwise the
+    license you just typed into the dataset defaults is absent from every picker
+    until some image happens to carry it, which is the gap this endpoint closes.
+
+    Bounded like the stats breakdown, and for the same reason — `other:` is
+    unbounded and comes from scrapers, so a scrape folder can produce one value
+    per image. Unlike the breakdown the tail is *dropped*, not collapsed into a
+    synthetic bucket: these counts are never summed to a dataset total, and a
+    collapsed bucket is not a selectable license.
+
+    Note the cap is applied in Python, not as SQL `LIMIT` — same as the breakdown.
+    Capping in SQL hides the tail from the default's own lookup too, so a default
+    that ranks past the cap gets re-added advertising a count of 0 while real
+    images carry it.
+    """
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        return []
+
+    effective_license = func.coalesce(func.nullif(Image.license, ""), ds.license or "", "")
+    rows = (await db.execute(
+        select(effective_license.label("lic"), func.count(Image.id).label("n"))
+        .where(Image.dataset_id == dataset_id)
+        .group_by(effective_license)
+        .order_by(func.count(Image.id).desc())
+    )).all()
+
+    by_license = {(r.lic or ""): r.n for r in rows}
+    out = [{"license": r.lic or "", "count": r.n} for r in rows[:LICENSES_IN_USE_LIMIT]]
+    if ds.license and not any(e["license"] == ds.license for e in out):
+        out.append({"license": ds.license, "count": by_license.get(ds.license, 0)})
+    return out
 
 
 async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
@@ -943,6 +1084,10 @@ async def duplicate_dataset(
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
     new_ds.declared_subfolders = list(source_dataset.declared_subfolders or [])
+    # Carry the provenance defaults across so images copied with raw (still
+    # inherited) values resolve to the same license they had in the source.
+    for _field in PROVENANCE_FIELDS:
+        setattr(new_ds, _field, getattr(source_dataset, _field) or "")
     await db.flush()
 
     dest_images = Path(new_ds.folder_path) / "images"
@@ -959,6 +1104,8 @@ async def duplicate_dataset(
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
             Image.generation_metadata, Image.processing_history, Image.sort_order,
+            Image.source_name, Image.source_url, Image.license, Image.attribution,
+            Image.source_meta,
         )
         result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
         rows = result.all()
@@ -1013,6 +1160,9 @@ async def duplicate_dataset(
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
                     sort_order=row.sort_order,
+                    # Raw, not resolved: the new dataset carries the same
+                    # provenance defaults, so inheritance stays equivalent.
+                    **copy_provenance(row),
                 ))
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
@@ -1098,6 +1248,7 @@ async def duplicate_dataset(
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,
                     sort_order=state.sort_order,
+                    **copy_provenance(state),
                 ))
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)

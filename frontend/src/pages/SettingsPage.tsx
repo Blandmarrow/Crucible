@@ -152,6 +152,10 @@ export default function SettingsPage() {
   const [galleryDefaultQuality, setGalleryDefaultQuality] = useState(
     () => localStorage.getItem(GALLERY_DEFAULT_QUALITY_KEY) ?? ""
   );
+  // Store-backed, not local state: a gallery pane mounted alongside this one must
+  // re-render its cards the moment the toggle flips.
+  const galleryLicenseBadge = useUiPrefsStore((s) => s.galleryLicenseBadge);
+  const setGalleryLicenseBadge = useUiPrefsStore((s) => s.setGalleryLicenseBadge);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -471,6 +475,27 @@ export default function SettingsPage() {
                   toast.success("Preference saved");
                 }}
               />
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>License badge on cards</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                Deliberately not one of the "Gallery defaults" below: this is a global display
+                setting that applies immediately to every open gallery, and the gallery toolbar's
+                reset button does not clear it.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={galleryLicenseBadge}
+                  onChange={(e) => {
+                    setGalleryLicenseBadge(e.target.checked);
+                    toast.success("Preference saved");
+                  }}
+                />
+                Show each image's effective source license on its gallery card
+              </label>
             </div>
 
             <div>

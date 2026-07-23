@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import {
   GALLERY_CHECKBOX_SIZE_KEY,
+  GALLERY_LICENSE_BADGE_KEY,
   clampGalleryCheckboxSize,
   getGalleryCheckboxSize,
+  getGalleryLicenseBadge,
 } from "../constants/storage";
 
 /**
@@ -20,6 +22,9 @@ interface UiPrefsStore {
   /** Gallery selection checkbox edge length, in px. */
   galleryCheckboxSize: number;
   setGalleryCheckboxSize: (size: number) => void;
+  /** Whether gallery cards show each image's effective license. */
+  galleryLicenseBadge: boolean;
+  setGalleryLicenseBadge: (on: boolean) => void;
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -28,5 +33,10 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
     const clamped = clampGalleryCheckboxSize(size);
     localStorage.setItem(GALLERY_CHECKBOX_SIZE_KEY, String(clamped));
     set({ galleryCheckboxSize: clamped });
+  },
+  galleryLicenseBadge: getGalleryLicenseBadge(),
+  setGalleryLicenseBadge: (on) => {
+    localStorage.setItem(GALLERY_LICENSE_BADGE_KEY, String(on));
+    set({ galleryLicenseBadge: on });
   },
 }));

@@ -10,6 +10,8 @@ import { imagesApi, type ImageListParams } from "../api/images";
 import { detectionApi, type DetectionStats } from "../api/detection";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
+import { OTHER_LICENSES_KEY, licenseInfo } from "../constants/licenses";
+import LicenseBadge from "../components/common/LicenseBadge";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, datasetScopedKey } from "../utils/persistentState";
@@ -91,7 +93,7 @@ type PanelFilter = { title: string; params: FilterParams } | null;
 
 type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captions" | "detections";
 type ItemId =
-  | "score_guide" | "quality_flags" | "score_coverage"
+  | "score_guide" | "quality_flags" | "score_coverage" | "licenses"
   | "aesthetic_score" | "style_sim" | "color_richness" | "saturation"
   | "blur" | "noise" | "uniformity" | "watermark"
   | "aspect_ratio" | "megapixels" | "file_size" | "file_formats"
@@ -314,6 +316,7 @@ const STATS_CONFIG: StatsCategoryDef[] = [
     { id: "score_guide",    label: "Score guide"     },
     { id: "quality_flags",  label: "Quality flags"   },
     { id: "score_coverage", label: "Score coverage"  },
+    { id: "licenses",       label: "Licenses"        },
   ]},
   { id: "aesthetic",  label: "Aesthetic & Style",  items: [
     { id: "aesthetic_score", label: "Aesthetic score"  },
@@ -1216,6 +1219,18 @@ export default function StatsPage() {
   if (isLoading) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading stats…</div>;
   if (!stats) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>No data</div>;
 
+  // Effective-license breakdown, largest bucket first; "" = no license recorded.
+  // The backend caps how many buckets it returns and collapses the tail into
+  // OTHER_LICENSES_KEY (unbounded `other:` free text would otherwise be one
+  // bucket per image), so that entry is a count, not a license id.
+  const licenseBreakdown = stats.license_breakdown ?? {};
+  const licenseRows = Object.entries(licenseBreakdown)
+    .filter(([id]) => id !== OTHER_LICENSES_KEY)
+    .map(([id, count]) => ({ id, count }))
+    .sort((a, b) => b.count - a.count);
+  const otherLicensesCount = licenseBreakdown[OTHER_LICENSES_KEY] ?? 0;
+  const unlicensedCount = licenseBreakdown[""] ?? 0;
+
   // ── Chart data ──
   const blurData      = scoreEntries(stats.blur_distribution,       BLUR_LABELS,  BLUR_EDGES,  "blur_score",       "asc");
   const noiseData     = scoreEntries(stats.noise_distribution,      NOISE_LABELS, NOISE_EDGES, "noise_score",      "desc");
@@ -1393,6 +1408,81 @@ export default function StatsPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {show("summary", "licenses") && (
+          <div className="panel" style={{ marginBottom: 14 }}>
+            <div className="panel-h">
+              <h3>Licenses</h3>
+              <div style={{ flex: 1 }} />
+              {unlicensedCount > 0 && (
+                <span className="badge dot warn">{unlicensedCount.toLocaleString()} with no license</span>
+              )}
+            </div>
+            {unlicensedCount > 0 && (
+              <p style={{ padding: "10px 16px 0", fontSize: 12, color: "var(--fg-mute)" }}>
+                {unlicensedCount.toLocaleString()} image{unlicensedCount !== 1 ? "s have" : " has"} no
+                license recorded at either the image or dataset level. Exports include them by
+                default, listed as unlicensed in <code>CREDITS.md</code>.
+              </p>
+            )}
+            <div style={{ padding: "10px 16px 14px" }}>
+              {licenseRows.length === 0 ? (
+                <p style={{ fontSize: 12, color: "var(--fg-mute)" }}>No images.</p>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--fg-dim)", borderBottom: "1px solid var(--line)" }}>
+                      <th style={{ padding: "6px 8px", fontWeight: 500 }}>License</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 500 }}>Commercial use</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 500, textAlign: "right" }}>Images</th>
+                      <th style={{ padding: "6px 8px", fontWeight: 500, textAlign: "right" }}>Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {licenseRows.map(({ id, count }) => {
+                      const info = licenseInfo(id);
+                      const pct = stats.image_count > 0 ? (count / stats.image_count) * 100 : 0;
+                      return (
+                        <tr
+                          key={id || "__none__"}
+                          style={{ borderBottom: "1px solid var(--line)", cursor: "pointer" }}
+                          onClick={() =>
+                            setPanelFilter({
+                              title: id ? `${info.label} images` : "Images with no license",
+                              params: id
+                                ? { license_filter: JSON.stringify([id]) }
+                                : { license_missing: true },
+                            })
+                          }
+                        >
+                          <td style={{ padding: "8px" }}>
+                            <LicenseBadge value={id} />
+                          </td>
+                          <td style={{ padding: "8px", color: "var(--fg-mute)" }}>
+                            {info.allowsCommercial === null ? "Unknown" : info.allowsCommercial ? "Allowed" : "Not allowed"}
+                            {info.requiresAttribution && " · attribution required"}
+                          </td>
+                          <td style={{ padding: "8px", textAlign: "right", fontFamily: "Geist Mono, monospace" }}>
+                            {count.toLocaleString()}
+                          </td>
+                          <td style={{ padding: "8px", textAlign: "right", color: "var(--fg-dim)", fontFamily: "Geist Mono, monospace" }}>
+                            {pct.toFixed(1)}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              {otherLicensesCount > 0 && (
+                <p style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 8 }}>
+                  + {otherLicensesCount.toLocaleString()} image
+                  {otherLicensesCount !== 1 ? "s" : ""} across smaller license buckets, not listed
+                  individually. Filter the gallery by license to see them.
+                </p>
+              )}
+            </div>
           </div>
         )}
         {show("summary", "score_coverage") && hasCoverage && (

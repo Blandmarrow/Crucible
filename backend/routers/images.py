@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, copy_with_sidecar, normalize_subfolder, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
+from backend.licenses import (
+    PROVENANCE_FIELDS,
+    copy_provenance,
+    materialize_by_source,
+    merge_provenance,
+    resolve_provenance,
+)
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
@@ -25,10 +32,13 @@ from backend.schemas.image import (
     BatchReorderRequest,
     BulkCountRequest,
     BulkDeleteRequest,
+    BulkProvenanceRequest,
+    BulkProvenanceResult,
     BulkRenameRequest,
     ImageCropRequest,
     ImageListItem,
     ImageOut,
+    ImageProvenanceUpdate,
     ImageResizeRequest,
     RenameImageRequest,
 )
@@ -40,6 +50,7 @@ from backend.services.image_service import (
     crop_image_to_dest,
     crop_to_aspect,
     extract_generation_metadata,
+    extract_embedded_provenance,
     generate_thumbnail,
     get_image_info,
     resize_image,
@@ -51,17 +62,18 @@ router = APIRouter(prefix="/images", tags=["images"])
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
 
-def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, dict | None]:
-    """Persist one upload and derive its metadata + thumbnail off the event loop.
+def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, dict | None, dict]:
+    """Persist one upload and derive its metadata + thumbnail + provenance off the event loop.
 
     `src_fileobj` is an UploadFile's SpooledTemporaryFile; sync reads of it are safe in a thread.
+    A browser upload carries no scraper sidecar, so only EXIF is available here.
     """
     with open(dest, "wb") as f:
         shutil.copyfileobj(src_fileobj, f)
     info = get_image_info(str(dest))
     gen_meta = extract_generation_metadata(str(dest))
     generate_thumbnail(str(dest), thumb_path)
-    return info, gen_meta
+    return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
 
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
@@ -127,6 +139,8 @@ async def list_images(
     caption_words_max: int | None = Query(None),
     caption_tokens_min: int | None = Query(None),
     caption_tokens_max: int | None = Query(None),
+    license_filter: str | None = Query(None, description="JSON array of effective license ids; empty = no filter"),
+    license_missing: bool | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
@@ -293,9 +307,53 @@ async def list_images(
         if caption_tokens_max is not None:
             q = q.where(tc_expr < caption_tokens_max)
 
+    # License filter operates on the *effective* value — an image with NULL
+    # license carries its dataset's default, so the filter must join and
+    # coalesce rather than test Image.license alone.
+    effective_license = func.coalesce(func.nullif(Image.license, ""), Dataset.license, "")
+    if license_filter or license_missing is not None:
+        q = q.join(Dataset, Dataset.id == Image.dataset_id)
+        if license_missing is True:
+            q = q.where(effective_license == "")
+        elif license_missing is False:
+            q = q.where(effective_license != "")
+        if license_filter:
+            # JSON array, not comma-separated: an `other:<free text>` id may
+            # contain commas. Same encoding as the export preview.
+            parsed = parse_license_filter_param(license_filter) or []
+            if parsed and any(not v for v in parsed):
+                # `""` is a meaningful entry for the *export* filters ("no license
+                # recorded"), so a client can reasonably send it here too — but
+                # this endpoint expresses that through `license_missing`. Dropping
+                # the blank silently narrows a mixed list to the non-blank ids
+                # (returning fewer images than asked for), and an all-blank list
+                # to no filter at all (returning every image). Both are silent
+                # lies, so any blank entry is a 400.
+                raise HTTPException(
+                    400,
+                    "license_filter contains an empty entry; use license_missing=true "
+                    "to select images with no license recorded",
+                )
+            if parsed:
+                q = q.where(effective_license.in_(parsed))
+
     q = q.offset((page - 1) * limit).limit(limit)
     result = await db.execute(q)
-    return result.scalars().all()
+    images = result.scalars().all()
+
+    # Stamp the effective license onto each row for the gallery badge. One
+    # extra lookup for the whole page, not per image.
+    ds_license = ""
+    if images:
+        ds_license = (await db.execute(
+            select(Dataset.license).where(Dataset.id == dataset_id)
+        )).scalar_one_or_none() or ""
+    out = []
+    for img in images:
+        item = ImageListItem.model_validate(img)
+        item.license = img.license or ds_license
+        out.append(item)
+    return out
 
 
 @router.post("/upload", status_code=201)
@@ -341,7 +399,7 @@ async def upload_images(
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
         thumb_path = str(dest_thumbs / (dest.stem + ".webp"))
-        info, gen_meta = await asyncio.get_event_loop().run_in_executor(
+        info, gen_meta, captured = await asyncio.get_event_loop().run_in_executor(
             None, _write_upload_sync, upload.file, dest, thumb_path
         )
 
@@ -354,6 +412,9 @@ async def upload_images(
             thumbnail_path=thumb_path,
             generation_metadata=gen_meta,
             sort_order=next_sort_order,
+            # Only EXIF is available here (no scraper sidecar on a browser
+            # upload); anything unset inherits the dataset default.
+            **merge_provenance(captured),
             **info,
         )
         if next_sort_order is not None:
@@ -368,7 +429,10 @@ async def upload_images(
 
 @router.get("/{image_id}", response_model=ImageOut)
 async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id, options=[undefer(Image.dino_layer_embeddings)])
+    img = await db.get(
+        Image, image_id,
+        options=[undefer(Image.dino_layer_embeddings), undefer(Image.source_meta)],
+    )
     if not img:
         raise HTTPException(404, "Image not found")
     if img.generation_metadata is None and img.file_path and Path(img.file_path).exists():
@@ -384,6 +448,8 @@ async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
     detections = det_result.scalars().all()
     img_out = ImageOut.model_validate(img)
     img_out.detections = [DetectionOut.model_validate(d) for d in detections]
+    ds = await db.get(Dataset, img.dataset_id)
+    img_out.provenance = resolve_provenance(img, ds)
     return img_out
 
 
@@ -446,6 +512,94 @@ async def bulk_count(body: BulkCountRequest, db: AsyncSession = Depends(get_db))
     )
     count = (await db.execute(query)).scalar_one()
     return {"count": count}
+
+
+def _provenance_values(body) -> dict:
+    """Turn a provenance edit request into SQL values.
+
+    None → the field is absent from the result (left unchanged).
+    "" (or whitespace) → NULL (clear the override so the dataset default applies).
+    Anything else → that value; `license` has already been normalized to a known
+    id or `other:<free text>` by the schema validator.
+    """
+    values: dict = {}
+    for field in PROVENANCE_FIELDS:
+        raw = getattr(body, field)
+        if raw is None:
+            continue
+        values[field] = raw.strip() or None
+    return values
+
+
+@router.post("/bulk-provenance", response_model=BulkProvenanceResult)
+async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depends(get_db)):
+    """Set source/license on a selection — how an existing library gets labeled."""
+    values = _provenance_values(body)
+    if not values:
+        ensure_not_busy(body.dataset_id)
+        return BulkProvenanceResult(updated=0)
+
+    subq = _apply_bulk_filters(
+        select(Image.id, Image.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
+    )
+    # An explicit image_ids selection can span datasets — the gallery toolbar shows
+    # a per-dataset breakdown precisely because of that — so scope by dataset_id
+    # only when the selection is a whole-dataset/subfolder one, and guard every
+    # dataset actually touched rather than just body.dataset_id.
+    if not body.image_ids:
+        subq = subq.where(Image.dataset_id == body.dataset_id)
+    rows = (await db.execute(subq)).all()
+    touched = {r.dataset_id for r in rows} or {body.dataset_id}
+    for ds_id in touched:
+        ensure_not_busy(ds_id)
+
+    ids = [r.id for r in rows]
+    updated = 0
+    # Chunked so the bind-parameter count stays under SQLite's 999 limit.
+    for batch in chunked(ids):
+        result = await db.execute(
+            sa_update(Image).where(Image.id.in_(list(batch))).values(**values)
+        )
+        updated += result.rowcount or 0
+    await db.commit()
+    # No refresh_stats: it recomputes counts/sizes, none of which provenance
+    # touches. The license breakdown is computed live by GET /datasets/{id}/stats.
+    return BulkProvenanceResult(updated=updated)
+
+
+@router.patch("/{image_id}/provenance", response_model=ImageOut)
+async def update_image_provenance(
+    image_id: str, body: ImageProvenanceUpdate, db: AsyncSession = Depends(get_db)
+):
+    # undefer as in get_image: ImageOut reads has_dino_layer_embeddings, and a
+    # deferred column would lazy-load mid-serialization (MissingGreenlet).
+    # source_meta is deferred too and is part of the provenance response.
+    img = await db.get(
+        Image, image_id,
+        options=[undefer(Image.dino_layer_embeddings), undefer(Image.source_meta)],
+    )
+    if not img:
+        raise HTTPException(404, "Image not found")
+    # Guards like every sibling write: restore_snapshot writes provenance, so an
+    # unguarded save would race a running restore.
+    ensure_not_busy(img.dataset_id)
+    for field, value in _provenance_values(body).items():
+        setattr(img, field, value)
+    # No refresh: the session is expire_on_commit=False, so the instance keeps
+    # its loaded state (and a refresh would re-defer the undeferred column).
+    await db.commit()
+    ds = await db.get(Dataset, img.dataset_id)
+    img_out = ImageOut.model_validate(img)
+    img_out.provenance = resolve_provenance(img, ds)
+    # Populated as in get_image, so the client can seed its per-image cache from
+    # this response instead of showing an image that has lost its detections.
+    dets = (await db.execute(
+        select(Detection).where(Detection.image_id == image_id).order_by(Detection.id)
+    )).scalars().all()
+    img_out.detections = [DetectionOut.model_validate(d) for d in dets]
+    return img_out
 
 
 @router.post("/bulk-rename")
@@ -664,7 +818,9 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
 
 @router.post("/{image_id}/crop")
 async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id)
+    # undefer: the new-file path copies this image's provenance onto the crop, and
+    # source_meta is a deferred column (a lazy load here would be a MissingGreenlet).
+    img = await db.get(Image, image_id, options=[undefer(Image.source_meta)])
     if not img:
         raise HTTPException(404, "Image not found")
     ensure_not_busy(img.dataset_id)
@@ -812,6 +968,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             "upscale_model": body.upscale_model,
             "upscale_target_width": body.upscale_target_width,
             "upscale_target_height": body.upscale_target_height,
+            # A derivative of a CC-BY-SA image is still CC-BY-SA — carry the
+            # parent's raw provenance (same dataset, so inheritance still holds).
+            "provenance": copy_provenance(img),
         }
         job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=job_cfg)
         db.add(job)
@@ -854,6 +1013,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     height=info["height"],
                     file_size_bytes=info["file_size_bytes"],
                     format=info["format"],
+                    **cfg["provenance"],
                 )
                 session.add(new_img)
                 await session.commit()
@@ -885,6 +1045,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
         subfolder=img.subfolder,
         file_path=str(dest_path),
         thumbnail_path=thumb_path,
+        **copy_provenance(img),
         **info,
     )
     db.add(new_img)
@@ -1081,13 +1242,16 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     target = normalize_subfolder(body.subfolder)
 
     _move_cols = (Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
-                  Image.sort_order, Image.created_at)
+                  Image.sort_order, Image.created_at,
+                  Image.source_name, Image.source_url, Image.license, Image.attribution)
+    # Deliberately no `Image.source_meta`: a move does not change it, and the
+    # materialize step below strips it back out — selecting it would load a
+    # scraper's full raw payload per row only to discard it.
     if body.image_ids:
         result = await db.execute(
             select(*_move_cols).where(Image.id.in_(body.image_ids))
         )
         rows = result.all()
-        source_dataset_id = rows[0].dataset_id if rows else None
     elif body.source_dataset_id is not None and body.source_subfolder is not None:
         source_subfolder = normalize_subfolder(body.source_subfolder)
         result = await db.execute(
@@ -1096,21 +1260,33 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             .where(Image.subfolder == source_subfolder)
         )
         rows = result.all()
-        source_dataset_id = body.source_dataset_id
     else:
         raise HTTPException(400, "Provide image_ids or source_dataset_id+source_subfolder")
 
     if not rows:
         raise HTTPException(404, "No matching images found")
-    if source_dataset_id == body.target_dataset_id:
+    # A selection can span datasets, so every source is handled individually —
+    # for the busy guard, the provenance below, and the stats refresh at the end.
+    source_dataset_ids = {row.dataset_id for row in rows}
+    if body.target_dataset_id in source_dataset_ids:
         raise HTTPException(400, "Source and target dataset must differ")
-    ensure_not_busy(source_dataset_id)
+    for src_id in source_dataset_ids:
+        ensure_not_busy(src_id)
     ensure_not_busy(body.target_dataset_id)
 
     target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
     target_dataset = target_ds_result.scalar_one_or_none()
     if not target_dataset:
         raise HTTPException(404, "Target dataset not found")
+
+    # An image whose provenance was inherited from the source dataset must have
+    # it written out as concrete values here, or it silently re-inherits the
+    # target dataset's unrelated default.
+    source_datasets = {
+        ds.id: ds for ds in (await db.execute(
+            select(Dataset).where(Dataset.id.in_(source_dataset_ids))
+        )).scalars()
+    }
 
     target_images_dir = Path(target_dataset.folder_path) / "images"
     target_thumb_dir = Path(target_dataset.folder_path) / "thumbnails"
@@ -1145,6 +1321,14 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     occupied_thumb_stems: set[str] = {p.stem for p in target_thumb_dir.glob("*.webp")}
     planned_thumb_stems: set[str] = set()
 
+    # Resolved against each row's *own* source dataset, so a move preserves the
+    # license the image actually had. source_meta is untouched — a move doesn't
+    # change it.
+    materialized: dict[str, dict] = {
+        img_id: {f: v for f, v in values.items() if f != "source_meta"}
+        for img_id, values in materialize_by_source(rows, source_datasets).items()
+    }
+
     # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn, assigned_sort_order)
     plan: list[tuple[Path, Path, Path, Path, str, str, int | None]] = []
     for idx, row in enumerate(rows):
@@ -1175,6 +1359,7 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 thumbnail_path=str(new_thumb),
                 is_auto_named=True,
                 sort_order=assigned_order,
+                **materialized[img_id],
             )
         )
 
@@ -1189,7 +1374,8 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             shutil.copy2(old_thumb, new_thumb)
             old_thumb.unlink()
 
-    await refresh_stats(db, source_dataset_id)
+    for src_id in source_dataset_ids:
+        await refresh_stats(db, src_id)
     await refresh_stats(db, body.target_dataset_id)
     return {"moved": len(rows), "target_dataset_id": body.target_dataset_id}
 
@@ -1206,12 +1392,13 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
         Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
         Image.generation_metadata, Image.sort_order, Image.created_at,
+        Image.source_name, Image.source_url, Image.license, Image.attribution,
+        Image.source_meta,
     )
 
     if body.image_ids:
         result = await db.execute(select(*cols).where(Image.id.in_(body.image_ids)))
         rows = result.all()
-        source_dataset_id = rows[0].dataset_id if rows else None
     elif body.source_dataset_id is not None and body.source_subfolder is not None:
         source_subfolder = normalize_subfolder(body.source_subfolder)
         result = await db.execute(
@@ -1220,21 +1407,32 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             .where(Image.subfolder == source_subfolder)
         )
         rows = result.all()
-        source_dataset_id = body.source_dataset_id
     else:
         raise HTTPException(400, "Provide image_ids or source_dataset_id+source_subfolder")
 
     if not rows:
         raise HTTPException(404, "No matching images found")
-    if source_dataset_id == body.target_dataset_id:
+    # Same as batch_move_dataset: the selection may span datasets.
+    source_dataset_ids = {row.dataset_id for row in rows}
+    if body.target_dataset_id in source_dataset_ids:
         raise HTTPException(400, "Source and target dataset must differ")
-    ensure_not_busy(source_dataset_id)
+    for src_id in source_dataset_ids:
+        ensure_not_busy(src_id)
     ensure_not_busy(body.target_dataset_id)
 
     target_ds_result = await db.execute(select(Dataset).where(Dataset.id == body.target_dataset_id))
     target_dataset = target_ds_result.scalar_one_or_none()
     if not target_dataset:
         raise HTTPException(404, "Target dataset not found")
+
+    # Same rule as batch_move_dataset: inherited provenance is materialized
+    # against each row's own source dataset so the copy keeps its real license.
+    source_datasets = {
+        ds.id: ds for ds in (await db.execute(
+            select(Dataset).where(Dataset.id.in_(source_dataset_ids))
+        )).scalars()
+    }
+    materialized = materialize_by_source(rows, source_datasets)
 
     target_images_dir = Path(target_dataset.folder_path) / "images"
     target_thumb_dir = Path(target_dataset.folder_path) / "thumbnails"
@@ -1310,6 +1508,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
             sort_order=assigned_order,
+            **materialized[row.id],
         ))
 
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:

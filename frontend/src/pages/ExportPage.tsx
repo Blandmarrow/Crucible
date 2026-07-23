@@ -1,16 +1,19 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { exportApi } from "../api/export";
 import { datasetsApi } from "../api/datasets";
 import { detectionApi } from "../api/detection";
+import { jobsApi } from "../api/jobs";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
+import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
+import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
@@ -71,6 +74,10 @@ interface ExportFilters {
   selectedSubfolders: string[];
   maskLabels: string[];
   maskExcludeLabels: string[];
+  licenseFilter: string[];
+  commercialOnly: boolean;
+  excludeUnlicensed: boolean;
+  excludeNoDerivatives: boolean;
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -84,6 +91,10 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   selectedSubfolders: [],
   maskLabels: [],
   maskExcludeLabels: [],
+  licenseFilter: [],
+  commercialOnly: false,
+  excludeUnlicensed: false,
+  excludeNoDerivatives: false,
 };
 
 export default function ExportPage() {
@@ -113,6 +124,27 @@ export default function ExportPage() {
   const [aestheticMin, setAestheticMin] = useState(filters.aestheticMin);
   const [filterCaptioned, setFilterCaptioned] = useState(filters.filterCaptioned);
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(filters.excludeFlags));
+  // Bounds-checked the way GalleryPage checks its own restored filter: this comes
+  // back from localStorage, possibly written by a build whose vocabulary has since
+  // changed, and an unknown id silently filters the export to zero images with no
+  // checkbox showing why.
+  const [licenseFilter, setLicenseFilter] = useState<Set<string>>(
+    () => new Set(filters.licenseFilter.filter(isKnownLicenseValue)),
+  );
+  // Free-text licenses recorded in this dataset — without them an `other:` license
+  // can be neither selected nor excluded, which is a rights gap, not a cosmetic
+  // one. A restored selection that is no longer in use keeps its row, or a filter
+  // would be applied with no checkbox showing it.
+  const customLicenses = useCustomLicenses(datasetId);
+  const licenseFilterCustoms = useMemo(() => {
+    const extra = [...licenseFilter].filter(
+      (l) => l.toLowerCase().startsWith(OTHER_PREFIX) && !customLicenses.includes(l),
+    );
+    return [...customLicenses, ...extra];
+  }, [customLicenses, licenseFilter]);
+  const [commercialOnly, setCommercialOnly] = useState(filters.commercialOnly);
+  const [excludeUnlicensed, setExcludeUnlicensed] = useState(filters.excludeUnlicensed);
+  const [excludeNoDerivatives, setExcludeNoDerivatives] = useState(filters.excludeNoDerivatives);
   const [filterStyleSim, setFilterStyleSim] = useState(filters.filterStyleSim);
   const [styleSimMin, setStyleSimMin] = useState(filters.styleSimMin);
   const [subfolderFilterActive, setSubfolderFilterActive] = useState(filters.subfolderFilterActive);
@@ -153,6 +185,10 @@ export default function ExportPage() {
     mask_labels: null as string[] | null,
     mask_exclude_labels: null as string[] | null,
     mask_missing: "white" as MaskMissing,
+    license_filter: null as string[] | null,
+    commercial_only: false,
+    exclude_unlicensed: false,
+    exclude_no_derivatives: false,
   });
 
   useEffect(() => {
@@ -167,13 +203,17 @@ export default function ExportPage() {
         mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
         mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
         mask_missing: maskMissing,
+        license_filter: licenseFilter.size > 0 ? [...licenseFilter] : null,
+        commercial_only: commercialOnly,
+        exclude_unlicensed: excludeUnlicensed,
+        exclude_no_derivatives: excludeNoDerivatives,
       });
     }, 350);
     // Cancel, not flush: this timer only drives the preview query, which should
     // not fire for a state the user has already navigated away from. Persistence
     // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives]);
 
   // Persist "filters" config — per-dataset, debounced.
   useDebouncedPersist(
@@ -186,6 +226,10 @@ export default function ExportPage() {
       selectedSubfolders: [...selectedSubfolders],
       maskLabels: [...maskLabels],
       maskExcludeLabels: [...maskExcludeLabels],
+      licenseFilter: [...licenseFilter],
+      commercialOnly,
+      excludeUnlicensed,
+      excludeNoDerivatives,
     },
   );
 
@@ -214,6 +258,10 @@ export default function ExportPage() {
     setSelectedSubfolders(new Set(next.selectedSubfolders));
     setMaskLabels(new Set(next.maskLabels));
     setMaskExcludeLabels(new Set(next.maskExcludeLabels));
+    setLicenseFilter(new Set(next.licenseFilter.filter(isKnownLicenseValue)));
+    setCommercialOnly(next.commercialOnly);
+    setExcludeUnlicensed(next.excludeUnlicensed);
+    setExcludeNoDerivatives(next.excludeNoDerivatives);
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -237,6 +285,10 @@ export default function ExportPage() {
     mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
     mask_invert: maskInvert,
     mask_missing: maskMissing,
+    license_filter: licenseFilter.size > 0 ? [...licenseFilter] : null,
+    commercial_only: commercialOnly,
+    exclude_unlicensed: excludeUnlicensed,
+    exclude_no_derivatives: excludeNoDerivatives,
   });
 
   const exportMutation = useMutation({
@@ -255,19 +307,27 @@ export default function ExportPage() {
   const treePreview = () => {
     const base = outputDir || "output_dir";
     const masks = exportMasks && !captionsOnly;
+    // Every format writes the provenance manifests at the top level.
+    const manifests = "\n  CREDITS.md\n  licenses.csv";
     switch (format) {
       case "kohya":
-        return `${base}/\n  ${nRepeats}_${conceptToken}/\n    image.png\n    image.txt${masks ? `\n  ${nRepeats}_${conceptToken}_mask/\n    image.png` : ""}`;
+        return `${base}/\n  ${nRepeats}_${conceptToken}/\n    image.png\n    image.txt${masks ? `\n  ${nRepeats}_${conceptToken}_mask/\n    image.png` : ""}${manifests}`;
       case "aitoolkit":
-        return `${base}/\n  ${conceptToken}/\n    image.jpg\n    image.txt${masks ? `\n  ${conceptToken}_mask/\n    image.png` : ""}`;
+        return `${base}/\n  ${conceptToken}/\n    image.jpg\n    image.txt${masks ? `\n  ${conceptToken}_mask/\n    image.png` : ""}${manifests}`;
       case "plain":
-        return `${base}/\n  images/\n    image.png${masks ? `\n  masks/\n    image.png` : ""}\n  captions.jsonl`;
+        return `${base}/\n  images/\n    image.png${masks ? `\n  masks/\n    image.png` : ""}\n  captions.jsonl${manifests}`;
     }
   };
 
   const toggleFlag = (key: string) => setExcludeFlags((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  const toggleLicense = (id: string) => setLicenseFilter((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
@@ -306,6 +366,10 @@ export default function ExportPage() {
     setAestheticMin(EXPORT_FILTERS_DEFAULTS.aestheticMin);
     setFilterCaptioned(EXPORT_FILTERS_DEFAULTS.filterCaptioned);
     setExcludeFlags(new Set(EXPORT_FILTERS_DEFAULTS.excludeFlags));
+    setLicenseFilter(new Set(EXPORT_FILTERS_DEFAULTS.licenseFilter));
+    setCommercialOnly(EXPORT_FILTERS_DEFAULTS.commercialOnly);
+    setExcludeUnlicensed(EXPORT_FILTERS_DEFAULTS.excludeUnlicensed);
+    setExcludeNoDerivatives(EXPORT_FILTERS_DEFAULTS.excludeNoDerivatives);
     setFilterStyleSim(EXPORT_FILTERS_DEFAULTS.filterStyleSim);
     setStyleSimMin(EXPORT_FILTERS_DEFAULTS.styleSimMin);
     setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
@@ -318,13 +382,24 @@ export default function ExportPage() {
 
   const isRunning = exportMutation.isPending || jobProgress?.status === "running";
   const isDone = jobProgress?.status === "completed";
+
+  // The SSE progress event carries no result_data, so read the finished job row
+  // for the manifest filenames it actually wrote.
+  const { data: finishedJob } = useQuery({
+    queryKey: ["job", activeJobId],
+    queryFn: () => jobsApi.get(activeJobId!),
+    enabled: !!activeJobId && isDone,
+  });
+  const manifestFiles: string[] = (finishedJob?.result_data?.manifest_files as string[]) ?? [];
   const showConcept = format === "kohya" || format === "aitoolkit";
+
 
   const exclusionRows = [
     { label: "Low aesthetic", count: preview?.excluded_low_aesthetic, show: filterAesthetic },
     { label: "No caption",    count: preview?.excluded_uncaptioned,   show: filterCaptioned },
     { label: "Flagged",       count: preview?.excluded_flagged,       show: excludeFlags.size > 0 },
     { label: "Low style sim", count: preview?.excluded_style_sim,     show: filterStyleSim },
+    { label: "License",       count: preview?.excluded_license,      show: commercialOnly || excludeUnlicensed || excludeNoDerivatives || licenseFilter.size > 0 },
   ].filter((r) => r.show);
 
   return (
@@ -407,6 +482,79 @@ export default function ExportPage() {
                   <input type="checkbox" className="checkbox" checked={filterCaptioned} onChange={(e) => setFilterCaptioned(e.target.checked)} />
                   <span style={{ fontSize: 12.5 }}>Has caption</span>
                 </label>
+
+                {/* License filters — operate on the effective license
+                    (image value coalesced over the dataset default). */}
+                <div>
+                  <label className="row-flex" style={{ gap: 8 }}>
+                    <input
+                      type="checkbox" className="checkbox"
+                      checked={commercialOnly}
+                      onChange={(e) => setCommercialOnly(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 12.5 }}>Commercial-use only</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: "var(--fg-mute)", paddingLeft: 24, marginTop: 2 }}>
+                    Keeps only licenses known to permit it — unknown counts as no.
+                  </div>
+                  {/* Its own flag, not an allowlist of every known id: that
+                      would also drop `other:<free text>` licenses, which are
+                      licensed — just not from the curated vocabulary. */}
+                  <label className="row-flex" style={{ gap: 8, marginTop: 7 }}>
+                    <input
+                      type="checkbox" className="checkbox"
+                      checked={excludeUnlicensed}
+                      onChange={(e) => setExcludeUnlicensed(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 12.5 }}>Exclude unlicensed images</span>
+                  </label>
+                  <label className="row-flex" style={{ gap: 8, marginTop: 7 }}>
+                    <input
+                      type="checkbox" className="checkbox"
+                      checked={excludeNoDerivatives}
+                      onChange={(e) => setExcludeNoDerivatives(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 12.5 }}>Exclude no-derivatives</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: "var(--fg-mute)", paddingLeft: 24, marginTop: 2 }}>
+                    An export ships resized/cropped copies — which CC BY-ND forbids redistributing.
+                  </div>
+                  <details style={{ marginTop: 7 }}>
+                    <summary style={{ fontSize: 12, color: "var(--fg-mute)", cursor: "pointer" }}>
+                      Specific licenses{licenseFilter.size > 0 ? ` (${licenseFilter.size} selected)` : ""}
+                    </summary>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4, marginTop: 5 }}>
+                      <label className="row-flex" style={{ gap: 8 }}>
+                        <input
+                          type="checkbox" className="checkbox"
+                          checked={licenseFilter.has("")}
+                          onChange={() => toggleLicense("")}
+                        />
+                        <span style={{ fontSize: 12 }}>No license recorded</span>
+                      </label>
+                      {LICENSE_OPTIONS.map((l) => (
+                        <label key={l.id} className="row-flex" style={{ gap: 8 }}>
+                          <input
+                            type="checkbox" className="checkbox"
+                            checked={licenseFilter.has(l.id)}
+                            onChange={() => toggleLicense(l.id)}
+                          />
+                          <span style={{ fontSize: 12 }}>{l.label}</span>
+                        </label>
+                      ))}
+                      {licenseFilterCustoms.map((lic) => (
+                        <label key={lic} className="row-flex" style={{ gap: 8 }}>
+                          <input
+                            type="checkbox" className="checkbox"
+                            checked={licenseFilter.has(lic)}
+                            onChange={() => toggleLicense(lic)}
+                          />
+                          <span style={{ fontSize: 12 }} title={lic}>{lic.slice(OTHER_PREFIX.length)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                </div>
 
                 {/* Per-flag checkboxes */}
                 <div>
@@ -701,6 +849,30 @@ export default function ExportPage() {
                     </div>
                   </div>
 
+                  {/* Unlicensed warning — advisory only; export never blocks. */}
+                  {!!preview.unlicensed_count && (
+                    <div
+                      style={{
+                        marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 12, color: "var(--warn)",
+                      }}
+                    >
+                      {preview.unlicensed_count.toLocaleString()} image
+                      {preview.unlicensed_count !== 1 ? "s have" : " has"} no license recorded.
+                      {/* From the backend, which applied *every* filter. Deriving
+                          this from the license flags alone claimed "they still
+                          export" even when a caption or aesthetic filter had
+                          already dropped them. */}
+                      {preview.unlicensed_will_export === 0
+                        ? " None of them are included in this export."
+                        : preview.unlicensed_will_export === preview.unlicensed_count
+                          ? " They still export, and are listed as unlicensed in CREDITS.md."
+                          : ` ${preview.unlicensed_will_export.toLocaleString()} of them still export,` +
+                            " listed as unlicensed in CREDITS.md."}
+                    </div>
+                  )}
+
                   {/* Exclusion breakdown */}
                   {exclusionRows.length > 0 && (
                     <div style={{ marginBottom: 14 }}>
@@ -763,7 +935,22 @@ export default function ExportPage() {
                 <div style={{ height: 5, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${jobProgress.percent ?? 0}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", transition: "width .4s" }} />
                 </div>
-                {isDone && <p style={{ color: "var(--good)", fontSize: 12, marginTop: 8 }}>✓ Export complete → {outputDir}</p>}
+                {isDone && (
+                  <p style={{ color: "var(--good)", fontSize: 12, marginTop: 8 }}>
+                    ✓ Export complete → {outputDir}
+                    {/* Named by the backend, not hardcoded: a manifest can supersede
+                        the existing one, land on CREDITS.2.md, or be skipped as
+                        byte-identical, so only the job knows what was written. */}
+                    {manifestFiles.length > 0 && (
+                      <>
+                        <br />
+                        <span style={{ color: "var(--fg-mute)" }}>
+                          Manifests: {manifestFiles.join(", ")}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
             </div>
           )}

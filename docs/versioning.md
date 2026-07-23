@@ -27,6 +27,12 @@ In both Manual and Auto modes, image files are automatically backed up before de
 - **Branch snapshot prompts** — configurable in Settings: prompt before checkout or branch creation (*Ask* mode) or always create snapshots automatically (*Auto* mode)
 - **Prune storage** — the "Prune storage" button in the Versions page header deletes backup data no longer referenced by any snapshot (e.g. after deleting old versions), reporting how much space was freed; this cannot be undone
 
+A snapshot captures each image's **source, URL, license and attribution** along
+with its captions and scores, so a restore reverts those too — if you relabel a
+dataset's rights and later rewind past that point, the old labels come back. A
+diff lists provenance changes per image like any other field. See
+[Source & License Provenance](provenance.md).
+
 The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
 
 While a restore, checkout, snapshot, or prune job is running on a dataset, edits to that dataset (uploads, deletes, renames, caption saves, …) are rejected with a clear "Dataset is busy" message — retry once the job finishes.

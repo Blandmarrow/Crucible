@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import time
@@ -95,6 +96,86 @@ def normalize_subfolder(s: str) -> str:
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
     return "/".join(parts)
+
+
+def _is_unsafe_url_char(c: str) -> bool:
+    """The single character predicate `safe_external_url` trims *and* rejects with."""
+    return c.isspace() or ord(c) < 0x20 or ord(c) in (0x7F, 0xFEFF)
+
+
+def _trim_unsafe_url_chars(s: str) -> str:
+    """`str.strip()` over `_is_unsafe_url_char` — which `strip()` itself cannot express."""
+    start, end = 0, len(s)
+    while start < end and _is_unsafe_url_char(s[start]):
+        start += 1
+    while end > start and _is_unsafe_url_char(s[end - 1]):
+        end -= 1
+    return s[start:end]
+
+
+def safe_external_url(value: str | None) -> str:
+    """A provenance URL if it is safe to put behind a link, else ``""``.
+
+    Only ``http``/``https`` survive: source URLs come from scrapers, sidecars and
+    EXIF, so a ``javascript:``/``data:``/``file:`` value must never reach an
+    ``href`` or a markdown link target. Whitespace (including embedded newlines,
+    which would otherwise break out of a markdown link) is rejected outright
+    rather than stripped — a URL with a space in the middle is not a URL.
+    Callers render a rejected value as escaped plain text, never as a link.
+
+    Kept character-for-character in step with
+    `frontend/src/utils/url.ts::safeExternalUrl`: the two guards decide whether the
+    *same* URL becomes a link in the UI and in `CREDITS.md`, so a character one
+    side rejects and the other accepts is a silent divergence between what a user
+    sees and what the export ships. The two sets agree over the whole Unicode
+    range only with the odd ones out spelled explicitly — ``U+FEFF`` matches JS
+    ``\\s`` but not Python's ``isspace()``, and ``U+0085`` is the reverse (the JS
+    side names it in its character class for the same reason).
+
+    **The trim uses that same set, deliberately not** ``str.strip()``. ``strip()``
+    strips exactly ``isspace()`` and JS ``trim()`` strips exactly ECMA ``\\s``, and
+    those two differ on the very characters named above — so a ``U+FEFF`` at the
+    *end* of a URL was trimmed away by the UI and rejected by the export, while
+    ``U+0085`` there did the reverse. Trimming the rejected set on both sides makes
+    the two identical by construction, whatever the character's position.
+    """
+    s = _trim_unsafe_url_chars(value or "")
+    if not s or any(_is_unsafe_url_char(c) for c in s):
+        return ""
+    scheme = s.split(":", 1)[0].lower() if ":" in s else ""
+    return s if scheme in ("http", "https") else ""
+
+
+def normalize_license_filter(values: list[str] | None) -> list[str] | None:
+    """Strip entries and drop an all-empty list; None means "no license filter".
+
+    ``""`` is a meaningful *entry* (images with no license recorded) but an empty
+    list must not be read as "match nothing".
+    """
+    if values is None:
+        return None
+    cleaned = [v.strip() for v in values]
+    return cleaned or None
+
+
+def parse_license_filter_param(value: str) -> list[str] | None:
+    """Parse a JSON-array license_filter query param into normalized ids.
+
+    A JSON array rather than a comma-separated string because an
+    ``other:<free text>`` license id may itself contain commas — splitting on
+    commas would silently match nothing. The single encoding for license id
+    lists across the API (export preview and ``GET /images/``); empty means
+    "no filter".
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(400, "license_filter must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(400, "license_filter must be a JSON array of strings")
+    return normalize_license_filter(parsed)
 
 
 def slugify_filename(name: str) -> str:

@@ -1,0 +1,95 @@
+# Gallery: selection, subfolders, filters & drag ordering
+
+This file covers `GalleryPage`: image selection and the shift-click range model, the subfolder sidebar, the filter controls, manual drag ordering, and dragging image cards onto subfolder rows. The detail view and its navigation context are in `docs/dev/image-detail.md`; file naming, imports and rescan in `docs/dev/image-files.md`.
+
+### Gallery image selection
+
+`ImageCard` accepts an optional `onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void` prop. When provided it routes both checkbox clicks and shift-clicks on the card body through this callback instead of calling `toggle` directly. `GalleryPage` always provides `handleSelect` as `onSelect`; contexts that render `ImageCard` without it (e.g. `BucketPanel`) fall back to the raw `toggle`.
+
+**Checkbox size is user-configurable** (Settings → Gallery, 14–32 px, default 18) via `uiPrefsStore.galleryCheckboxSize` — see `docs/dev/frontend-core.md` (§ Frontend state) for why this is a store and not a localStorage read. The checkbox itself is `components/gallery/GalleryCheckbox.tsx` (`size` + `selected` props, purely presentational — callers read the store and pass the size down). It derives the tick SVG (`size / 2`), border radius (`max(4, size / 4.5)`) and border width (2 at ≥ 26 px, else 1.5) from that one number, so the checkbox scales as a unit rather than growing a box around a fixed-size tick. Those formulas are private to that file and must stay there: `SettingsPage`'s slider preview renders **this same component** rather than a lookalike, so the preview cannot drift from what the gallery draws. `ImageCard` wraps it in a click target that adds `CB_PAD` (4 px) of padding with a matching negative `top`/`left` offset: this widens the click target past the visual box while keeping the box pinned at the card's 8 px corner inset. Clicks in that pad toggle selection rather than opening the image — that is intentional, and is most of the "the checkbox is hard to hit" fix. The quality-flag badges opposite it are deliberately left at a fixed 18 px.
+
+**`handleSelect` in GalleryPage** — two `useRef`s drive range tracking:
+
+- `lastSelectedId` — the selection anchor; set on every plain (non-shift) toggle, and on shift+checkbox when no valid range could be computed (stale anchor). Never moved by a shift-only interaction.
+- `lastRangeEndId` — the endpoint of the last contiguous range; set each time a checkbox shift-click successfully applies a range, reset to `null` on any plain toggle.
+
+| Interaction | Effect |
+|---|---|
+| Click checkbox | Toggle image; anchor = clicked image |
+| Shift+click checkbox | Range from anchor → clicked; images that fell out of the previous range are deselected via `replaceRange`; anchor unchanged |
+| Shift+click card body | Toggle image only; anchor and range-end unchanged |
+
+The `onMouseDown` handler on the card's outer `<div>` calls `e.preventDefault()` when `Shift` is held to suppress browser text-selection. This does not interfere with dnd-kit's `PointerSensor` (which listens to `pointerdown`, not `mousedown`).
+
+### Gallery subfolder sidebar
+
+`GalleryPage` shows a left-hand subfolder sidebar (180 px fixed) when any subfolder exists or when the create form is open. Items: "All" (no filter), "(root)" (empty-string subfolder), and one button per named subfolder with its image count. Active item is highlighted with `var(--surface-3)`.
+
+The `(root)` row renders **whenever the sidebar does**, even at count 0: `rootEntry` falls back to a synthetic `{ path: "", image_count: 0 }` because `list_subfolders` only returns a `""` row while at least one image still lives there. Without the fallback, dragging the last root image into a subfolder would delete the only drop target for dragging images back out. Its hover-revealed move/copy buttons are gated on `image_count > 0` (they would otherwise confirm into a "Moved 0 images" toast); the row stays a drop target either way. The synthetic entry is **not** pushed into the `subfolders` array — that array gates sidebar visibility and feeds `buildSubfolderTree`, the upload `<select>`, and `SelectionToolbar`.
+
+- **Create**: `+` icon in the sidebar header opens an inline form (input + Enter/Escape handling). If no subfolders exist yet, a `+ Subfolder` button appears in the main toolbar instead to surface the sidebar. On confirm, calls `datasetsApi.createSubfolder` → `POST /datasets/{id}/subfolders`, sets active subfolder to the new path.
+- **Delete**: hover-revealed `×` button on each row opens a `ConfirmDialog`. If the subfolder has images, the dialog warns they will be moved to root (not deleted). On confirm, calls `datasetsApi.deleteSubfolder` → `DELETE /datasets/{id}/subfolders?path=...`. If the deleted subfolder was active, resets to "All".
+- **Move to dataset**: hover-revealed arrow icon button on each row opens `MoveToDatasetModal` (shared with `SelectionToolbar`). On confirm, calls `POST /images/batch/move-dataset` with `source_dataset_id + source_subfolder`. If the moved subfolder was active, resets to "All". Invalidates `["images"]` and `["subfolders"]` for both source and target datasets.
+- **Copy to dataset**: hover-revealed copy icon button on each row opens `MoveToDatasetModal` with `mode="copy"`. On confirm, calls `POST /images/batch/copy-dataset`. Source subfolder stays intact. Invalidates `["images"]` and `["subfolders"]` for target dataset only.
+- **Upload subfolder**: a `<select>` next to the Upload button lets users target a specific subfolder for drag-drop or file-picker uploads. Defaults to the active subfolder; can be overridden independently.
+- **Drop target**: every subfolder row — and the `(root)` row — is a dnd-kit droppable, so image cards can be dragged from the grid onto a row to move them into that subfolder. See § Drag images onto subfolders below. The "All" row is deliberately **not** a droppable (it has no target path); the sidebar *container* is a sentinel droppable so that missing a row lands on a no-op instead of a reorder.
+- **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, and delete.
+- **CSS**: `.subfolder-row .subfolder-delete-btn`, `.subfolder-row .subfolder-move-btn`, and `.subfolder-row .subfolder-copy-btn` are `opacity: 0`; hover on the row reveals them. Defined in `frontend/src/index.css`. Move and copy buttons share base layout via `.subfolder-action-btn`; each has its own hover color (accent for move, info for copy). Delete uses inline styles (pre-existing pattern).
+
+### Gallery filters
+
+`GalleryPage` supports the following filter controls:
+
+- **Search bar** — debounced 350 ms; passes `search` param to `GET /images/`; filters by filename OR caption text (case-insensitive).
+- **Caption filter** — All / Captioned / Uncaptioned.
+- **Quality flag** — dropdown with options: None, Blurry (`is_blurry`), Noisy (`is_noisy`), Near-uniform (`is_uniform`), Watermarked (`has_watermark`), Duplicate (`is_duplicate`), NSFW (`is_nsfw`), AI artifacts (`has_ai_artifacts`). All values map directly to `quality_flag` param.
+- **Score filters** — multi-chip system: each active filter is a `{field, min?, max?}` chip with a × remove button. An "Add score filter" form lets the user pick any of the 8 score fields and enter optional min/max bounds. Multiple chips are combined as AND conditions via the JSON-encoded `score_filters` param. The older single `score_field`/`min_score`/`max_score` params are not used by GalleryPage (retained only for StatsPage BucketPanel backward compat).
+- **Detection label** — text input with icon prefix, debounced 350 ms; passes `detection_label` to `GET /images/`; uses a correlated `EXISTS` subquery against the `detections` table matching `label ILIKE '%...%'`; has a clear (×) button when set.
+- **Subfolder filter** — see Gallery subfolder sidebar section above; passes `subfolder` query param to `GET /images/`.
+- **License filter** — single-select dropdown over the curated vocabulary, a "Missing license only" entry, and a "Used in this dataset" optgroup of the free-text `other:` licenses actually recorded there (`hooks/useCustomLicenses`). `""` means no filter; the `MISSING_LICENSE` sentinel (`"__missing__"`, in `constants/galleryOptions.ts`) sends `license_missing=true`; anything else is sent as a one-element `license_filter` JSON array. A restored `other:` filter that is no longer in use keeps its own option, or the `<select>` would render no option for the filter it is applying. See `docs/dev/provenance.md` for the effective-license semantics and for why `""` behaves differently here than in the export filters.
+- **Caption token / word filters** (`caption_tokens_min`/`caption_tokens_max`, `caption_words_min`/`caption_words_max`) — used by StatsPage's caption-length/token histograms (`BucketPanel`) to drill into a bucket. Semantics are min-inclusive, max-exclusive; an empty caption counts as 0. The token filter is **pure SQL** over the persisted `func.coalesce(Image.caption_token_count, 0)` column (kept in sync by the `caption_text` listener — see CLAUDE.md § Shared utilities), so normal `ORDER BY`/`OFFSET`/`LIMIT` paging applies. (It previously fetched a capped 5,000-row set and re-tokenized in a thread; that cap and the in-Python BPE pass are gone.)
+
+### Manual image ordering
+
+`Image.sort_order: int | None` (nullable, default `NULL`) — stores the custom display position of an image within its `(dataset_id, subfolder)` scope. `NULL` means no custom order has been assigned; such images sort last (`NULLS LAST`) with `created_at ASC` as a tiebreak.
+
+**Activation**: the gallery sort dropdown includes a **"Custom order"** option (`sort=sort_order`). When it is selected for the first time and no image in the current page has `sort_order` set, the frontend silently initialises order from the current page's arrangement by calling `PATCH /images/batch/reorder` with `pageOffset + index` values so that page 2+ images receive sort_orders starting at `(page-1)*pageSize` rather than 0.
+
+**Drag-and-drop**: every card is a `SortableImageCard` in **every** sort mode — the entire card surface is the drag handle (listeners spread on the outer wrapper). The `DndContext` is likewise unconditional and spans the sidebar as well as the grid (see § Drag images onto subfolders); only `SortableContext` — and therefore reordering — is gated on "Custom order". `PointerSensor` with `activationConstraint: { distance: 8 }` lets short clicks still navigate to the detail page. In custom order, `handleDragEnd` falls through its subfolder branch and calls `arrayMove` for an immediate optimistic `qc.setQueryData`, then fires `reorderMutation` (`PATCH /images/batch/reorder`) to persist.
+
+### Drag images onto subfolders
+
+A single `DndContext` in `GalleryPage` wraps **both** the subfolder sidebar and the image grid (the `flex` row containing them), so cards can be dragged from one into the other. `handleDragEnd` branches on the drop target's id before the reorder logic.
+
+- **Droppable ids** are namespaced `subfolder:{path}` (`subfolder:` alone = root) via `subfolderDropId` / `isSubfolderDropId` / `subfolderFromDropId` in `frontend/src/constants/galleryOptions.ts`, plus the non-namespaced `SIDEBAR_DROP_ID` sentinel. Image ids are UUIDs so the prefix cannot collide. The helpers live in the constants module rather than beside the component because `react-refresh/only-export-components` rejects a component file that also exports plain functions.
+- **`DropZone`** (`components/gallery/DropZone.tsx`) is a render-prop wrapper around `useDroppable` taking a raw `id`. It exists for two reasons: `useDroppable` only registers when it runs *inside* the `DndContext`, which `GalleryPage` renders in its own JSX (so a hook at the top of `GalleryPage` would silently never register), and the rows are built inside `renderSubfolderNode`'s closure where a hook can't go at all. It yields `{ setNodeRef, isOver }`; `isOver` layers `inset 0 0 0 1px var(--accent)` over the row's existing active background.
+- **Cards are draggable in every sort mode.** `SortableImageCard` takes a `sortable?: boolean` prop (default `true`) passed to `useSortable`'s `disabled` as `{ draggable: false, droppable: !sortable }`. Outside custom order the card is still draggable but is not a drop target, so `over.id` can only ever be a subfolder id. **`useSortable` outside a `SortableContext` is safe** — the sortable context has a default value and `useSortable` reads it with a plain `useContext`; with `activeIndex`/`overIndex` at `-1` the sort transform stays `null` and it degrades to a plain draggable. `SortableContext` itself is still gated on `isCustomOrder`.
+- **Collision detection** is a composed function that resolves in three steps: (1) a subfolder row under the pointer always wins; (2) otherwise, if the pointer is inside the **sidebar sentinel** (below), return `[]`; (3) otherwise use the `pointerWithin` hits, falling back to `closestCenter` **with folder rows and the sentinel filtered out** so gutter drops between cards still reorder. Plain `closestCenter` is wrong here — a 180 px row's center can beat a card's when dragging near the grid's left edge.
+- **The sidebar container is a sentinel droppable** (`SIDEBAR_DROP_ID`) — never a move target, only a way to answer "is the pointer in the sidebar?". Step (2) returning `[]` makes `over` `null`, so `handleDragEnd`'s existing `!over` guard no-ops. Without it, a drop on sidebar chrome — the "All" row, the header, the create form, the padding below the last row — reaches the `closestCenter` fallback, which scores against `collisionRect` (the **dragged card's** rect, not the pointer) and therefore returns a grid card; in custom-order mode that silently reordered the image and persisted it via `PATCH /images/batch/reorder`. Two constraints on the filter in step (3): the sentinel must be excluded too, or a gutter drop could resolve to the 180 px sidebar rect instead of a card; and the sentinel comparison must come **before** `!isSubfolderDropId(...)`, because that is an `id is string` predicate whose negation narrows `c.id` to `number` and stops the comparison compiling. Note `SIDEBAR_DROP_ID` (`"subfolder-sidebar"`) is deliberately outside the `"subfolder:"` namespace — one character apart, so do not widen the prefix.
+- **`DragOverlay`** is portaled to `document.body`. This is required, not cosmetic: the grid's scroll container is `overflow-y: auto`, so without it the dragged card is clipped the moment it crosses into the sidebar. A consequence is that reorder drags now dim the source card in place rather than moving it. A multi-image drag shows an "N images" badge.
+- **Selection semantics**: dragging a card that is in the current selection moves the whole selection; dragging an unselected card moves only it. `clear()` is gated on `vars.ids.length > 1` so a single-card drag can't wipe an unrelated selection — note that counts images *actually moved* (post no-op filter), not images dragged, so dragging a 5-image selection of which 4 are already in the target moves one and leaves the selection standing. The selection store is module-global, so ids are filtered by `datasetByImageId.get(id) === datasetId` before sending — the backend derives `dataset_id` from the first row and would otherwise move another pane's images into this dataset.
+- **No-op guard**: the backend does *not* filter out images already in the target, and with `rename_on_move` they would be pointlessly renamed to a fresh unique stem. `moveImagesTo` drops those ids client-side against the current page cache (`ImageListItem.subfolder`) and toasts "Already in …" when nothing remains. Ids absent from the cache are sent through — their subfolder is unknown.
+- The mutation mirrors `SelectionToolbar`'s `moveSubfolderMutation` on the parts that must not diverge: same `SUBFOLDER_RENAME_KEY` read, same two invalidations, same success toast. It deliberately differs in two places — `clear()` is conditional (above) where the toolbar's is unconditional, and `onError` surfaces the server's `detail` where the toolbar shows a flat "Move failed". No optimistic update: `rename_on_move` changes `filename`/`file_path`/`thumbnail_path` server-side.
+
+**Known gaps** (deliberate, not bugs): the sidebar does not auto-scroll during a drag — dnd-kit only auto-scrolls the *dragged* element's ancestors — so a target below the fold must be scrolled to first. Collapsed parent rows are themselves valid drop targets; there is no spring-loaded expand-on-hover. In custom-order mode, only the sidebar is sentinel-guarded: a drop anywhere else `pointerWithin` finds nothing — the toolbar, the filter bar, the pagination row, past the window edge — still reaches the `closestCenter` fallback and reorders to the nearest card. That predates the drag-to-subfolder work; guarding it would mean a second sentinel around the grid column.
+
+**Renumber Files button**: visible in the gallery toolbar only when "Custom order" is active. Opens a `ConfirmDialog`, then calls `POST /images/bulk-rename` with `sort_by_sort_order: true` — renames every image in the current subfolder to `{subfolder_slug}_001.ext`, `_002`, … in drag order. Useful before export to make filenames reflect training sequence.
+
+**`PATCH /images/batch/reorder`** (`backend/routers/images.py`): accepts `{ dataset_id, updates: [{id, sort_order}] }`. Validates all IDs belong to `dataset_id`, then bulk-updates `sort_order` via `sa_update`. Returns `{ updated: int }`.
+
+**Upload append**: new uploads are appended to the end of the custom order only when *every* existing image in that `(dataset_id, subfolder)` already has `sort_order` set (checked via `COUNT(id) == COUNT(sort_order)` + `MAX(sort_order)`). If any image lacks a `sort_order`, the subfolder is treated as unordered and new uploads receive `NULL`.
+
+**Cross-operation behaviour**:
+| Operation | `sort_order` effect |
+|---|---|
+| Upload to ordered subfolder | Appended at `MAX + 1` |
+| Upload to unordered subfolder | `NULL` |
+| Batch move subfolder (same dataset) | Preserved |
+| Batch move dataset | Preserved in relative sequence, appended after target's max `sort_order`. If target is empty: starts from 0. If target has mixed ordering (some null): cleared to `NULL`. |
+| Batch copy dataset | Preserved in relative sequence, appended after target's max `sort_order`. Same logic as move: empty target starts from 0, fully ordered target appends at max+1, mixed ordering clears to `NULL`. |
+| Dataset duplicate | Copied from source (both live-copy and snapshot-copy paths) |
+| Crop / upscale / LUT new-file | `NULL` (sorts last) |
+| Export | Always ordered `sort_order ASC NULLS LAST, created_at ASC` |
+| Snapshot create | Captured in `VersionImageState.sort_order` |
+| Snapshot restore / branch checkout | Restored to `Image.sort_order` |
+| Version diff | Compared; appears as a `sort_order` change entry when ordering changed between versions |

@@ -13,7 +13,12 @@ models/lut/
 models/sam3/
 frontend/dist/
 frontend/node_modules/
-.claude/
+# Local Claude Code state stays ignored, but project skills are shared:
+# CLAUDE.md's doc-maintenance workflow lives in .claude/skills/. The two-line
+# form matters — with a bare `.claude/` git never descends into the directory,
+# so no negation inside it can take effect.
+.claude/*
+!.claude/skills/
 .devcontainer/
 .DS_Store
 Thumbs.db

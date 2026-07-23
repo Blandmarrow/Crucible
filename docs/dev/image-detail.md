@@ -1,0 +1,57 @@
+# Image detail view: navigation context, crop, caption panel & generation metadata
+
+This file covers `ImageDetailPage` and the state it shares with the gallery: the two persisted gallery/nav keys, `injectNavId`/`paneGo`, the crop tool, the selection toggle, the caption panel, and AI generation-metadata extraction and display. The gallery grid itself is in `docs/dev/gallery.md`.
+
+### Gallery persistence & detail-view navigation
+
+`GalleryPage` persists two keys (keyed by `datasetId`):
+
+| Key | Storage | Contents | Purpose |
+|---|---|---|---|
+| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, scrollTop, activeSubfolder }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart |
+| `gallery-nav-${datasetId}` | `sessionStorage` | `{ ids, page, sort, order, captionedFilter }` | Ordered image ID list + query context for prev/next navigation in the detail view — session-only, regenerated on next visit |
+
+The main save effect is a 350ms-debounced write on `[datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder]` changes (to `localStorage`). A separate unmount-only effect merges `scrollTop: scrollRef.current?.scrollTop` into the existing entry — kept separate because scrollTop changes on every scroll event with no tracked state, and debouncing it into the main effect would thrash localStorage. This pair is deliberately **not** on `useDebouncedPersist`: that hook's `value` is computed during render, while `scrollTop` must be sampled at flush time from a DOM ref. See `docs/dev/persistence.md` (§ Three persistence shapes) — this effect is the prior art the hook generalized from.
+
+`ImageDetailPage` reads `gallery-nav-*` (`sessionStorage`) for arrow-key navigation. At page boundaries it pre-fetches the adjacent page (`useQuery`, `enabled: atEnd / atStart`); on crossing, writes the new context back to `gallery-nav-*` (sessionStorage) and updates `gallery-state-*` (**`localStorage`**) so **Back** returns to the correct gallery page. Both pages must use the same storage backend for `gallery-state-*` — `ImageDetailPage` lines 276/279 write to `localStorage`; do not revert to `sessionStorage` there. Arrow keys are suppressed when an `<input>`, `<textarea>`, or `<select>` has focus, or when `isContentEditable` is true. The `Delete` key opens a confirm dialog in both gallery and detail view; both handlers share the same focus guard. The arrow-key handler is additionally suppressed while the delete confirm dialog is open (`showDeleteConfirm`) to prevent background navigation.
+
+**Reset filters button**: a small ghost/icon button in the gallery toolbar calls `localStorage.removeItem(\`gallery-state-${datasetId}\`)` and resets `page`, `sortIdx`, `captionedFilter`, `qualityFilter`, `licenseFilter`, and `activeSubfolder` to their Settings-configured defaults (`licenseFilter` has no setting — it resets to "no filter"); `hasRestoredScroll.current` is set to `true` to skip scroll restore. Follows the per-page "Reset to defaults" pattern — see Persistent page state in `docs/dev/persistence.md`.
+
+**Nav context invariant for newly created images**: When navigating to an image that was just created (crop, upscale new-file), the new image ID is not in the existing `gallery-nav-*` list, so `currentIndex === -1` and arrow keys would silently do nothing. Always call `injectNavId(datasetId, sourceImageId, newImageId)` (defined at module level in `ImageDetailPage.tsx`) before calling `paneGo` to insert the new ID immediately after the source in the nav context. This applies to: sync crop, crop+upscale job completion, and standalone upscale (non-replace) completion. Conversely, call `removeNavId(datasetId, imageId)` when deleting an image from `ImageDetailPage` to remove the stale ID so arrow-key navigation on adjacent images cannot land on it. Both functions delegate to `mutateNavIds(datasetId, transform)` — the shared helper that handles sessionStorage read/parse/write.
+
+**ImageDetailPage crop tool**: Two output modes controlled by the **Replace** checkbox. *New file* (default) — creates a new `Image` record (filename `{source_stem}_crop{ext}`, collision-handled via `unique_filename_with_thumb`) and navigates to it on success. *Replace* — overwrites the source file in-place, updates the existing `Image` record (width, height, file_size_bytes, format, phash), regenerates the thumbnail, and stays on the same image. The aspect dropdown and zoom slider control the crop selection shape and size; W×H inputs control the output pixel dimensions (resize-after-crop, independent of the selection). When both W and H are filled in, the crop box aspect ratio automatically locks to W/H. The crop endpoint (`POST /images/{id}/crop`) accepts `replace: bool = False`; in replace mode it calls `protect_file_before_overwrite` before touching the file. New-file mode uses `asyncio.get_running_loop()` and a targeted `LIKE '{stem}%'` query for collision detection (not a full dataset scan). An optional upscale model selector (shown when upscale models are configured) enables atomic crop+upscale in either mode: the crop is saved to a temp file, a `crop_upscale` background job runs the upscale, and the endpoint returns `{job_id}` instead of the image dict. The frontend branches on `"job_id" in data` to distinguish the async path.
+
+**ImageDetailPage selection**: A **Select / Selected** toggle button sits in the top toolbar (right of the filename, before the Boxes button). It calls `selectionStore.toggle(imageId, datasetId)` and reflects `isSelected(imageId)` via a targeted selector. Pressing **Space** anywhere on the page (except when a text field is focused or a modal is open) does the same thing — handled in the arrow-key `useEffect` alongside ArrowLeft/ArrowRight; `showDetectModal` is additionally checked. The button is styled `btn-primary` + `CheckSquare` icon when selected, `btn-ghost` + `Square` when not.
+
+**ImageDetailPage caption panel**: Contains only the caption text textarea and Save button (plus the collapsible AI Generate section). The `caption_style` field is still present in the DB schema, the `PUT /captions/image/{id}` endpoint, and the save mutation — read from `captionData` and re-persisted unchanged — but no style picker is exposed in the UI. The `tags_json` column and `tags` table were removed by migration `a8c3e1f2b9d0_drop_tags_system`; `TagEditor.tsx` and the panel's `tags` state are deleted accordingly. A live **token counter** (`N words · N tokens`) is displayed right-aligned beside the "Caption Text" label, computed via `gpt-tokenizer` (`encode` with GPT-2 BPE) inside a `useMemo` keyed on `captionText`. The counter turns amber at ≥ 70 tokens and red at ≥ 77 to signal the CLIP truncation limit.
+
+**Caption textarea auto-resize**: The textarea auto-expands to fit its content via a `useEffect` keyed on `[captionText, imageId, image?.id]`. Three dependencies are required: (1) `captionText` — resize when the text changes; (2) `imageId` — resize immediately on navigation (covers same-text-on-two-images edge case); (3) `image?.id` — the critical one: the component has an early return `if (imageLoading || !image) return <Loading/>`, so the textarea is not in the DOM while the image query is pending. `captionData` (the lighter query) typically resolves before `image`, so `captionRef.current` is null when `captionText` first changes on a fresh navigation. Adding `image?.id` ensures the resize fires again once the loading phase ends and the ref becomes valid. Do not remove any of these three dependencies. A separate `useEffect` on `[imageId]` resets `captionDirty` to `false` on navigation; without this, an unsaved edit would leave `captionDirty=true` on the next image, causing the `captionData` effect to skip `setCaptionText` entirely (blocking the resize).
+
+The **AI Generate** collapsible (`showAi` state, gated `enabled: showAi`) uses the same four-model-type picker pattern and `resolveModelId` helper as `SelectionToolbar`. WD14 models show only the threshold slider and hide `PromptPresetManager` and `ResolutionPicker` (both are wrapped in `{aiModel && !aiModel.startsWith("wd14:") && (...)}` — keep this consistent with `SelectionToolbar`'s ternary). An `aiOverwrite: bool` state (default `true`) is exposed as a checkbox that appears once a model is selected. The `["captioning-models"]` query is defined at component level (not inside the collapsible) but gated on `enabled: showAi` to avoid loading until the section is first opened.
+
+### Gallery generation metadata
+
+`generation_metadata` is included in both `ImageOut` and `ImageListItem` backend schemas, so it comes back with the gallery list response. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when `image.generation_metadata` is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default.
+
+### Source & license provenance
+
+Images and datasets carry `source_name` / `source_url` / `license` / `attribution`, with NULL on the image meaning *inherit the dataset default*. The gallery reads the **effective** license (`ImageListItem.license`) for its badge and offers `license_filter` / `license_missing`; `ImageDetailPage` renders `components/image/ProvenancePanel.tsx`, and the selection toolbar's bulk action uses `components/gallery/SetProvenanceModal.tsx`. Ingest capture (import/rescan/upload), the derived-image rule, cross-dataset materialization and the full API surface are in `docs/dev/provenance.md`.
+
+### AI generation metadata
+
+Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Included in both `ImageOut` and `ImageListItem` schemas.
+
+Supported formats:
+
+| PNG chunk key | Tool | Parser |
+|---|---|---|
+| `parameters` | AUTOMATIC1111 / SD WebUI | `_parse_a1111_params()` — splits on `Negative prompt:` (case-insensitive, handles `\r\n`); extracts steps/cfg_scale/seed/sampler/sampler_name/model/model_hash/size/vae from trailing key-value line |
+| `workflow` / `prompt` | ComfyUI | Stores raw workflow JSON; extracts text from `CLIPTextEncode`/`CLIPTextEncodeSDXL` nodes as prompt |
+| `Comment` | Generic | Stored as `raw`; JSON-parsed if valid |
+| EXIF tag 37510 (UserComment) | Various | Parsed as A1111 format if `Steps:` present, otherwise stored as `raw` |
+
+**Parser invariant**: `prompt` is only stored when non-empty. An image generated with no positive prompt results in a dict with `negative_prompt` but no `prompt` key — this is correct, not a bug.
+
+Frontend: `components/image/GenerationMetadata.tsx` — collapsible section titled **GENERATION METADATA** (default expanded) with source badge, prompt + copy button, negative prompt, param grid (model/sampler/steps/CFG/seed/size/VAE), and optional ComfyUI raw workflow viewer.
+
+**Lazy backfill**: `GET /images/{image_id}` calls `extract_generation_metadata` and commits if the field is NULL, transparently backfilling pre-feature images.

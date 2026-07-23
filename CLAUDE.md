@@ -50,7 +50,7 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 
 `BackgroundJob` has a nullable `label: str | None` column (max 200 chars). Every router that creates a job sets an auto-generated descriptive label (e.g. `"Florence-2 (large) — 50 images"`, `"Quality: technical, aesthetic — 100 images"`) and accepts an optional `label` field in the request body to override it (`body.label or auto_label`). A `_model_short_label(model: str) -> str` helper in `routers/captioning.py` converts raw model IDs to readable names for the auto-label.
 
-This file covers conventions that apply across the whole codebase: commands, the request/job data flow above, the key invariants and shared utilities below. Subsystem-specific details — ML models and inference, gallery/image handling, captioning, export and bulk operations, dataset versioning, dashboard pages, frontend state/pane management, and backend infrastructure/environment setup — live in topic files under `docs/dev/`, indexed in the Documentation Map near the end of this file. Read the relevant topic file(s) with the Read tool before working on that subsystem; do not read all of them up front.
+This file covers conventions that apply across the whole codebase: commands, the request/job data flow above, the key invariants and shared utilities below. Subsystem-specific details — ML models and inference, object detection, quality scoring, the gallery, the image detail view, image files and import, captioning, export, bulk operations, dataset versioning, the individual dashboard pages, frontend state/persistence/styling/panes, backend infrastructure, and environment setup — live in topic files under `docs/dev/`, indexed in the Documentation Map near the end of this file. Read the relevant topic file(s) with the Read tool before working on that subsystem; do not read all of them up front.
 
 ### Shared utilities
 
@@ -60,7 +60,7 @@ This file covers conventions that apply across the whole codebase: commands, the
 - `slugify_filename(name: str) -> str` — lowercases, removes non-word characters, collapses whitespace/underscores/hyphens to `_`, strips leading/trailing `_-`, truncates to 200 chars. Returns `"image"` if the result is empty.
 - `unique_filename(directory: Path, stem: str, suffix: str, db_names: set, disk_exclude: set[str] | None = None) -> str` — returns a filename not on disk and not in `db_names`. Tries `{stem}{suffix}` first, then `{stem}_001{suffix}`, `_002`, … Both checks are required: `db_names` covers in-flight batch collisions within the same request; the filesystem check covers files that exist but have no DB record. `disk_exclude` names files that exist on disk but should be treated as absent (files being renamed away in the same batch — used by bulk-rename renumbering so the counter restarts from `001` instead of skipping past the source files).
 - `unique_filename_with_thumb(images_dir, stem, suffix, db_names, occupied_thumb_stems, planned_thumb_stems) -> str` — like `unique_filename` but also avoids thumbnail-stem collisions. Thumbnails are always `.webp` keyed by image stem, so two images with different extensions but the same stem would share a thumbnail path. Call this instead of `unique_filename` in every code path that creates or renames an image file and associates a thumbnail with it. Mutates `db_names` (adds the chosen filename) and `planned_thumb_stems` (adds the chosen stem) so subsequent calls within the same batch stay consistent. Build `occupied_thumb_stems` from `thumb_dir.glob("*.webp")` once before the loop; do **not** exclude the stems of images being renamed/moved from this set — doing so re-introduces the within-batch clobber bug where one image's new thumbnail path matches another's current path.
-- **Caption sidecar helpers.** `rename_with_sidecar(old_path, new_path)` / `copy_with_sidecar(old_path, new_path)` — move or copy a file together with its `.txt` sidecar (if present) in one call; the copy variant uses `shutil.copy2` and leaves the source intact. Use these everywhere a file is renamed or copied; never copy the two-step pattern inline. `read_caption_sidecar(image_path: Path | str) -> str | None` reads the `.txt` sidecar next to an image (the read-side counterpart of `caption_service._write_txt_sidecar`), returning the stripped text of `{stem}.txt` if present and non-empty, else `None` — use it everywhere a sidecar caption is read (folder import, rescan/sync, standalone caption import); never inline the `.with_suffix(".txt")` logic. See `docs/dev/gallery-and-images.md` (§ Importing captions & folder rescan).
+- **Caption sidecar helpers.** `rename_with_sidecar(old_path, new_path)` / `copy_with_sidecar(old_path, new_path)` — move or copy a file together with its `.txt` sidecar (if present) in one call; the copy variant uses `shutil.copy2` and leaves the source intact. Use these everywhere a file is renamed or copied; never copy the two-step pattern inline. `read_caption_sidecar(image_path: Path | str) -> str | None` reads the `.txt` sidecar next to an image (the read-side counterpart of `caption_service._write_txt_sidecar`), returning the stripped text of `{stem}.txt` if present and non-empty, else `None` — use it everywhere a sidecar caption is read (folder import, rescan/sync, standalone caption import); never inline the `.with_suffix(".txt")` logic. See `docs/dev/image-files.md` (§ Importing captions & folder rescan).
 - `compile_user_regex(pattern: str)` / `regex_sub_deadline(compiled, repl, text, deadline: float)` / `REGEX_TIMEOUT_SECONDS` / `regex_error` — the only sanctioned way to run a **client-supplied** regex. `compile_user_regex` raises `regex_error` (map to HTTP 400); `regex_sub_deadline` substitutes under an absolute `time.monotonic()` deadline and raises `TimeoutError` (map to HTTP 408) so one budget covers a whole batch instead of N × timeout. See the Key invariant below for why stdlib `re` is unusable here. Used by the `comfy` rows bulk-edit and both `caption_service` regex paths.
 - `chunked(seq, size=10_000) -> Iterator[Sequence]` — yields successive `size`-length slices of a sequence. The single source of truth for splitting id lists before an SQL `IN (...)` so bind-parameter count stays under SQLite's 999-variable limit; use it in every batched `IN` query (detection crop worker, `_fetch_bboxes_by_image`, `export_service._fetch_detections_by_image`). Never re-inline a `range(0, len(x), N)` slice loop.
 - `ALLOWED_FLAG_KEYS: frozenset` — the canonical set of valid quality flag names (`is_blurry`, `is_noisy`, `is_uniform`, `has_watermark`, `is_duplicate`, `is_nsfw`, `has_ai_artifacts`). Import this wherever flag names must be validated or used in SQL filters; never redefine the set locally.
@@ -71,7 +71,7 @@ This file covers conventions that apply across the whole codebase: commands, the
 
 **`backend/licenses.py`** — the license vocabulary (`LICENSES`, `LICENSE_IDS`, `FIELD_MAX_LEN`, `normalize_license`, `license_info`, `allows_commercial`; `frontend/src/constants/licenses.ts` mirrors the ids, **every** `LicenseInfo` field and `FIELD_MAX_LEN`, and a test enforces the whole match — `allows_commercial`/`no_derivatives` decide what an export ships, so a divergence there is a rights error) and the provenance rules built on it. Import from here; never hardcode a license id list or re-inline the inheritance coalesce. Read side: `resolve_provenance(img, ds)`, the NULL-coalescing image-over-dataset read — duck-typed, and must not import models or it re-creates an import cycle. Write side: `merge_provenance(*layers)` (left-wins ingest merge, clamping), `clamp_provenance(values)`, `normalize_license_input(v)` (the Pydantic validator — normalize **then** length-check), `copy_provenance(img)` (same-dataset derivative), `materialize_provenance(img, ds)` (cross-dataset copy/move), `materialize_by_source(rows, ds_by_id)` (the batch form, resolving each row against its own source dataset). **Ingest truncates; the API rejects** — an import must never fail on a bad sidecar, and an API client must never silently lose data. A **client-supplied** license-id list is read only through `utils.parse_license_filter_param` / `normalize_license_filter`: a JSON array, never comma-separated, because an `other:<free text>` id may contain commas. An empty list always means "no filter", never "match nothing". `""` inside the list is **not** uniform across the API: it is a meaningful entry (no license recorded) for the **export** filters, while `GET /images/` expresses unlicensed through its separate `license_missing` param and **rejects (400) any list containing a blank entry** — dropping it would silently narrow a mixed list or void the filter entirely. Check which endpoint you are on before relying on it. See `docs/dev/provenance.md`.
 
-**Shared frontend components**: `SelectionToolbar`, `MoveToDatasetModal`, `ConfirmDialog`, `GenerationMetadata`, `DirPickerModal`, and `JobProgressBar` are reusable components referenced from multiple subsystem doc files below — don't be surprised when the same component name recurs across files. Each is documented where it's most central: `SelectionToolbar`'s modal/cache-invalidation conventions and `ConfirmDialog` in `docs/dev/frontend-core.md` (§ Frontend state and § Styling respectively); `MoveToDatasetModal` (§ Image file naming) and `GenerationMetadata` (§ AI generation metadata) in `docs/dev/gallery-and-images.md`; `DirPickerModal` (the in-app "Browse…" folder picker, used by folder/caption import and Export) in `docs/dev/dashboard-pages.md` (§ Datasets page); `JobProgressBar` in `docs/dev/versioning.md` (§ Dataset versioning, Frontend). Other files document only how that subsystem *uses* them.
+**Shared frontend components**: `SelectionToolbar`, `MoveToDatasetModal`, `ConfirmDialog`, `GenerationMetadata`, `DirPickerModal`, and `JobProgressBar` are reusable components referenced from multiple subsystem doc files below — don't be surprised when the same component name recurs across files. Each is documented where it's most central: `SelectionToolbar`'s modal/cache-invalidation conventions in `docs/dev/frontend-core.md` (§ Frontend state) and `ConfirmDialog` in `docs/dev/styling.md`; `MoveToDatasetModal` in `docs/dev/image-files.md` (§ Image file naming) and `GenerationMetadata` in `docs/dev/image-detail.md` (§ AI generation metadata); `DirPickerModal` (the in-app "Browse…" folder picker, used by folder/caption import and Export) in `docs/dev/datasets-page.md`; `JobProgressBar` in `docs/dev/versioning.md` (§ Dataset versioning, Frontend). Other files document only how that subsystem *uses* them.
 
 ### Key invariants
 
@@ -81,7 +81,12 @@ This file covers conventions that apply across the whole codebase: commands, the
 - **Absolute DB path.** `config.py` derives the database URL from `Path(__file__).parent.parent` so it resolves correctly regardless of the working directory when uvicorn is launched.
 - **Path traversal guard.** `_safe_path()` in `routers/images.py` validates that resolved file paths stay within `settings.datasets_dir`.
 - **Never run a client-supplied regex through stdlib `re`.** Use `compile_user_regex` + `regex_sub_deadline` from `backend/utils.py` (the `regex` package). `re`'s matching loop is C code that never releases the GIL and cannot be interrupted, so a catastrophic pattern freezes the entire process — and the obvious guard does not work: wrapping it in `run_in_executor` + `asyncio.wait_for` can never fire, because the event loop can't be scheduled to fire it, and Python cannot kill the thread. Verified: `(a|a)*$` against 30 `a`s takes `re` **105 s** at 100% GIL, versus a clean `TimeoutError` from `regex` with the loop still live. Hardcoded patterns and `re.escape`'d literals (`slugify_filename`, `subsume_tags`) are fine on `re` — they can't backtrack. A comment claiming a thread + `wait_for` bounds a regex is the bug, not the fix.
-- **Provenance NULL means inherit; materialize it on cross-dataset copy/move.** An `Image` whose `source_name`/`source_url`/`license`/`attribution` is NULL **or `""`** inherits its `Dataset`'s default, resolved at read time by `licenses.resolve_provenance` — which coalesces on *falsiness*, so a blank string is not "explicitly nothing"; recording that needs a real value (the `no-license` id, a written-out attribution). Any code path that moves or copies an image into a *different* dataset must call `licenses.materialize_provenance(img, source_dataset)` and write concrete values, or the image silently re-inherits the destination's unrelated default. `duplicate_dataset` is the one sanctioned exception: it copies the four dataset defaults onto the new dataset first, so raw `copy_provenance` keeps inheritance equivalent. **Resolve each image against its own source dataset** — a selection can span datasets, so use `licenses.materialize_by_source(rows, ds_by_id)` rather than resolving the batch against `rows[0]`'s dataset; the same goes for the batch's busy guard and stats refresh. Same-dataset derivatives (crop, upscale, LUT, detection crop) copy raw values instead, via `copy_provenance` (which deep-copies `source_meta`, so parent and derivative never share one mutable JSON dict). `VersionImageState` mirrors all five image columns — adding a provenance column without the mirror makes a snapshot restore wipe it. **`Image.source_meta` is `deferred=True`**: every reader that loads `Image` **as an ORM entity** (those derivative paths, and `create_snapshot`) must `undefer` it, or `getattr(img, "source_meta")` lazy-loads on an async session and raises `MissingGreenlet` — a failure that only appears on the live async path, never in a helper-level unit test. A `select(Image.source_meta, …)` column list already loads it and needs no undefer, and `batch_move_dataset` omits the column on purpose. **And provenance strings are untrusted input in every document they reach** — `source_name`/`source_url`/`attribution`/free-text `license` come from scrapers, sidecars and EXIF, so anything interpolating them into a generated artifact must neutralise them for that syntax: markdown via `export_service._md_inline`/`_md_link`, CSV cells via `_csv_cell` (leading `=`/`+`/`-`/`@`/TAB/CR), any linked URL via `utils.safe_external_url`. `CREDITS.md` is a legal attribution document built by interpolation — a newline in `attribution` forged a `## <license>` section claiming rights the export did not carry.
+- **Provenance NULL means inherit; materialize it on cross-dataset copy/move.** An `Image` whose `source_name`/`source_url`/`license`/`attribution` is NULL **or `""`** inherits its `Dataset`'s default, resolved at read time by `licenses.resolve_provenance` — which coalesces on *falsiness*, so a blank string is not "explicitly nothing"; recording that needs a real value (the `no-license` id, a written-out attribution).
+  - **Cross-dataset.** Any code path that moves or copies an image into a *different* dataset must call `licenses.materialize_provenance(img, source_dataset)` and write concrete values, or the image silently re-inherits the destination's unrelated default. `duplicate_dataset` is the one sanctioned exception: it copies the four dataset defaults onto the new dataset first, so raw `copy_provenance` keeps inheritance equivalent.
+  - **Resolve each image against its own source dataset** — a selection can span datasets, so use `licenses.materialize_by_source(rows, ds_by_id)` rather than resolving the batch against `rows[0]`'s dataset; the same goes for the batch's busy guard and stats refresh.
+  - **Same-dataset derivatives** (crop, upscale, LUT, detection crop) copy raw values instead, via `copy_provenance` (which deep-copies `source_meta`, so parent and derivative never share one mutable JSON dict). `VersionImageState` mirrors all five image columns — adding a provenance column without the mirror makes a snapshot restore wipe it.
+  - **`Image.source_meta` is `deferred=True`**: every reader that loads `Image` **as an ORM entity** (those derivative paths, and `create_snapshot`) must `undefer` it, or `getattr(img, "source_meta")` lazy-loads on an async session and raises `MissingGreenlet` — a failure that only appears on the live async path, never in a helper-level unit test. A `select(Image.source_meta, …)` column list already loads it and needs no undefer, and `batch_move_dataset` omits the column on purpose.
+  - **Provenance strings are untrusted input in every document they reach** — `source_name`/`source_url`/`attribution`/free-text `license` come from scrapers, sidecars and EXIF, so anything interpolating them into a generated artifact must neutralise them for that syntax: markdown via `export_service._md_inline`/`_md_link`, CSV cells via `_csv_cell` (leading `=`/`+`/`-`/`@`/TAB/CR), any linked URL via `utils.safe_external_url`. `CREDITS.md` is a legal attribution document built by interpolation — a newline in `attribution` forged a `## <license>` section claiming rights the export did not carry.
 - **Never mutate a loaded JSON column in place.** For JSON columns like `Image.quality_flags`, copy before mutating: `flags = dict(img.quality_flags or {})`, edit `flags`, then reassign `img.quality_flags = flags`. SQLAlchemy's default change detection compares by equality, so mutating and reassigning the *same* dict object looks unchanged and the UPDATE is silently skipped. The correct pattern lives in `services/caption_service.py`.
 
 ## Documentation Map
@@ -90,22 +95,33 @@ Each file below covers one subsystem in depth. Read the relevant file(s) with th
 your task touches that subsystem — do not read all of them up front. Do NOT use `@`-paths to reference
 these files anywhere — `@path` auto-loads the target into every conversation, defeating this split.
 
-| File | Contents | Read this when... | Lines |
+| File | Contents | Read this when... | Words |
 |---|---|---|---|
-| `docs/dev/ml-models.md` | Model manager (VRAM/unload), model ID registry, JoyCaption/Florence-2 details, quality scorers, object detection, upscaling, LUT grading, device abstraction, TorchDynamo, config validation | Working on captioning models, quality scoring, object detection, upscaling, LUT grading, or `backend/ml/` | ~257 |
-| `docs/dev/gallery-and-images.md` | Image naming/renaming/collisions, gallery selection/filters/subfolder sidebar, manual drag ordering, drag-images-onto-subfolders (dnd-kit droppables, DragOverlay, collision detection), gallery navigation state (incl. ImageDetailPage crop/selection/caption panel), generation metadata | Working on `GalleryPage`, `ImageDetailPage`, gallery drag & drop, image upload/move/copy/rename, or generation-metadata display | ~175 |
-| `docs/dev/provenance.md` | Source/license provenance: `backend/licenses.py` vocabulary, dataset→image inheritance, ingest capture precedence (import dialog / scraper sidecar / EXIF-PNG), derived-image and cross-dataset materialization rules, ComfyUI synthetic stamping, `bulk-provenance` and `licenses-in-use` API, license filters, the provenance frontend components | Working on `licenses.py`, provenance/license/attribution anywhere, `ProvenancePanel`, `SetProvenanceModal`, `LicenseSelect`, license filters, or `source_meta` | ~109 |
-| `docs/dev/captioning.md` | Captioning post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config and ModelPicker | Working on `CaptioningPage`, the caption job pipeline, or LLM provider integration | ~56 |
-| `docs/dev/export-and-bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count, `bulk-provenance`, detection-driven cropping (`/detection/crop`, `detection_crop_rect`), dataset export (kohya/ai-toolkit/plain, filters incl. license/commercial/no-derivatives, resize, metadata stripping, CREDITS.md/licenses.csv manifests and their supersede rule) | Working on `ExportPage`, `BulkEditPage`, `CropToDetectionForm`, or any `bulk-*` endpoint | ~136 |
-| `docs/dev/tag-consolidation.md` | Dataset-wide semantic tag consolidation: MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, `TagConsolidatePage` preview/confirm UI | Working on `TagConsolidatePage`, the `tag-consolidation` router, `tag_embedder`, or per-image `dedupe_tags` | ~103 |
-| `docs/dev/versioning.md` | Dataset version control: snapshots, branches, copy-on-write object store (atomic `_store_object`), diff, restore, COW injection points, provenance mirroring in `VersionImageState`, object-store prune/GC, dataset-busy guard (409 during versioning jobs) | Working on `VersionsPage`, branch/snapshot logic, `dataset_busy`, or any code path that overwrites/deletes image files in place | ~112 |
-| `docs/dev/dashboard-pages.md` | Datasets page (categories, category rail, density toggle, persisted UI state, duplicate, import), Statistics page (histograms, CSV export, BucketPanel), Settings page (tabs, thresholds), hardware stats, file browser, Logs page (job history + JS error console), Booru tag lookup page | Working on `DatasetsPage`, `StatsPage`, `SettingsPage`, hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~250 |
-| `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, shared constants modules, Sidebar/Layout, split-view pane manager, Tailwind/CSS design system, `errorConsoleStore`, `ErrorConsole` overlay | Working on global frontend state, a new job-triggering UI, the pane/split-view system, styling, or the JS error console | ~155 |
-| `docs/dev/backend-infrastructure.md` | Production frontend serving, server shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, venv/ML setup, prereq auto-install, GPU auto-detection, manage.ps1 encoding constraint | Working on `main.py` server lifecycle, `manage.ps1`/`manage.sh`, Alembic migrations, or SSE infrastructure | ~80 |
-| `docs/dev/comfyui.md` | ComfyUI generation queue: plans (workflow template + pinned params, `output_is_synthetic`), prompt rows, global prompt library (categories), `comfy_generate` job (submit/poll/import, per-row cleanup), ComfyClient/patch_workflow, `ComfyPage` UI, `comfyui_url` setting | Working on `ComfyPage`, the `comfy` router, `comfy_service.py`, ComfyUI integration, the prompt library, or the `comfy_generate` job | ~250 |
-| `docs/dev/comfy-prompts.md` | LLM prompt generation for the ComfyUI queue: one-shot endpoint, the durable `comfy_prompts` job (per-batch row commits, cancel/PM-004 discipline), `parse_prompts` output filtering, `GeneratePromptsModal` job re-attach | Working on generating prompts with an LLM, `comfy_prompts`, `prompt_generator.py`, or `GeneratePromptsModal` | ~162 |
-| `docs/dev/comfyui-sync.md` | Workflow sync: "Sync from canvas" button, `GET /comfy/canvas-workflow`, `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop on sync, ComfyUI API constraints | Working on workflow sync, the sync button, the bridge extension, `canvas-workflow`, or pulling workflows from ComfyUI | ~86 |
-| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~20 |
+| `docs/dev/ml-models.md` | Model manager (VRAM/unload), model ID registry, JoyCaption/Florence-2, upscaling, LUT grading, device abstraction, TorchDynamo, config validation | Working on captioning models, upscaling, LUT grading, or `backend/ml/` loading | ~1960 |
+| `docs/dev/detection.md` | `/detection` router, `DetectionJobRequest` scope/model/task matrix, SAM2/SAM3/Florence-2/NudeNet inference, mask geometry and `mask_area`, watermark-flag sync, detection frontend surfaces | Working on object detection, masks, or `DetectionsPanel` | ~2860 |
+| `docs/dev/scoring.md` | Quality scorers and the columns they write, flag thresholds, duplicate detection (pigeonhole index + brute force), style similarity and DINOv2 per-layer scoring | Working on `QualityPage`, quality flags, or thresholds | ~1290 |
+| `docs/dev/gallery.md` | Gallery selection and shift-click ranges, subfolder sidebar, filters, manual drag ordering, drag-images-onto-subfolders (dnd-kit droppables, DragOverlay, collision detection) | Working on `GalleryPage` or gallery drag & drop | ~2760 |
+| `docs/dev/image-detail.md` | Gallery/nav persisted keys, `injectNavId`/`paneGo`, crop tool, selection toggle, caption panel, AI generation metadata extraction and display | Working on `ImageDetailPage` or generation-metadata display | ~1500 |
+| `docs/dev/image-files.md` | Image naming/renaming/collisions, cross-dataset move and copy, folder import, rescan/sync, standalone caption import, drag-`.txt`-onto-image | Working on image upload/move/copy/rename or caption import | ~1160 |
+| `docs/dev/provenance.md` | `backend/licenses.py` vocabulary, dataset→image inheritance, ingest capture precedence, derived-image and cross-dataset materialization, ComfyUI synthetic stamping, `bulk-provenance`/`licenses-in-use`, the provenance components | Anything touching license, attribution, `source_meta`, or license filters | ~3170 |
+| `docs/dev/captioning.md` | Caption post-processing (delimiter modes, refusal stripping, rename-on-caption), pipeline job execution, OpenAI-compatible provider config, `ModelPicker` | Working on `CaptioningPage` or LLM provider integration | ~1550 |
+| `docs/dev/export.md` | Export (kohya/ai-toolkit/plain): shared loop, stem uniquification, filters incl. license/commercial/no-derivatives, resize, metadata stripping, loss masks, CREDITS.md/licenses.csv | Working on `ExportPage` or `export_service.py` | ~3000 |
+| `docs/dev/bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count/reorder, detection-driven cropping (`detection_crop_rect`) and the crop detection remap | Working on `BulkEditPage`, `CropToDetectionForm`, or a `bulk-*` endpoint | ~2420 |
+| `docs/dev/tag-consolidation.md` | MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, preview/confirm UI | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` | ~890 |
+| `docs/dev/versioning.md` | Snapshots, branches, copy-on-write object store (atomic `_store_object`), diff, restore, COW injection points, object-store prune/GC, the dataset-busy 409 guard | Working on `VersionsPage`, `dataset_busy`, or any path that overwrites image files in place | ~2980 |
+| `docs/dev/datasets-page.md` | Preview strip, license badge, sort/density/grouping, category rail, persisted page UI, `ImportFolderModal`/`DirPickerModal`, folder naming, edit, duplicate | Working on `DatasetsPage`, categories, or the folder picker | ~2360 |
+| `docs/dev/statistics.md` | Stats queries and live polling, server-side aggregation, `DatasetStats` schema, editable histograms, CSV export, the `GET /images/` filter extensions, Detections and Licenses panels | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` | ~2350 |
+| `docs/dev/settings.md` | The `ThresholdSettings` singleton row and every tab (Gallery, Captioning, UI Behavior, Quality Thresholds, Versioning, LLM Providers, ComfyUI) | Working on `SettingsPage`, a new app-wide setting, or `threshold_service.py` | ~1050 |
+| `docs/dev/workspace.md` | Sidebar hardware meters and `/system`, file browser and `/filesystem`, Logs page (job history + JS error console), Booru tag lookup | Working on hardware meters, `FileBrowserPage`, `LogsPage`, or `BooruPage` | ~1170 |
+| `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, `errorConsoleStore`/`ErrorConsole`, shared constants modules, Sidebar/Layout, split-view pane manager | Working on global frontend state, a new job-triggering UI, panes, or the JS error console | ~2910 |
+| `docs/dev/persistence.md` | `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes, the workflow/filters persistent page state pattern | Adding a storage key or persisting page configuration | ~1380 |
+| `docs/dev/styling.md` | CSS variable tokens, `@layer components` classes, `CrucibleMark` and its export/drift checks, `ConfirmDialog`, hist-bar CSS | Working on Tailwind/CSS, the brand mark, or a destructive-confirm modal | ~1030 |
+| `docs/dev/backend-infrastructure.md` | Production frontend serving, shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, job cancellation, stale-job cleanup | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation | ~1970 |
+| `docs/dev/environment-setup.md` | Venv ML packages, prereq auto-install, Python version discovery, PyTorch GPU auto-detection (NVIDIA/ROCm/MPS), SAM2/SAM3 install, update self-handoff, encoding constraint | Working on `manage.ps1`/`manage.sh`, torch wheels, or the setup/update flow | ~1500 |
+| `docs/dev/comfyui.md` | Plans (workflow template + pinned params, `output_is_synthetic`), prompt rows, prompt library, the `comfy_generate` job, ComfyClient/patch_workflow, `ComfyPage` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration | ~2490 |
+| `docs/dev/comfy-prompts.md` | One-shot generate endpoint, the durable `comfy_prompts` job (per-batch commits, cancel/PM-004 discipline), `parse_prompts` filtering, `GeneratePromptsModal` re-attach | Generating prompts with an LLM or working on `prompt_generator.py` | ~1830 |
+| `docs/dev/comfyui-sync.md` | "Sync from canvas", `GET /comfy/canvas-workflow`, the `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, pin keep/drop, ComfyUI API constraints | Working on workflow sync or the bridge extension | ~710 |
+| `docs/dev/postmortems.md` | Postmortem index: past incidents as one-line rows (symptom, root-cause category, LIVE/MITIGATED/STRUCTURAL status), linking detail files under `docs/dev/postmortems/` | Doing a code review or investigating a bug — check the code under review against known failure classes | ~380 |
 
 ### Code review & bug investigation
 
@@ -121,80 +137,19 @@ When reviewing code (any `/code-review` run or ad-hoc review request) or investi
 
 ## Maintaining this documentation
 
-This documentation is split across this file (always loaded) and topic files under
-`docs/dev/` (loaded on demand via the Documentation Map above). Keep it that way as
-you learn new things during a session:
+Documentation is split across this file (always loaded) and the topic files above
+(loaded on demand). Three rules apply to every change; the full workflow — where a
+new fact goes, split thresholds, cross-reference conventions, the end-of-branch doc
+audit, and the skill-proposal format — lives in the `doc-maintenance` skill. Invoke
+it before editing any doc.
 
-- **Plain relative paths only.** Never write `@docs/...` anywhere in documentation.
-  The `@path` syntax triggers automatic recursive loading into every conversation.
-- **Narrow, subsystem-specific knowledge**: append it to the relevant `docs/dev/`
-  file under the best-fitting heading. If this makes that file's "read this when"
-  hint incomplete, update the hint (keep trigger keywords front-loaded).
-- **Cross-cutting knowledge** (a new shared utility, a universal invariant, a
-  pattern every module must follow): add it to Key invariants or Shared utilities
-  in this file. Test: "would I want this loaded even for a task in an unrelated
-  subsystem?" Utility entries stay one line here; detailed behavior goes in the
-  utility's docstring.
-- **New subsystem, or a topic file growing past ~250 lines**: split into a new
-  `docs/dev/<topic>.md` and add a Documentation Map row (contents, keyword-front-
-  loaded triggers, line count). Don't append new features to the least-bad
-  existing file.
-- **Cross-references between topic files**: when documenting something in file A
-  that depends on something in file B, add a one-line pointer, e.g. "see
-  `docs/dev/versioning.md` for the copy-on-write mechanism" — don't duplicate it.
-- **Line counts in the Documentation Map** are approximate; refresh a row's count
-  when you substantially edit its file.
-- **Run `scripts/check_docs.py`** after any documentation change; fix what it
-  reports.
-- **Periodic rebalancing**: if a topic file becomes a dumping ground of unrelated
-  facts, propose splitting it during that session rather than continuing to append.
-- **Doc audits**: when asked for a "doc audit", diff each topic file against the
-  code it describes and propose corrections for anything stale.
-- **`docs/*.md` vs `docs/dev/*.md`**: `docs/*.md` (flat, no `dev/`) is end-user
-  documentation referenced from `README.md` — different audience, do not confuse
-  the two.
-- **User-facing features need user-facing docs.** `docs/dev/` explains a subsystem
-  to whoever maintains it; it never counts as documenting the feature. When a change
-  adds or alters something a user can see — a page, a sidebar item, a settings tab,
-  a setup step — update `README.md` and the relevant `docs/*.md` **in the same
-  change**, not just `docs/dev/`. A whole subsystem (its own page + settings) earns
-  its own `docs/<topic>.md` plus a README Docs-table row (see `docs/comfyui.md`);
-  a smaller capability is a section in the `docs/<topic>.md` that already covers
-  its area. **`docs/features.md` is an index, not a container** — it gets a row
-  pointing at the topic doc, never prose. (It previously held ten subsystems and
-  reached 4,700 words; `scripts/check_docs.py` now enforces a line budget on
-  `docs/*.md` so that cannot recur.) README's Workflow chain,
-  Prerequisites, and Docs table are part of the change when the feature affects
-  them. `scripts/check_docs.py` link-checks these files but cannot tell that a
-  feature is missing from them — that is on you.
-
-### Proposing skills
-
-Reference documentation stays in `docs/dev/` — never duplicate it into skills.
-But when you notice **procedural** knowledge that meets ALL of these criteria,
-propose creating a project skill in `.claude/skills/<name>/SKILL.md`:
-
-1. It's a *workflow* (a sequence of steps/commands), not facts about the code.
-2. It has recurred, or clearly will recur, across sessions (e.g. release process,
-   migration workflow, scaffolding a new module of an established pattern,
-   regenerating fixtures).
-3. It benefits from automatic triggering and/or a bundled script whose code
-   shouldn't occupy context (only script *output* costs tokens).
-
-**Never create a skill without approval.** Propose it in this exact format and
-wait for a yes/no:
-
-> **Skill proposal:** `<name>` — <one sentence: what workflow it captures>.
-> **Trigger description:** "<the frontmatter description, keyword-front-loaded>"
-> **Bundles:** <scripts/templates, or "none">
-> **Why a skill and not docs:** <one sentence>
-
-If approved: keep SKILL.md focused on the workflow steps, put reusable code in
-bundled scripts rather than inline instructions, and keep the description short
-and keyword-rich (descriptions of all skills are always loaded and may be
-truncated when many skills exist — every word must earn its place). If rejected,
-don't re-propose the same skill unless circumstances change.
-
-Be conservative: a handful of high-value skills beats many marginal ones, since
-every skill's description permanently occupies context and dilutes trigger
-matching for the others.
+- **Plain relative paths only.** Never write `@docs/...` or `@CLAUDE` anywhere in
+  documentation; the `@path` syntax recursively auto-loads the target into every
+  conversation, defeating the split.
+- **User-facing features need user-facing docs.** `docs/dev/` explains a subsystem to
+  whoever maintains it and never counts as documenting the feature. A change to
+  anything a user can see — a page, a sidebar item, a settings tab, a setup step —
+  updates `README.md` and the relevant `docs/*.md` **in the same change**.
+- **Run `python scripts/check_docs.py`** after any documentation change and fix what
+  it reports. It enforces word budgets, not line counts, and warns on any paragraph
+  over 250 words — see its module docstring for why.

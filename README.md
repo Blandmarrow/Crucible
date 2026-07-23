@@ -121,7 +121,7 @@ Setup auto-detects your GPU and prompts before downloading the matching PyTorch 
 
 During setup you are also prompted to install **SAM2** (Segment Anything Model 2, ~50 MB from GitHub) — required only for Grounded SAM 2.1 segmentation; all other features work without it.
 
-You are likewise prompted to install **SAM3** (Segment Anything Model 3, ~50 MB from GitHub) — required only for SAM 3 text-prompt segmentation. SAM3 additionally needs its checkpoint downloaded manually: get `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) and place it in `models/sam3/`. Only safetensors checkpoints are supported.
+You are likewise prompted to install **SAM3** (Segment Anything Model 3, ~50 MB from GitHub) — required only for SAM 3 text-prompt segmentation. SAM 3 additionally needs its checkpoint downloaded manually: get `sam3.safetensors` (~3.4 GB) from [1038lab/sam3](https://huggingface.co/1038lab/sam3) and place it in `models/sam3/`. Only safetensors checkpoints are supported.
 
 **Optional: ComfyUI bridge** — if you use the ComfyUI generation page, the **CrucibleBridge** extension lets *Sync from canvas* pull the workflow you currently have open, instead of the last one you queued. It is a copy-a-folder install into ComfyUI's `custom_nodes/` and is entirely optional — see [extras/ComfyUI-CrucibleBridge/README.md](extras/ComfyUI-CrucibleBridge/README.md).
 

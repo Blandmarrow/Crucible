@@ -873,6 +873,26 @@ export default function ExportPage() {
                     </div>
                   )}
 
+                  {/* Free text under the ND filter — the one place the two
+                      redistribution-safety filters disagree. "Commercial use"
+                      drops what it cannot classify; "exclude no-derivatives"
+                      keeps it. Only worth saying when that filter is on. */}
+                  {excludeNoDerivatives && !!preview.freetext_will_export && (
+                    <div
+                      style={{
+                        marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 12, color: "var(--warn)",
+                      }}
+                    >
+                      {preview.freetext_will_export.toLocaleString()} exporting image
+                      {preview.freetext_will_export !== 1 ? "s have" : " has"} a free-text
+                      license Crucible can't classify. <strong>Exclude no-derivatives</strong> drops
+                      only licenses known to be ND, so these are included — check them if this
+                      export will be redistributed.
+                    </div>
+                  )}
+
                   {/* Exclusion breakdown */}
                   {exclusionRows.length > 0 && (
                     <div style={{ marginBottom: 14 }}>

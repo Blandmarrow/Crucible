@@ -23,8 +23,8 @@ Three fully implemented export formats, all with identical filter and processing
 - **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested
 - **Captions only** — skip image files entirely and export only caption sidecars / JSONL manifests; useful for updating captions in an existing dataset without re-copying images
 - **Commercial-use only** / **Exclude unlicensed images** / specific-license selection — filter on each image's effective license (its own value, or its dataset's default). The specific-license list includes any free-text licenses recorded in the dataset, so a custom license can be exported or held back like any other. "Commercial use" is conservative: an unknown license counts as *not* permitted → [details](provenance.md)
-- **Exclude no-derivatives** — drops CC BY-ND images. An export ships resized, cropped or re-encoded copies, which is exactly what "no derivatives" forbids redistributing. Unlike the commercial filter this one is not conservative: only licenses *known* to be ND are dropped, so a free-text license is kept → [details](provenance.md)
-- **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run, and warns when any images have no license recorded
+- **Exclude no-derivatives** — drops CC BY-ND images. An export ships resized, cropped or re-encoded copies, which is exactly what "no derivatives" forbids redistributing. Unlike the commercial filter this one is not conservative: only licenses *known* to be ND are dropped, so a free-text license is kept — the preview counts those so you can see them before shipping → [details](provenance.md)
+- **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run, and warns when any images have no license recorded, or when free-text licenses are slipping past the no-derivatives filter
 - **Loss masks** — see below
 
 ## Provenance manifests

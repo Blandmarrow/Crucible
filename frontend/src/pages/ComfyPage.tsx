@@ -15,10 +15,7 @@ import type { GeneratePromptsJobBody } from "../components/comfy/GeneratePrompts
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
-
-function apiErrorDetail(err: unknown, fallback: string): string {
-  return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? fallback;
-}
+import { apiErrorDetail } from "../utils/apiError";
 
 /** Hooks can't run in loops — render one of these per active run to keep a
  *  dedicated SSE subscription per job. */

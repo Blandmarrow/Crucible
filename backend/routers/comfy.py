@@ -265,7 +265,7 @@ def _comfy_source_meta(plan: ComfyPlan, row: ComfyRow, workflow: dict | None) ->
     return meta
 
 
-def _comfy_output_provenance(ds, synthetic: bool, plan_name: str = "") -> dict:
+def _comfy_output_provenance(synthetic: bool, plan_name: str = "") -> dict:
     """Provenance columns to stamp on images imported from a ComfyUI run.
 
     `synthetic` is the plan's own declaration that its output is self-created —
@@ -1321,7 +1321,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             stem_slug = slugify_filename(plan_row.name) or "comfy"
 
             output_provenance = _comfy_output_provenance(
-                ds, plan_row.output_is_synthetic, plan_row.name
+                plan_row.output_is_synthetic, plan_row.name
             )
 
             client = ComfyClient(comfy_url)

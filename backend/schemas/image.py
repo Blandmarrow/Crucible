@@ -48,7 +48,7 @@ class ImageOut(BaseModel):
     license: str | None = None
     attribution: str | None = None
     # Deliberately no top-level `source_meta`: it is a scraper's raw payload (up
-    # to ~512 KB per image), it is already carried by `provenance.source_meta`,
+    # to the 256 KB sidecar cap), it is already carried by `provenance.source_meta`,
     # and this response is refetched on every arrow-key navigation.
     # Resolved values + an `inherited` list of field names — see
     # backend.licenses.resolve_provenance. Populated by the router.

@@ -10,26 +10,29 @@ itself (plans, pins, rows, running) is `docs/dev/comfyui.md`.
 batch_size≤10, existing, temperature}`) makes **one** LLM batch call via
 `ml/prompt_generator.py` (text-only `AsyncOpenAI` sibling of the captioner; not
 model-manager-tracked) and returns `{prompts}` — `existing` is the anti-similarity context
-(the model is told those already exist and to diverge). Structure is enforced decoder-level
-via `response_format: json_schema` **with a mandatory plain-call fallback whenever that
-attempt errors OR parses to zero prompts** — LM Studio + Qwen3 (thinking) returns *empty
-content* under a schema constraint, so error-only fallback is not enough. `max_tokens` is
-floored at 8192 (the provider's captioning-tuned value truncates thinking models
-mid-reasoning; a zero-prompt `finish_reason=="length"` raises a "raise max tokens" hint).
-`parse_prompts` (unit of truth for splitting) returns a `ParsedPrompts(prompts, filtered)`
-NamedTuple: it strips closed AND unclosed `<think>` blocks, then prefers JSON (bare array or
-`{"prompts": []}`), falling back to line splitting with list-marker/commentary stripping.
-Filtering is **line-split-branch only** — a JSON array element is a deliberate unit, so
-filtering there would make the reliable path lossy. Two regexes, both precision-first:
-`_COMMENTARY_RE` (openers; single words must be followed by whitespace/end, so
-`sure-footed mountain goat` is not chatter — a bare `sure\b` matches the hyphen) and
-`_META_LINE_RE` (self-referential lines, requires `prompt(s)` to co-occur, applied **only to
-the first and last surviving line**, since a bare leading "these" would reject
-`these towering cliffs at dawn`). The asymmetry drives the design: under-filtering used to be
-visible and reversible in the review textarea, but the `comfy_prompts` job inserts rows
-directly, so an over-filter silently discards a paid generation — hence precision over recall,
-a `filtered` count in `result_data`, and mandatory tests
-(`backend/tests/test_parse_prompts.py`, which asserts the two lines above *survive*).
+(the model is told those already exist and to diverge).
+
+- **Structured output**: enforced decoder-level via `response_format: json_schema` **with a
+  mandatory plain-call fallback whenever that attempt errors OR parses to zero prompts** — LM
+  Studio + Qwen3 (thinking) returns *empty content* under a schema constraint, so error-only
+  fallback is not enough. `max_tokens` is floored at 8192 (the provider's captioning-tuned
+  value truncates thinking models mid-reasoning; a zero-prompt `finish_reason=="length"`
+  raises a "raise max tokens" hint).
+- **`parse_prompts`** (unit of truth for splitting) returns a `ParsedPrompts(prompts, filtered)`
+  NamedTuple: it strips closed AND unclosed `<think>` blocks, then prefers JSON (bare array or
+  `{"prompts": []}`), falling back to line splitting with list-marker/commentary stripping.
+  Filtering is **line-split-branch only** — a JSON array element is a deliberate unit, so
+  filtering there would make the reliable path lossy.
+- **Two regexes, both precision-first**: `_COMMENTARY_RE` (openers; single words must be
+  followed by whitespace/end, so `sure-footed mountain goat` is not chatter — a bare `sure\b`
+  matches the hyphen) and `_META_LINE_RE` (self-referential lines, requires `prompt(s)` to
+  co-occur, applied **only to the first and last surviving line**, since a bare leading "these"
+  would reject `these towering cliffs at dawn`).
+- **Why precision over recall**: under-filtering used to be visible and reversible in the
+  review textarea, but the `comfy_prompts` job inserts rows directly, so an over-filter
+  silently discards a paid generation — hence a `filtered` count in `result_data` and
+  mandatory tests (`backend/tests/test_parse_prompts.py`, which asserts the two lines above
+  *survive*).
 
 ### The `comfy_prompts` job
 

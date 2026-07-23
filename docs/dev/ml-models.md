@@ -79,7 +79,7 @@ ML-based image upscaling via the `spandrel` library, which auto-detects architec
 
 **Output modes**: *New file* — filename `{stem}_up{N}x{ext}` (collision-handled via `unique_filename_with_thumb`), new `Image` record created, thumbnail generated. *Replace* — updates `width`/`height`/`file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated. Replace mode calls `protect_file_before_overwrite` before overwriting the file — see `docs/dev/versioning.md` for the copy-on-write mechanism.
 
-**History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked, leaving a single clean entry so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression. See `docs/dev/gallery-and-images.md` § Gallery navigation state for `injectNavId`/`paneGo` mechanics.
+**History management**: Non-replace upscale navigation uses `{ replace: true }` so the source image's history entry is overwritten rather than stacked, leaving a single clean entry so one Back press returns to the gallery. Do not remove the `replace: true` from these `paneGo` calls without considering the double-Back regression. See `docs/dev/image-detail.md` § Gallery persistence & detail-view navigation for `injectNavId`/`paneGo` mechanics.
 
 **Frontend surfaces**:
 - `ImageDetailPage` — "Upscale" toolbar button toggles inline controls (model select, Replace checkbox, optional W×H). Uses `upscalingApi.run()` with `image_ids: [imageId]`.
@@ -113,7 +113,7 @@ Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-control
 **Output modes**: *New file* — filename `{stem}_lut{ext}` (collision-handled via `unique_filename_with_thumb`), new `Image` record created, thumbnail generated. *Replace* — updates `file_size_bytes`/`updated_at`/`processing_history` on existing record, thumbnail regenerated. Replace mode calls `protect_file_before_overwrite` before overwriting the file — see `docs/dev/versioning.md` for the copy-on-write mechanism.
 
 **Frontend surfaces**:
-- `ImageDetailPage` — "LUT" toolbar button (mutually exclusive with Crop and Upscale) toggles inline controls: LUT `<select>`, intensity slider, Replace checkbox, Run button. Non-replace completion calls `injectNavId` + `paneGo` to navigate to the new image (same pattern as upscaling). See `docs/dev/gallery-and-images.md` § Gallery navigation state for `injectNavId`/`paneGo` mechanics.
+- `ImageDetailPage` — "LUT" toolbar button (mutually exclusive with Crop and Upscale) toggles inline controls: LUT `<select>`, intensity slider, Replace checkbox, Run button. Non-replace completion calls `injectNavId` + `paneGo` to navigate to the new image (same pattern as upscaling). See `docs/dev/image-detail.md` § Gallery persistence & detail-view navigation for `injectNavId`/`paneGo` mechanics.
 - `SelectionToolbar` — "LUT" button opens a modal with `<LutForm>`.
 - `BulkEditPage` — "Apply LUT" tab (see `docs/dev/bulk-ops.md`).
 

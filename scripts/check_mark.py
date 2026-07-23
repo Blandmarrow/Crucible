@@ -24,7 +24,7 @@ Checks (any failure sets a non-zero exit code):
      sources (a re-export that wasn't re-copied would silently ship the old C)
   7. if frontend/dist has been built, its CSS still contains the mark's
      animation rules (Tailwind purges @layer components rules whose selector
-     it cannot find verbatim in the source — see docs/dev/frontend-core.md)
+     it cannot find verbatim in the source — see docs/dev/styling.md)
 """
 from __future__ import annotations
 
@@ -151,7 +151,7 @@ def check_built_css() -> bool | None:
         fail(f"built CSS is missing rules for: {', '.join(missing)}")
         print("      Tailwind purged them — the class name is probably built")
         print("      dynamically instead of written out verbatim.")
-        print("      See docs/dev/frontend-core.md (Styling).")
+        print("      See docs/dev/styling.md.")
         return False
     return True
 
@@ -236,7 +236,7 @@ def main() -> int:
         print("\nOK")
         return 0
     print("\nThe mark drifted. Update docs/images/ and CrucibleMark.tsx together —")
-    print("see docs/dev/frontend-core.md (Styling).")
+    print("see docs/dev/styling.md.")
     return 1
 
 

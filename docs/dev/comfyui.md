@@ -117,8 +117,22 @@ unpacked** — that was PM-005; the ComfyUI path ignores `.provenance` and stamp
 (metadata + thumbnail; the PNG's embedded `prompt`/`workflow` chunks give `generation_metadata`
 provenance for free) → optional caption (effective prompt = row override or template value,
 assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`) → row
-`completed`, commit per row. `refresh_stats` + `result_data`
-(`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
+`completed`, commit per row, then `refresh_stats` for that row (whenever it put image rows in
+play — including a failed row whose images were rolled back, where the recount corrects the column).
+`result_data` (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
+
+**Stats are refreshed per row, not once at the end.** `Dataset.image_count` is a stored column
+that `GET /datasets/{id}` returns verbatim, so the sidebar and gallery counters can only move
+while a run is in flight if the column is rewritten as it goes — and a cancel then finds it
+already correct rather than stale by however many rows landed. The call sits *before* the row's
+`_emit`, so the SSE event the frontend invalidates on arrives after the column is fresh. The
+raise paths are covered separately: `enqueue` receives `_run_with_stats`, a wrapper that re-runs
+`refresh_stats` against `run_dataset_id` (a plain str captured in the router, not an ORM read)
+only when `_run` raises — cancel and the connect-error abort; a normal return is already covered
+by the last row's refresh — in its **own** session, outside `_run`'s `async with`, so no second
+writer opens while the first session is live, guarded by `except Exception`, which cannot
+swallow `CancelledError` and so cannot turn a cancelled job into a failed one. Regression test:
+`backend/tests/test_comfy_cancel_stats.py`.
 
 Imported rows get their provenance from `_comfy_output_provenance(plan_row.output_is_synthetic,
 plan_row.name)` and their `source_meta` from `_comfy_source_meta(plan_row, row, wf)` — built from `wf`,
@@ -143,7 +157,8 @@ Failure/cancel semantics:
   cooperative and never reaches here with files written) is a separate branch: unlink, delete
   the tracked `Image` objects, reset the row to `pending`, re-raise.
 - **3 consecutive connect errors abort the run** with a job-level error; untouched rows stay
-  `pending`.
+  `pending`. Like cancel, this raises straight out of `_run` — which is why the stats refresh
+  lives in the `_run_with_stats` wrapper's `finally` and per row, not after the loop.
 - Cancel (`DELETE /jobs/{id}`) is cooperative: checked before each row and inside the poll
   loop, which best-effort `POST /interrupt`s ComfyUI and reverts the in-flight row to
   `pending` before raising. Note `DELETE /jobs` flips the job row to `cancelled` immediately,
@@ -153,7 +168,9 @@ Failure/cancel semantics:
 
 Dataset-scoped page at `/datasets/:datasetId/comfy` (PageType `"comfy"`, registered in App
 routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). Job type
-`comfy_generate` is in TopBar's `IMAGE_MODIFYING_JOB_TYPES`. API module
+`comfy_generate` is in TopBar's `IMAGE_MODIFYING_JOB_TYPES` and `LIVE_IMAGE_JOB_TYPES`; it is
+the one job type whose live branch also invalidates `["dataset", id]`, because it is the one
+whose worker refreshes the stored counters per row (see `docs/dev/frontend-core.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,

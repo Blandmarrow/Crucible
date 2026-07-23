@@ -19,7 +19,10 @@ export function useJobSSE(jobId: string | null) {
         try {
           const data = JSON.parse(e.data) as JobProgress;
           if (data.type !== "heartbeat") {
-            updateJob(id, data);
+            // optimistic: false, not spread-through: jobStore merges partials, so a
+            // cancel button's optimistic flag would otherwise survive onto server
+            // events and TopBar would never treat the job's terminal status as real.
+            updateJob(id, { ...data, optimistic: false });
           }
         } catch {}
       };
@@ -48,7 +51,8 @@ export function useAllJobsSSE() {
       try {
         const data = JSON.parse(e.data) as JobProgress;
         if (data.type !== "heartbeat" && data.job_id) {
-          updateJob(data.job_id, data);
+          // See useJobSSE: server events must clear any optimistic cancel flag.
+          updateJob(data.job_id, { ...data, optimistic: false });
         }
       } catch {}
     };

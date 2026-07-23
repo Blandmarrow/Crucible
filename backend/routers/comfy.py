@@ -1279,6 +1279,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     plan_id = body.plan_id
+    # Captured as a plain str for the stats refresh in `_run_with_stats`: that
+    # runs after `_run`'s session is gone, and reading `.dataset_id` off an ORM
+    # object there could lazy-load on a closed/expired session.
+    run_dataset_id = plan.dataset_id
     subfolder = normalize_subfolder(body.subfolder)
     set_caption = body.set_caption
 
@@ -1550,9 +1554,17 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         consecutive_connect_errors = 0
 
                 await session.commit()
+                # Per row, not once at the end: `Dataset.image_count` is a stored
+                # column, so the sidebar/gallery counters can only move if it is
+                # rewritten as the run progresses — and a cancel or abort then finds
+                # it already correct instead of stale by however many rows landed.
+                # Before `_emit`, so the SSE event the frontend invalidates on is
+                # sent after the column is fresh. `row_image_ids` is also non-empty
+                # on the rollback path, where the recount is what makes it right.
+                if row_image_ids:
+                    await refresh_stats(session, run_dataset_id)
                 await _emit(i + 1, f"Completed {i + 1}/{total}", prompt_preview)
 
-            await refresh_stats(session, ds.id)
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = {
@@ -1563,5 +1575,32 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 }
             await session.commit()
 
-    await job_queue.enqueue(job, _run)
+    async def _run_with_stats(job_id: str) -> None:
+        """`_run` plus a stats refresh on the paths that raise past the per-row one.
+
+        The per-row refresh above is the last thing a row does, so a normal return
+        needs nothing more — this wrapper acts only when `_run` raises: cancellation
+        (`raise_if_cancelled` / the cooperative check in the poll loop) and the
+        connect-error abort both raise straight out of the row loop, so anything
+        the last row committed would otherwise never be counted. Wrapping the call
+        rather than the body keeps the refresh outside `_run`'s `async with`: its
+        session is closed before a second one opens, so there is no writer-lock
+        contention on the abort path. Guarded by `except Exception`, which cannot
+        swallow `CancelledError` — a failure here must not turn a cancelled job into
+        a failed one.
+        """
+        from backend.database import AsyncSessionLocal
+        from backend.services.dataset_service import refresh_stats
+
+        try:
+            await _run(job_id)
+        except BaseException:
+            try:
+                async with AsyncSessionLocal() as stats_session:
+                    await refresh_stats(stats_session, run_dataset_id)
+            except Exception:
+                logger.warning("comfy_generate: final stats refresh failed", exc_info=True)
+            raise
+
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id, "total": n}

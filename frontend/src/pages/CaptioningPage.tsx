@@ -1208,7 +1208,7 @@ export default function CaptioningPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          useJobStore.getState().updateJob(qJob.job_id, { status: "cancelled" });
+                          useJobStore.getState().updateJob(qJob.job_id, { status: "cancelled", optimistic: true });
                           jobsApi.cancel(qJob.job_id);
                         }}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-dim)", padding: 0, lineHeight: 1, fontSize: 14 }}

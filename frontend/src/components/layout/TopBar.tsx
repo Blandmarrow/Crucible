@@ -26,6 +26,7 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -113,7 +114,9 @@ export default function TopBar() {
       // outcome toast both have to live here, in a component that never unmounts.
       if (progress.job_type === PROMPT_JOB_TYPE) {
         const done = progress.done ?? 0;
-        const terminal = ["completed", "failed", "cancelled"].includes(progress.status);
+        // Skip optimistic cancel writes here too, or the outcome toast fires at
+        // click time and promptTerminalRef dedups the real terminal event away.
+        const terminal = TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic;
         const advanced = done > (promptDoneRef.current.get(jobId) ?? -1);
         if (progress.status === "running" && advanced) promptDoneRef.current.set(jobId, done);
         if ((progress.status === "running" && advanced) || terminal) {
@@ -145,7 +148,20 @@ export default function TopBar() {
           }
         }
       }
-      if (progress.status === "completed" && !processedJobsRef.current.has(jobId)) {
+      // Every terminal status, not just "completed": these jobs commit per item, so
+      // a cancelled or failed run has still changed real images (a ComfyUI run
+      // cancelled after 3 of 10 rows imported 3 images). Only invalidating on
+      // success left those changes invisible until the next full-page load.
+      // But never on the cancel buttons' own optimistic status write — a row can
+      // still land between the click and the cooperative cancel, and reacting at
+      // click time would consume this job's one invalidation before it does. The
+      // backend always emits a terminal SSE event (even for pending jobs, reaped
+      // at dequeue), and useSSE clears the flag, so the real event gets through.
+      if (
+        TERMINAL_JOB_STATUSES.has(progress.status) &&
+        !progress.optimistic &&
+        !processedJobsRef.current.has(jobId)
+      ) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
@@ -199,6 +215,12 @@ export default function TopBar() {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
           if (progress.job_type === "comfy_generate") {
             qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+            // Sidebar/gallery image counters, so they climb with the run instead of
+            // jumping at the end. Scoped to comfy_generate: its worker refreshes the
+            // stored Dataset.image_count per row, so there is something new to read.
+            // Caption jobs are in LIVE_IMAGE_JOB_TYPES too but refresh only at the
+            // end, so this would be one refetch per image returning the same number.
+            qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
           }
           if (progress.image_id) {
             qc.invalidateQueries({ queryKey: ["caption", progress.image_id] });
@@ -295,7 +317,7 @@ export default function TopBar() {
             <button
               type="button"
               onClick={() => {
-                useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled", optimistic: true });
                 jobsApi.cancel(runningJob.job_id);
               }}
               style={{
@@ -327,7 +349,7 @@ export default function TopBar() {
                 <button
                   type="button"
                   onClick={() => {
-                    useJobStore.getState().updateJob(j.job_id, { status: "cancelled" });
+                    useJobStore.getState().updateJob(j.job_id, { status: "cancelled", optimistic: true });
                     jobsApi.cancel(j.job_id);
                   }}
                   style={{
@@ -356,11 +378,11 @@ export default function TopBar() {
               title="Cancel every queued job and the currently running one"
               onClick={() => {
                 for (const j of pendingJobs) {
-                  useJobStore.getState().updateJob(j.job_id, { status: "cancelled" });
+                  useJobStore.getState().updateJob(j.job_id, { status: "cancelled", optimistic: true });
                   jobsApi.cancel(j.job_id);
                 }
                 if (runningJob) {
-                  useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled" });
+                  useJobStore.getState().updateJob(runningJob.job_id, { status: "cancelled", optimistic: true });
                   jobsApi.cancel(runningJob.job_id);
                 }
               }}

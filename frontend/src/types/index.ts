@@ -245,6 +245,10 @@ export interface JobProgress {
   /** comfy_prompts: prompts asked for. `total` becomes the created count when the
    *  job completes, so the shortfall is only visible by comparing against this. */
   requested?: number;
+  /** True only on the frontend's own cancel-button write, never on a server event
+   *  (`useSSE` force-clears it). TopBar's terminal-status watcher skips optimistic
+   *  entries so invalidation waits for the backend to actually finish cancelling. */
+  optimistic?: boolean;
   throughput_ips?: number;
   vram_used_mb?: number;
 }

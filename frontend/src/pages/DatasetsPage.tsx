@@ -5,6 +5,7 @@ import { loadPersisted } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
+import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import toast from "react-hot-toast";
 import { datasetsApi, type DatasetProvenance } from "../api/datasets";
 import ProvenanceFields from "../components/common/ProvenanceFields";
@@ -329,6 +330,9 @@ export default function DatasetsPage() {
         qc.invalidateQueries({ queryKey: ["tag-stats", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
         qc.invalidateQueries({ queryKey: ["tag-cooccurrence", importJobProgress.dataset_id] });
+        // An import is a provenance writer: a scraper sidecar is the largest
+        // source of new `other:` licenses, unpickable until this refetches.
+        qc.invalidateQueries({ queryKey: ["licenses-in-use", importJobProgress.dataset_id] });
       }
       showImportSummaryToast(importJobId);
       setImportJobId(null);
@@ -1250,6 +1254,10 @@ export default function DatasetsPage() {
   const showRail = hasAnyCategory && sectionKeys.length >= 2;
   const allCollapsed = sectionKeys.length > 0 && sectionKeys.every((k) => collapsedCategories.has(k));
 
+  // Free-text licenses already recorded in the dataset being edited — offered as
+  // options for its default. Idle (never fetched) while no edit modal is open.
+  const renameCustomLicenses = useCustomLicenses(renameTarget?.id);
+
   // ── Rename modal: changed detection ───────────────────────────────────────
   const renameChanged = renameTarget
     ? renameName !== renameTarget.name ||
@@ -1435,6 +1443,7 @@ export default function DatasetsPage() {
                 value={renameProvenance}
                 onChange={setRenameProvenance}
                 note="Defaults for every image in this dataset that hasn't set its own. Changing them updates all non-overridden images."
+                customLicenses={renameCustomLicenses}
               />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

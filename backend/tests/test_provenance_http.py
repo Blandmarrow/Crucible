@@ -968,6 +968,68 @@ def test_stats_license_breakdown_matches_the_gallery_filter(tmp_path):
     run(scenario())
 
 
+def test_licenses_in_use_offers_every_value_the_filter_accepts(tmp_path):
+    """The pickers' free-text options: what exists, and only what filters cleanly.
+
+    A free-text license is data, not vocabulary, so a dropdown can only offer one
+    by asking. The contract that matters is that nothing it offers is a value the
+    gallery filter would reject or resolve differently — that mismatch is exactly
+    how a picker sends users to an empty gallery.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("picker", license="other:Studio EULA")
+
+            # A dataset default no image carries yet is still offered — otherwise
+            # the license just typed into the defaults is unpickable everywhere.
+            assert (await env.client.get(
+                f"{API}/datasets/{ds['id']}/licenses-in-use")).json() == [
+                    {"license": "other:Studio EULA", "count": 0}]
+
+            for n in range(2):
+                await _upload(env, ds["id"], f"inh{n}.png", _png_bytes((n * 40, 3, 4)))
+            override = await _upload(env, ds["id"], "own.png", _png_bytes((7, 7, 7)))
+            await env.client.patch(f"{API}/images/{override['id']}/provenance",
+                                   json={"license": "other:Client X, revision 2"})
+
+            rows = (await env.client.get(f"{API}/datasets/{ds['id']}/licenses-in-use")).json()
+            # Inherited default first (2 images), then the single override.
+            assert rows == [
+                {"license": "other:Studio EULA", "count": 2},
+                {"license": "other:Client X, revision 2", "count": 1},
+            ]
+
+            # Every offered value round-trips through the gallery filter with the
+            # count it advertised. Note the comma inside the second one: this is
+            # why license_filter is a JSON array and never comma-separated.
+            for row in rows:
+                r = await env.client.get(f"{API}/images/", params={
+                    "dataset_id": ds["id"], "license_filter": json.dumps([row["license"]])})
+                assert r.status_code == 200, r.text
+                assert len(r.json()) == row["count"], row["license"]
+
+            # An unlicensed dataset reports the "" bucket (the gallery expresses it
+            # through license_missing, and renders its own option for it).
+            bare = await env.create_dataset("bare")
+            await _upload(env, bare["id"], "b.png", _png_bytes((2, 2, 2)))
+            assert (await env.client.get(
+                f"{API}/datasets/{bare['id']}/licenses-in-use")).json() == [
+                    {"license": "", "count": 1}]
+
+            # ...and that "" is the one row a consumer may NOT forward: this
+            # endpoint reports it, `GET /images/` rejects it. Dropping it is
+            # useCustomLicenses's job, so anything reading the raw response
+            # instead of the hook 400s here rather than filtering.
+            assert (await env.client.get(f"{API}/images/", params={
+                "dataset_id": bare["id"], "license_filter": json.dumps([""]),
+            })).status_code == 400
+
+            assert (await env.client.get(
+                f"{API}/datasets/nope/licenses-in-use")).status_code == 404
+
+    run(scenario())
+
+
 # --- export: filters, manifest placement, cancellation -------------------
 
 

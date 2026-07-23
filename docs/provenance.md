@@ -69,10 +69,19 @@ Anything outside this list is stored as free text and shown as-is. Choose
 **Other (free text)…** at the bottom of any license *editor* — on the image
 detail page, in the dataset Edit modal, in the import dialog, or in the bulk
 **Set source/license** action — and a text box appears for you to type it
-(roughly 58 characters). The gallery's license *filter* has no such entry: it
-filters by the values that exist, so a free-text license is not one of its
-options. A license Crucible doesn't recognise in a scraper sidecar's `license`
-field is kept the same way rather than dropped.
+(roughly 58 characters). A license Crucible doesn't recognise in a scraper
+sidecar's `license` field is kept the same way rather than dropped.
+
+You only type it once. Every license control scoped to a dataset then offers the
+free-text licenses **already recorded in that dataset** — including the dataset's
+own default — under a **Used in this dataset** heading: the gallery's license
+filter, the Export page's *Specific licenses* list, the image detail editor, the
+bulk **Set source/license** action, the dataset Edit modal, and the folder-import
+dialog (which reads the dataset you are importing *into*, and updates when you
+change it). Pick one instead of retyping it; a one-character difference is a
+second, near-duplicate license. The list is per-dataset, so it never offers a
+license none of that dataset's images have. (The create-dataset dialog has no
+dataset to read yet, so it shows the standard list only.)
 
 **"No license granted" is not the same as "Unknown", and neither is the same as
 blank.** Blank means *nothing recorded* — the image still inherits its dataset's

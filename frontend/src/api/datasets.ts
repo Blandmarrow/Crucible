@@ -16,6 +16,12 @@ export interface ScoreValues {
   caption_tokens: number[];
 }
 
+/** One distinct effective license in a dataset; `license: ""` = none recorded. */
+export interface LicenseUsage {
+  license: string;
+  count: number;
+}
+
 /** The four dataset-level provenance defaults; "" means unset. */
 export interface DatasetProvenance {
   source_name: string;
@@ -62,6 +68,10 @@ export const datasetsApi = {
   refreshStats: (id: string) => client.post(`/datasets/${id}/refresh-stats`),
   stats: (id: string, subfolder?: string) =>
     client.get<DatasetStats>(`/datasets/${id}/stats`, { params: { subfolder } }).then((r) => r.data),
+  /** Distinct effective licenses in the dataset — the source of the pickers'
+   *  free-text options (see hooks/useCustomLicenses). */
+  licensesInUse: (id: string) =>
+    client.get<LicenseUsage[]>(`/datasets/${id}/licenses-in-use`).then((r) => r.data),
   tagCooccurrence: (id: string, limit = 15, subfolder?: string) =>
     client.get<TagCooccurrence>(`/datasets/${id}/tag-cooccurrence`, { params: { limit, subfolder } }).then((r) => r.data),
   scoreValues: (id: string, subfolder?: string) =>

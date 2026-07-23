@@ -20,6 +20,7 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import SetProvenanceModal from "./SetProvenanceModal";
 import { invalidateProvenanceScope } from "../../constants/queryKeys";
+import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -47,6 +48,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const { selectedIds, clear, count } = useSelectionStore();
   const datasetByImageId = useSelectionStore((s) => s.datasetByImageId);
   const qc = useQueryClient();
+  // Offered by the Set source/license modal so an in-use free-text license is a
+  // pick rather than a retype.
+  const customLicenses = useCustomLicenses(datasetId);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
   const [showScore, setShowScore] = useState(false);
@@ -1096,6 +1100,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           onConfirm={(edit) => provenanceMutation.mutate(edit)}
           onClose={() => setShowProvenance(false)}
           sourceInfo={datasetBreakdown}
+          customLicenses={customLicenses}
         />
       )}
 

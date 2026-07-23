@@ -22,6 +22,10 @@ const PROVENANCE_SCOPE = [
   ["dataset-stats"],
   ["export-preview"],
   ["bucket-images"],
+  // The free-text licenses the pickers offer (hooks/useCustomLicenses) are the
+  // set of values in use, so a provenance write can add one — and the point of
+  // typing a custom license is to filter/apply it immediately afterwards.
+  ["licenses-in-use"],
 ] as const;
 
 export function invalidateProvenanceScope(qc: QueryClient) {

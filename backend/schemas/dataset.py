@@ -66,6 +66,12 @@ class SubfolderCreate(BaseModel):
     path: str
 
 
+class LicenseUsage(BaseModel):
+    """One distinct effective license in a dataset. `""` = no license recorded."""
+    license: str
+    count: int
+
+
 class DatasetDuplicateRequest(BaseModel):
     new_name: str = Field(..., min_length=1, max_length=255)
     source_version_id: str | None = None  # None = duplicate current on-disk state

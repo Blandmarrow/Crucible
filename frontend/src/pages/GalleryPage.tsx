@@ -26,7 +26,8 @@ import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
-import { LICENSE_OPTIONS, isKnownLicenseValue } from "../constants/licenses";
+import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
+import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
@@ -123,6 +124,17 @@ export default function GalleryPage() {
     if (restored === MISSING_LICENSE || isKnownLicenseValue(restored)) return restored;
     return "";
   });
+  // Free-text licenses recorded in this dataset — the vocabulary is compiled in,
+  // but an `other:` license exists only in the data, so it can only be offered by
+  // asking. A restored filter that is no longer in use is kept in the list too,
+  // or the `<select>` would show no option for the filter it is applying.
+  const customLicenses = useCustomLicenses(datasetId);
+  const licenseFilterOptions = useMemo(() => {
+    const isCustom = licenseFilter.toLowerCase().startsWith(OTHER_PREFIX);
+    return isCustom && !customLicenses.includes(licenseFilter)
+      ? [...customLicenses, licenseFilter]
+      : customLicenses;
+  }, [customLicenses, licenseFilter]);
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
@@ -336,6 +348,9 @@ export default function GalleryPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // An import is a provenance writer: a scraper sidecar is the largest source
+    // of new `other:` licenses, and they are unpickable until this refetches.
+    qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });
     showImportSummaryToast(importJobId);
     setImportJobId(null);
   }, [importProgress?.status, importJobId, datasetId, qc]);
@@ -955,6 +970,13 @@ export default function GalleryPage() {
           {LICENSE_OPTIONS.map((l) => (
             <option key={l.id} value={l.id}>{l.label}</option>
           ))}
+          {licenseFilterOptions.length > 0 && (
+            <optgroup label="Used in this dataset">
+              {licenseFilterOptions.map((lic) => (
+                <option key={lic} value={lic}>{lic.slice(OTHER_PREFIX.length)}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
 
         <button

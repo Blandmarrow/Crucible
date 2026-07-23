@@ -12,6 +12,9 @@ interface Props {
   onClose: () => void;
   /** Rendered under the title when the selection spans multiple datasets. */
   sourceInfo?: React.ReactNode;
+  /** Free-text licenses in use in the *current* dataset (hooks/useCustomLicenses).
+   *  A selection can span datasets; `sourceInfo` is what says so. */
+  customLicenses?: string[];
 }
 
 /** Per-field mode: only "set" and "inherit" send anything to the server. */
@@ -67,7 +70,9 @@ function ModeToggle({
   );
 }
 
-export default function SetProvenanceModal({ count, isPending, onConfirm, onClose, sourceInfo }: Props) {
+export default function SetProvenanceModal({
+  count, isPending, onConfirm, onClose, sourceInfo, customLicenses,
+}: Props) {
   const uid = useId();
   const [modes, setModes] = useState<Record<string, Mode>>({
     license: "keep", source_name: "keep", source_url: "keep", attribution: "keep",
@@ -123,6 +128,7 @@ export default function SetProvenanceModal({ count, isPending, onConfirm, onClos
             disabled={modes.license !== "set"}
             className="select w-full disabled:opacity-40"
             inputClassName="input w-full disabled:opacity-40"
+            customOptions={customLicenses}
           />
           {isBlankSet("license") && <BlankSetHint />}
         </div>

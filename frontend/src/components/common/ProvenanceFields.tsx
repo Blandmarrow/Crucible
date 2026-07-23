@@ -12,6 +12,10 @@ interface Props {
   defaultOpen?: boolean;
   /** Explains what these values apply to; differs between create/edit and import. */
   note?: string;
+  /** Free-text licenses already used in the dataset these values apply to
+   *  (hooks/useCustomLicenses) — for the import dialog, its selected *target*.
+   *  Omitted only by the create dialog, which has no dataset to read them from. */
+  customLicenses?: string[];
 }
 
 const TEXT_FIELDS = [
@@ -25,7 +29,7 @@ const TEXT_FIELDS = [
  * and the folder-import dialog. All four fields are optional — an empty field
  * simply records nothing.
  */
-export default function ProvenanceFields({ value, onChange, defaultOpen, note }: Props) {
+export default function ProvenanceFields({ value, onChange, defaultOpen, note, customLicenses }: Props) {
   const hasAny = Object.values(value).some(Boolean);
   const [open, setOpen] = useState(defaultOpen ?? hasAny);
   // Unique per instance: the create and edit modals can both be in the tree.
@@ -60,6 +64,7 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note }:
               className="select"
               inputClassName="input"
               style={{ width: "100%" }}
+              customOptions={customLicenses}
             />
           </div>
           {TEXT_FIELDS.map(({ key, label, placeholder }) => (

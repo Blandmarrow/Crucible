@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { imagesApi } from "../../api/images";
 import { OTHER_PREFIX, isBlankLicense } from "../../constants/licenses";
 import { invalidateProvenanceScope } from "../../constants/queryKeys";
+import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import { apiErrorDetail } from "../../utils/apiError";
 import { safeExternalUrl } from "../../utils/url";
 import type { ImageDetail } from "../../types";
@@ -39,6 +40,9 @@ export default function ProvenancePanel({ image }: Props) {
 
   const resolved = image.provenance;
   const inherited = new Set(resolved?.inherited ?? []);
+  // Free-text licenses already used in this dataset — including the dataset's own
+  // default — so overriding one image to a custom license is a pick, not a retype.
+  const customLicenses = useCustomLicenses(image.dataset_id);
 
   // The draft is seeded when the editor opens and never re-synced from props while
   // it is open. A sync effect here would discard whatever the user had typed every
@@ -171,6 +175,7 @@ export default function ProvenancePanel({ image }: Props) {
                   emptyLabel="Inherit from dataset"
                   className="select w-full mt-0.5"
                   inputClassName="input w-full mt-0.5"
+                  customOptions={customLicenses}
                 />
               </label>
               {FIELDS.map(({ key, label }) => (

@@ -5,6 +5,7 @@ import type { Dataset } from "../../types";
 import { datasetsApi, type DatasetProvenance } from "../../api/datasets";
 import ProvenanceFields from "./ProvenanceFields";
 import { EMPTY_PROVENANCE } from "../../constants/licenses";
+import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import DirPickerModal from "./DirPickerModal";
 
 interface Props {
@@ -36,6 +37,11 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
     enabled: !!targetId,
   });
   const subfolderPaths = subfolders.map((s) => s.path).filter(Boolean).sort();
+
+  // Free-text licenses already recorded in the *target* dataset, so the override
+  // below is a pick rather than a retype. Keyed on `targetId` like the subfolder
+  // query above, so both follow the dataset selector.
+  const customLicenses = useCustomLicenses(targetId);
 
   const importMutation = useMutation({
     mutationFn: () =>
@@ -157,6 +163,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
               value={provenance}
               onChange={setProvenance}
               note="Applied to every imported image, overriding anything read from a {stem}.json scraper sidecar or the file's EXIF. Leave blank to use those, then the dataset default."
+              customLicenses={customLicenses}
             />
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

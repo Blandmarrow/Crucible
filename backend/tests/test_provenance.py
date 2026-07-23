@@ -47,7 +47,7 @@ from backend.schemas.image import (
     ImageListItem,
     ImageProvenanceUpdate,
 )
-from backend.services import export_service, version_service
+from backend.services import dataset_service, export_service, version_service
 from backend.services.image_service import read_provenance_sidecar
 from backend.utils import parse_license_filter_param
 
@@ -225,6 +225,59 @@ def test_materialize_by_source_uses_each_rows_own_dataset():
     orphan = _Stub(id="z", dataset_id="Z", source_name=None, source_url=None,
                    license=None, attribution=None, source_meta=None)
     assert materialize_by_source([orphan], {})["z"]["license"] is None
+
+
+# --- licenses in use: the cap vs. the always-included default ------------
+
+
+def test_licenses_in_use_default_keeps_its_real_count_past_the_cap(tmp_path, monkeypatch):
+    """The dataset default is exempt from the cap, and never advertises a fake 0.
+
+    Two rules meet here: the tail is capped (`other:` is unbounded and comes from
+    scrapers), and the dataset's own default is always offered. Capping in SQL
+    satisfies both only by accident — it hides the tail from the default's own
+    lookup too, so a default that ranks below the cap comes back with `count: 0`
+    while real images carry it. The cap therefore runs in Python, over the full
+    grouped set, exactly as the stats breakdown does.
+    """
+    monkeypatch.setattr(dataset_service, "LICENSES_IN_USE_LIMIT", 2)
+
+    async def scenario():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/lic.db")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+        ds_dir = tmp_path / "ds"
+        (ds_dir / "images").mkdir(parents=True)
+
+        async with Session() as db:
+            ds = Dataset(name="scraped", folder_path=str(ds_dir), license="other:D")
+            db.add(ds)
+            await db.flush()
+            # Two licenses outrank the default, which only one image inherits.
+            plan = ["other:A"] * 3 + ["other:B"] * 2 + [None]
+            for i, lic in enumerate(plan):
+                db.add(Image(
+                    dataset_id=ds.id, filename=f"{i}.png", original_filename=f"{i}.png",
+                    subfolder="", file_path=str(ds_dir / "images" / f"{i}.png"),
+                    thumbnail_path="", license=lic,
+                ))
+            await db.commit()
+
+            rows = await dataset_service.get_licenses_in_use(db, ds.id)
+
+        await engine.dispose()
+        return rows
+
+    rows = run(scenario())
+    # Capped at 2 — plus the default, which the cap may not drop...
+    assert rows == [
+        {"license": "other:A", "count": 3},
+        {"license": "other:B", "count": 2},
+        {"license": "other:D", "count": 1},
+    ]
+    # ...carrying the image that actually inherits it, not a fabricated 0.
+    assert rows[-1]["count"] == 1
 
 
 # --- versioning round-trip ----------------------------------------------

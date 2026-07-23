@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -12,7 +12,8 @@ import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
-import { LICENSE_OPTIONS, isKnownLicenseValue } from "../constants/licenses";
+import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
+import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
@@ -130,6 +131,17 @@ export default function ExportPage() {
   const [licenseFilter, setLicenseFilter] = useState<Set<string>>(
     () => new Set(filters.licenseFilter.filter(isKnownLicenseValue)),
   );
+  // Free-text licenses recorded in this dataset — without them an `other:` license
+  // can be neither selected nor excluded, which is a rights gap, not a cosmetic
+  // one. A restored selection that is no longer in use keeps its row, or a filter
+  // would be applied with no checkbox showing it.
+  const customLicenses = useCustomLicenses(datasetId);
+  const licenseFilterCustoms = useMemo(() => {
+    const extra = [...licenseFilter].filter(
+      (l) => l.toLowerCase().startsWith(OTHER_PREFIX) && !customLicenses.includes(l),
+    );
+    return [...customLicenses, ...extra];
+  }, [customLicenses, licenseFilter]);
   const [commercialOnly, setCommercialOnly] = useState(filters.commercialOnly);
   const [excludeUnlicensed, setExcludeUnlicensed] = useState(filters.excludeUnlicensed);
   const [excludeNoDerivatives, setExcludeNoDerivatives] = useState(filters.excludeNoDerivatives);
@@ -528,6 +540,16 @@ export default function ExportPage() {
                             onChange={() => toggleLicense(l.id)}
                           />
                           <span style={{ fontSize: 12 }}>{l.label}</span>
+                        </label>
+                      ))}
+                      {licenseFilterCustoms.map((lic) => (
+                        <label key={lic} className="row-flex" style={{ gap: 8 }}>
+                          <input
+                            type="checkbox" className="checkbox"
+                            checked={licenseFilter.has(lic)}
+                            onChange={() => toggleLicense(lic)}
+                          />
+                          <span style={{ fontSize: 12 }} title={lic}>{lic.slice(OTHER_PREFIX.length)}</span>
                         </label>
                       ))}
                     </div>

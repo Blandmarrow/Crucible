@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, SubfolderCreate, SubfolderInfo, TagCooccurrence
+from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImport, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, LicenseUsage, SubfolderCreate, SubfolderInfo, TagCooccurrence
 from backend.services.dataset_service import (
     create_dataset,
     declare_subfolder,
     delete_subfolder,
     duplicate_dataset,
     get_dataset_stats,
+    get_licenses_in_use,
     get_score_values,
     get_tag_cooccurrence,
     import_captions_from_folder,
@@ -381,6 +382,19 @@ async def get_stats(dataset_id: str, subfolder: str | None = Query(None), db: As
     if not stats:
         raise HTTPException(404, "Dataset not found")
     return stats
+
+
+@router.get("/{dataset_id}/licenses-in-use", response_model=list[LicenseUsage])
+async def licenses_in_use(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """The dataset's distinct effective licenses — what the license pickers offer.
+
+    A free-text `other:` license is data, not vocabulary, so a dropdown can only
+    offer one by asking for it. See `get_licenses_in_use`.
+    """
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    return await get_licenses_in_use(db, dataset_id)
 
 
 @router.get("/{dataset_id}/score-values")

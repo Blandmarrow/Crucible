@@ -37,6 +37,12 @@ _MAX_FAILED_DETAILS = 50
 LICENSE_BREAKDOWN_LIMIT = 20
 LICENSE_BREAKDOWN_OTHER_KEY = "__other_licenses__"
 
+# Cap on the distinct licenses get_licenses_in_use reports. Deliberately looser
+# than the breakdown cap: that one only drops rows from a summary panel, while
+# this list *is* the picker — a value that falls off the end cannot be selected
+# or filtered on at all.
+LICENSES_IN_USE_LIMIT = 100
+
 
 def remove_dataset_dir(folder: Path) -> None:
     """Recursively remove a dataset's on-disk folder, logging (not swallowing) any failure.
@@ -963,6 +969,50 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     )
     stats["license_breakdown"] = license_breakdown
     return stats
+
+
+async def get_licenses_in_use(db: AsyncSession, dataset_id: str) -> list[dict]:
+    """Distinct *effective* licenses recorded in one dataset, most-used first.
+
+    Exists so an `other:<free text>` license can be *picked* rather than retyped.
+    The curated vocabulary is compiled into the frontend, but a free-text license
+    is data — the only way a dropdown can offer one is to ask which ones exist.
+    Feeds the gallery license filter, the export filter and every license editor
+    scoped to a single dataset.
+
+    The dataset's own default is always included — exempt from the cap below, and
+    carrying its real count whether or not any image resolves to it. Otherwise the
+    license you just typed into the dataset defaults is absent from every picker
+    until some image happens to carry it, which is the gap this endpoint closes.
+
+    Bounded like the stats breakdown, and for the same reason — `other:` is
+    unbounded and comes from scrapers, so a scrape folder can produce one value
+    per image. Unlike the breakdown the tail is *dropped*, not collapsed into a
+    synthetic bucket: these counts are never summed to a dataset total, and a
+    collapsed bucket is not a selectable license.
+
+    Note the cap is applied in Python, not as SQL `LIMIT` — same as the breakdown.
+    Capping in SQL hides the tail from the default's own lookup too, so a default
+    that ranks past the cap gets re-added advertising a count of 0 while real
+    images carry it.
+    """
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        return []
+
+    effective_license = func.coalesce(func.nullif(Image.license, ""), ds.license or "", "")
+    rows = (await db.execute(
+        select(effective_license.label("lic"), func.count(Image.id).label("n"))
+        .where(Image.dataset_id == dataset_id)
+        .group_by(effective_license)
+        .order_by(func.count(Image.id).desc())
+    )).all()
+
+    by_license = {(r.lic or ""): r.n for r in rows}
+    out = [{"license": r.lic or "", "count": r.n} for r in rows[:LICENSES_IN_USE_LIMIT]]
+    if ds.license and not any(e["license"] == ds.license for e in out):
+        out.append({"license": ds.license, "count": by_license.get(ds.license, 0)})
+    return out
 
 
 async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:

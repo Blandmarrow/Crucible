@@ -36,10 +36,26 @@ Tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are treated th
 
 ## Post-processing options
 
-- Strip common AI refusal phrases automatically
+- **Strip refusal phrases & identity guesses** — removes the usual "I'm sorry, I can't…" boilerplate and speculative name-guessing
+- **Strip thinking blocks** — removes `<think>…</think>` spans and reasoning preambles, which reasoning-capable models emit ahead of the caption proper
+- **Normalise underscores in prose** — `word_word` → `word word`; applies to prose styles only, so booru tags keep their underscores
+- **Strip hedging phrases** — "It appears to be a cat" → "a cat"
+- **Merge redundant tags** — drops a tag that is contained in a longer one in the same caption (`tail` when `long tail` is present) and collapses exact duplicates; tag styles only → [details](tag-consolidation.md)
 - Back up the original `.txt` sidecar before overwriting
 - **Rename on caption** — after each caption is saved, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root images); useful for building consistently named datasets
 - **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
+
+### The AI-artifacts flag
+
+Whenever a generated caption contains a thinking block or a hedging phrase, the image is
+flagged `has_ai_artifacts` — **whether or not** the matching strip option is ticked. The
+flag records that the model produced cruft, so it stays on even when the cruft was cleaned
+up, letting you find and re-caption those images later. It clears if the caption is
+emptied.
+
+This is the one quality flag scoring never sets. It shows up beside the scoring flags in
+the dataset flag counts, the gallery filters and the **Exclude quality flags** option below
+→ [details](scoring.md#quality-flags)
 
 ## Delimiter mode
 

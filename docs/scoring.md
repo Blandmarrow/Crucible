@@ -18,20 +18,28 @@ Tick the scorers you want and start the run — they execute together in one bac
 | **DINOv2 per-layer embeds** — stores all 12 transformer layer CLS tokens; enables per-layer style similarity (only offered when DINOv2 embeddings is ticked) | GPU · 1.2 GB |
 | **NSFW detection · Marqo** — ViT classifier, sets the `is_nsfw` flag | GPU · 1.0 GB |
 
+These costs are not additive. Aesthetic, Watermark and Style embeddings are three uses of
+a single CLIP ViT-L/14 load, so ticking all three costs that 2.1 GB once, not three times
+over. DINOv2 and NSFW are separate models, so those do add to the total.
+
 A **subfolder** dropdown in the page header (shown only when subfolders exist) scopes the run, so you can score one subset at a time without touching the rest of the dataset. An optional **job label** field names the run in the queue and in [Logs](workspace.md#logs).
 
 Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers write vectors that the style-similarity workflow consumes afterwards. Run them first, or nothing will be there to compare against.
 
 ## What each scorer produces
 
-| Scorer | Metrics | GPU |
-|---|---|---|
-| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation | CPU only |
-| **Aesthetic** | Aesthetic score 1–10 (LAION improved aesthetic predictor, CLIP ViT-L/14), watermark score 0–1 (CLIP zero-shot), CLIP embeddings | ~3.5 GB VRAM |
-| **DINOv2** | 768-dim final-layer embedding + all 12 transformer-layer CLS tokens for per-layer style analysis | ~1.2 GB VRAM |
-| **NSFW** | NSFW score 0–1 (Marqo `nsfw-image-detection-384` ViT classifier), flag `is_nsfw` | ~0.3 GB VRAM |
-| **Style Similarity** | Cosine similarity against reference images using stored embeddings | CPU only |
-| **Duplicate Detection** | Perceptual hash (pHash) grouping | CPU only |
+| Scorer | Metrics |
+|---|---|
+| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation — then duplicate grouping across the dataset |
+| **Aesthetic** | Aesthetic score 1–10 (LAION improved aesthetic predictor, CLIP ViT-L/14) |
+| **Watermark** | Watermark score 0–1 (CLIP zero-shot), flag `has_watermark` |
+| **Style embeddings** | 768-dim CLIP ViT-L/14 embedding per image |
+| **DINOv2** | 768-dim final-layer embedding + all 12 transformer-layer CLS tokens for per-layer style analysis |
+| **NSFW** | NSFW score 0–1 (Marqo `nsfw-image-detection-384` ViT classifier), flag `is_nsfw` |
+
+Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
+once when an image is imported, and the **Technical** scorer does the grouping pass that
+compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it.
 
 ## Style similarity
 
@@ -67,13 +75,13 @@ Quality flags are set automatically when metrics cross thresholds (all configura
 
 All six thresholds are configurable in Settings — changes take effect on the next scoring run.
 
-A seventh quality flag, `has_ai_artifacts`, is not set by scoring and has no threshold. It is set automatically by the **captioning** pipeline when a generated caption contains thinking-blocks or hedging language (see [Captioning](captioning.md)), and appears alongside the scoring flags in dataset flag counts and filters.
+A seventh quality flag, `has_ai_artifacts`, is not set by scoring and has no threshold. It is set automatically by the **captioning** pipeline when a generated caption contains thinking-blocks or hedging language (see [Captioning](captioning.md#the-ai-artifacts-flag)), and appears alongside the scoring flags in dataset flag counts and filters.
 
 The watermark score flags *that* an image has a watermark, not where it is — to locate the region, see [Locating watermarks](detection.md#locating-watermarks).
 
 ## Duplicate resolution
 
-After a scoring run that includes duplicate detection, the Quality page groups detected duplicates into thumbnail grids. Each group offers:
+After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids. Each group offers:
 
 - **Keep best** — retains the image with the highest aesthetic score and deletes the rest
 - **Keep first** — retains the earliest-uploaded image and deletes the rest

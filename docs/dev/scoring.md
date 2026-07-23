@@ -1,0 +1,52 @@
+# Quality scoring, flags & style similarity
+
+This file covers the quality scorers and the columns they write, the flag thresholds and where they are configured, duplicate detection, and the style-similarity / DINOv2 per-layer scoring flow.
+
+The scorers are loaded and evicted through the shared model manager — see `docs/dev/ml-models.md`.
+
+Quality scorers and what they add to `Image`:
+| Module | Columns written | Notes |
+|---|---|---|
+| `ml/technical_scorer.py` | `blur_score`, `noise_score`, `uniformity_score`, `color_score`, `saturation_score`; flags `is_blurry`, `is_noisy`, `is_uniform` | Pure OpenCV/numpy, no GPU |
+| `ml/aesthetic_scorer.py` | `aesthetic_score` (1–10), `watermark_score` (0–1), flag `has_watermark`, `clip_embedding` (BLOB, float16) | CLIP ViT-L-14; text encoder used for zero-shot watermark; image encoder for embeddings |
+| `ml/dino_scorer.py` | `dino_embedding` (BLOB, float16), `dino_layer_embeddings` (BLOB, float16) | `dino_embedding`: final-layer CLS token, 768-dim. `dino_layer_embeddings`: all 12 transformer-layer CLS tokens concatenated, 18 432 bytes (12 × 768 × float16); layer N (1-indexed) at offset `(N-1)*768*2`. `slice_layer_embedding(blob, layer)` extracts one layer's bytes. |
+| `ml/similarity_scorer.py` | — | CPU-only. `compute_style_similarity(ref_bytes, cand_bytes)` — cosine similarity of candidates to mean reference. `compute_combined_similarity(ref_clip, cand_clip, ref_dino, cand_dino, clip_w=0.38, dino_w=0.62)` — weighted blend of CLIP and DINOv2 cosine similarities. |
+
+Flag thresholds:
+| Flag | Column | Default threshold | Source |
+|---|---|---|---|
+| `is_blurry` | `blur_score` (Laplacian variance) | < 100 | `blur_threshold` in `threshold_settings` DB table |
+| `is_noisy` | `noise_score` (smooth-region std dev) | > 15 | `noise_threshold` in `threshold_settings` DB table |
+| `is_uniform` | `uniformity_score` (grayscale std dev) | < 12 | `uniformity_threshold` in `threshold_settings` DB table |
+| `has_watermark` | `watermark_score` (CLIP zero-shot, 0–1) | ≥ 0.6 | `watermark_threshold` in `threshold_settings` DB table |
+| `is_duplicate` | `phash` (perceptual hash Hamming distance) | < 8 | `duplicate_threshold` in `threshold_settings` DB table |
+| `is_nsfw` | `nsfw_score` (Marqo classifier, 0–1) | ≥ 0.5 | `nsfw_threshold` in `threshold_settings` DB table |
+
+`gdino_threshold` (default 0.35) in `threshold_settings` controls the Grounding DINO box confidence cutoff passed to SAM2 `text_prompt` detection — read via `get_thresholds()` at the start of each SAM2 detection job. `text_threshold` scales with it (`gdino_threshold - 0.10`, floored at 0.01).
+
+`sam3_threshold` (default 0.5) in `threshold_settings` is the SAM 3 instance confidence cutoff — read at the start of each SAM3 detection job and applied as `Sam3Processor.confidence_threshold` (plus a defensive per-instance filter in `predict_sync`).
+
+All thresholds are user-configurable via Settings (`/settings` → `GET/PATCH /api/v1/settings/thresholds`). Quality flag thresholds take effect on the next scoring run; `gdino_threshold`/`sam3_threshold` take effect on the next SAM2/SAM3 detection run. Constants in `technical_scorer.py` serve only as parameter defaults — the quality router always passes DB-fetched values via `backend/services/threshold_service.py::get_thresholds()`.
+
+**Duplicate detection** (`technical_scorer.find_duplicates_sync`) runs after technical scoring: it greedily groups images whose phash Hamming distance is `< duplicate_threshold` (first unassigned image is the group root and claims every *later* unassigned image within the threshold, members in input order; each image is claimed once). `find_duplicates_sync` is a **dispatcher over two exact, output-identical implementations** — only speed differs, never results:
+
+- `_find_duplicates_indexed` (the path at scale): a pigeonhole multi-index chunk search, ~linear in N. Each hash is split into 4 chunks; any pair within distance d must agree on ≥1 chunk up to ⌊d/4⌋ bit flips, so probing 4 chunk tables with the chunk value XOR every ≤⌊d/4⌋-bit mask is guaranteed to surface every true neighbor as a candidate, which is then verified with the exact `dist < duplicate_threshold` popcount comparison. **Do not "simplify" the chunk count or radius derivation** — an undershoot silently drops duplicate pairs.
+- `_find_duplicates_bruteforce`: the O(N²) vectorized all-pairs scan (numpy + module-level 256-entry `POPCNT` table). Semantically frozen — it is the reference implementation the golden tests compare against, and the fallback when `n < MIN_INDEX_N` (2048), the hash is shorter than 4 bytes, the threshold is so large the index would probe more than `CANDIDATE_FRACTION_CUTOFF` (0.25) of all rows per query (≥ ~21 for 64-bit hashes; practical thresholds are 4–12), or the total probe volume exceeds `n // PROBE_COST_DIVISOR` (8) — probes are pure-Python dict lookups, far costlier each than a vectorized scan row, so the index must be clearly cheaper before it engages (at 64-bit hashes, thresholds 13–20 need n ≳ 22k–80k).
+
+Both paths are length-generic (no 64-bit assumption; the chunk-key fold must stay **unsigned** — a signed int64 fold wraps 8-byte-chunk keys negative and silently drops pairs whose probe crosses bit 63). The dispatcher and the golden tests both derive the chunk split and probe radius from the shared `_chunk_plan()` helper, so the tested plan cannot drift from the production one. `backend/tests/test_find_duplicates.py` pins the byte-identical-output property (groups, roots, member order) across sizes, thresholds (incl. floats — `threshold_settings.duplicate_threshold` is a Float column, though the quality router currently truncates it to `int` before calling, so algorithm-level float support is future-proofing), and hash lengths up to 256-bit; it runs in CI via `.github/workflows/backend-tests.yml` (cv2 is imported lazily inside `score_technical_sync`, so the tests and CI need no cv2 and no stub). The O(N²) path was the critical scaling wall found in `backend/scripts/scaling_bottlenecks_report.md` (~3.4 h projected at 1M images); re-verify with `python -m backend.scripts.bench_scaling --only dedup` after touching this code. The consumer `_flag_duplicates` (`routers/quality.py`) then loads the flagged images with a single chunked `select(...).where(Image.id.in_(...))` (≤10k ids per chunk) rather than per-row `session.get`, and follows the copy-then-reassign `quality_flags` invariant.
+
+**Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
+
+| `embedding_type` | `dino_layer` | Column(s) written | Description |
+|---|---|---|---|
+| `"clip"` | — | `style_similarity_score` | Cosine similarity of CLIP embeddings |
+| `"dino"` | `null` | `style_similarity_score` | Cosine similarity of DINOv2 final-layer embeddings |
+| `"dino"` | 1–12 | `style_similarity_score` | Cosine similarity using a specific DINOv2 transformer layer (from `dino_layer_embeddings`) |
+| `"combined"` | `null` | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_sim` (final layer) |
+| `"combined"` | 1–12 | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_layer_sim` (specific layer) |
+| `"dino_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Scores each of the 12 DINOv2 layers independently; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
+| `"combined_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Blended score (0.38 CLIP + 0.62 DINOv2) for each of the 12 layers; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
+
+Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request. `StyleSimilarityRequest` accepts an optional `image_ids: list[str] | None` field; when set, only those images are scored (candidate queries in all embedding-type branches are filtered accordingly). `QualityPage` omits `image_ids` (scores the whole dataset); `SelectionToolbar` passes the current selection.
+
+**All-layers scoring is vectorized and RAM-bounded** (`dino_all_layers` / `combined_all_layers`): rather than re-slicing every reference blob per candidate per layer (the old `slice_layer_embedding` inner loops), the per-layer normalized mean reference is computed once via `_mean_layer_refs()` (stack refs → mean per layer → L2-normalize), and each candidate blob is decoded whole with `_decode_dino_layers()` (`np.frombuffer(...).reshape(12, 768)`); scoring is one matmul per layer (`cand[:, l, :] @ mean_refs[l]`), matching `compute_style_similarity`'s normalize-then-dot exactly. In combined mode the CLIP score doesn't depend on the layer, so it's computed once per chunk. Candidates are **keyset-paginated** (`WHERE Image.id > last ORDER BY Image.id LIMIT 2000`) through the shared local `_score_all_layers_paginated()` helper so the ~18 KB per-layer blobs are never all resident at once (~1.8 GB at 100k images). Output shape and rounding are byte-identical to the pre-vectorization loop (combined rounds the blended score to 4 decimals; both round each per-layer cosine to 4).

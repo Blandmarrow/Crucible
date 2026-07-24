@@ -56,6 +56,18 @@ add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). To launch the app itself, use the `run-app` skill.
 
+Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
+
+```bash
+cd frontend
+npm run build                     # refresh dist first — e2e serves it (stale dist = stale test)
+npx playwright install chromium   # first run only
+npx playwright test               # spins up its own backend on :8199 vs a throwaway DB
+```
+
+The full pre-merge sweep (backend pytest → frontend build+lint → e2e) is the
+`qa-smoke` skill.
+
 ## Architecture
 
 ### Data flow

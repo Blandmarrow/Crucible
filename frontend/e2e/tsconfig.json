@@ -1,0 +1,14 @@
+{
+  // Editor-only types for the e2e specs. Deliberately NOT referenced from the
+  // root tsconfig (which is solution-style) so it never enters `npm run build`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

@@ -320,6 +320,54 @@ function Build-Frontend {
     Write-Host "  Frontend built." -ForegroundColor Green
 }
 
+# frontend/package-lock.json is tracked, but `npm install` rewrites it on some
+# machines (npm major-version differences reorder or reformat the file even when
+# the resolved tree is identical). That leaves the working tree permanently
+# dirty, and the next `git pull` carrying a real lockfile change aborts with
+# "Your local changes would be overwritten by merge". The lock is a generated
+# artifact here - update/setup reinstall from it - so discard the local rewrite.
+# Scoped to this one path on purpose: any other locally-modified tracked file
+# must still stop the pull rather than be silently thrown away.
+#
+# This helper is best-effort by design: it runs inside the launcher, so a
+# failure here must never be worse than the problem it fixes. The whole body is
+# wrapped, and $ErrorActionPreference is dropped to Continue for the duration -
+# the file-scope "Stop" turns native stderr into a terminating error on
+# PowerShell 5.1, and git writes routine warnings there ("unable to find all
+# commit-graph files"), which would abort the update over nothing.
+function Reset-Lockfile {
+    param([switch]$Quiet)
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Test-Path "$ROOT\.git")) { return }
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        # --porcelain prints "XY path", X = index column, Y = worktree column,
+        # and nothing at all when the path is clean. Only an unstaged rewrite
+        # (Y = M) is npm's; a staged lockfile edit is deliberate, so leave it be
+        # - it still blocks the pull, which is right for a real change.
+        # 2>&1 turns stderr lines into ErrorRecords; keep only real stdout.
+        $out = @(git -C "$ROOT" status --porcelain -- frontend/package-lock.json 2>&1 |
+                 Where-Object { $_ -is [string] })
+        if ($out.Count -eq 0) { return }
+        $status = [string]$out[0]
+        if ($status.Length -lt 2 -or $status[1] -ne 'M') { return }
+
+        git -C "$ROOT" checkout -- frontend/package-lock.json 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0 -and -not $Quiet) {
+            Write-Host "  Discarded local npm rewrite of frontend/package-lock.json." -ForegroundColor DarkGray
+        }
+    } catch {
+        # Nothing to do - the pull below will report the real problem.
+    } finally {
+        $ErrorActionPreference = $prevEap
+        # Never leak a non-zero exit code into a caller's $LASTEXITCODE check.
+        $global:LASTEXITCODE = 0
+    }
+}
+
 function Run-Migrations {
     Write-Host "Running database migrations..." -ForegroundColor Yellow
     Push-Location "$ROOT\backend"
@@ -446,6 +494,7 @@ function Cmd-Setup {
         exit 1
     }
     Pop-Location
+    Reset-Lockfile -Quiet
     Write-Host "  Frontend built." -ForegroundColor Green
 
     if (-not (Test-Path "$ROOT\.env")) {
@@ -525,6 +574,9 @@ function Cmd-Update {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "  git not found - skipping pull. Update the files manually if needed." -ForegroundColor DarkGray
     } else {
+        # Clear npm's lockfile churn first, or the pull aborts on it.
+        Reset-Lockfile
+
         # PowerShell parses this entire file into an AST before executing a single
         # line, so a pull that rewrites manage.ps1 has no effect on the run that
         # pulled it - the rest of the update silently executes the OLD script, and
@@ -657,6 +709,10 @@ function Cmd-Update {
         exit 1
     }
     Pop-Location
+    # node_modules is already installed; drop any lockfile churn npm just made so
+    # the tree is clean for the next pull. This is the prevention - the reset
+    # before the pull above only rescues a machine that is already dirty.
+    Reset-Lockfile -Quiet
     Write-Host "  Done." -ForegroundColor Green
 
     Write-Host "[6/6] Building frontend..." -ForegroundColor Yellow

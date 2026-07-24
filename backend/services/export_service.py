@@ -656,7 +656,9 @@ async def _run_export_loop(
             if accumulate_plain or caption_format == "jsonl":
                 jsonl_entries.append({"file": dest_img.name, "caption": caption})
             else:
-                sidecar = _write_sidecar(dest_dir, dest_img.stem, caption, caption_format or "txt")
+                sidecar = await asyncio.get_event_loop().run_in_executor(
+                    None, _write_sidecar, dest_dir, dest_img.stem, caption, caption_format or "txt"
+                )
 
             # Name a file this export actually wrote. A captions-only run never
             # writes `dest_img`, so it lists the caption sidecar instead (or, when

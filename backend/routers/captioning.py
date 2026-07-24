@@ -159,6 +159,19 @@ class CaptionJobRequest(BaseModel):
 _TAG_STYLES = frozenset({"tags", "booru", "danbooru", "e621", "rule34", "booru_like"})
 
 
+def _backup_sidecar(image_path: str) -> None:
+    """Copy an image's caption sidecar to `.txt.bak` before it is overwritten.
+
+    Sync, so the caller can run it in one executor hop — the captioning loop is
+    GPU-dominated, so a hop per image costs nothing next to the inference it sits
+    between, and keeps two blocking file operations off the event loop.
+    """
+    txt_path = Path(image_path).with_suffix(".txt")
+    if txt_path.exists():
+        bak_path = txt_path.with_suffix(".txt.bak")
+        bak_path.write_text(txt_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+
 def _model_short_label(model: str) -> str:
     if model.startswith("florence2"):
         variant = model.removeprefix("florence2_")
@@ -414,10 +427,9 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                             caption = caption + body.delimiter + existing_caption
 
                         if body.save_backup:
-                            txt_path = Path(file_path).with_suffix(".txt")
-                            if txt_path.exists():
-                                bak_path = txt_path.with_suffix(".txt.bak")
-                                bak_path.write_text(txt_path.read_text(encoding="utf-8"), encoding="utf-8")
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, _backup_sidecar, file_path
+                            )
 
                         await set_caption(session, img_id, caption, body.style, body.model,
                                           has_ai_artifacts=artifact_detected)

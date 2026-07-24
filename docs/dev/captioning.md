@@ -36,6 +36,13 @@ This file covers caption job post-processing (merging, refusal stripping, rename
 
 **Ollama timeout**: `httpx.AsyncClient` in `ollama_captioner.py` uses a 300-second timeout per image to accommodate slow hardware and cold model loads.
 
+**Sidecar writes never run on the event loop.** `_write_txt_sidecar` (`caption_service.py`) is blocking file I/O, and a bulk edit or import calls it once per image — inline, that stalls the whole server for the length of the batch. Two shapes, picked by how tight the surrounding loop is:
+
+- **Tight loops batch.** `bulk_edit_captions` and `find_replace_captions` accumulate `(file_path, text)` pairs while assigning captions, then make **one** `run_in_executor` call to `_write_sidecars_async(pairs)` **before** `db.commit()` — one hop per batch, since a hop per tiny file costs more than the write. Keeping it before the commit preserves the fail-before-commit ordering the inline writes had. Use this helper for any new batch caption path.
+- **Already-slow loops hop per file.** The captioning loop (`routers/captioning.py::_backup_sidecar`, for `save_backup`) and the standalone caption import (`dataset_service.py::_copy_caption_file_sync`) are GPU- or disk-dominated per item, so a per-image executor hop is free. Folder import writes the sidecar *inside* `_ingest_file_sync`, which already runs in an executor — zero extra hops. Export's `_write_sidecar` is wrapped to match its `_write_image`/`_write_mask` siblings.
+
+The ORM caption assignment always stays on the event loop: `Image.caption_text` must be set by attribute assignment or `caption_token_count` goes stale (CLAUDE.md § Shared utilities). Sync helpers therefore return the text rather than touching the session.
+
 ### OpenAI-compatible providers
 
 **Router**: `backend/routers/providers.py`, prefix `/providers`. Registered in `main.py`. No service layer — CRUD is thin enough to live in the router.

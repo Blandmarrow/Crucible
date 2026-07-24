@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.models import Dataset, Image
+from backend.services.caption_service import _write_txt_sidecar
 from backend.services.image_service import (
     extract_generation_metadata,
     extract_embedded_provenance,
@@ -42,6 +43,43 @@ LICENSE_BREAKDOWN_OTHER_KEY = "__other_licenses__"
 # this list *is* the picker — a value that falls off the end cannot be selected
 # or filtered on at all.
 LICENSES_IN_USE_LIMIT = 100
+
+# --- Stats cache -------------------------------------------------------------
+# `get_dataset_stats` and `get_score_values` both pull every image row in the
+# dataset into Python, and StatsPage polls them live — so an idle Stats tab
+# re-reads the whole table every few seconds. Each call first runs a cheap
+# validator query (row count + newest `updated_at`, plus the dataset's own
+# `updated_at` for stats, whose license breakdown depends on the dataset
+# default); an unchanged validator serves the previous payload.
+#
+# Staleness is bounded to edits that leave the (count, max updated_at) tuple
+# identical — impossible for any ORM/Core write, since `Image.updated_at` has an
+# `onupdate`. Callers must treat the returned dict as read-only: it is the cached
+# object, not a copy.
+_STATS_CACHE_MAX = 64
+_stats_cache: dict[tuple[str, str | None, str], tuple[tuple, dict]] = {}
+
+
+def _stats_cache_get(key: tuple[str, str | None, str], validator: tuple) -> dict | None:
+    entry = _stats_cache.get(key)
+    return entry[1] if entry is not None and entry[0] == validator else None
+
+
+def _stats_cache_put(key: tuple[str, str | None, str], validator: tuple, payload: dict) -> None:
+    _stats_cache[key] = (validator, payload)
+    while len(_stats_cache) > _STATS_CACHE_MAX:
+        _stats_cache.pop(next(iter(_stats_cache)))  # drop oldest insertion
+
+
+async def _image_validator(db: AsyncSession, dataset_id: str, subfolder: str | None) -> tuple:
+    """(row count, newest updated_at) for one dataset/subfolder scope."""
+    where = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        where.append(Image.subfolder == subfolder)
+    row = (await db.execute(
+        select(func.count(Image.id), func.max(Image.updated_at)).where(*where)
+    )).one()
+    return (row[0], row[1])
 
 
 def remove_dataset_dir(folder: Path) -> None:
@@ -137,6 +175,11 @@ def _ingest_file_sync(
     gen_meta = extract_generation_metadata(str(dest_file))
     generate_thumbnail(str(dest_file), thumb_path)
     caption = read_caption_sidecar(src_file) if read_caption else None
+    if caption:
+        # Written here rather than by the caller so the import loop pays no extra
+        # executor hop per file; the caller still does the ORM assignment (the
+        # caption_token_count listener only fires on attribute assignment).
+        _write_txt_sidecar(str(dest_file), caption)
     provenance = _capture_provenance(src_file, dest_file)
     return info, gen_meta, caption, provenance
 
@@ -161,6 +204,17 @@ def _register_file_sync(f: Path, thumb_path: str) -> RegisteredFile:
     gen_meta = extract_generation_metadata(str(f))
     generate_thumbnail(str(f), thumb_path)
     return RegisteredFile(info, gen_meta, _capture_provenance(f, f))
+
+
+def _copy_caption_file_sync(txt_file: Path, image_path: str) -> str:
+    """Read a standalone caption file and write it as the image's sidecar.
+
+    Both halves of the round trip in one executor hop; returns the text so the
+    caller can do the ORM assignment on the event loop.
+    """
+    text = txt_file.read_text(encoding="utf-8").strip()
+    _write_txt_sidecar(image_path, text)
+    return text
 
 
 def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb: Path) -> None:
@@ -365,7 +419,6 @@ async def import_images_from_folder(
 ) -> dict:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
-    from backend.services.caption_service import _write_txt_sidecar
 
     src = Path(folder_path)
     if not src.exists() or not src.is_dir():
@@ -428,10 +481,10 @@ async def import_images_from_folder(
                 **info,
             )
             if caption:
+                # The sidecar itself was already written inside _ingest_file_sync.
                 img.caption_text = caption
                 img.captioned_by = "import"
                 img.captioned_at = datetime.utcnow()
-                _write_txt_sidecar(str(dest_file), caption)
             db.add(img)
             added += 1
         except Exception as exc:  # skip broken files, continue import
@@ -514,7 +567,10 @@ async def rescan_dataset(
             break
         try:
             seen_filenames.add(f.name)
-            caption = read_caption_sidecar(f) if import_captions else None
+            caption = (
+                await asyncio.get_event_loop().run_in_executor(None, read_caption_sidecar, f)
+                if import_captions else None
+            )
 
             existing_img = by_filename.get(f.name)
             if existing_img is None:
@@ -599,7 +655,6 @@ async def import_captions_from_folder(
     """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
-    from backend.services.caption_service import _write_txt_sidecar
 
     src = Path(folder_path)
     if not src.exists() or not src.is_dir():
@@ -629,11 +684,15 @@ async def import_captions_from_folder(
             if img is None:
                 unmatched.append(txt.name)
             else:
-                text = txt.read_text(encoding="utf-8").strip()
+                # Read the source .txt and write the dataset-side sidecar in one
+                # executor hop; the ORM assignment stays on the event loop so the
+                # caption_token_count listener still fires.
+                text = await asyncio.get_event_loop().run_in_executor(
+                    None, _copy_caption_file_sync, txt, img.file_path
+                )
                 img.caption_text = text
                 img.captioned_by = "import"
                 img.captioned_at = datetime.utcnow()
-                _write_txt_sidecar(img.file_path, text)
                 matched += 1
         except Exception:
             unmatched.append(txt.name)
@@ -876,6 +935,12 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     if not ds:
         return {}
 
+    cache_key = (dataset_id, subfolder, "stats")
+    validator = (*await _image_validator(db, dataset_id, subfolder), ds.updated_at)
+    cached = _stats_cache_get(cache_key, validator)
+    if cached is not None:
+        return cached
+
     q = select(
         Image.width, Image.height, Image.format,
         Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
@@ -968,6 +1033,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         None, _aggregate_dataset_stats, rows, ds, subfolder, score_cov, flag_counts
     )
     stats["license_breakdown"] = license_breakdown
+    _stats_cache_put(cache_key, validator, stats)
     return stats
 
 
@@ -1016,6 +1082,14 @@ async def get_licenses_in_use(db: AsyncSession, dataset_id: str) -> list[dict]:
 
 
 async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | None = None) -> dict:
+    # No dataset-level input here (unlike get_dataset_stats' license breakdown),
+    # so the image validator alone keys the cache.
+    cache_key = (dataset_id, subfolder, "scores")
+    validator = await _image_validator(db, dataset_id, subfolder)
+    cached = _stats_cache_get(cache_key, validator)
+    if cached is not None:
+        return cached
+
     q = select(
         Image.aesthetic_score,
         Image.blur_score,
@@ -1063,7 +1137,9 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
             out["caption_tokens"].append(row.caption_token_count or 0)
         return out
 
-    return await asyncio.get_running_loop().run_in_executor(None, _collect)
+    values = await asyncio.get_running_loop().run_in_executor(None, _collect)
+    _stats_cache_put(cache_key, validator, values)
+    return values
 
 
 async def duplicate_dataset(

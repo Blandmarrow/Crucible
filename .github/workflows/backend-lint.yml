@@ -1,0 +1,33 @@
+name: backend-lint
+
+# Lints the backend with ruff, limited to the pyflakes (F) and syntax/runtime
+# (E9) rule sets — see ruff.toml for why style rules are out of scope. Kept as
+# a separate workflow from backend-tests.yml so that file's carefully curated
+# dependency list stays intact and this gives an independent status check.
+# Ruff is a single self-contained wheel, so no pip cache is configured.
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "ruff.toml"
+      - ".github/workflows/backend-lint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "ruff.toml"
+      - ".github/workflows/backend-lint.yml"
+
+jobs:
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check backend

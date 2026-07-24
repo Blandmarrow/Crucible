@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from PIL import Image
 
 from backend.ml.image_utils import preprocess_for_caption
 from backend.ml import device as _device

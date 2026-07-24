@@ -1,9 +1,8 @@
 import asyncio
 import base64
 import logging
-from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 from backend.ml.image_utils import preprocess_for_caption
 

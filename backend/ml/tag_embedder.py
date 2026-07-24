@@ -9,7 +9,6 @@ import logging
 
 import numpy as np
 
-from backend.ml import device as _device
 
 logger = logging.getLogger(__name__)
 

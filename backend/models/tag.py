@@ -14,7 +14,7 @@ class Tag(Base):
     category: Mapped[str] = mapped_column(String(64), default="general")
     source: Mapped[str] = mapped_column(String(64), default="manual")
 
-    image: Mapped["Image"] = relationship("Image", back_populates="tags")
+    image: Mapped["Image"] = relationship("Image", back_populates="tags")  # noqa: F821 — SQLAlchemy resolves the string forward ref via its registry
 
     __table_args__ = (
         UniqueConstraint("image_id", "tag", name="uq_image_tag"),

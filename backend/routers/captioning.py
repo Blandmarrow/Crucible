@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -183,7 +182,7 @@ def _model_short_label(model: str) -> str:
 @router.get("/models")
 async def list_models(db: AsyncSession = Depends(get_db)):
     from backend.ml import wd14_tagger
-    from backend.schemas.openai_provider import OpenAIProviderOut, _is_remote
+    from backend.schemas.openai_provider import OpenAIProviderOut
     static = model_manager.list_models()
     ollama_models = await ollama_captioner.list_vision_models()
     wd14_models = wd14_tagger.list_wd14_models()

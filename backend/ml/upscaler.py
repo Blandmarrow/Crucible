@@ -59,7 +59,6 @@ def upscale_image_sync(
     import torch
     import numpy as np
     from PIL import Image, ImageOps
-    from backend.ml.model_manager import model_manager
 
     model_id = f"upscale:{model_path}"
     device = _device.get_device()
@@ -117,7 +116,6 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
     """Synchronous load — must be called from an executor thread."""
     global _extra_arches_installed
     from backend.ml.model_manager import model_manager, ModelEntry
-    import torch
 
     with model_manager._sync_lock:
         if model_id in model_manager._registry:
@@ -179,7 +177,6 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
 def _tile_upscale(model, tensor, scale: int, tile_size: int, overlap: int, device: str):
     """Process image in overlapping tiles and blend seams with linear ramp weights."""
     import torch
-    import torch.nn.functional as F
 
     _, c, h, w = tensor.shape
     out_h, out_w = h * scale, w * scale

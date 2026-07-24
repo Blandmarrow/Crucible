@@ -6,7 +6,7 @@ import { useGpuStats } from "../../hooks/useGpuStats";
 import { useCpuRamStats } from "../../hooks/useCpuRamStats";
 import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
 import CrucibleMark from "../common/CrucibleMark";
-import { useErrorConsoleStore } from "../../stores/errorConsoleStore";
+import { useErrorConsoleStore } from "../../store/errorConsoleStore";
 
 /* ── SVG icons matching the design spec ── */
 const IcoDatasets = () => (

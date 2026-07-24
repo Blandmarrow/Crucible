@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../../stores/errorConsoleStore";
+import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../../store/errorConsoleStore";
 
 function formatTimestamp(d: Date): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });

@@ -23,7 +23,7 @@ import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
 import LogsPage from "./pages/LogsPage";
-import { usePaneStore } from "./stores/paneStore";
+import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
 const queryClient = new QueryClient({

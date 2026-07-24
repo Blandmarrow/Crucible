@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { jobsApi } from "../api/jobs";
-import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../stores/errorConsoleStore";
+import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../store/errorConsoleStore";
 import type { Job } from "../types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

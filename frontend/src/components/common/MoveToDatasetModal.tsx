@@ -2,6 +2,7 @@ import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightFromLine, Copy } from "lucide-react";
 import { datasetsApi } from "../../api/datasets";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import type { Dataset, SubfolderInfo } from "../../types";
 
 interface Props {
@@ -21,6 +22,10 @@ export default function MoveToDatasetModal({ count, currentDatasetId, onConfirm,
   // selectValue: "" = root/placeholder, existing path, or CUSTOM sentinel
   const [selectValue, setSelectValue] = useState("");
   const [customInput, setCustomInput] = useState("");
+  const { overlayProps, panelProps } = useModalBehavior({
+    onClose,
+    label: `${mode === "copy" ? "Copy" : "Move"} images to dataset`,
+  });
 
   const { data: allDatasets = [] } = useQuery<Dataset[]>({
     queryKey: ["datasets"],
@@ -45,8 +50,8 @@ export default function MoveToDatasetModal({ count, currentDatasetId, onConfirm,
   const showCustomInput = targetSubfolders.length === 0 || isCustom;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="card p-5 w-full max-w-sm space-y-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" {...overlayProps}>
+      <div className="card p-5 w-full max-w-sm space-y-3" {...panelProps}>
         <h4 className="font-medium flex items-center gap-2">
           {mode === "copy" ? <Copy size={15} /> : <ArrowRightFromLine size={15} />}
           {mode === "copy" ? "Copy" : "Move"} {count} Image{count !== 1 ? "s" : ""} to Dataset

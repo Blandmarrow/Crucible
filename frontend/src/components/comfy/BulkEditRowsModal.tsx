@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, type ComfyPlan } from "../../api/comfy";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 interface Props {
   plan: ComfyPlan;
@@ -30,6 +31,7 @@ export default function BulkEditRowsModal({ plan, rowCount, selectedIds, onClose
   const [scope, setScope] = useState<"all" | "selected">(selectedIds.length > 0 ? "selected" : "all");
 
   const targetCount = scope === "selected" ? selectedIds.length : rowCount;
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Edit prompts", closeOnBackdrop: true });
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -54,9 +56,9 @@ export default function BulkEditRowsModal({ plan, rowCount, selectedIds, onClose
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={onClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 520, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 520, maxWidth: "92vw" }} {...panelProps}>
         <div className="panel-h"><h3>Edit prompts</h3></div>
         <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>

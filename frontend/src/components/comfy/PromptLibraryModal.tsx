@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { comfyApi } from "../../api/comfy";
 import { datasetsApi } from "../../api/datasets";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import { apiErrorDetail } from "../../utils/apiError";
 
 interface Props {
@@ -27,13 +28,14 @@ const NEW_CATEGORY = "__new__";
 /** The global prompt library (categorized) plus cross-plan prompt reuse, in one modal. */
 export default function PromptLibraryModal({ targetPlanId, targetDatasetId, onClose, onImported }: Props) {
   const [tab, setTab] = useState<"library" | "plans">("library");
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Prompt library", closeOnBackdrop: true });
 
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={onClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 720, maxWidth: "94vw", display: "flex", flexDirection: "column", maxHeight: "88vh" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 720, maxWidth: "94vw", display: "flex", flexDirection: "column", maxHeight: "88vh" }} {...panelProps}>
         <div className="panel-h">
           <h3>Prompt library</h3>
           <div style={{ flex: 1 }} />

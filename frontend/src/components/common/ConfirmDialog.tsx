@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { CONFIRM_DEFAULT_KEY } from "../../constants/storage";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 interface Props {
   title: string;
@@ -14,6 +15,11 @@ interface Props {
 export default function ConfirmDialog({ title, message, onConfirm, onCancel, confirmLabel = "Confirm", danger = false, defaultFocus }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+
+  // autoFocus: false — the effect below owns which button starts focused, and a
+  // destructive confirm never closes on a backdrop click. Escape is the one new
+  // affordance here, and it cancels.
+  const { overlayProps, panelProps } = useModalBehavior({ onClose: onCancel, label: title, autoFocus: false });
 
   useEffect(() => {
     const focusConfirm =
@@ -41,8 +47,8 @@ export default function ConfirmDialog({ title, message, onConfirm, onCancel, con
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="card p-6 w-full max-w-sm space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" {...overlayProps}>
+      <div className="card p-6 w-full max-w-sm space-y-4" {...panelProps}>
         <h3 className="font-semibold text-lg">{title}</h3>
         <p className="text-gray-400 text-sm">{message}</p>
         <div className="flex gap-3 justify-end">

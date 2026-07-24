@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Folder, FolderOpen, HardDrive, ChevronRight, ArrowUp, Plus, X, Check } from "lucide-react";
 import { filesystemApi, type FsEntry } from "../../api/filesystem";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import { parentOf, breadcrumbsFromPath } from "../../utils/pathUtils";
 
 interface Props {
@@ -21,6 +22,11 @@ export default function DirPickerModal({ initialPath = "", title = "Select outpu
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [error, setError] = useState("");
+
+  // closeOnBackdrop: this picker already closed on an overlay click. It stacks
+  // over ImportFolderModal (z-index 200 vs 50); because both handlers sit on
+  // their own panel, only this one reacts while it is open.
+  const { overlayProps, panelProps } = useModalBehavior({ onClose: onCancel, label: title, closeOnBackdrop: true });
 
   useEffect(() => {
     filesystemApi.roots().then((r) => setRoots(r.roots));
@@ -65,13 +71,16 @@ export default function DirPickerModal({ initialPath = "", title = "Select outpu
         background: "rgba(0,0,0,.65)",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      {...overlayProps}
     >
-      <div style={{
-        background: "var(--surface-1)", border: "1px solid var(--line)",
-        borderRadius: "var(--r)", width: 540, maxHeight: "80vh",
-        display: "flex", flexDirection: "column", overflow: "hidden",
-      }}>
+      <div
+        {...panelProps}
+        style={{
+          background: "var(--surface-1)", border: "1px solid var(--line)",
+          borderRadius: "var(--r)", width: 540, maxHeight: "80vh",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+      >
         {/* Header */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -133,7 +142,8 @@ export default function DirPickerModal({ initialPath = "", title = "Select outpu
           {error && <span style={{ color: "var(--bad)", fontSize: 12 }}>{error}</span>}
         </div>
 
-        {/* New folder inline form */}
+        {/* New folder inline form. Its Escape closes just this row, so it stops
+            propagation — otherwise the panel handler closes the whole picker. */}
         {newFolderOpen && (
           <div style={{
             display: "flex", alignItems: "center", gap: 6,
@@ -146,7 +156,10 @@ export default function DirPickerModal({ initialPath = "", title = "Select outpu
               value={newFolderName}
               style={{ flex: 1 }}
               onChange={(e) => setNewFolderName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setNewFolderOpen(false); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") createFolder();
+                if (e.key === "Escape") { e.stopPropagation(); setNewFolderOpen(false); }
+              }}
             />
             <button className="btn sm primary" onClick={createFolder} disabled={!newFolderName.trim()}>
               <Check size={13} /> Create

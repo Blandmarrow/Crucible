@@ -43,6 +43,6 @@ The order images travel through the app:
 | Source & license provenance — where images came from, what you may do with them, export credits | [provenance.md](provenance.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
 | Settings reference — all seven tabs | [settings.md](settings.md) |
-| Background jobs, restart & shutdown, hardware meters, split view, logs, file browser, booru lookup | [workspace.md](workspace.md) |
+| Background jobs, restart & shutdown, hardware meters, split view, dialog keyboard behavior, logs, file browser, booru lookup | [workspace.md](workspace.md) |
 
 All long-running operations run in a background job queue and stream real-time progress to the UI — see [Background jobs](workspace.md#background-jobs--the-top-bar).

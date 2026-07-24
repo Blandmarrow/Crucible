@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import { versioningApi } from "../../api/versioning";
 import { useJobSSE } from "../../hooks/useSSE";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import { useJobStore } from "../../store/jobStore";
 import JobProgressBar from "../common/JobProgressBar";
 import type { Version } from "../../types";
@@ -51,12 +52,21 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
   const isRunning = jobId !== null && jobProgress?.status === "running";
   const percent = jobProgress?.percent ?? 0;
 
+  // Escape mirrors the Cancel button, which is disabled while the restore runs.
+  const { overlayProps, panelProps } = useModalBehavior({
+    onClose: () => { if (!isRunning) onClose(); },
+    label: "Restore snapshot",
+  });
+
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
-    }}>
-      <div className="panel" style={{ width: 460, padding: 0 }}>
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+      }}
+      {...overlayProps}
+    >
+      <div className="panel" style={{ width: 460, padding: 0 }} {...panelProps}>
         <div className="panel-h" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Restore Snapshot</span>
           <button className="btn ghost" onClick={onClose} disabled={isRunning} style={{ padding: "2px 8px" }}>✕</button>

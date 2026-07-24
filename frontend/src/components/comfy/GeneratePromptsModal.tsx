@@ -6,6 +6,7 @@ import { comfyApi } from "../../api/comfy";
 import { jobsApi } from "../../api/jobs";
 import { providersApi } from "../../api/providers";
 import { useJobStore } from "../../store/jobStore";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import ModelPicker from "../providers/ModelPicker";
 import JobProgressBar from "../common/JobProgressBar";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
@@ -278,12 +279,16 @@ export default function GeneratePromptsModal({
   // then rejects.
   const jobBlocks = jobBusy || promptsLoading;
 
+  // Escape goes through handleClose, so it aborts the in-flight sync batch the
+  // same way the ✕ and Cancel buttons do. The background job is unaffected.
+  const { overlayProps, panelProps } = useModalBehavior({ onClose: handleClose, label: "Generate prompts", closeOnBackdrop: true });
+
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={handleClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 640, maxWidth: "94vw" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 640, maxWidth: "94vw" }} {...panelProps}>
         <div className="panel-h">
           <h3>Generate prompts</h3>
           <div style={{ flex: 1 }} />

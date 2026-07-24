@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { versioningApi } from "../../api/versioning";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import type { FieldChange, Version } from "../../types";
 
 interface Props {
@@ -108,6 +109,7 @@ function ChangeRow({ field, change }: { field: string; change: FieldChange }) {
 export default function DiffModal({ datasetId, versions, onClose }: Props) {
   const [v1Id, setV1Id] = useState(versions[1]?.id ?? "");
   const [v2Id, setV2Id] = useState(versions[0]?.id ?? "");
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Compare versions" });
 
   const { data: diff, isLoading, error } = useQuery({
     queryKey: ["diff", datasetId, v1Id, v2Id],
@@ -117,11 +119,14 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
   });
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
-    }}>
-      <div className="panel" style={{ width: 620, maxHeight: "80vh", display: "flex", flexDirection: "column", padding: 0 }}>
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+      }}
+      {...overlayProps}
+    >
+      <div className="panel" style={{ width: 620, maxHeight: "80vh", display: "flex", flexDirection: "column", padding: 0 }} {...panelProps}>
         <div className="panel-h" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Compare Versions</span>
           <button className="btn ghost" onClick={onClose} style={{ padding: "2px 8px" }}>✕</button>

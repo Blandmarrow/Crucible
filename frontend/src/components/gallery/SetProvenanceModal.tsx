@@ -3,6 +3,7 @@ import { ScrollText } from "lucide-react";
 
 import { isBlankLicense } from "../../constants/licenses";
 import type { ProvenanceEdit } from "../../api/images";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import LicenseSelect from "../common/LicenseSelect";
 
 interface Props {
@@ -74,6 +75,7 @@ export default function SetProvenanceModal({
   count, isPending, onConfirm, onClose, sourceInfo, customLicenses,
 }: Props) {
   const uid = useId();
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Set source and license" });
   const [modes, setModes] = useState<Record<string, Mode>>({
     license: "keep", source_name: "keep", source_url: "keep", attribution: "keep",
   });
@@ -103,8 +105,8 @@ export default function SetProvenanceModal({
   const hasBlankSet = Object.keys(modes).some(isBlankSet);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="card p-5 w-full max-w-md space-y-3 max-h-[90vh] overflow-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" {...overlayProps}>
+      <div className="card p-5 w-full max-w-md space-y-3 max-h-[90vh] overflow-auto" {...panelProps}>
         <h4 className="font-medium flex items-center gap-2">
           <ScrollText size={15} /> Set Source &amp; License — {count} Image{count !== 1 ? "s" : ""}
         </h4>

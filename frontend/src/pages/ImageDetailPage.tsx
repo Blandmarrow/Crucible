@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
-import { usePaneStore } from "../stores/paneStore";
+import { usePaneStore } from "../store/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
@@ -36,7 +36,7 @@ import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
-import { encode } from "gpt-tokenizer";
+import { useTokenCount } from "../utils/tokenCount";
 
 interface Wd14ModelInfo { id: string; name: string; }
 
@@ -221,13 +221,18 @@ export default function ImageDetailPage() {
   const [renameStem, setRenameStem] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // GPT-2 token count from the lazily-loaded tokenizer (null until it loads).
+  const tokens = useTokenCount(captionText);
   const captionStats = useMemo(() => {
     const trimmed = captionText.trim();
     const words = trimmed ? trimmed.split(/\s+/).length : 0;
-    const tokens = trimmed ? encode(trimmed).length : 0;
-    const tokenColor = tokens >= 77 ? "text-red-400" : tokens >= 70 ? "text-yellow-400" : "text-gray-500";
+    const tokenColor =
+      tokens === null ? "text-gray-500"
+      : tokens >= 77 ? "text-red-400"
+      : tokens >= 70 ? "text-yellow-400"
+      : "text-gray-500";
     return { words, tokens, tokenColor };
-  }, [captionText]);
+  }, [captionText, tokens]);
 
   const pageSize = getGalleryPageSize();
 
@@ -1619,7 +1624,7 @@ export default function ImageDetailPage() {
             <div className="flex items-center justify-between mb-1">
               <label className="label !mb-0">Caption Text</label>
               <span className={`text-xs tabular-nums ${captionStats.tokenColor}`}>
-                {captionStats.words} words · {captionStats.tokens} tokens
+                {captionStats.words} words · {captionStats.tokens ?? "…"} tokens
               </span>
             </div>
             <textarea

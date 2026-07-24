@@ -9,7 +9,7 @@ import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CrucibleMark from "../common/CrucibleMark";
-import { usePaneStore } from "../../stores/paneStore";
+import { usePaneStore } from "../../store/paneStore";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { Columns2, RefreshCw } from "lucide-react";
 

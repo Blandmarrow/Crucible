@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { SplitSquareHorizontal, SplitSquareVertical, X, Layers } from "lucide-react";
 import { datasetsApi } from "../../api/datasets";
-import { usePaneStore } from "../../stores/paneStore";
+import { usePaneStore } from "../../store/paneStore";
 import type { PageType, PaneView } from "../../contexts/PaneContext";
 
 const PAGE_OPTIONS: { value: PageType; label: string }[] = [

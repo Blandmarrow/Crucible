@@ -1,6 +1,6 @@
 import { Group, Panel, Separator, type Layout } from "react-resizable-panels";
 import { PaneContext } from "../../contexts/PaneContext";
-import { usePaneStore, type PaneTree } from "../../stores/paneStore";
+import { usePaneStore, type PaneTree } from "../../store/paneStore";
 import PaneHeader from "./PaneHeader";
 import PageRenderer from "./PageRenderer";
 

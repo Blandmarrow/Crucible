@@ -1,5 +1,5 @@
 import { Component, type ReactNode, type ErrorInfo } from "react";
-import { useErrorConsoleStore } from "../../stores/errorConsoleStore";
+import { useErrorConsoleStore } from "../../store/errorConsoleStore";
 
 interface Props {
   children: ReactNode;

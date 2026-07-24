@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePaneContext } from "../contexts/PaneContext";
-import { usePaneStore } from "../stores/paneStore";
+import { usePaneStore } from "../store/paneStore";
 import type { PaneView } from "../contexts/PaneContext";
 
 export function usePaneNavigate() {

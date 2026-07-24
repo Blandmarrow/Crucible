@@ -40,6 +40,22 @@ config (`"files": []` + project references), so a bare `npx tsc --noEmit` type-c
 **nothing** and exits 0 on code that does not compile. Verify frontend changes with
 `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
 
+### Tests
+
+Backend pytest (from the repo root, venv active **in the same shell** — a `( … )`
+subshell discards activation and silently runs on system Python, which has no
+fastapi/sqlalchemy):
+
+```bash
+source venv/bin/activate && python -m pytest backend/tests/ -q
+```
+
+Request-level tests drive `backend.main.app` over httpx (see
+`backend/tests/conftest.py`); everything else is service-level. Coverage is opt-in:
+add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
+CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
+scoped to `E9`+`F`). To launch the app itself, use the `run-app` skill.
+
 ## Architecture
 
 ### Data flow

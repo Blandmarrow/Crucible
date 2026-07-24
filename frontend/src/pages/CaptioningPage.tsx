@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { captioningApi, type PipelineStep, type DelimiterMode } from "../api/captioning";
 import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
@@ -619,8 +620,7 @@ export default function CaptioningPage() {
       }
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to start detection");
+      toast.error(apiErrorDetail(err, "Failed to start detection"));
     },
   });
 

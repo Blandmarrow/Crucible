@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { qualityApi } from "../api/quality";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
@@ -222,8 +223,7 @@ export default function QualityPage() {
       qc.invalidateQueries({ queryKey: ["image"] });
     },
     onError: (err: unknown) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? (err instanceof Error ? err.message : "Style similarity scoring failed"));
+      toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));
     },
   });
 

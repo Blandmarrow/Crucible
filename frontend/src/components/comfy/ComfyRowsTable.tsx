@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, coerceCellValue, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 
@@ -142,8 +143,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
       comfyApi.updateRow(rowId, { values }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] }),
     onError: (err: unknown) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Failed to save row");
+      toast.error(apiErrorDetail(err, "Failed to save row"));
     },
   });
 
@@ -179,8 +179,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
       );
     },
     onError: (err: unknown) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Failed to update rows");
+      toast.error(apiErrorDetail(err, "Failed to update rows"));
     },
   });
 

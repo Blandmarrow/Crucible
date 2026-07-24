@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi } from "../../api/comfy";
 
 interface Props {
@@ -46,8 +47,7 @@ export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
         toast.error("The selected rows have no prompt text");
         return;
       }
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Failed to save prompts");
+      toast.error(apiErrorDetail(err, "Failed to save prompts"));
     },
   });
 

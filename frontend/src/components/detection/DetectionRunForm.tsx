@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScanSearch } from "lucide-react";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { detectionApi } from "../../api/detection";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { useJobStore } from "../../store/jobStore";
@@ -105,8 +106,7 @@ export default function DetectionRunForm({ datasetId, imageIds, subfolder, quali
       }
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to start detection");
+      toast.error(apiErrorDetail(err, "Failed to start detection"));
     },
   });
 

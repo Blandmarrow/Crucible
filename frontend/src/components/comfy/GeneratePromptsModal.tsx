@@ -9,6 +9,7 @@ import { useJobStore } from "../../store/jobStore";
 import ModelPicker from "../providers/ModelPicker";
 import JobProgressBar from "../common/JobProgressBar";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
+import { apiErrorDetail } from "../../utils/apiError";
 
 /** Body of the durable "generate until N" job (see comfyApi.generatePromptsJob). */
 export interface GeneratePromptsJobBody {
@@ -180,11 +181,6 @@ export default function GeneratePromptsModal({
   const effectiveProviderId = provider?.id ?? "";
   const lines = useMemo(() => resultText.split("\n").map((l) => l.trim()).filter(Boolean), [resultText]);
 
-  function apiError(err: unknown): string {
-    return (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      ?? "Prompt generation failed";
-  }
-
   async function generateBatch(currentLines: string[]): Promise<string[]> {
     const existing = [...(useQueueContext ? queuePrompts : []), ...currentLines];
     const res = await comfyApi.generatePrompts({
@@ -223,7 +219,7 @@ export default function GeneratePromptsModal({
       setResultText((prev) => (prev.trim() ? prev.replace(/\n$/, "") + "\n" : "") + prompts.join("\n"));
     } catch (err) {
       // An abort is the user closing the modal, not a failure to report.
-      if (!axios.isCancel(err)) toast.error(apiError(err));
+      if (!axios.isCancel(err)) toast.error(apiErrorDetail(err, "Prompt generation failed"));
     } finally {
       batchAbortRef.current = null;
       setBatching(false);

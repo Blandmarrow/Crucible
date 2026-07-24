@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { comfyApi } from "../api/comfy";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
@@ -278,7 +279,7 @@ export default function SettingsPage() {
   const createProviderMutation = useMutation({
     mutationFn: (body: ProviderCreate) => providersApi.create(body),
     onSuccess: () => { toast.success("Provider added"); refetchProviders(); qc.invalidateQueries({ queryKey: ["captioning-models"] }); setShowProviderForm(false); setEditingProviderId(null); },
-    onError: (e: unknown) => toast.error((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to save provider"),
+    onError: (e: unknown) => toast.error(apiErrorDetail(e, "Failed to save provider")),
   });
   const updateProviderMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Parameters<typeof providersApi.update>[1] }) =>

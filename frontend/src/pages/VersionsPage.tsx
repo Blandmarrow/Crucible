@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { Pin } from "lucide-react";
 import { settingsApi } from "../api/settings";
 import { versioningApi } from "../api/versioning";
@@ -152,7 +153,7 @@ export default function VersionsPage() {
 
   const versionsQueryKey = ["versions", datasetId, resolvedBranchId, search, createdAfter, createdBefore];
 
-  const { data: versions = [], isLoading: versionsLoading } = useQuery({
+  const { data: versions = [], isLoading: versionsLoading, isError: versionsError } = useQuery({
     queryKey: versionsQueryKey,
     queryFn: () => versioningApi.listVersions(datasetId!, {
       branchId: resolvedBranchId,
@@ -170,8 +171,7 @@ export default function VersionsPage() {
       toast.success("Version deleted");
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Delete failed";
-      toast.error(msg);
+      toast.error(apiErrorDetail(err, "Delete failed"));
     },
   });
 
@@ -179,8 +179,7 @@ export default function VersionsPage() {
     mutationFn: () => versioningApi.pruneStorage(datasetId!),
     onSuccess: () => { toast.success("Prune job started"); },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Prune failed";
-      toast.error(msg);
+      toast.error(apiErrorDetail(err, "Prune failed"));
     },
   });
 
@@ -314,6 +313,8 @@ export default function VersionsPage() {
       <div style={{ flex: 1, overflowY: "auto" }}>
         {versionsLoading ? (
           <div style={{ padding: 24, color: "var(--fg-mute)", fontSize: 13 }}>Loading versions…</div>
+        ) : versionsError ? (
+          <div style={{ padding: 24, color: "var(--bad)", fontSize: 13 }}>Failed to load versions.</div>
         ) : versions.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--fg-mute)", fontSize: 13 }}>
             {hasActiveFilter

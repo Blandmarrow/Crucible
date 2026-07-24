@@ -80,7 +80,7 @@ export default function BulkEditPage() {
     enabled: !!datasetId,
   });
 
-  const { data: countData, isFetching: countFetching } = useQuery({
+  const { data: countData, isFetching: countFetching, isError: countError } = useQuery({
     queryKey: ["bulk-count", datasetId, imageIds ?? null, qualityFlags ?? null, subfolder ?? null, targetsFlaggedImages],
     queryFn: () => imagesApi.bulkCount(datasetId!, { imageIds, qualityFlags, subfolder, includeFlagged: targetsFlaggedImages }),
     enabled: !!datasetId && !formDisabled,
@@ -196,9 +196,13 @@ export default function BulkEditPage() {
             Currently selected ({selectedCount} image{selectedCount !== 1 ? "s" : ""})
           </label>
           {!formDisabled && (
-            <p className="text-xs pt-1" style={{ color: countData?.count === 0 ? "var(--warn)" : "var(--fg-mute)" }}>
-              {getCountLabel(countData, countFetching)}
-            </p>
+            countError ? (
+              <p className="text-xs pt-1" style={{ color: "var(--bad)" }}>Count unavailable</p>
+            ) : (
+              <p className="text-xs pt-1" style={{ color: countData?.count === 0 ? "var(--warn)" : "var(--fg-mute)" }}>
+                {getCountLabel(countData, countFetching)}
+              </p>
+            )
           )}
         </div>
       </div>

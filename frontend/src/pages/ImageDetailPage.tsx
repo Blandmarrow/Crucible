@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { imagesApi } from "../api/images";
 import { captionsApi } from "../api/captions";
 import { tagConsolidationApi } from "../api/tagConsolidation";
@@ -382,11 +383,14 @@ export default function ImageDetailPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [showDetectModal, showDeleteConfirm]);
 
-  const { data: image, isLoading: imageLoading } = useQuery({
+  const { data: image, isLoading: imageLoading, isError: imageError } = useQuery({
     queryKey: ["image", imageId],
     queryFn: () => imagesApi.get(imageId!),
     enabled: !!imageId,
     staleTime: 0,
+    // A 404 (deleted/moved image) is terminal — don't burn retries on it.
+    retry: (failureCount, err) =>
+      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 3,
   });
 
   const { data: captionData } = useQuery({
@@ -812,8 +816,7 @@ export default function ImageDetailPage() {
       }
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to start detection");
+      toast.error(apiErrorDetail(err, "Failed to start detection"));
     },
   });
 
@@ -833,8 +836,7 @@ export default function ImageDetailPage() {
       }
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to add detection");
+      toast.error(apiErrorDetail(err, "Failed to add detection"));
     },
   });
 
@@ -843,8 +845,7 @@ export default function ImageDetailPage() {
       detectionApi.refine(params.id, { point_prompts: params.point_prompts, point_labels: params.point_labels }),
     onSuccess: (data) => setRefineJobId(data.job_id),
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to start refine");
+      toast.error(apiErrorDetail(err, "Failed to start refine"));
     },
   });
 
@@ -880,6 +881,24 @@ export default function ImageDetailPage() {
   const onCropComplete = useCallback((_: unknown, croppedPixels: CropArea) => {
     setCroppedArea(croppedPixels);
   }, []);
+
+  if (imageError && !image) {
+    return (
+      <div className="p-8" style={{ color: "var(--fg-mute)" }}>
+        <p style={{ color: "var(--bad)", marginBottom: 12 }}>
+          Image not found — it may have been deleted or moved.
+        </p>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() =>
+            paneGo(`/datasets/${datasetId}/gallery`, { page: "gallery", datasetId }, { replace: true })
+          }
+        >
+          <ArrowLeft size={14} /> Back to gallery
+        </button>
+      </div>
+    );
+  }
 
   if (imageLoading || !image) {
     return <div className="p-8 text-gray-500">Loading...</div>;

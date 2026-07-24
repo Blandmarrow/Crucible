@@ -1,6 +1,5 @@
 """Tests for backend.ml.mask_utils.detection_crop_rect (detection-driven crop math)."""
 
-import pytest
 
 from backend.ml.mask_utils import detection_crop_rect
 

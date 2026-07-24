@@ -12,8 +12,7 @@ from backend.schemas.versioning import (
     BranchCreate, BranchOut,
     CheckoutRequest,
     DiffOut,
-    RestoreRequest, RestoreSummary,
-    SnapshotCreate, VersionOut, VersionUpdate,
+    RestoreRequest, SnapshotCreate, VersionOut, VersionUpdate,
 )
 from backend.services import version_service
 from backend.services.dataset_busy import busy

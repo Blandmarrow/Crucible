@@ -87,7 +87,7 @@ class Image(Base):
     def has_dino_layer_embeddings(self) -> bool:
         return self.dino_layer_embeddings is not None
 
-    dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="images")
+    dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="images")  # noqa: F821 — SQLAlchemy resolves the string forward ref via its registry
 
     __table_args__ = (
         Index("ix_images_dataset_aesthetic", "dataset_id", "aesthetic_score"),

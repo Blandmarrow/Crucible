@@ -1,12 +1,9 @@
-import io
 import json
 import re
-import shutil
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from backend.config import settings
 from backend.utils import image_save_kwargs
 
 

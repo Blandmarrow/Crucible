@@ -26,3 +26,6 @@ Thumbs.db
 *.egg-info/
 .pytest_cache/
 alembic/__pycache__/
+.coverage
+frontend/playwright-report/
+frontend/test-results/

@@ -40,6 +40,34 @@ config (`"files": []` + project references), so a bare `npx tsc --noEmit` type-c
 **nothing** and exits 0 on code that does not compile. Verify frontend changes with
 `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
 
+### Tests
+
+Backend pytest (from the repo root, venv active **in the same shell** — a `( … )`
+subshell discards activation and silently runs on system Python, which has no
+fastapi/sqlalchemy):
+
+```bash
+source venv/bin/activate && python -m pytest backend/tests/ -q
+```
+
+Request-level tests drive `backend.main.app` over httpx (see
+`backend/tests/conftest.py`); everything else is service-level. Coverage is opt-in:
+add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
+CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
+scoped to `E9`+`F`). To launch the app itself, use the `run-app` skill.
+
+Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
+
+```bash
+cd frontend
+npm run build                     # refresh dist first — e2e serves it (stale dist = stale test)
+npx playwright install chromium   # first run only
+npx playwright test               # spins up its own backend on :8199 vs a throwaway DB
+```
+
+The full pre-merge sweep (backend pytest → frontend build+lint → e2e) is the
+`qa-smoke` skill.
+
 ## Architecture
 
 ### Data flow

@@ -232,7 +232,6 @@ def predict_sync(
     Returns list of {label, bbox [x1,y1,x2,y2] norm., score, mask (polygon JSON)}.
     """
     predictor = model_entry["predictor"]
-    dev = model_entry["device"]
 
     img = open_rgb(image_path)
     img_w, img_h = img.size

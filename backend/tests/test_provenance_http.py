@@ -8,7 +8,6 @@ router-shaped failures that no service-level test can reach.
 """
 import csv
 import shutil
-import io
 import json
 import os
 from pathlib import Path
@@ -17,32 +16,14 @@ from PIL import Image as PilImage
 from sqlalchemy import select
 
 from backend.models.image import Image
-from backend.tests.conftest import API, api_env, run, wait_for_job
-
-
-def _png_bytes(color=(10, 120, 200), size=(16, 16), **text) -> bytes:
-    """A real PNG, optionally carrying tEXt chunks (Author/Copyright/…)."""
-    from PIL import PngImagePlugin
-
-    info = PngImagePlugin.PngInfo()
-    for k, v in text.items():
-        info.add_text(k, v)
-    buf = io.BytesIO()
-    PilImage.new("RGB", size, color).save(buf, "PNG", pnginfo=info)
-    return buf.getvalue()
-
-
-async def _upload(env, dataset_id: str, name: str = "a.png", data: bytes | None = None) -> dict:
-    """Upload one image and return its row. The endpoint returns filenames only."""
-    r = await env.client.post(
-        f"{API}/images/upload",
-        params={"dataset_id": dataset_id},
-        files=[("files", (name, data or _png_bytes(), "image/png"))],
-    )
-    assert r.status_code == 201, r.text
-    filename = r.json()["files"][0]
-    listing = (await env.client.get(f"{API}/images/", params={"dataset_id": dataset_id})).json()
-    return next(i for i in listing if i["filename"] == filename)
+from backend.tests.conftest import (
+    API,
+    api_env,
+    png_bytes,
+    run,
+    upload_image,
+    wait_for_job,
+)
 
 
 # --- B1: the ComfyUI import path ----------------------------------------
@@ -65,7 +46,7 @@ class _FakeComfyClient:
         return {"outputs": {"9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}}}
 
     async def fetch_image(self, filename, subfolder="", type="output"):
-        return _png_bytes()
+        return png_bytes()
 
     async def interrupt(self):
         return None
@@ -306,7 +287,7 @@ def test_oversized_sidecar_value_truncates_and_stays_editable(tmp_path):
 
             src = tmp_path / "scrape"
             src.mkdir()
-            (src / "pic.png").write_bytes(_png_bytes())
+            (src / "pic.png").write_bytes(png_bytes())
             (src / "pic.png.json").write_text(json.dumps({
                 "category": "somesite",
                 "rights": "R" * 500,
@@ -345,7 +326,7 @@ def test_api_rejects_a_license_that_normalizes_past_the_column(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             r = await env.client.patch(
                 f"{API}/images/{img['id']}/provenance", json={"license": "z" * 64})
@@ -366,7 +347,7 @@ def test_patch_provenance_clears_with_empty_and_returns_detections(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d", license="CC-BY-4.0", source_name="Flickr")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             r = await env.client.patch(f"{API}/images/{img['id']}/provenance", json={
                 "license": "CC0-1.0", "source_name": "Unsplash",
@@ -395,7 +376,7 @@ def test_provenance_writes_are_blocked_while_the_dataset_is_busy(tmp_path):
             from backend.services import dataset_busy
 
             ds = await env.create_dataset("d")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             with dataset_busy.busy(ds["id"], "versioning"):
                 r = await env.client.patch(
@@ -422,8 +403,8 @@ def test_bulk_provenance_guards_every_dataset_in_a_cross_dataset_selection(tmp_p
 
             ds_a = await env.create_dataset("a")
             ds_b = await env.create_dataset("b")
-            img_a = await _upload(env, ds_a["id"])
-            img_b = await _upload(env, ds_b["id"])
+            img_a = await upload_image(env, ds_a["id"])
+            img_b = await upload_image(env, ds_b["id"])
             ids = [img_a["id"], img_b["id"]]
 
             # Busy on the dataset that is NOT body.dataset_id.
@@ -451,8 +432,8 @@ def test_bulk_provenance_include_flagged_comes_from_the_body(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            blurry = await _upload(env, ds["id"], "blurry.png")
-            clean = await _upload(env, ds["id"], "clean.png", _png_bytes((200, 30, 30)))
+            blurry = await upload_image(env, ds["id"], "blurry.png")
+            clean = await upload_image(env, ds["id"], "clean.png", png_bytes((200, 30, 30)))
 
             async with env.Session() as db:
                 row = (await db.execute(
@@ -504,8 +485,8 @@ def test_cross_dataset_move_materializes_each_row_against_its_own_dataset(tmp_pa
             ds_b = await env.create_dataset("b", license="CC-BY-NC-SA-4.0", source_name="Danbooru")
             ds_dest = await env.create_dataset("dest", license="owned", source_name="Me")
 
-            img_a = await _upload(env, ds_a["id"], "a.png")
-            img_b = await _upload(env, ds_b["id"], "b.png", _png_bytes((9, 9, 9)))
+            img_a = await upload_image(env, ds_a["id"], "a.png")
+            img_b = await upload_image(env, ds_b["id"], "b.png", png_bytes((9, 9, 9)))
 
             r = await env.client.post(f"{API}/images/batch/move-dataset", json={
                 "image_ids": [img_a["id"], img_b["id"]],
@@ -531,8 +512,8 @@ def test_cross_dataset_copy_materializes_each_row_against_its_own_dataset(tmp_pa
             ds_b = await env.create_dataset("b", license="research-only")
             ds_dest = await env.create_dataset("dest", license="owned")
 
-            img_a = await _upload(env, ds_a["id"], "a.png")
-            img_b = await _upload(env, ds_b["id"], "b.png", _png_bytes((9, 9, 9)))
+            img_a = await upload_image(env, ds_a["id"], "a.png")
+            img_b = await upload_image(env, ds_b["id"], "b.png", png_bytes((9, 9, 9)))
 
             r = await env.client.post(f"{API}/images/batch/copy-dataset", json={
                 "image_ids": [img_a["id"], img_b["id"]],
@@ -560,7 +541,7 @@ def test_crop_copies_parent_provenance(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload(env, ds["id"], "a.png", _png_bytes(size=(64, 64)))
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(64, 64)))
 
             r = await env.client.patch(f"{API}/images/{img['id']}/provenance", json={
                 "license": "CC-BY-SA-4.0", "source_name": "Flickr", "attribution": "alice",
@@ -613,7 +594,7 @@ def test_lut_and_upscale_derivatives_copy_provenance_over_the_async_session(tmp_
             monkeypatch.setattr(upscaler, "_detect_scale", lambda *a, **kw: 1)
 
             ds = await env.create_dataset("derive")
-            img = await _upload(env, ds["id"], "a.png", _png_bytes(size=(32, 32)))
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(32, 32)))
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
                 row.license, row.source_name, row.source_meta = "CC-BY-SA-4.0", "Flickr", {"post_id": 7}
@@ -649,7 +630,7 @@ def test_detection_crop_copies_parent_provenance(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("dets")
-            img = await _upload(env, ds["id"], "a.png", _png_bytes(size=(64, 64)))
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(64, 64)))
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
                 row.license, row.source_name, row.source_meta = "CC-BY-NC-4.0", "Danbooru", {"post_id": 3}
@@ -686,9 +667,9 @@ def test_upload_captures_png_text_attribution(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload(
+            img = await upload_image(
                 env, ds["id"], "credited.png",
-                _png_bytes(Author="Jane Doe", Copyright="© 2026 Jane Doe"),
+                png_bytes(Author="Jane Doe", Copyright="© 2026 Jane Doe"),
             )
             detail = (await env.client.get(f"{API}/images/{img['id']}")).json()
             assert "Jane Doe" in (detail["attribution"] or "")
@@ -703,7 +684,7 @@ def test_import_does_not_adopt_an_unrelated_json_file(tmp_path):
             ds = await env.create_dataset("d")
             src = tmp_path / "src"
             src.mkdir()
-            (src / "workflow.png").write_bytes(_png_bytes())
+            (src / "workflow.png").write_bytes(png_bytes())
             (src / "workflow.json").write_text(
                 json.dumps({"nodes": [{"type": "KSampler"}], "links": []}), encoding="utf-8")
 
@@ -734,7 +715,7 @@ def test_patch_provenance_serializes_every_deferred_column(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
@@ -764,7 +745,7 @@ def test_snapshot_and_restore_round_trip_through_the_router(tmp_path):
             assert r.status_code == 200, r.text
 
             ds = await env.create_dataset("d")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
                 row.license, row.source_name, row.source_meta = "CC-BY-SA-4.0", "Flickr", {"post_id": 7}
@@ -816,7 +797,7 @@ def test_version_diff_reports_every_provenance_field(tmp_path):
             assert r.status_code == 200, r.text
 
             ds = await env.create_dataset("diffme")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             async def snapshot(name: str) -> str:
                 r = await env.client.post(f"{API}/datasets/{ds['id']}/versions",
@@ -876,7 +857,7 @@ def test_patch_dataset_provenance_defaults_on_both_branches(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d1")
-            img = await _upload(env, ds["id"])
+            img = await upload_image(env, ds["id"])
 
             async def prov():
                 return (await env.client.get(f"{API}/images/{img['id']}")).json()["provenance"]
@@ -933,8 +914,8 @@ def test_stats_license_breakdown_matches_the_gallery_filter(tmp_path):
 
             ds = await env.create_dataset("stats", license="CC-BY-NC-4.0")
             for n in range(3):
-                await _upload(env, ds["id"], f"inh{n}.png", _png_bytes((n * 30, 1, 2)))
-            owned = await _upload(env, ds["id"], "owned.png", _png_bytes((9, 9, 9)))
+                await upload_image(env, ds["id"], f"inh{n}.png", png_bytes((n * 30, 1, 2)))
+            owned = await upload_image(env, ds["id"], "owned.png", png_bytes((9, 9, 9)))
             await env.client.patch(
                 f"{API}/images/{owned['id']}/provenance", json={"license": "owned"})
 
@@ -954,7 +935,7 @@ def test_stats_license_breakdown_matches_the_gallery_filter(tmp_path):
             # Unbounded `other:` free text is one bucket per distinct value, so the
             # tail collapses instead of growing the response without limit.
             for n in range(LICENSE_BREAKDOWN_LIMIT + 5):
-                extra = await _upload(env, ds["id"], f"o{n}.png", _png_bytes((n, 200, 7)))
+                extra = await upload_image(env, ds["id"], f"o{n}.png", png_bytes((n, 200, 7)))
                 await env.client.patch(f"{API}/images/{extra['id']}/provenance",
                                        json={"license": f"other:terms {n}"})
 
@@ -987,8 +968,8 @@ def test_licenses_in_use_offers_every_value_the_filter_accepts(tmp_path):
                     {"license": "other:Studio EULA", "count": 0}]
 
             for n in range(2):
-                await _upload(env, ds["id"], f"inh{n}.png", _png_bytes((n * 40, 3, 4)))
-            override = await _upload(env, ds["id"], "own.png", _png_bytes((7, 7, 7)))
+                await upload_image(env, ds["id"], f"inh{n}.png", png_bytes((n * 40, 3, 4)))
+            override = await upload_image(env, ds["id"], "own.png", png_bytes((7, 7, 7)))
             await env.client.patch(f"{API}/images/{override['id']}/provenance",
                                    json={"license": "other:Client X, revision 2"})
 
@@ -1011,7 +992,7 @@ def test_licenses_in_use_offers_every_value_the_filter_accepts(tmp_path):
             # An unlicensed dataset reports the "" bucket (the gallery expresses it
             # through license_missing, and renders its own option for it).
             bare = await env.create_dataset("bare")
-            await _upload(env, bare["id"], "b.png", _png_bytes((2, 2, 2)))
+            await upload_image(env, bare["id"], "b.png", png_bytes((2, 2, 2)))
             assert (await env.client.get(
                 f"{API}/datasets/{bare['id']}/licenses-in-use")).json() == [
                     {"license": "", "count": 1}]
@@ -1036,12 +1017,12 @@ def test_licenses_in_use_offers_every_value_the_filter_accepts(tmp_path):
 async def _export_env(env, tmp_path):
     """A dataset defaulting to CC-BY-NC-4.0 with one owned override + one unlicensed."""
     ds = await env.create_dataset("exp", license="CC-BY-NC-4.0", source_name="Flickr")
-    inherits = await _upload(env, ds["id"], "inherits.png")
-    owned = await _upload(env, ds["id"], "owned.png", _png_bytes((1, 2, 3)))
+    inherits = await upload_image(env, ds["id"], "inherits.png")
+    owned = await upload_image(env, ds["id"], "owned.png", png_bytes((1, 2, 3)))
     await env.client.patch(f"{API}/images/{owned['id']}/provenance", json={"license": "owned"})
 
     unlicensed_ds = await env.create_dataset("unl")
-    unlicensed = await _upload(env, unlicensed_ds["id"], "unl.png", _png_bytes((4, 5, 6)))
+    unlicensed = await upload_image(env, unlicensed_ds["id"], "unl.png", png_bytes((4, 5, 6)))
     return ds, unlicensed_ds, inherits, owned, unlicensed
 
 
@@ -1083,9 +1064,9 @@ def test_gallery_license_filter_runs_on_the_effective_license(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("gal", license="CC-BY-NC-4.0")
-            inherits = await _upload(env, ds["id"], "inherits.png")
-            owned = await _upload(env, ds["id"], "owned.png", _png_bytes((1, 2, 3)))
-            custom = await _upload(env, ds["id"], "custom.png", _png_bytes((4, 5, 6)))
+            inherits = await upload_image(env, ds["id"], "inherits.png")
+            owned = await upload_image(env, ds["id"], "owned.png", png_bytes((1, 2, 3)))
+            custom = await upload_image(env, ds["id"], "custom.png", png_bytes((4, 5, 6)))
             await env.client.patch(f"{API}/images/{owned['id']}/provenance", json={"license": "owned"})
             # A free-text id containing a comma — the reason the param is a JSON
             # array and never a comma-separated string.
@@ -1120,7 +1101,7 @@ def test_gallery_license_filter_runs_on_the_effective_license(tmp_path):
             assert len(await names(license_missing=False)) == 3
 
             unl_ds = await env.create_dataset("unl")
-            await _upload(env, unl_ds["id"], "bare.png", _png_bytes((7, 8, 9)))
+            await upload_image(env, unl_ds["id"], "bare.png", png_bytes((7, 8, 9)))
             r = await env.client.get(
                 f"{API}/images/", params={"dataset_id": unl_ds["id"], "license_missing": True})
             assert {i["filename"] for i in r.json()} == {"bare.png"}
@@ -1134,7 +1115,7 @@ def test_gallery_license_filter_rejects_malformed_and_all_blank_lists(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("gal")
-            await _upload(env, ds["id"], "a.png")
+            await upload_image(env, ds["id"], "a.png")
 
             async def status(value):
                 r = await env.client.get(
@@ -1200,7 +1181,7 @@ def test_a_cancelled_export_leaves_the_canonical_manifest_to_the_real_run(tmp_pa
 
             ds = await env.create_dataset("cancelme", license="CC-BY-4.0")
             for n in range(4):
-                await _upload(env, ds["id"], f"{n}.png", _png_bytes((n * 20, 30, 40)))
+                await upload_image(env, ds["id"], f"{n}.png", png_bytes((n * 20, 30, 40)))
 
             out = tmp_path / "out"
             real_write_image = export_service._write_image
@@ -1264,7 +1245,7 @@ def test_a_failed_export_still_ships_a_partial_manifest(tmp_path, monkeypatch):
             ds = await env.create_dataset(
                 "failme", license="CC-BY-4.0", attribution="Photo by Jane Doe")
             for n in range(4):
-                await _upload(env, ds["id"], f"{n}.png", _png_bytes((n * 20, 30, 40)))
+                await upload_image(env, ds["id"], f"{n}.png", png_bytes((n * 20, 30, 40)))
 
             out = tmp_path / "out"
             real_write_image = export_service._write_image
@@ -1381,7 +1362,7 @@ def test_re_export_into_the_same_directory_supersedes_its_manifest(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("re-export", license="CC-BY-4.0")
-            await _upload(env, ds["id"], "one.png")
+            await upload_image(env, ds["id"], "one.png")
             out = tmp_path / "out"
 
             async def export(**extra):
@@ -1397,7 +1378,7 @@ def test_re_export_into_the_same_directory_supersedes_its_manifest(tmp_path):
             job = await export()
             assert job["result_data"]["manifest_files"] == ["CREDITS.md", "licenses.csv"]
 
-            await _upload(env, ds["id"], "two.png", _png_bytes((5, 6, 7)))
+            await upload_image(env, ds["id"], "two.png", png_bytes((5, 6, 7)))
             job = await export()
             # Same names again — overwritten in place, not chained.
             assert job["result_data"]["manifest_files"] == ["CREDITS.md", "licenses.csv"]
@@ -1428,7 +1409,7 @@ def test_manifest_file_column_is_not_formula_guarded(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("csv")
-            img = await _upload(env, ds["id"], "a.png")
+            img = await upload_image(env, ds["id"], "a.png")
             # Ingest slugifies, so force the name the writer has to handle.
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
@@ -1465,9 +1446,9 @@ def test_exclude_no_derivatives_drops_only_known_nd_licenses(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("nd")
-            nd = await _upload(env, ds["id"], "nd.png")
-            free = await _upload(env, ds["id"], "free.png", _png_bytes((1, 2, 3)))
-            other = await _upload(env, ds["id"], "other.png", _png_bytes((4, 5, 6)))
+            nd = await upload_image(env, ds["id"], "nd.png")
+            free = await upload_image(env, ds["id"], "free.png", png_bytes((1, 2, 3)))
+            other = await upload_image(env, ds["id"], "other.png", png_bytes((4, 5, 6)))
             await env.client.patch(f"{API}/images/{nd['id']}/provenance",
                                    json={"license": "CC-BY-ND-4.0"})
             await env.client.patch(f"{API}/images/{free['id']}/provenance",
@@ -1516,10 +1497,10 @@ def test_freetext_will_export_counts_what_the_nd_filter_waved_through(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("freetext")
-            nd = await _upload(env, ds["id"], "nd.png")
-            known = await _upload(env, ds["id"], "known.png", _png_bytes((1, 2, 3)))
-            other = await _upload(env, ds["id"], "other.png", _png_bytes((4, 5, 6)))
-            await _upload(env, ds["id"], "bare.png", _png_bytes((7, 8, 9)))
+            nd = await upload_image(env, ds["id"], "nd.png")
+            known = await upload_image(env, ds["id"], "known.png", png_bytes((1, 2, 3)))
+            other = await upload_image(env, ds["id"], "other.png", png_bytes((4, 5, 6)))
+            await upload_image(env, ds["id"], "bare.png", png_bytes((7, 8, 9)))
             await env.client.patch(f"{API}/images/{nd['id']}/provenance",
                                    json={"license": "CC-BY-ND-4.0"})
             await env.client.patch(f"{API}/images/{known['id']}/provenance",
@@ -1568,8 +1549,8 @@ def test_unlicensed_will_export_accounts_for_every_filter(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("mix")
-            await _upload(env, ds["id"], "bare.png")
-            captioned = await _upload(env, ds["id"], "cap.png", _png_bytes((1, 2, 3)))
+            await upload_image(env, ds["id"], "bare.png")
+            captioned = await upload_image(env, ds["id"], "cap.png", png_bytes((1, 2, 3)))
             r = await env.client.put(f"{API}/captions/image/{captioned['id']}",
                                      json={"caption_text": "a cat"})
             assert r.status_code == 200, r.text

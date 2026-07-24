@@ -1,0 +1,13 @@
+# Ruff configuration for the backend.
+#
+# Scope is deliberately narrow: only the pyflakes (`F`) rules and the syntax /
+# runtime-error `E9` checks. Style rules (line length, whitespace, import order,
+# etc.) are intentionally out of scope — this repo does not enforce a formatter,
+# and a style-only lint gate would produce churn without catching real bugs.
+# The goal is catching undefined names, unused imports, and code that won't run.
+#
+# Ruff respects .gitignore, so venv/ and other ignored paths are auto-excluded.
+target-version = "py312"
+
+[lint]
+select = ["E9", "F"]

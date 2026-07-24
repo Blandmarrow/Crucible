@@ -101,6 +101,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
 
   return (
     <div
+      data-testid="gallery-tile"
       style={{
         border: captionDragOver ? "1px solid var(--accent)" : selected ? "1px solid var(--accent)" : "1px solid var(--line)",
         boxShadow: selected ? "0 0 0 1px var(--accent), 0 0 24px -8px var(--accent-glow)" : "none",

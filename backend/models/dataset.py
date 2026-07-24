@@ -34,6 +34,6 @@ class Dataset(Base):
     license: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     attribution: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
-    images: Mapped[list["Image"]] = relationship(
+    images: Mapped[list["Image"]] = relationship(  # noqa: F821 — SQLAlchemy resolves the string forward ref via its registry
         "Image", back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
     )

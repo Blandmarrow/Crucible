@@ -2,3 +2,6 @@
 # and by developers running the test suite; never by manage setup/update
 # (which installs requirements.txt).
 pytest>=8.0
+# Coverage is opt-in: pass --cov=backend on the command line. There is no
+# pytest addopts anywhere, so CI stays plain (no coverage gate).
+pytest-cov>=5.0

@@ -1,4 +1,5 @@
 import type { CanvasWorkflowResponse, PinnedParam } from "../../api/comfy";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 interface Props {
   snapshot: CanvasWorkflowResponse;
@@ -20,12 +21,13 @@ function formatAge(s: number): string {
 /** Confirmation before replacing the plan's workflow with one pulled from ComfyUI. */
 export default function SyncCanvasModal({ snapshot, droppedPins, onApply, onClose }: Props) {
   const isBridge = snapshot.source === "bridge";
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Sync from ComfyUI", closeOnBackdrop: true });
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={onClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 520, maxWidth: "94vw" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 520, maxWidth: "94vw" }} {...panelProps}>
         <div className="panel-h">
           <h3>Sync from ComfyUI</h3>
           <div style={{ flex: 1 }} />

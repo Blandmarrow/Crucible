@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, type ComfyPlan, type WorkflowFile } from "../../api/comfy";
 import { settingsApi } from "../../api/settings";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import DirPickerModal from "../common/DirPickerModal";
 
 interface Props {
@@ -52,13 +53,14 @@ export default function WorkflowScanModal({ onLoad, onClose }: Props) {
   }
 
   const errorDetail = error ? apiErrorDetail(error, "") : "";
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Scan workflow folder", closeOnBackdrop: true });
 
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={onClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 640, maxWidth: "94vw" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 640, maxWidth: "94vw" }} {...panelProps}>
         <div className="panel-h">
           <h3>Scan workflow folder</h3>
           <div style={{ flex: 1 }} />
@@ -117,16 +119,16 @@ export default function WorkflowScanModal({ onLoad, onClose }: Props) {
         </div>
       </div>
 
+      {/* Stacks over this modal. No click shield needed: the overlay above only
+          closes on a click that lands on the overlay itself. */}
       {showPicker && (
-        <div onClick={(e) => e.stopPropagation()}>
-          <DirPickerModal
-            title="Select workflow folder"
-            confirmLabel="Scan folder"
-            initialPath={dir}
-            onConfirm={(path) => { setDirOverride(path); setShowPicker(false); }}
-            onCancel={() => setShowPicker(false)}
-          />
-        </div>
+        <DirPickerModal
+          title="Select workflow folder"
+          confirmLabel="Scan folder"
+          initialPath={dir}
+          onConfirm={(path) => { setDirOverride(path); setShowPicker(false); }}
+          onCancel={() => setShowPicker(false)}
+        />
       )}
     </div>
   );

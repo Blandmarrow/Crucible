@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi } from "../../api/comfy";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 interface Props {
   planId: string;
@@ -15,6 +16,7 @@ interface Props {
 export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
   const qc = useQueryClient();
   const [category, setCategory] = useState("");
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Save to library", closeOnBackdrop: true });
 
   const { data: library = [] } = useQuery({
     queryKey: ["comfy", "library"],
@@ -56,9 +58,9 @@ export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={onClose}
+      {...overlayProps}
     >
-      <div className="panel" style={{ width: 420, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
+      <div className="panel" style={{ width: 420, maxWidth: "92vw" }} {...panelProps}>
         <div className="panel-h"><h3>Save to library</h3></div>
         <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
@@ -73,7 +75,6 @@ export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
               value={category} onChange={(e) => setCategory(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && trimmed && !saveMutation.isPending) saveMutation.mutate(trimmed);
-                if (e.key === "Escape") onClose();
               }}
             />
             <datalist id="library-categories">

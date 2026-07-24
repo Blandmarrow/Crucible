@@ -72,6 +72,7 @@ Every step from raw images to a training-ready export, in order:
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/workspace.md#file-browser)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
+- **Keyboard-drivable dialogs** — Esc closes, Tab cycles within the dialog, focus returns where it came from, and screen readers announce them as dialogs → [details](docs/workspace.md#dialogs)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 

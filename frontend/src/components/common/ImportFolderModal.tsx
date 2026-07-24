@@ -6,6 +6,7 @@ import { datasetsApi, type DatasetProvenance } from "../../api/datasets";
 import ProvenanceFields from "./ProvenanceFields";
 import { EMPTY_PROVENANCE } from "../../constants/licenses";
 import { useCustomLicenses } from "../../hooks/useCustomLicenses";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import DirPickerModal from "./DirPickerModal";
 
 interface Props {
@@ -29,6 +30,9 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const [showSubfolders, setShowSubfolders] = useState(false);
 
   const target = datasets.find((d) => d.id === targetId) ?? null;
+
+  // closeOnBackdrop: this modal already closed on an overlay click.
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Import from folder", closeOnBackdrop: true });
 
   // Existing logical subfolders of the target dataset, for the subfolder "Browse" picker.
   const { data: subfolders = [] } = useQuery({
@@ -56,8 +60,8 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="card p-5" style={{ width: 460, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" {...overlayProps}>
+      <div className="card p-5" style={{ width: 460, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto" }} {...panelProps}>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Import from folder</h3>
         <div style={{ marginBottom: 14 }}>
           <label className="label">Dataset</label>

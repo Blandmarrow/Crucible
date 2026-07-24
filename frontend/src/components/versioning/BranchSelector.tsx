@@ -5,6 +5,7 @@ import { apiErrorDetail } from "../../utils/apiError";
 import { Trash2 } from "lucide-react";
 import { versioningApi } from "../../api/versioning";
 import { useJobSSE } from "../../hooks/useSSE";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 import { useJobStore } from "../../store/jobStore";
 import { BRANCH_SNAPSHOT_KEY } from "../../constants/storage";
 import JobProgressBar from "../common/JobProgressBar";
@@ -26,22 +27,85 @@ function SnapshotPrompt({
   message,
   onYes,
   onNo,
+  onDismiss,
 }: {
   message: string;
   onYes: () => void;
   onNo: () => void;
+  /** Escape — backs out of the whole operation, since neither answer is a "cancel". */
+  onDismiss: () => void;
 }) {
+  const { overlayProps, panelProps } = useModalBehavior({ onClose: onDismiss, label: message });
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
-    }}>
-      <div className="panel" style={{ width: 380, padding: 0 }}>
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
+      }}
+      {...overlayProps}
+    >
+      <div className="panel" style={{ width: 380, padding: 0 }} {...panelProps}>
         <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <p style={{ margin: 0, fontSize: 13 }}>{message}</p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btn ghost" onClick={onNo}>No, skip snapshot</button>
             <button className="btn primary" onClick={onYes}>Yes, create snapshot</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Module scope, not inline JSX: the modal behavior hook mounts and unmounts with
+ *  the dialog, so it has to live in a component that does the same. */
+function DeleteBranchPrompt({
+  branches, selectedId, selectedName, onSelect, onClose, onDelete,
+}: {
+  branches: Branch[];
+  selectedId: string;
+  selectedName: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Delete branch" });
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
+      }}
+      {...overlayProps}
+    >
+      <div className="panel" style={{ width: 400, padding: 0 }} {...panelProps}>
+        <div className="panel-h" style={{ padding: "12px 16px" }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Delete Branch</span>
+        </div>
+        <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "block", marginBottom: 6 }}>
+              Branch to delete
+            </label>
+            <select
+              className="select"
+              style={{ width: "100%" }}
+              value={selectedId}
+              onChange={(e) => onSelect(e.target.value)}
+            >
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--fg-mute)" }}>
+            All snapshots on this branch will be permanently deleted. This cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn danger" disabled={!selectedId} onClick={onDelete}>
+              Delete "{selectedName}"
+            </button>
           </div>
         </div>
       </div>
@@ -237,6 +301,7 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
           message="Save the current state as a snapshot before switching branches?"
           onYes={() => { setCheckoutPrompt(null); doCheckout(checkoutPrompt, true); }}
           onNo={() => { setCheckoutPrompt(null); doCheckout(checkoutPrompt, false); }}
+          onDismiss={() => setCheckoutPrompt(null)}
         />
       )}
 
@@ -245,53 +310,22 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
           message={`Create an initial snapshot for branch "${createPrompt}"?`}
           onYes={() => { const n = createPrompt; setCreatePrompt(null); doCreateBranch(n, true); }}
           onNo={() => { const n = createPrompt; setCreatePrompt(null); doCreateBranch(n, false); }}
+          onDismiss={() => setCreatePrompt(null)}
         />
       )}
 
       {showDeleteModal && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300,
-        }}>
-          <div className="panel" style={{ width: 400, padding: 0 }}>
-            <div className="panel-h" style={{ padding: "12px 16px" }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>Delete Branch</span>
-            </div>
-            <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "block", marginBottom: 6 }}>
-                  Branch to delete
-                </label>
-                <select
-                  className="select"
-                  style={{ width: "100%" }}
-                  value={deleteBranchId}
-                  onChange={(e) => setDeleteBranchId(e.target.value)}
-                >
-                  {deletableBranches.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
-              </div>
-              <p style={{ margin: 0, fontSize: 13, color: "var(--fg-mute)" }}>
-                All snapshots on this branch will be permanently deleted. This cannot be undone.
-              </p>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button className="btn ghost" onClick={() => setShowDeleteModal(false)}>Cancel</button>
-                <button
-                  className="btn danger"
-                  disabled={!deleteBranchId}
-                  onClick={() => {
-                    deleteMutation.mutate(deleteBranchId);
-                    setShowDeleteModal(false);
-                  }}
-                >
-                  Delete "{deleteBranchName}"
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DeleteBranchPrompt
+          branches={deletableBranches}
+          selectedId={deleteBranchId}
+          selectedName={deleteBranchName}
+          onSelect={setDeleteBranchId}
+          onClose={() => setShowDeleteModal(false)}
+          onDelete={() => {
+            deleteMutation.mutate(deleteBranchId);
+            setShowDeleteModal(false);
+          }}
+        />
       )}
     </>
   );

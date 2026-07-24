@@ -1,6 +1,6 @@
 # Frontend core: state, constants, layout & panes
 
-This file covers shared frontend conventions: TanStack Query/Zustand state and cache-invalidation patterns, the JS error console, shared constants modules, Sidebar layout, and the split-view pane manager. Two neighbours split off it: storage keys and the persistent page state pattern are in `docs/dev/persistence.md`, the Tailwind/CSS design system and `ConfirmDialog` in `docs/dev/styling.md`.
+This file covers shared frontend conventions: TanStack Query/Zustand state and cache-invalidation patterns, the JS error console, shared constants modules, Sidebar layout, and the split-view pane manager. Two neighbours split off it: storage keys and the persistent page state pattern are in `docs/dev/persistence.md`, the Tailwind/CSS design system, `ConfirmDialog` and the `useModalBehavior` hook every modal uses in `docs/dev/styling.md`.
 
 ### Frontend state
 

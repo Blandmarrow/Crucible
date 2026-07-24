@@ -134,6 +134,16 @@ def png_bytes(color=(10, 120, 200), size=(16, 16), **text) -> bytes:
     return buf.getvalue()
 
 
+def jpeg_bytes(color=(200, 60, 20), size=(16, 16)) -> bytes:
+    """A real JPEG. Companion to `png_bytes` for tests that need two files whose
+    stems can collide but whose extensions differ (thumbnail-stem clobber cases)."""
+    from PIL import Image as PilImage
+
+    buf = io.BytesIO()
+    PilImage.new("RGB", size, color).save(buf, "JPEG", quality=95)
+    return buf.getvalue()
+
+
 async def upload_image(env, dataset_id: str, name: str = "a.png", data: bytes | None = None) -> dict:
     """Upload one image and return its row. The endpoint returns filenames only."""
     r = await env.client.post(

@@ -14,6 +14,8 @@ Images receive human-readable names derived from their original filename via `sl
 
 **Cross-dataset copies** (`POST /images/batch/copy-dataset`): same request schema as move. Source images and files remain untouched; new `Image` records are inserted in the target dataset with all metadata copied (scores, captions, flags, generation metadata — deferred blob embeddings are not copied). Uses `copy_with_sidecar` for the image file and `shutil.copy2` for the thumbnail. Calls `refresh_stats` on the target only. **DB inserts are staged before file copies** so that a filesystem failure prevents commit and leaves no orphaned DB records (opposite ordering to move — here an incomplete copy should leave nothing rather than partial records).
 
+**Regression tests**: `backend/tests/test_rename_collisions_http.py` pins rename/bulk-rename placement over HTTP (thumbnail-stem uniquify, sidecar-follows-rename, mixed-suffix distinct stems, the two-phase swap-permutation rename — PM-001 class); `backend/tests/test_move_copy_placement_http.py` pins move/copy file + thumbnail + sidecar placement and both DB-vs-filesystem ordering invariants above under mid-batch fault injection.
+
 Frontend entry points for both: `SelectionToolbar` ("Move to Dataset" / "Copy to Dataset" buttons) and `GalleryPage` subfolder sidebar (arrow icon for move, copy icon for copy). Shared modal: `MoveToDatasetModal` (`frontend/src/components/common/MoveToDatasetModal.tsx`) — accepts an optional `mode?: "move" | "copy"` prop (default `"move"`) which changes the icon, title, and confirm button label. Callback prop is `onConfirm(targetDatasetId, subfolder)`.
 
 ### Importing captions & folder rescan

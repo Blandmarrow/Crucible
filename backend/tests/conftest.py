@@ -27,6 +27,7 @@ background job runners import at call time — is swapped for the temp one and
 restored afterwards.
 """
 import asyncio
+import io
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +115,36 @@ async def api_env(tmp_path: Path):
         settings.datasets_dir = prev_datasets_dir
         database.AsyncSessionLocal = prev_session_local
         await engine.dispose()
+
+
+def png_bytes(color=(10, 120, 200), size=(16, 16), **text) -> bytes:
+    """A real PNG, optionally carrying tEXt chunks (Author/Copyright/…).
+
+    Shared by every request-level test that needs a file to upload; kept here so
+    a new smoke test does not reach into another test module for it.
+    """
+    from PIL import Image as PilImage
+    from PIL import PngImagePlugin
+
+    info = PngImagePlugin.PngInfo()
+    for k, v in text.items():
+        info.add_text(k, v)
+    buf = io.BytesIO()
+    PilImage.new("RGB", size, color).save(buf, "PNG", pnginfo=info)
+    return buf.getvalue()
+
+
+async def upload_image(env, dataset_id: str, name: str = "a.png", data: bytes | None = None) -> dict:
+    """Upload one image and return its row. The endpoint returns filenames only."""
+    r = await env.client.post(
+        f"{API}/images/upload",
+        params={"dataset_id": dataset_id},
+        files=[("files", (name, data or png_bytes(), "image/png"))],
+    )
+    assert r.status_code == 201, r.text
+    filename = r.json()["files"][0]
+    listing = (await env.client.get(f"{API}/images/", params={"dataset_id": dataset_id})).json()
+    return next(i for i in listing if i["filename"] == filename)
 
 
 async def wait_for_job(env: ApiEnv, job_id: str, timeout: float = 20.0) -> dict:

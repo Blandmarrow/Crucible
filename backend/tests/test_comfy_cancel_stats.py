@@ -10,8 +10,7 @@ and the frontend did not even refetch, because TopBar only invalidated on "compl
 Request-level for the same reason as `test_provenance_http.py`: the bug lives in the
 job body of a router, where no service-level test reaches.
 """
-from backend.tests.conftest import API, api_env, run, wait_for_job
-from backend.tests.test_provenance_http import _png_bytes
+from backend.tests.conftest import API, api_env, png_bytes, run, wait_for_job
 
 
 class _CancellingComfyClient:
@@ -42,7 +41,7 @@ class _CancellingComfyClient:
         return {"outputs": {"9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}}}
 
     async def fetch_image(self, filename, subfolder="", type="output"):
-        return _png_bytes()
+        return png_bytes()
 
     async def interrupt(self):
         return None

@@ -1,30 +1,35 @@
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 
 import Sidebar from "./components/layout/Sidebar";
 import TopBar from "./components/layout/TopBar";
-import DatasetsPage from "./pages/DatasetsPage";
-import GalleryPage from "./pages/GalleryPage";
-import ImageDetailPage from "./pages/ImageDetailPage";
-import CaptioningPage from "./pages/CaptioningPage";
-import QualityPage from "./pages/QualityPage";
-import StatsPage from "./pages/StatsPage";
-import ExportPage from "./pages/ExportPage";
-import BulkEditPage from "./pages/BulkEditPage";
-import TagConsolidatePage from "./pages/TagConsolidatePage";
-import BooruPage from "./pages/BooruPage";
-import FileBrowserPage from "./pages/FileBrowserPage";
-import SettingsPage from "./pages/SettingsPage";
-import VersionsPage from "./pages/VersionsPage";
-import ComfyPage from "./pages/ComfyPage";
+import {
+  DatasetsPage,
+  GalleryPage,
+  ImageDetailPage,
+  CaptioningPage,
+  QualityPage,
+  StatsPage,
+  ExportPage,
+  BulkEditPage,
+  TagConsolidatePage,
+  BooruPage,
+  FileBrowserPage,
+  SettingsPage,
+  VersionsPage,
+  ComfyPage,
+  LogsPage,
+} from "./pages/lazyPages";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
-import LogsPage from "./pages/LogsPage";
 import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
+
+/** Shared fallback while a lazily-loaded page chunk is in flight. */
+const pageFallback = <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading…</div>;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,6 +72,7 @@ function MainContent() {
 
   return (
     <main style={{ flex: 1, overflowY: "auto" }}>
+      <Suspense fallback={pageFallback}>
       <Routes>
         <Route path="/" element={<Navigate to="/datasets" replace />} />
         <Route path="/datasets" element={<ErrorBoundary><DatasetsPage /></ErrorBoundary>} />
@@ -85,6 +91,7 @@ function MainContent() {
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />
       </Routes>
+      </Suspense>
     </main>
   );
 }

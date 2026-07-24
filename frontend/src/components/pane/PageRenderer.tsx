@@ -1,19 +1,22 @@
+import { Suspense } from "react";
 import type { PaneView } from "../../contexts/PaneContext";
-import DatasetsPage from "../../pages/DatasetsPage";
-import GalleryPage from "../../pages/GalleryPage";
-import ImageDetailPage from "../../pages/ImageDetailPage";
-import CaptioningPage from "../../pages/CaptioningPage";
-import QualityPage from "../../pages/QualityPage";
-import StatsPage from "../../pages/StatsPage";
-import ExportPage from "../../pages/ExportPage";
-import BulkEditPage from "../../pages/BulkEditPage";
-import TagConsolidatePage from "../../pages/TagConsolidatePage";
-import FileBrowserPage from "../../pages/FileBrowserPage";
-import BooruPage from "../../pages/BooruPage";
-import VersionsPage from "../../pages/VersionsPage";
-import ComfyPage from "../../pages/ComfyPage";
+import {
+  DatasetsPage,
+  GalleryPage,
+  ImageDetailPage,
+  CaptioningPage,
+  QualityPage,
+  StatsPage,
+  ExportPage,
+  BulkEditPage,
+  TagConsolidatePage,
+  FileBrowserPage,
+  BooruPage,
+  VersionsPage,
+  ComfyPage,
+} from "../../pages/lazyPages";
 
-export default function PageRenderer({ view }: { view: PaneView }) {
+function renderPage(view: PaneView) {
   switch (view.page) {
     case "datasets":     return <DatasetsPage />;
     case "gallery":      return <GalleryPage />;
@@ -30,4 +33,14 @@ export default function PageRenderer({ view }: { view: PaneView }) {
     case "booru":        return <BooruPage />;
     default:             return <DatasetsPage />;
   }
+}
+
+export default function PageRenderer({ view }: { view: PaneView }) {
+  // A per-pane Suspense so a pane whose page chunk is still loading shows its own
+  // fallback without blanking a sibling pane rendering a different page.
+  return (
+    <Suspense fallback={<div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading…</div>}>
+      {renderPage(view)}
+    </Suspense>
+  );
 }

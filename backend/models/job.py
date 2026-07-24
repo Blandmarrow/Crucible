@@ -21,6 +21,8 @@ class BackgroundJob(Base):
     error_msg: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Indexed: every listing orders by it, and the startup retention sweep
+    # (workers/job_queue.py::sweep_old_jobs) filters on it.
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

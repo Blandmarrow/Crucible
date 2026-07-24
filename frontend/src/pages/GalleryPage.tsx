@@ -3,6 +3,7 @@ import { ArrowRightFromLine, Copy } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../utils/apiError";
 import { createPortal } from "react-dom";
 import {
   DndContext, DragOverlay, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors,
@@ -461,8 +462,7 @@ export default function GalleryPage() {
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
     },
     onError: (err) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Move failed");
+      toast.error(apiErrorDetail(err, "Move failed"));
     },
   });
 

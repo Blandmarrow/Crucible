@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, type ComfyPlan } from "../../api/comfy";
 
 interface Props {
@@ -46,8 +47,7 @@ export default function BulkEditRowsModal({ plan, rowCount, selectedIds, onClose
       onClose();
     },
     onError: (err: unknown) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Bulk edit failed");
+      toast.error(apiErrorDetail(err, "Bulk edit failed"));
     },
   });
 

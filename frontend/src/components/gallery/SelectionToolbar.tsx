@@ -399,8 +399,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["image"] });
     },
     onError: (err: unknown) => {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? (err instanceof Error ? err.message : "Style similarity scoring failed"));
+      toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));
     },
   });
 
@@ -431,8 +430,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       }
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(msg ?? "Failed to start detection");
+      toast.error(apiErrorDetail(err, "Failed to start detection"));
     },
   });
 

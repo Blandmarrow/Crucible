@@ -1173,35 +1173,35 @@ export default function StatsPage() {
     enabled: !!datasetId,
   });
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isError: statsError, refetch: refetchStats } = useQuery({
     queryKey: ["dataset-stats", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.stats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
     refetchInterval: statsRefetchInterval,
   });
 
-  const { data: tagStats = [] } = useQuery({
+  const { data: tagStats = [], isError: tagStatsError } = useQuery({
     queryKey: ["tag-stats", datasetId, activeSubfolder],
     queryFn: () => captionsApi.tagStats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
     refetchInterval: statsRefetchInterval,
   });
 
-  const { data: cooccurrence } = useQuery({
+  const { data: cooccurrence, isError: cooccurrenceError } = useQuery({
     queryKey: ["tag-cooccurrence", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.tagCooccurrence(datasetId!, 15, activeSubfolder),
     enabled: !!datasetId,
     refetchInterval: statsRefetchInterval,
   });
 
-  const { data: sv, isLoading: svLoading } = useQuery<ScoreValues>({
+  const { data: sv, isLoading: svLoading, isError: svError } = useQuery<ScoreValues>({
     queryKey: ["score-values", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.scoreValues(datasetId!, activeSubfolder),
     enabled: !!datasetId,
     refetchInterval: statsRefetchInterval,
   });
 
-  const { data: detStats } = useQuery<DetectionStats>({
+  const { data: detStats, isError: detStatsError } = useQuery<DetectionStats>({
     queryKey: ["detection-stats", datasetId, activeSubfolder],
     queryFn: () => detectionApi.stats(datasetId!, activeSubfolder),
     enabled: !!datasetId,
@@ -1217,6 +1217,13 @@ export default function StatsPage() {
   const show = (cat: CategoryId, item: ItemId) => vis.categories[cat] && vis.items[item];
 
   if (isLoading) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading stats…</div>;
+  if (statsError && !stats)
+    return (
+      <div style={{ padding: 40, color: "var(--fg-mute)" }}>
+        <p style={{ color: "var(--bad)", marginBottom: 12 }}>Failed to load statistics.</p>
+        <button className="btn sm ghost" onClick={() => refetchStats()}>Retry</button>
+      </div>
+    );
   if (!stats) return <div style={{ padding: 40, color: "var(--fg-mute)" }}>No data</div>;
 
   // Effective-license breakdown, largest bucket first; "" = no license recorded.
@@ -1312,7 +1319,7 @@ export default function StatsPage() {
               ))}
             </select>
           )}
-          <button className="btn" disabled={svLoading} onClick={() => downloadCsv(stats, sv, detStats, datasetId!, stats?.name ?? "")}>
+          <button className="btn" disabled={svLoading || svError} onClick={() => downloadCsv(stats, sv, detStats, datasetId!, stats?.name ?? "")}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
             </svg>
@@ -1346,6 +1353,12 @@ export default function StatsPage() {
           </div>
         ))}
       </div>
+
+      {svError && (
+        <p style={{ color: "var(--bad)", fontSize: 12, marginBottom: 14 }}>
+          Score distributions unavailable — failed to load score values.
+        </p>
+      )}
 
       {/* ── Summary ─────────────────────────────────────────────────────────── */}
       <CategorySection
@@ -1633,6 +1646,12 @@ export default function StatsPage() {
             )}
           </div>
         )}
+        {tagStatsError && (
+          <p style={{ color: "var(--bad)", fontSize: 12, marginBottom: 14 }}>Failed to load tag statistics.</p>
+        )}
+        {cooccurrenceError && show("captions", "cooccurrence") && (
+          <p style={{ color: "var(--bad)", fontSize: 12, marginBottom: 14 }}>Failed to load tag co-occurrence.</p>
+        )}
         {topTags.length > 0 && (show("captions", "top_tags") || show("captions", "cooccurrence")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("captions", "top_tags") && show("captions", "cooccurrence") && hasCooccurrence ? "1fr 1.4fr" : "1fr", gap: 14, marginBottom: 14 }}>
             {show("captions", "top_tags") && (
@@ -1674,7 +1693,11 @@ export default function StatsPage() {
         isCollapsed={vis.collapsed.detections}
         onToggleCollapsed={() => toggleCollapsed("detections")}
       >
-        {!hasDetections ? (
+        {detStatsError ? (
+          <div className="panel" style={{ padding: "24px 16px", textAlign: "center", color: "var(--bad)", fontSize: 12.5, marginBottom: 14 }}>
+            Failed to load detection statistics.
+          </div>
+        ) : !hasDetections ? (
           <div className="panel" style={{ padding: "24px 16px", textAlign: "center", color: "var(--fg-mute)", fontSize: 12.5, marginBottom: 14 }}>
             No detections in this {activeSubfolder ? "subfolder" : "dataset"} yet. Run object detection or draw masks to populate this section.
           </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { Trash2 } from "lucide-react";
 import { versioningApi } from "../../api/versioning";
 import { useJobSSE } from "../../hooks/useSSE";
@@ -70,8 +71,7 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       toast.success("Branch deleted");
     },
     onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Delete failed";
-      toast.error(msg);
+      toast.error(apiErrorDetail(err, "Delete failed"));
     },
   });
 

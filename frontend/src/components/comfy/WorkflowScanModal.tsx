@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, type ComfyPlan, type WorkflowFile } from "../../api/comfy";
 import { settingsApi } from "../../api/settings";
 import DirPickerModal from "../common/DirPickerModal";
@@ -44,15 +45,13 @@ export default function WorkflowScanModal({ onLoad, onClose }: Props) {
       const res = await comfyApi.loadWorkflowFile(f.path);
       onLoad(res.workflow, f.name);
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Failed to load workflow file");
+      toast.error(apiErrorDetail(err, "Failed to load workflow file"));
     } finally {
       setLoadingPath(null);
     }
   }
 
-  const errorDetail =
-    (error as { response?: { data?: { detail?: string } } } | null)?.response?.data?.detail;
+  const errorDetail = error ? apiErrorDetail(error, "") : "";
 
   return (
     <div

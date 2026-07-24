@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { apiErrorDetail } from "../../utils/apiError";
 import { coerceCellValue, comfyApi } from "../../api/comfy";
 import type { CanvasWorkflowResponse, ComfyPlan, PinnedParam } from "../../api/comfy";
 import SyncCanvasModal from "./SyncCanvasModal";
@@ -173,8 +174,7 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
     try {
       setSyncSnapshot(await comfyApi.canvasWorkflow());
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? "Could not pull a workflow from ComfyUI");
+      toast.error(apiErrorDetail(err, "Could not pull a workflow from ComfyUI"));
     } finally {
       setSyncing(false);
     }

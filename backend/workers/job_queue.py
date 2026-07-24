@@ -1,15 +1,22 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Coroutine
 
-from sqlalchemy import update
+from sqlalchemy import delete, select, update
 
 from backend.database import AsyncSessionLocal
 from backend.models import BackgroundJob
 from backend.workers.progress import broadcaster
 
 logger = logging.getLogger(__name__)
+
+# Retention policy for finished `background_jobs` rows, applied once per startup.
+# The table only ever grows otherwise — every caption/export/detection run adds a
+# row, and nothing deletes them. The floor exists so a long-idle install still
+# keeps recent history: LogsPage asks for 200 rows and the jobs list caps at 500.
+JOB_RETENTION_DAYS = 30
+JOB_RETENTION_MIN_KEEP = 500
 
 
 async def mark_interrupted_jobs() -> int:
@@ -33,6 +40,40 @@ async def mark_interrupted_jobs() -> int:
     count = result.rowcount or 0
     if count:
         logger.info("Marked %d interrupted job(s) from a previous run as failed", count)
+    return count
+
+
+async def sweep_old_jobs() -> int:
+    """Delete finished job rows older than the retention window. Returns the count.
+
+    Only `completed`/`failed`/`cancelled` rows are eligible — anything still
+    pending/running belongs to this process (and `mark_interrupted_jobs`, which
+    runs first at startup, has already resolved leftovers from the previous one).
+    The newest ``JOB_RETENTION_MIN_KEEP`` rows overall are always kept, so an
+    install that has been idle for a year still shows its last runs.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=JOB_RETENTION_DAYS)
+    async with AsyncSessionLocal() as db:
+        keep_floor = await db.scalar(
+            select(BackgroundJob.created_at)
+            .order_by(BackgroundJob.created_at.desc())
+            .offset(JOB_RETENTION_MIN_KEEP - 1)
+            .limit(1)
+        )
+        if keep_floor is None:
+            # Fewer than MIN_KEEP rows exist — nothing can be dropped.
+            return 0
+        result = await db.execute(
+            delete(BackgroundJob).where(
+                BackgroundJob.status.in_(("completed", "failed", "cancelled")),
+                BackgroundJob.created_at < cutoff,
+                BackgroundJob.created_at < keep_floor,
+            )
+        )
+        await db.commit()
+    count = result.rowcount or 0
+    if count:
+        logger.info("Swept %d job row(s) older than %d days", count, JOB_RETENTION_DAYS)
     return count
 
 

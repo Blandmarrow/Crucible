@@ -55,6 +55,7 @@ A global **Logs** page (sidebar nav item) with two tabs:
 - Failed jobs display their error message below the row in red
 - Plain-text filter input to search by label, type, or dataset ID
 - **Refresh** button to re-fetch the list on demand
+- Finished jobs are kept for **30 days**, and the 500 most recent runs are always kept regardless of age. Older rows are cleaned up when the server starts, so job history does not grow without bound. Jobs still queued or running are never removed.
 
 **Errors tab**
 - Captures JS runtime errors (`window.onerror`), unhandled promise rejections (`unhandledrejection`), and React render errors (ErrorBoundary)

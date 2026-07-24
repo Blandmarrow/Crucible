@@ -69,7 +69,9 @@ async def set_caption(
         flags["has_ai_artifacts"] = has_ai_artifacts
         img.quality_flags = flags
 
-    _write_txt_sidecar(img.file_path, caption_text)
+    await asyncio.get_running_loop().run_in_executor(
+        None, _write_txt_sidecar, img.file_path, caption_text
+    )
     await db.commit()
     return img.dataset_id
 
@@ -131,17 +133,20 @@ async def bulk_edit_captions(
         new_texts = await loop.run_in_executor(None, _apply_regex, items)
 
         img_map = {img.id: img for img in images}
+        sidecars: list[tuple[str, str]] = []
         for img_id, new_text in new_texts.items():
             img = img_map[img_id]
             img.caption_text = new_text
             img.captioned_at = datetime.utcnow()
             _maybe_clear_ai_artifact(img, new_text)
-            _write_txt_sidecar(img.file_path, new_text)
+            sidecars.append((img.file_path, new_text))
             affected += 1
         skipped = len(images) - affected
+        await _write_sidecars_async(sidecars)
         await db.commit()
         return {"affected": affected, "skipped": skipped}
 
+    sidecars = []
     for img in images:
         old_text = img.caption_text or ""
 
@@ -174,9 +179,10 @@ async def bulk_edit_captions(
         img.caption_text = new_text
         img.captioned_at = datetime.utcnow()
         _maybe_clear_ai_artifact(img, new_text)
-        _write_txt_sidecar(img.file_path, new_text)
+        sidecars.append((img.file_path, new_text))
         affected += 1
 
+    await _write_sidecars_async(sidecars)
     await db.commit()
     return {"affected": affected, "skipped": skipped}
 
@@ -220,23 +226,27 @@ async def find_replace_captions(
         new_texts = await loop.run_in_executor(None, _apply_regex, items)
 
         img_map = {img.id: img for img in images}
+        sidecars: list[tuple[str, str]] = []
         for img_id, new_text in new_texts.items():
             img = img_map[img_id]
             img.caption_text = new_text
             _maybe_clear_ai_artifact(img, new_text)
-            _write_txt_sidecar(img.file_path, new_text)
+            sidecars.append((img.file_path, new_text))
             updated += 1
+        await _write_sidecars_async(sidecars)
         await db.commit()
         return updated
 
+    sidecars = []
     for img in images:
         old = img.caption_text
         new = old.replace(find, replace)
         if new != old:
             img.caption_text = new
             _maybe_clear_ai_artifact(img, new)
-            _write_txt_sidecar(img.file_path, new)
+            sidecars.append((img.file_path, new))
             updated += 1
+    await _write_sidecars_async(sidecars)
     await db.commit()
     return updated
 
@@ -269,3 +279,22 @@ def _write_txt_sidecar(image_path: str, text: str) -> None:
     except OSError as exc:
         logger.error("Failed to write caption sidecar %s: %s", txt_path, exc)
         raise
+
+
+def _write_txt_sidecars(pairs: list[tuple[str, str]]) -> None:
+    """Write a whole batch of caption sidecars. Runs in one executor hop."""
+    for image_path, text in pairs:
+        _write_txt_sidecar(image_path, text)
+
+
+async def _write_sidecars_async(pairs: list[tuple[str, str]]) -> None:
+    """Offload a batch of sidecar writes to a thread, keeping them before the commit.
+
+    One executor hop per *batch*: a bulk edit touches thousands of tiny files, and a
+    hop per file would cost more in scheduling than the write itself. Raising here
+    (before ``db.commit()``) preserves the fail-before-commit ordering the callers
+    had when the writes were inline.
+    """
+    if not pairs:
+        return
+    await asyncio.get_running_loop().run_in_executor(None, _write_txt_sidecars, pairs)

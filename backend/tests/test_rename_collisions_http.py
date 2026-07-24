@@ -158,11 +158,14 @@ def test_bulk_rename_swap_permutation_no_clobber(tmp_path):
             )
             assert r.status_code == 200, r.text
 
-            # Capture each id's bytes after the first rename (now pic.png/pic_001.png).
+            # Capture each id's name and bytes after the first rename
+            # (now pic.png/pic_001.png).
             orig = {}
+            name_before = {}
             rows = await _rows(env, ds["id"])
             for row in rows:
                 orig[row.id] = Path(row.file_path).read_bytes()
+                name_before[row.id] = row.filename
 
             # Reverse the sort order, then renumber honoring it: targets permute.
             rows_sorted = sorted(rows, key=lambda r: r.file_path)
@@ -185,6 +188,10 @@ def test_bulk_rename_swap_permutation_no_clobber(tmp_path):
 
             rows = await _rows(env, ds["id"])
             for row in rows:
+                # The permutation must actually happen — otherwise the second
+                # rename is a no-op and this test stops covering the two-phase
+                # temp rename entirely.
+                assert row.filename != name_before[row.id]
                 # Each blob still findable at its own row's path — nothing clobbered.
                 assert Path(row.file_path).read_bytes() == orig[row.id]
             # Both original blobs still present on disk (a permutation, not a loss).

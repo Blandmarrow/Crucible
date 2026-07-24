@@ -24,6 +24,8 @@ Images with no `caption_text` are skipped for `remove` and `find_replace`. For `
 
 **AI-artifact flag clearing.** Every caption-write site in `bulk_edit_captions` and `find_replace_captions` (both the plain and regex branches) calls `_maybe_clear_ai_artifact(img, new_text)` before writing the sidecar, so a bulk `remove`/`find_replace` that empties a caption also unmarks `has_ai_artifacts` — matching the single-image editor. See `docs/dev/captioning.md` § Captioning job execution (Flag lifecycle) for the helper. The `bulk-edit` and `find-replace` router endpoints (`routers/captions.py`) call `refresh_stats(db, dataset_id)` after the service returns so the Statistics page's AI-artifact count recomputes in the same request.
 
+**Regression tests**: `backend/tests/test_caption_bulk_http.py` drives `/find-replace` and `/bulk-edit` over HTTP — selective literal replace (DB + sidecar), regex `remove` whitespace-normalization and skip counts, invalid regex swallowed as a 200 no-op, and the 408 regex-timeout path leaving every caption and sidecar byte-identical (both code paths).
+
 Per-caption subsumption cleanup (drop `tail` when `long tail` is present) is **not** a bulk-edit operation — it lives on the Consolidate Tags page as "Quick cleanup" (`POST /tag-consolidation/dataset/{id}/subsume`); see `docs/dev/tag-consolidation.md`. `BulkEditForm` invalidates the per-image `["caption"]` / `["image"]` query families on success (in addition to `["images", datasetId]` + the four stats keys) so an open `ImageDetailPage` refreshes immediately.
 
 ## Bulk image operations (rename / delete / count / provenance)

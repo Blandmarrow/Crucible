@@ -192,6 +192,33 @@ _build_frontend() {
     echo "  Frontend built."
 }
 
+# frontend/package-lock.json is tracked, but `npm install` rewrites it on some
+# machines (npm major-version differences reorder or reformat the file even when
+# the resolved tree is identical). That leaves the working tree permanently
+# dirty, and the next `git pull` carrying a real lockfile change aborts with
+# "Your local changes would be overwritten by merge". The lock is a generated
+# artifact here - update/setup reinstall from it - so discard the local rewrite.
+# Scoped to this one path on purpose: any other locally-modified tracked file
+# must still stop the pull rather than be silently thrown away.
+# Pass "quiet" to suppress the notice.
+_reset_lockfile() {
+    command -v git &>/dev/null || return 0
+    [ -e "$ROOT/.git" ] || return 0
+
+    # --porcelain prints "XY path", X = index column, Y = worktree column, and
+    # nothing at all when the path is clean. Only an unstaged rewrite (Y = M) is
+    # npm's; a staged lockfile edit is deliberate, so leave it be - it still
+    # blocks the pull, which is the right outcome for a real change.
+    local st
+    st="$(git -C "$ROOT" status --porcelain -- frontend/package-lock.json 2>/dev/null)"
+    [ "${st:1:1}" = "M" ] || return 0
+
+    if git -C "$ROOT" checkout -- frontend/package-lock.json 2>/dev/null && [ "${1:-}" != "quiet" ]; then
+        echo "  Discarded local npm rewrite of frontend/package-lock.json."
+    fi
+    return 0
+}
+
 _migrate() {
     echo "Running database migrations..."
     cd "$ROOT/backend"
@@ -469,6 +496,7 @@ cmd_setup() {
     npm install
     npm run build
     cd "$ROOT"
+    _reset_lockfile quiet
     echo "  Frontend built."
 
     if [ ! -f "$ROOT/.env" ]; then
@@ -545,6 +573,9 @@ cmd_update() {
     if ! command -v git &>/dev/null; then
         echo "  git not found - skipping pull. Update the files manually if needed."
     else
+        # Clear npm's lockfile churn first, or the pull aborts on it.
+        _reset_lockfile
+
         # bash reads this script incrementally by byte offset rather than parsing it
         # up front, so a pull that rewrites manage.sh mid-run makes bash resume at a
         # stale offset in the new file - it can execute a fragment of a line. Hash
@@ -552,7 +583,12 @@ cmd_update() {
         # replaces the process, which removes the hazard rather than hiding it.
         local self_before self_after
         self_before="$(cksum < "$0")"
-        git -C "$ROOT" pull
+        # `set -e` would abort here on a failed pull, but silently - the user is
+        # left staring at git's own output with no idea the update stopped.
+        if ! git -C "$ROOT" pull; then
+            echo "ERROR: git pull failed. Resolve any conflicts and try again." >&2
+            exit 1
+        fi
         echo "  Done."
         self_after="$(cksum < "$0")"
         if [ "$self_before" != "$self_after" ]; then
@@ -657,6 +693,10 @@ cmd_update() {
     cd "$ROOT/frontend"
     npm install
     cd "$ROOT"
+    # node_modules is already installed; drop any lockfile churn npm just made so
+    # the tree is clean for the next pull. This is the prevention - the reset
+    # before the pull above only rescues a machine that is already dirty.
+    _reset_lockfile quiet
     echo "  Done."
 
     echo "[6/6] Building frontend..."

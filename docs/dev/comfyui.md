@@ -105,7 +105,9 @@ workflow, 400 with an "Export (API)" hint for UI-format files. Both validate pat
 
 `POST /comfy/run` (`{plan_id, row_ids?, subfolder, set_caption, label?}`): explicit `row_ids`
 run regardless of status; otherwise all `pending` rows in `sort_order`. A 409 guards against a
-second pending/running run for the same plan. Standard job pattern (nested `_run(job_id)`
+second pending/running run for the same plan — matched on `job_type` **and**
+`config["plan_id"]`, so a prompt-generation job never blocks a run (see
+`docs/dev/comfy-prompts.md`). Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
 Per row, sequentially (one at a time — ComfyUI's own queue is never stacked): mark `running` →
@@ -172,6 +174,11 @@ routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). J
 the one job type whose live branch also invalidates `["dataset", id]`, because it is the one
 whose worker refreshes the stored counters per row (see `docs/dev/frontend-core.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
+
+`frontend/e2e/comfy.spec.ts` covers the two journeys that need no ComfyUI server: the empty
+state → create a plan (which selects it and jumps to *Workflow & Pins*), and *Paste prompts…*
+→ rows. It deliberately never starts a run — CI has no ComfyUI and no torch; the run body is
+covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
   delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins*.

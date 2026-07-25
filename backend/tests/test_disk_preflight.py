@@ -102,6 +102,21 @@ def test_export_endpoint_rejects_a_full_disk_with_507(tmp_path, monkeypatch):
     run(scenario())
 
 
+def test_export_endpoint_rejects_a_relative_output_dir(tmp_path):
+    """The destination is a client-supplied path: `sanitize_abs_path` gates it (400)."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("relative-out")
+
+            for bad in ("out/here", "out\x00/here"):
+                r = await env.client.post(f"{API}/export/plain", json={
+                    "dataset_id": ds["id"], "output_dir": bad,
+                })
+                assert r.status_code == 400, r.text
+
+    run(scenario())
+
+
 def test_export_job_fails_when_the_payload_exceeds_free_space(tmp_path, monkeypatch):
     """Free space clears the request-path floor but not the images' own size."""
     async def scenario():

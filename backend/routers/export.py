@@ -13,6 +13,7 @@ from backend.utils import (
     normalize_license_filter,
     parse_license_filter_param,
     require_free_space,
+    sanitize_abs_path,
 )
 from backend.services.export_service import (
     export_aitoolkit,
@@ -164,13 +165,22 @@ def _parse_flags(s: str) -> list[str]:
     return flags
 
 
-def _check_output_space(output_dir: str) -> None:
-    """Floor-only free-space check on the destination volume, in the request path.
+def _check_output_dir(output_dir: str) -> None:
+    """Validate the client-supplied destination and floor-check its free space.
 
-    The export loop runs the real preflight — it knows the payload size. This one
-    only catches an already-full disk, but it answers 507 immediately instead of
-    handing back a job id the client has to poll to learn the export never started.
+    `sanitize_abs_path` is the standard gate on any path a client hands a router
+    (400 on a null byte or a relative path) — an export writes wherever it is told,
+    so a relative `output_dir` would land somewhere relative to the server's cwd
+    rather than anywhere the user meant.
+
+    The export loop runs the real free-space preflight — it knows the payload size.
+    This one only catches an already-full disk, but it answers 507 immediately
+    instead of handing back a job id the client has to poll to learn the export
+    never started. Both checks belong in the request path: the handlers enqueue a
+    job and return, so an HTTPException raised in the coroutine would fail the job
+    instead of reaching the client.
     """
+    sanitize_abs_path(output_dir)
     try:
         require_free_space(output_dir)
     except InsufficientDiskSpaceError as e:
@@ -181,7 +191,7 @@ def _check_output_space(output_dir: str) -> None:
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
-    _check_output_space(body.output_dir)
+    _check_output_dir(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
@@ -243,7 +253,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
-    _check_output_space(body.output_dir)
+    _check_output_dir(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
@@ -304,7 +314,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
-    _check_output_space(body.output_dir)
+    _check_output_dir(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)

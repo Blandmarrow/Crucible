@@ -54,7 +54,8 @@ Request-level tests drive `backend.main.app` over httpx (see
 `backend/tests/conftest.py`); everything else is service-level. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
-scoped to `E9`+`F`). To launch the app itself, use the `run-app` skill.
+scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
+after a model/migration change (CI job `migration-drift`). To launch the app itself, use the `run-app` skill.
 
 Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
 
@@ -144,7 +145,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/frontend-core.md` | TanStack Query/Zustand conventions, SSE hooks, job-completion cache invalidation, `errorConsoleStore`/`ErrorConsole`, shared constants modules, Sidebar/Layout, split-view pane manager | Working on global frontend state, a new job-triggering UI, panes, or the JS error console | ~3130 |
 | `docs/dev/persistence.md` | `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes, the workflow/filters persistent page state pattern | Adding a storage key or persisting page configuration | ~1380 |
 | `docs/dev/styling.md` | CSS variable tokens, `@layer components` classes, `CrucibleMark` and its export/drift checks, `ConfirmDialog`, `useModalBehavior` (modal keyboard/focus/ARIA), hist-bar CSS | Working on Tailwind/CSS, the brand mark, or any modal dialog | ~1460 |
-| `docs/dev/backend-infrastructure.md` | Production frontend serving, shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), SSE progress broadcaster, job cancellation, stale-job cleanup, job retention sweep | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation | ~2120 |
+| `docs/dev/backend-infrastructure.md` | Production frontend serving, shutdown/restart + restart loop, database (subfolders, indexes, deferred columns), migration drift check, SSE progress broadcaster, job cancellation, stale-job cleanup, job retention sweep | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation | ~2300 |
 | `docs/dev/environment-setup.md` | Venv ML packages, prereq auto-install, Python version discovery, PyTorch GPU auto-detection (NVIDIA/ROCm/MPS), SAM2/SAM3 install, update self-handoff, lockfile reset, encoding constraint | Working on `manage.ps1`/`manage.sh`, torch wheels, or the setup/update flow | ~1760 |
 | `docs/dev/comfyui.md` | Plans (workflow template + pinned params, `output_is_synthetic`), prompt rows, prompt library, the `comfy_generate` job, ComfyClient/patch_workflow, `ComfyPage` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration | ~2750 |
 | `docs/dev/comfy-prompts.md` | One-shot generate endpoint, the durable `comfy_prompts` job (per-batch commits, cancel/PM-004 discipline), `parse_prompts` filtering, `GeneratePromptsModal` re-attach | Generating prompts with an LLM or working on `prompt_generator.py` | ~1830 |

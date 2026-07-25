@@ -1,4 +1,6 @@
 import asyncio
+import sys
+
 import psutil
 from fastapi import APIRouter
 
@@ -73,7 +75,26 @@ async def _mps_stats() -> dict | None:
     Apple Silicon unified memory stats via torch.mps.
     Unified memory has no fixed GPU partition, so total_mb is driver-allocated
     (best approximation). utilization_pct is omitted.
+
+    Two guards, both about the `import torch` below — a cold import costs ~14 s:
+
+    - MPS only exists on macOS, so every other platform must return before the
+      import. This probe is last in `gpu_stats`'s chain, i.e. it runs on exactly
+      the machines with no nvidia-smi and no rocm-smi — where the import used to
+      run inline and freeze the event loop (not just this request: the *whole
+      app*, for the duration) on the first sidebar poll after every start.
+    - On macOS the import still has to happen once, so it goes to an executor.
     """
+    if sys.platform != "darwin":
+        return None
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, _mps_stats_sync)
+    except Exception:
+        return None
+
+
+def _mps_stats_sync() -> dict | None:
+    """The blocking half of `_mps_stats`. Executor-only — never call inline."""
     try:
         import torch
         if not (

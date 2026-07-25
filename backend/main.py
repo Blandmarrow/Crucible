@@ -1,3 +1,4 @@
+import asyncio
 import os
 import signal
 import threading
@@ -49,6 +50,9 @@ from backend.routers import booru, captions, captioning, comfy, datasets, detect
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
+_background_tasks: set[asyncio.Task] = set()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
@@ -57,8 +61,25 @@ async def lifespan(app: FastAPI):
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
     await job_queue.start()
+    # Integrity check + rotating backup: seconds of disk I/O on a large database, and
+    # nothing requested by the user waits on it. Fire and forget, after the app is
+    # already serving. The reference keeps the task from being garbage-collected
+    # mid-run (asyncio only holds a weak one).
+    _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
     await job_queue.stop()
+
+
+async def _startup_db_maintenance() -> None:
+    """Back up the database off the startup path. Never fatal to the app."""
+    from backend.services.db_maintenance import run_startup_maintenance_sync
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, run_startup_maintenance_sync)
+    except Exception:
+        logging.getLogger(__name__).exception("Startup database maintenance failed")
+    finally:
+        _background_tasks.discard(asyncio.current_task())
 
 
 async def _sweep_old_jobs() -> None:

@@ -19,7 +19,7 @@ from backend.licenses import (
 )
 from backend.models import Dataset, Image
 from backend.models.detection import Detection
-from backend.utils import chunked, safe_external_url
+from backend.utils import chunked, require_free_space, safe_external_url
 from backend.workers.job_queue import job_queue
 
 # Only the columns the export loop actually reads — avoids loading multi-MB blob fields
@@ -38,6 +38,8 @@ _EXPORT_COLS = (
     Image.source_url,
     Image.license,
     Image.attribution,
+    # Only read by the disk-space preflight below.
+    Image.file_size_bytes,
 )
 
 
@@ -583,6 +585,15 @@ async def _run_export_loop(
     images = result.all()
 
     export_masks = mask_dir is not None and not captions_only
+
+    # Disk-space preflight, before a single file is written. Filters are not applied
+    # yet, so this over-estimates (never under-estimates) the payload — the point is
+    # to fail the job with a readable message instead of dying mid-export on ENOSPC
+    # with a half-written dataset on disk. A captions-only run writes text sidecars
+    # only, so its estimate is 0 and just the floor applies.
+    needed = 0 if captions_only else sum(img.file_size_bytes or 0 for img in images)
+    require_free_space(dest_dir, needed)
+
     detections_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
     exclude_by_image: dict[str, list[tuple[str | None, list[float] | None]]] = {}
     if export_masks:

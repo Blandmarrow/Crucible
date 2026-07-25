@@ -24,6 +24,12 @@ on:
       - "scripts/check_mark.py"
       - ".github/workflows/check-mark.yml"
 
+# Every job here only reads the repo and runs tests; nothing writes back to
+# GitHub. Pin the token to the minimum so a compromised action or dependency
+# cannot use it to push, comment, or publish.
+permissions:
+  contents: read
+
 jobs:
   check-mark:
     runs-on: ubuntu-latest

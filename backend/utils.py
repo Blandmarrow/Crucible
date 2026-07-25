@@ -242,6 +242,59 @@ def unique_filename_with_thumb(
     return candidate
 
 
+class InsufficientDiskSpaceError(RuntimeError):
+    """Raised by `require_free_space` — carries a message meant for the user."""
+
+
+# A run that writes files needs room for more than the bytes it copies: resized
+# JPEGs, mask PNGs, caption sidecars, manifests and SQLite's own WAL all land on
+# the same volume. The multiplier covers those; the floor covers the case where
+# the payload is tiny but the disk is nearly full, which breaks the whole app and
+# not just this run.
+DISK_HEADROOM = 1.2
+DISK_FLOOR_BYTES = 256 * 2 ** 20
+
+
+def format_bytes(n: float) -> str:
+    """Human byte size for user-facing messages ('1.4 GB'). Not for filenames or IDs."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit in ("B", "KB") else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def require_free_space(
+    target_dir: Path | str,
+    needed_bytes: int = 0,
+    headroom: float = DISK_HEADROOM,
+    floor_bytes: int = DISK_FLOOR_BYTES,
+) -> None:
+    """Raise InsufficientDiskSpaceError when `target_dir`'s volume is too full.
+
+    The requirement is `max(needed_bytes * headroom, floor_bytes)`, so a call with
+    no size estimate (`needed_bytes=0`) still enforces the floor — that is the cheap
+    request-path form. `target_dir` need not exist yet: the check walks up to the
+    nearest existing ancestor, which is on the same volume. An unreadable path is
+    never fatal on its own — the operation is allowed to proceed and fail for real.
+    """
+    probe = Path(target_dir).resolve()
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError:
+        return
+    required = max(int(needed_bytes * headroom), floor_bytes)
+    if free >= required:
+        return
+    detail = f" for {format_bytes(needed_bytes)} of files" if needed_bytes else ""
+    raise InsufficientDiskSpaceError(
+        f"Not enough free disk space on {probe}: {format_bytes(free)} available, "
+        f"about {format_bytes(required)} needed{detail}. Free up space and try again."
+    )
+
+
 def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     """Rename a file and its .txt sidecar (if it exists) atomically."""
     old_path.rename(new_path)

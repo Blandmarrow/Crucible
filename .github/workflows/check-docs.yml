@@ -18,6 +18,12 @@ on:
       - "docs/dev/**"
       - "scripts/check_docs.py"
 
+# Every job here only reads the repo and runs tests; nothing writes back to
+# GitHub. Pin the token to the minimum so a compromised action or dependency
+# cannot use it to push, comment, or publish.
+permissions:
+  contents: read
+
 jobs:
   check-docs:
     runs-on: ubuntu-latest

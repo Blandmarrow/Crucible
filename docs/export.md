@@ -27,6 +27,8 @@ Three fully implemented export formats, all with identical filter and processing
 - **Live export preview** — shows exact will-export and excluded counts (broken down by filter reason) before you run, and warns when any images have no license recorded, or when free-text licenses are slipping past the no-derivatives filter
 - **Loss masks** — see below
 
+Before writing anything, an export checks that the destination drive has room for the images it is about to copy (plus a margin for sidecars, masks and manifests). If it does not, the export is refused up front — with the free and required sizes in the message — rather than filling the disk and leaving a half-written dataset behind.
+
 ## Provenance manifests
 
 Every export writes two files at the top level of the output directory, in all

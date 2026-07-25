@@ -33,6 +33,8 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 - **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
 - **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
 
+A folder import copies every file into the dataset, so it checks first that the drive has room for them. If it does not, the import fails immediately — with the free and required sizes in the job's error — instead of stopping partway through with some images copied and some not.
+
 ## Organising into subfolders
 
 **Drag an image card onto a subfolder row** in the left sidebar to move it there — this works in any sort mode. Drop onto **(root)** to move an image back out of its subfolder; that row is always available, even when it's empty. The row highlights as you drag over it, and missing it — dropping on **All** or on empty sidebar space — does nothing.

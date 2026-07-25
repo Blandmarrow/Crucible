@@ -31,6 +31,17 @@ Two buttons sit at the right of the top bar. Both ask for confirmation first, an
 
 Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](#logs) history.
 
+## Database backups
+
+Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). Each time the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
+
+Two things worth knowing:
+
+- A database that fails the integrity check is **not** backed up. That is deliberate — copying a damaged file in would push the newest good backup one slot closer to deletion. The failure is written to the server's console output.
+- Backups are full copies on the same disk. They protect against a bad edit or a corrupted database, not against losing the drive. If a dataset matters, copy a backup somewhere else.
+
+To restore one, stop the server, rename the backup over `dataset_manager.db`, and start again. Image files are not part of the backup — for those, use [dataset versioning](versioning.md).
+
 ## Hardware meters
 
 The bottom of the sidebar shows live **CPU**, **RAM**, and **GPU** meters, refreshed every few seconds. The GPU row shows VRAM use and is labelled with your card's name — useful for checking headroom before loading a large captioning model, or confirming VRAM was actually released after a model unload. Rows show "No data" on machines where a reading is unavailable (for example, no supported GPU).

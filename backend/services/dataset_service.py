@@ -22,7 +22,7 @@ from backend.services.image_service import (
     get_image_info,
     read_provenance_sidecar,
 )
-from backend.utils import copy_with_sidecar, read_caption_sidecar, thumbnail_path_for
+from backend.utils import copy_with_sidecar, read_caption_sidecar, require_free_space, thumbnail_path_for
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +407,14 @@ async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
     return moved
 
 
+def _file_size(path: Path) -> int:
+    """st_size, or 0 for a file that vanished between the scan and this stat."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 async def import_images_from_folder(
     db: AsyncSession,
     dataset: Dataset,
@@ -429,6 +437,11 @@ async def import_images_from_folder(
     else:
         image_files = [f for f in src.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
     total = len(image_files)
+
+    # Every one of these files is copied into the dataset, plus a thumbnail each.
+    # Check before the first copy so a too-small disk fails the job with a readable
+    # message rather than leaving a partially imported folder behind.
+    require_free_space(dataset.folder_path, sum(_file_size(f) for f in image_files))
     added = 0
     failed_count = 0
     failed: list[dict] = []

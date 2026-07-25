@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import BackgroundJob
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_license_filter, parse_license_filter_param
+from backend.utils import (
+    ALLOWED_FLAG_KEYS,
+    InsufficientDiskSpaceError,
+    normalize_license_filter,
+    parse_license_filter_param,
+    require_free_space,
+)
 from backend.services.export_service import (
     export_aitoolkit,
     export_kohya,
@@ -158,10 +164,24 @@ def _parse_flags(s: str) -> list[str]:
     return flags
 
 
+def _check_output_space(output_dir: str) -> None:
+    """Floor-only free-space check on the destination volume, in the request path.
+
+    The export loop runs the real preflight — it knows the payload size. This one
+    only catches an already-full disk, but it answers 507 immediately instead of
+    handing back a job id the client has to poll to learn the export never started.
+    """
+    try:
+        require_free_space(output_dir)
+    except InsufficientDiskSpaceError as e:
+        raise HTTPException(status_code=507, detail=str(e))
+
+
 @router.post("/kohya")
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    _check_output_space(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
@@ -223,6 +243,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    _check_output_space(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
@@ -283,6 +304,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
     from pathlib import Path as _Path
     exclude_flags = _parse_flags(body.exclude_flags)
+    _check_output_space(body.output_dir)
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)

@@ -1,4 +1,4 @@
-import { NavLink, useMatch } from "react-router-dom";
+import { NavLink, useMatch } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { datasetsApi } from "../../api/datasets";
 import { versioningApi } from "../../api/versioning";

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, ChevronDown, ChevronRight, X } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ImageListItem, SubfolderInfo } from "../types";

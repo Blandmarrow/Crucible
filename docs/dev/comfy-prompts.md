@@ -50,7 +50,10 @@ the provider `api_key` must never reach it. `plan_id` is injected manually (path
 `target_count` is **absolute** ("until the plan holds N prompts"), making a resume after a stop
 idempotent. Pre-flight, each a real HTTP error rather than a job that dies minutes later: plan
 404, prompt pin 400 (otherwise a full run can burn and then insert nothing), provider 404 /
-model 400, per-plan 409, and `existing >= target_count` → 400.
+model 400, per-plan 409, and `existing >= target_count` → 400. The 409 is scoped by **both**
+`job_type` and `config["plan_id"]`: a live *run* on the same plan, or a prompt job on another
+plan, must not block it (`backend/tests/test_conflict_paths_http.py` pins both directions —
+each 409 is paired with a case that has to fall through to the next 400).
 
 **"Existing" means *effective* prompts, not rows with a stored value.** The count comes from
 `_plan_prompt_texts` → `effective_prompt` (row value → pin run default → workflow template), so

@@ -35,10 +35,11 @@ Jobs that were running when the server stopped are not resumed — they are mark
 
 ## Database backups
 
-Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). Each time the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
+Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). When the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
 
-Two things worth knowing:
+Three things worth knowing:
 
+- A start within **15 minutes** of the newest backup does nothing — no check, no copy. Only five copies are kept, so a run of quick restarts would otherwise discard the whole backup history in a few minutes, which is the opposite of what it is for. Restarting to force a fresh copy therefore does not work; a backup is a periodic safety net, not a snapshot button. For a point-in-time copy you control, use [dataset versioning](versioning.md).
 - A database that fails the integrity check is **not** backed up. That is deliberate — copying a damaged file in would push the newest good backup one slot closer to deletion. The failure is written to the server's console output.
 - Backups are full copies on the same disk. They protect against a bad edit or a corrupted database, not against losing the drive. If a dataset matters, copy a backup somewhere else.
 

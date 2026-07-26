@@ -22,6 +22,15 @@ The centre of the top bar shows what is happening:
 
 Jobs run one at a time, in submission order, so queueing several runs back to back is the normal way to work.
 
+## Starting up
+
+`manage start` — `.\manage.ps1 start`, `./manage.sh start`, or **Start** in `Crucible.bat` — opens your browser on `http://localhost:8000` immediately, before the server is ready. Until it is, that page is a placeholder: the Crucible mark animating over "Starting Crucible…". It swaps itself for the app the moment the server answers, so there is nothing to click and no need to reload. A first launch, or the first one after an update, also rebuilds the frontend and loads PyTorch, so a couple of minutes is normal; past a minute the page says as much and offers a manual **Reload now** button.
+
+Only `start` does this — `dev` leaves your browser alone. Two other things worth knowing:
+
+- To launch without a browser (a headless machine, or you simply have the tab open already), set `CRUCIBLE_NO_BROWSER=1`: `CRUCIBLE_NO_BROWSER=1 ./manage.sh start`, or `$env:CRUCIBLE_NO_BROWSER=1` before `.\manage.ps1 start` on Windows. Nothing opens and no placeholder runs; startup is otherwise identical.
+- If something else already holds port 8000 — usually a copy of Crucible you forgot to stop — the placeholder steps aside silently and no browser opens, so what you see is the server's own "address already in use" error rather than a page from the other instance.
+
 ## Restarting & shutting down
 
 Two buttons sit at the right of the top bar. Both ask for confirmation first, and both are disabled while the other is in progress.

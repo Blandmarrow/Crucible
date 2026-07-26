@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<!-- Startup splash, served on :8000 by scripts/splash_server.py while `manage
+     start` migrates, rebuilds and imports the backend. The two placeholders
+     below are filled in from docs/images/Crucible Logo Animated.html at serve
+     time — the mark is deliberately not transcribed a second time here, so it
+     cannot drift from the design source (scripts/check_mark.py asserts the
+     substitution still lands). Do not name a placeholder anywhere else in this
+     file: the substitution is a plain replace-all and would fill that in too.
+     Colours are the index.css tokens, written out because this page loads no
+     app CSS. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starting Crucible…</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root {
+    --bg: #07090b; --surface-1: #0d1013; --line: #1d252b;
+    --fg: #e6edec; --fg-mute: #9aa6a3; --fg-dim: #5e6a68;
+    --accent: #10b981;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 28px;
+    font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  }
+  /* Overrides the reference markup's own width/height attributes. */
+  svg { width: 190px; height: 190px; }
+  /* The dropped cells scale about their own centre — the reference markup
+     carries this class on every group it animates. */
+  .anim-c { transform-box: fill-box; transform-origin: center; }
+  .copy { text-align: center; max-width: 380px; padding: 0 20px; }
+  .title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .sub {
+    margin-top: 6px; font-size: 12px; color: var(--fg-dim);
+    font-family: "Geist Mono", ui-monospace, monospace;
+  }
+  .slow { margin-top: 20px; display: none; }
+  .slow.on { display: block; }
+  .slow p { margin: 0; font-size: 12.5px; color: var(--fg-mute); line-height: 1.5; }
+  button {
+    margin-top: 12px; padding: 5px 11px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--surface-1);
+    color: var(--fg); font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { svg * { animation: none !important; } }
+
+{{KEYFRAMES}}
+</style>
+</head>
+<body>
+  {{MARK}}
+  <div class="copy">
+    <div class="title">Starting Crucible…</div>
+    <div class="sub">waiting for the server to come up</div>
+    <div class="slow" id="slow">
+      <p>
+        This is taking longer than usual. A first launch — or the first one after
+        an update — also rebuilds the frontend and loads the ML stack, which can
+        take a few minutes. Still watching: this page opens the app by itself the
+        moment the server answers. If it never does, check the terminal.
+      </p>
+      <button type="button" id="reload">Reload now</button>
+    </div>
+  </div>
+<script>
+  // This page is served by the placeholder server, which answers /api/v1/health
+  // with 503. Only the real backend replies 200 — so the first ok response is
+  // proof the handover happened and the app is there to load.
+  var SLOW_MS = 60000;
+  var slowAt = Date.now() + SLOW_MS;
+
+  document.getElementById("reload").onclick = function () { location.reload(); };
+
+  function again() {
+    if (Date.now() > slowAt) document.getElementById("slow").className = "slow on";
+    setTimeout(poll, 700);
+  }
+
+  function poll() {
+    fetch("/api/v1/health", { cache: "no-store" }).then(function (res) {
+      if (res.ok) location.replace("/");
+      else again();
+    }).catch(again);
+  }
+
+  poll();
+</script>
+</body>
+</html>

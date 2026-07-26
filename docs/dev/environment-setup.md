@@ -1,6 +1,6 @@
 # Environment setup: venv, prerequisites & GPU wheels
 
-This file covers everything `manage.ps1` / `manage.sh` do to build a working environment: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, and the `manage.ps1` encoding constraint. Server lifecycle, the database and SSE live in `docs/dev/backend-infrastructure.md`; the models these packages serve are in `docs/dev/ml-models.md` and `docs/dev/detection.md`.
+This file covers everything `manage.ps1` / `manage.sh` do to build a working environment and launch it: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, the startup splash, and the `manage.ps1` encoding constraint. Server lifecycle, the database and SSE live in `docs/dev/backend-infrastructure.md`; the models these packages serve are in `docs/dev/ml-models.md` and `docs/dev/detection.md`.
 
 ### Venv ML packages
 
@@ -68,6 +68,20 @@ Overall, `update` is **6 steps** and `setup` is **7 steps** on both platforms.
 Two deliberate limits. It is scoped to that single path — any other locally-modified tracked file must still abort the pull rather than be silently discarded. And it acts only on an *unstaged* rewrite: `git status --porcelain` prints `XY path`, and the helper requires `Y == "M"`, so a staged lockfile edit is left alone and still blocks the pull, which is correct for a deliberate change. `git checkout --` restores from the index rather than `HEAD` for the same reason. Both helpers always return success (PowerShell resets `$LASTEXITCODE`, bash `return 0`) so a failed restore never aborts the caller under `$ErrorActionPreference = "Stop"` or `set -e`.
 
 The pre-pull reset necessarily runs under the **old** script — the one already on disk. A machine whose lockfile is dirty when it pulls *this* fix in still needs one manual `git checkout -- frontend/package-lock.json` first; the automation only takes effect from the following update onward.
+
+### Startup splash (`start` only)
+
+`start` is silent for a long stretch before uvicorn answers: migrations, an occasional frontend rebuild, then the `backend.main` import chain. `scripts/splash_server.py` fills it — a stdlib-only `ThreadingHTTPServer` that binds `0.0.0.0:8000` **before** `_migrate`, so the launcher can open a browser straight away on the app's real URL. It binds the **same address uvicorn does**, on purpose: a splash on `127.0.0.1` and an app on `0.0.0.0` look like two different listeners to anything forwarding the port (Docker publishing, a dev container, WSL), and the handover can then strand a browser that reached the splash through that forward. It answers `/api/v1/health` with **503** and every other path with `scripts/splash.html`; the page polls that endpoint and does `location.replace("/")` on the first 200. Only the real backend answers 200, so that response *is* the handover signal — and the poll is same-origin, which is why the splash holds :8000 rather than being opened as a `file://` page (`main.py`'s CORS list is a fixed allowlist, and browsers are tightening cross-origin requests to localhost). Ordering is the invariant: `_stop_splash` / `Stop-Splash` must complete before uvicorn binds. `CRUCIBLE_NO_BROWSER=1` skips the splash and the browser both.
+
+Three things it must not do, each of which cost a real failure mode to get right:
+
+- **Import anything from `backend/`** — that drags in the very import chain the splash exists to cover. Stdlib only, and it renders its page once at startup.
+- **Outlive its launcher.** A hard kill (PowerShell 5.1 skips `finally` on Ctrl+C) would leave it holding :8000 and break the next launch, so it takes `--parent-pid` and polls the parent every 2s (POSIX `os.kill(pid, 0)`; Windows `OpenProcess` + `WaitForSingleObject` via `ctypes`), with a `--timeout` (default 1800s) as a second backstop. bash traps `EXIT` only — the splash is a background child in the same process group, so Ctrl+C already reaches it, and trapping `INT` would change what Ctrl+C does to the uvicorn restart loop.
+- **Serve anything cacheable.** Every response carries `Cache-Control: no-store`; without it the browser can hold the splash against the app's own URLs and serve it back long after the handover.
+
+If the port is already taken the server exits **3**, its output is redirected to `/dev/null`, and the launcher drops the splash and opens no browser — uvicorn's own "address already in use" is the error the user should see. The restart loop never re-runs the splash: an in-app restart is covered by the TopBar overlay (`docs/dev/backend-infrastructure.md`).
+
+The page never transcribes the mark. `build_page()` substitutes the `@keyframes` blocks and `<svg>` of `docs/images/Crucible Logo Animated.html` into two placeholders in `splash.html` — a plain replace-all, so a placeholder name must not appear anywhere else in the template. `scripts/check_mark.py` renders the page and diffs the result against the export (see `docs/dev/styling.md`).
 
 ### `manage.ps1` encoding constraint
 

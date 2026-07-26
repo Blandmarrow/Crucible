@@ -8,6 +8,8 @@ a change to one silently diverges from the rest. This diffs them:
   - docs/images/Crucible Logo Animated.html animated reference
   - frontend/src/components/common/CrucibleMark.tsx   what the app renders
   - frontend/public/favicon.svg + PNGs     copies of the docs/images/ exports
+  - scripts/splash.html                    startup splash — embeds the animated
+                                           reference rather than transcribing it
 
 Dependency-free (stdlib only). Run from anywhere:
 
@@ -25,6 +27,10 @@ Checks (any failure sets a non-zero exit code):
   7. if frontend/dist has been built, its CSS still contains the mark's
      animation rules (Tailwind purges @layer components rules whose selector
      it cannot find verbatim in the source — see docs/dev/styling.md)
+  8. the startup splash still comes out with the mark in it: splash_server
+     builds its page by substituting the animated reference into splash.html,
+     which fails silently (an empty page slot) if either file is renamed or
+     restructured
 """
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for splash_server
 MARK_SVG = ROOT / "docs/images/crucible-mark.svg"
 ICON_SVG = ROOT / "docs/images/crucible-icon.svg"
 ANIM_HTML = ROOT / "docs/images/Crucible Logo Animated.html"
@@ -156,14 +163,14 @@ def check_built_css() -> bool | None:
     return True
 
 
-def diff(label: str, ref: set, got: set) -> bool:
+def diff(label: str, ref: set, got: set, got_label: str = "component") -> bool:
     if ref == got:
         return True
     fail(f"{label} differs from the export")
     if ref - got:
-        print(f"      only in export:    {sorted(ref - got)}")
+        print(f"      only in export: {sorted(ref - got)}")
     if got - ref:
-        print(f"      only in component: {sorted(got - ref)}")
+        print(f"      only in {got_label}: {sorted(got - ref)}")
     return False
 
 
@@ -184,6 +191,41 @@ def check_copies() -> bool:
             fail(f"{pub_rel} differs from {src_rel}")
             print("      Re-copy the export into frontend/public/ (Vite serves it verbatim).")
             ok = False
+    return ok
+
+
+def check_splash(ref_all: set, ref_kept: set, ref_bright: set, ref_anim: dict) -> bool:
+    """The rendered startup splash must carry the reference mark verbatim.
+
+    splash_server substitutes the animated export into scripts/splash.html when
+    it serves the page, so there is no transcription here to drift — but the
+    substitution can break quietly (a renamed export, a reworked <style> block,
+    a placeholder edited out of the template) and would then ship a splash with
+    no mark on it at all.
+    """
+    try:
+        import splash_server
+    except Exception as exc:  # noqa: BLE001 - any import failure is a failure
+        fail(f"could not import scripts/splash_server.py ({exc})")
+        return False
+
+    page = splash_server.build_page()
+    if "<svg" not in page:
+        fail("the startup splash renders without the mark")
+        print("      splash_server.build_page() found nothing to substitute —")
+        print("      check docs/images/ and scripts/splash.html.")
+        return False
+
+    got_all, got_kept, got_bright = parse_reference_svg(page)
+    got_anim = parse_reference_anim(page)
+
+    ok = True
+    ok &= diff("splash grid cells", ref_all, got_all, "splash")
+    ok &= diff("splash C shape", ref_kept, got_kept, "splash")
+    ok &= diff("splash bright cells", ref_bright, got_bright, "splash")
+    if ref_anim != got_anim:
+        fail("splash animation role/variant differs from the export")
+        ok = False
     return ok
 
 
@@ -216,6 +258,7 @@ def main() -> int:
                 print(f"      {k}: export={r[0]}-{r[1]} component={g[0]}-{g[1]}")
 
     ok &= check_copies()
+    ok &= check_splash(ref_all, ref_kept, ref_bright, ref_anim)
 
     built = check_built_css()
     ok &= built is not False
@@ -231,7 +274,8 @@ def main() -> int:
             )
             print(f"    {row}")
         print(f"\n  {len(ref_all)} cells   @ = C   # = bright   . = dropped grid")
-        print("\n  built CSS: " + (
+        print("\n  startup splash: mark embedded")
+        print("  built CSS: " + (
             "animation rules present" if built else "not built — skipped"))
         print("\nOK")
         return 0

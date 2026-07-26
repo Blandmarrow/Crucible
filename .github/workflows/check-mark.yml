@@ -1,9 +1,10 @@
 name: check-mark
 
 # Runs the brand-mark drift check (scripts/check_mark.py). Fails the build when
-# the CrucibleMark component, the docs/images/ exports, and the frontend/public/
-# favicons fall out of sync. Stdlib-only, no deps. frontend/dist is gitignored,
-# so the built-CSS check is skipped in CI — the copy/shape/anim checks still run.
+# the CrucibleMark component, the docs/images/ exports, the frontend/public/
+# favicons and the startup splash fall out of sync. Stdlib-only, no deps.
+# frontend/dist is gitignored, so the built-CSS check is skipped in CI — the
+# copy/shape/anim/splash checks still run.
 
 on:
   pull_request:
@@ -13,6 +14,8 @@ on:
       - "docs/images/**"
       - "frontend/public/**"
       - "scripts/check_mark.py"
+      - "scripts/splash.html"
+      - "scripts/splash_server.py"
       - ".github/workflows/check-mark.yml"
   push:
     branches: [main]
@@ -22,6 +25,8 @@ on:
       - "docs/images/**"
       - "frontend/public/**"
       - "scripts/check_mark.py"
+      - "scripts/splash.html"
+      - "scripts/splash_server.py"
       - ".github/workflows/check-mark.yml"
 
 # Every job here only reads the repo and runs tests; nothing writes back to

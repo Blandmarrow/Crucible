@@ -381,6 +381,58 @@ function Run-Migrations {
     Write-Host "  Migrations applied." -ForegroundColor Green
 }
 
+# --- Startup splash --------------------------------------------------------
+# `start` is silent for a long stretch before uvicorn answers: migrations, an
+# occasional frontend rebuild, then the torch/transformers import chain. A
+# stdlib-only placeholder server holds :8000 for that stretch and serves the
+# animated mark, so the browser can be opened straight away on the real URL; it
+# is stopped before uvicorn binds, and the page swaps itself for the app on the
+# first healthy response. See scripts\splash_server.py.
+# Set CRUCIBLE_NO_BROWSER=1 to skip the whole thing.
+$script:SplashProcess = $null
+
+function Start-Splash {
+    if ($env:CRUCIBLE_NO_BROWSER -eq "1") { return }
+    $splash = "$ROOT\scripts\splash_server.py"
+    if (-not (Test-Path $splash)) { return }
+
+    $py = "$ROOT\venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { $py = "python" }
+
+    try {
+        $script:SplashProcess = Start-Process -FilePath $py `
+            -ArgumentList @("`"$splash`"", "--parent-pid", $PID) `
+            -WindowStyle Hidden -PassThru
+    } catch {
+        $script:SplashProcess = $null
+        return
+    }
+
+    # Give it a moment to bind. If it is already gone the port was taken - stay
+    # quiet and leave the browser closed: uvicorn reports that conflict itself
+    # further down, and opening a browser onto someone else's server would only
+    # muddy it.
+    Start-Sleep -Milliseconds 500
+    if ($script:SplashProcess.HasExited) {
+        $script:SplashProcess = $null
+        return
+    }
+
+    try { Start-Process "http://localhost:8000" | Out-Null } catch {
+        Write-Host "  (could not open a browser - open http://localhost:8000 yourself)" -ForegroundColor DarkGray
+    }
+}
+
+function Stop-Splash {
+    if (-not $script:SplashProcess) { return }
+    try {
+        if (-not $script:SplashProcess.HasExited) {
+            Stop-Process -Id $script:SplashProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+    $script:SplashProcess = $null
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -521,20 +573,29 @@ function Cmd-Start {
     Write-Host ""
     Write-Host "=== Crucible ===" -ForegroundColor Cyan
 
-    Run-Migrations
+    Start-Splash
+    try {
+        Run-Migrations
 
-    # Rebuild frontend only if source files are newer than the last build
-    $distIndex = "$ROOT\frontend\dist\index.html"
-    $needsBuild = -not (Test-Path $distIndex)
+        # Rebuild frontend only if source files are newer than the last build
+        $distIndex = "$ROOT\frontend\dist\index.html"
+        $needsBuild = -not (Test-Path $distIndex)
 
-    if (-not $needsBuild) {
-        $distTime = (Get-Item $distIndex).LastWriteTime
-        $changed = Get-ChildItem "$ROOT\frontend" -Recurse -File |
-            Where-Object { $_.FullName -notmatch '\\(node_modules|dist)\\' -and $_.LastWriteTime -gt $distTime }
-        if ($changed) { $needsBuild = $true }
+        if (-not $needsBuild) {
+            $distTime = (Get-Item $distIndex).LastWriteTime
+            $changed = Get-ChildItem "$ROOT\frontend" -Recurse -File |
+                Where-Object { $_.FullName -notmatch '\\(node_modules|dist)\\' -and $_.LastWriteTime -gt $distTime }
+            if ($changed) { $needsBuild = $true }
+        }
+
+        if ($needsBuild) { Build-Frontend }
+    } finally {
+        # Hand :8000 over. Has to happen before uvicorn binds, on every way out
+        # of the block above - Run-Migrations exits the script on failure. The
+        # restart loop below never brings the splash back: a restart is already
+        # covered in-app by the TopBar overlay.
+        Stop-Splash
     }
-
-    if ($needsBuild) { Build-Frontend }
 
     Write-Host ""
     Write-Host "Starting server at http://localhost:8000" -ForegroundColor Green

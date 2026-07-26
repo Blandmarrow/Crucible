@@ -227,6 +227,69 @@ _migrate() {
     echo "  Migrations applied."
 }
 
+# --- Startup splash --------------------------------------------------------
+# `start` is silent for a long stretch before uvicorn answers: migrations, an
+# occasional frontend rebuild, then the torch/transformers import chain. A
+# stdlib-only placeholder server holds :8000 for that stretch and serves the
+# animated mark, so the browser can be opened straight away on the real URL; it
+# is stopped before uvicorn binds, and the page swaps itself for the app on the
+# first healthy response. See scripts/splash_server.py.
+# CRUCIBLE_NO_BROWSER=1 skips the whole thing.
+_SPLASH_PID=""
+
+_open_browser() {
+    local url="$1" opener openers
+    if [ "$(uname -s)" = "Darwin" ]; then
+        openers="open"
+    else
+        # No bare `open` here on purpose: on Debian-family Linux /usr/bin/open is
+        # util-linux's openvt, which switches virtual terminals - not a browser.
+        openers="xdg-open wslview x-www-browser sensible-browser"
+    fi
+    for opener in $openers; do
+        if command -v "$opener" &>/dev/null; then
+            "$opener" "$url" >/dev/null 2>&1 &
+            return 0
+        fi
+    done
+    return 1
+}
+
+_start_splash() {
+    if [ "${CRUCIBLE_NO_BROWSER:-0}" = "1" ] || [ ! -f "$ROOT/scripts/splash_server.py" ]; then
+        return 0
+    fi
+
+    # Silenced: the only thing it has to say is "port taken", and uvicorn says
+    # that far more clearly further down. Run it by hand to see the message.
+    python "$ROOT/scripts/splash_server.py" --parent-pid $$ >/dev/null 2>&1 &
+    _SPLASH_PID=$!
+
+    # Give it a moment to bind. If it is already gone the port was taken - stay
+    # quiet and leave the browser closed: uvicorn reports that conflict itself
+    # further down, and opening a browser onto someone else's server would only
+    # muddy it.
+    sleep 0.5
+    if ! kill -0 "$_SPLASH_PID" 2>/dev/null; then
+        wait "$_SPLASH_PID" 2>/dev/null || true
+        _SPLASH_PID=""
+        return 0
+    fi
+
+    if ! _open_browser "http://localhost:8000"; then
+        echo "  (no browser opener found - open http://localhost:8000 yourself)"
+    fi
+    return 0
+}
+
+_stop_splash() {
+    [ -n "$_SPLASH_PID" ] || return 0
+    kill "$_SPLASH_PID" 2>/dev/null || true
+    wait "$_SPLASH_PID" 2>/dev/null || true
+    _SPLASH_PID=""
+    return 0
+}
+
 # Echo the newest PyTorch CUDA wheel tag (e.g. cu130) that the driver's CUDA
 # version supports, by querying the live wheel index at download.pytorch.org.
 # Args: driver CUDA major, minor. Prints the chosen "cuNNN" tag (empty if the
@@ -523,6 +586,12 @@ cmd_start() {
     echo ""
     echo "=== Crucible ==="
 
+    # Only EXIT is trapped: the splash is a background child in this process
+    # group, so a Ctrl+C during the build already reaches it, and trapping INT
+    # here would change what Ctrl+C does to the uvicorn loop below.
+    trap _stop_splash EXIT
+    _start_splash
+
     _migrate
 
     # Rebuild frontend only if source files are newer than the last build
@@ -550,6 +619,11 @@ cmd_start() {
     # Clean up any stale sentinels from a previous crash
     rm -f "$ROOT/.restart"
     rm -f "$ROOT/.shutdown"
+
+    # Hand :8000 over. Must complete before uvicorn binds - and the restart loop
+    # below never brings the splash back, because a restart is already covered
+    # in-app by the TopBar overlay.
+    _stop_splash
 
     while true; do
         python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 || true

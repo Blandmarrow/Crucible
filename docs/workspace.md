@@ -4,7 +4,9 @@ The app shell: the top bar, background jobs, server control, hardware meters, sp
 
 ## Dialogs
 
-Every dialog in the app can be driven from the keyboard and is announced as a dialog by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
+Confirmation prompts and the app's main dialogs — the folder picker, folder import, move-to-dataset, set-provenance, and the ComfyUI and version dialogs — can be driven from the keyboard and are announced as dialogs by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
+
+Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**.
 
 ## Background jobs & the top bar
 

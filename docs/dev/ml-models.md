@@ -35,7 +35,7 @@ Model IDs and their captioner/scorer modules:
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `dino` | `ml/dino_scorer.py` (`facebook/dinov2-base` via HuggingFace `transformers`; ~1.2 GB VRAM; used for DINOv2 embedding extraction) |
 | `nsfw` | `ml/nsfw_scorer.py` (`Marqo/nsfw-image-detection-384` ViT classifier; sets `nsfw_score` + `is_nsfw` flag) |
-| `sam2` | `ml/sam2_predictor.py` (`facebook/sam2.1-hiera-large` via `sam2` package; ~900 MB VRAM; detection only, not captioning; Grounding DINO loaded lazily on first `text_prompt` call from `IDEA-Research/grounding-dino-tiny`) |
+| `sam2` | `ml/sam2_predictor.py` (`facebook/sam2.1-hiera-large` via `sam2` package; ~1800 MB VRAM budgeted for eviction planning (`list_models`), 900 MB post-load floor; detection only, not captioning; Grounding DINO loaded lazily on first `text_prompt` call from `IDEA-Research/grounding-dino-tiny`) |
 | `sam3` | `ml/sam3_predictor.py` (native open-vocabulary text-prompt segmentation via `sam3` package; ~3.5 GB VRAM; checkpoint loaded from local `models/sam3/*.safetensors` — safetensors only, no HF download; detection only) |
 | `tag_embedder` | `ml/tag_embedder.py` (`sentence-transformers/all-MiniLM-L6-v2`, ~90 MB, ~500 MB VRAM; text-only, not image captioning; embeds the tag vocabulary for dataset-wide tag consolidation — see `docs/dev/tag-consolidation.md`) |
 
@@ -47,7 +47,7 @@ Model IDs and their captioner/scorer modules:
 
 **Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All captioners (Florence-2, PaliGemma-2, JoyCaption, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 
-**Config validation** (`backend/config.py`): `@model_validator(mode="after")` enforces at startup: (1) `max_vram_mb < 1000` → `ValueError` (fail fast); (2) empty `hf_token` → debug-level warning (not hard error); (3) unrecognised `.env` keys → WARNING log; `extra="ignore"` retained so OS env vars are never flagged. `config.py` still declares `watermark_threshold` for legacy `.env` compatibility but the quality router reads all five thresholds from the `threshold_settings` DB table instead.
+**Config validation** (`backend/config.py`): `@model_validator(mode="after")` enforces at startup: (1) `max_vram_mb < 1000` → `ValueError` (fail fast); (2) empty `hf_token` → debug-level warning (not hard error); (3) unrecognised `.env` keys → WARNING log; `extra="ignore"` retained so OS env vars are never flagged. `config.py` still declares `watermark_threshold` for legacy `.env` compatibility but the quality router reads all six flag thresholds (blur, noise, uniformity, watermark, duplicate, NSFW) from the `threshold_settings` DB table instead.
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 

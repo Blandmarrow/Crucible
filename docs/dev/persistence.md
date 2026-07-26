@@ -4,7 +4,7 @@ This file covers everything the frontend stores in `localStorage`/`sessionStorag
 
 ### `constants/storage.ts` — the key registry
 
-Every storage key is declared here rather than inline in a component. One row per key:
+Every *statically named* storage key is declared here rather than inline in a component. One row per key; the two documented exceptions are listed below the table.
 
 | Key | Storage & value | Read / written by | Notes |
 |---|---|---|---|
@@ -20,8 +20,19 @@ Every storage key is declared here rather than inline in a component. One row pe
 | `GALLERY_DEFAULT_CAPTION_KEY` | `localStorage`, `"all" \| "captioned" \| "uncaptioned"` | Read at `GalleryPage` init time via `getGalleryDefaultCaptionFilter()` | Gallery default |
 | `GALLERY_DEFAULT_QUALITY_KEY` | `localStorage`, flag key or `""` | Read at `GalleryPage` init time via `getGalleryDefaultQualityFilter()` | Gallery default |
 | `CAPTION_DEFAULT_MODEL_KEY`, `CAPTION_DEFAULT_STYLE_KEY`, `CAPTION_DEFAULT_SCOPE_KEY`, `CAPTION_DEFAULT_DELIMITER_KEY`, `CAPTION_DEFAULT_STRIP_REFS_KEY`, `CAPTION_DEFAULT_RENAME_KEY`, `CAPTION_DEFAULT_SAVE_BACKUP_KEY` | `localStorage` | Read at `CaptioningPage` init time | Captioning defaults; serve as first-run fallbacks (see Persistent page state below) |
-| `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
+| `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `TAG_CONSOLIDATE_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
 | `CAPTIONING_FILTERS_PREFIX`, `EXPORT_FILTERS_PREFIX`, `QUALITY_FILTERS_PREFIX`, `BULK_EDIT_FILTERS_PREFIX`, `STATS_FILTERS_PREFIX` | `localStorage` prefix, JSON blob; append `-${datasetId}` via `datasetScopedKey()` | Their owning page | Per-dataset "filters" blobs |
+
+**Component-local keys — the two sanctioned exceptions.** Both are storage whose key is
+computed per entity, so it cannot be a static constant and has no meaningful registry row:
+
+- `` `comfy-genprompts-${planId}` `` and `` `comfy-genprompts-job-${planId}` ``
+  (`components/comfy/GeneratePromptsModal.tsx`) — per-plan draft settings and the re-attachable
+  job id, keyed by plan. See `docs/dev/comfy-prompts.md`.
+- `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
+  `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
+
+Anything else belongs in `storage.ts` with a row above.
 
 `getGalleryPageSize(): number` — shared helper that reads `GALLERY_PAGE_SIZE_KEY`, guards against `NaN`, and returns the default `100` on parse failure. Use this everywhere the page size is read; never inline the `parseInt` + fallback pattern.
 
@@ -54,6 +65,6 @@ Don't "unify" them without reading this. The hook covers every *debounced blob* 
 - *Workflow* fields (model/prompt/style/toggles — *how you like to work*) are stored in a **global** blob shared across all datasets, keyed by `*_WORKFLOW_KEY`. Loaded once at `useState` init time.
 - *Filters/scope* fields that reference dataset-specific data (subfolder, score thresholds, flag exclusions) are stored in a **per-dataset** blob, keyed by `datasetScopedKey(*_FILTERS_PREFIX, datasetId)`. Reloaded when `datasetId` changes (via a `prevDatasetId` ref guard effect) so pane-mode dataset switches load the right per-dataset blob without unmounting.
 - Both blobs are saved by `useDebouncedPersist` (above). Pass `null` as the key for the per-dataset blob while `datasetId` is unset instead of guarding with an early `return`.
-- Each page exposes a "Reset to defaults" button (ghost style, near the configuration header) that calls `clearPersisted` on both blobs and resets state to the hardcoded defaults, re-reading `CAPTION_DEFAULT_*` Settings values as appropriate for `CaptioningPage`. If the page contains child forms with their own internal `useState` (e.g. text fields, operation pickers), those won't remount just because the parent scope/tab state returns to its default value. Fix by adding a `resetKey` counter to the parent (`const [resetKey, setResetKey] = useState(0)`), incrementing it in the reset handler (`setResetKey(k => k + 1)`), and including it in the child form's `key` prop (`key={\`${scope}-${resetKey}\``}). `BulkEditPage` uses this pattern — all five tab forms carry `key={\`${scope}-${resetKey}\`}`.
+- Each page exposes a "Reset to defaults" button (ghost style, near the configuration header) that calls `clearPersisted` on both blobs and resets state to the hardcoded defaults, re-reading `CAPTION_DEFAULT_*` Settings values as appropriate for `CaptioningPage`. If the page contains child forms with their own internal `useState` (e.g. text fields, operation pickers), those won't remount just because the parent scope/tab state returns to its default value. Fix by adding a `resetKey` counter to the parent (`const [resetKey, setResetKey] = useState(0)`), incrementing it in the reset handler (`setResetKey(k => k + 1)`), and including it in the child form's `key` prop (`key={\`${scope}-${resetKey}\``}). `BulkEditPage` uses this pattern — all eight tab forms carry `key={\`${scope}-${resetKey}\`}` (eight across seven tabs; the Detections tab renders two).
 - Settings → Captioning tab also has a "Reset remembered Captioning configuration" button that clears `CAPTIONING_WORKFLOW_KEY` globally (the per-dataset filter blobs are reset per-page since Settings has no enumeration of all dataset IDs).
 - `Set<string>` fields (`excludeFlags`, `selectedSubfolders`, `selectedRefIds`, `selectedFlags`) are serialized as `string[]` and converted back to `Set` at each page's load boundary; `loadPersisted`/`savePersisted` stay generic over plain JSON shapes.

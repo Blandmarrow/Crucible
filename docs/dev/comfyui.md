@@ -66,7 +66,7 @@ non-empty line into the `is_prompt` alias, `…/rows/delete`, `…/rows/reorder`
 failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
 `{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
 each non-empty row, used to browse/reuse prompts across plans and datasets (the
-`ImportPromptsModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
+`PromptLibraryModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
 `{alias, value}`, `value: null|""` clears back to the default/template), and `POST /comfy/run`. Editing a
 completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
 `rows/set-value`) resets it to `pending` and clears `error_msg`/`prompt_id` (image links are

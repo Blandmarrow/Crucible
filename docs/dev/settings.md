@@ -3,7 +3,7 @@
 This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettings` singleton row, and every tab (Gallery, Captioning, UI Behavior, Quality Thresholds, Versioning, LLM Providers, ComfyUI).
 
 
-`frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all seven scoring thresholds — the six quality-flag thresholds plus the Grounding DINO box-confidence threshold — as editable number inputs.
+`frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all eight scoring thresholds — the six quality-flag thresholds plus the Grounding DINO box-confidence and SAM 3 confidence thresholds — as editable number inputs.
 
 **Backend**: `backend/routers/settings.py`, prefix `/settings`. Two endpoints:
 
@@ -42,7 +42,7 @@ Constants defined in `docs/dev/frontend-core.md` § Frontend constants and `docs
 - Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
 - **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/image-files.md` § Importing captions & folder rescan.
 
-**Quality Thresholds tab** — seven editable number inputs from the `FIELDS` array: blur, noise, uniformity, duplicate, watermark, NSFW, and DINO box confidence (`gdino_threshold`). Requires Save; the flag thresholds apply to the next scoring run, `gdino_threshold` to the next SAM2 detection run.
+**Quality Thresholds tab** — eight editable number inputs from the `FIELDS` array: blur, noise, uniformity, duplicate, watermark, NSFW, DINO box confidence (`gdino_threshold`), and SAM 3 confidence (`sam3_threshold`). Requires Save; the flag thresholds apply to the next scoring run, `gdino_threshold` to the next SAM2 detection run, `sam3_threshold` to the next SAM3 run.
 
 **Versioning tab** — version control mode radio (`off | manual | auto`) plus branch snapshot behavior radio. Requires Save for the version control mode; branch snapshot behavior is immediate (localStorage).
 

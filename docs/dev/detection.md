@@ -22,6 +22,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `POST /detection/merge` | `DetectionMergeRequest {detection_ids ≥2}` | `DetectionOut` — merge ≥2 same-image rows into one `model="manual"` row |
 | `POST /detection/manual` | `ManualDetectionRequest` | `DetectionOut` (no SAM) **or** `{job_id}` (with SAM) — hand-drawn box |
 | `POST /detection/{detection_id}/refine` | `DetectionRefineRequest {point_prompts, point_labels}` | `{job_id}` — point-refine an existing mask (400 if the row has no mask) |
+| `POST /detection/crop` | `DetectionCropRequest` | `{job_id, total, skipped}` — batch-crop images to their detection boxes; `skipped` counts images with no matching detection. Documented in full in `docs/dev/bulk-ops.md` |
 
 **Management routes are sync/DB-only** except `manual` (with SAM) and `refine`, which enqueue a `job_type="detection"` job. Declare the static paths (`/models`, `/bulk-delete`, `/merge`, `/manual`) before the `/{detection_id}` routes. `bulk-delete` resolves scope like `crop_to_detection` (image_ids > dataset + `normalize_subfolder` + `ALLOWED_FLAG_KEYS` exclusions), then optional `label.in_` / `model.in_` / `score < score_below`. SQL `score <` never matches NULL, so unscored/manual rows are immune to a score filter (intended).
 

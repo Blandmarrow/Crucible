@@ -59,7 +59,7 @@ The ORM caption assignment always stays on the event loop: `Image.caption_text` 
 
 **Schema**: `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` — true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`. Remote providers show a warning banner in the CaptioningPage and Settings form.
 
-**Captioner**: `ml/openai_compat_captioner.py` — `caption_image(image_path, base_url, api_key, model_name, style, custom_prompt, max_px, max_tokens, target_w, target_h)`. Encodes the image as JPEG base64 (after `preprocess_for_caption` and optional `max_px` downscale), sends via `openai.ChatCompletion` with a `image_url` content block. 120-second per-image timeout. Not tracked by `model_manager`.
+**Captioner**: `ml/openai_compat_captioner.py` — `caption_image(image_path, base_url, api_key, model_name, style, custom_prompt, max_px, max_tokens, target_w, target_h)`. Encodes the image as JPEG base64 (after `preprocess_for_caption` and optional `max_px` downscale), sends via the v1 SDK (`OpenAI(base_url=…).chat.completions.create`) with an `image_url` content block. 120-second per-image timeout. Not tracked by `model_manager`.
 
 **Model ID format** in captioning: `openai_compat:{provider_id}:{model_name}`. The router splits on `:` with `maxsplit=2` to recover `provider_id` and `model_name`. If `model_name` is empty, `openai_provider.default_model` is used.
 

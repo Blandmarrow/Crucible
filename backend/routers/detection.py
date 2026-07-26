@@ -133,7 +133,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
         total = len(image_data)
         start_time = time.monotonic()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         async def _finish_watermark_sync() -> None:
             """Refresh dataset stats after a watermark-sync run so the flag counts
@@ -769,7 +769,7 @@ async def create_manual_detection(
         from backend.ml.sam2_predictor import predict_sync
         from backend.workers.progress import broadcaster
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         detections: list[dict] = []
@@ -890,7 +890,7 @@ async def refine_detection(
         from backend.ml.sam2_predictor import refine_sync
         from backend.workers.progress import broadcaster
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         result: dict | None = None

@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 BACKUP_KEEP = 5
 BACKUP_DIR_NAME = "backups"
 
+# Skip the whole run when a backup this recent already exists. `manage.sh dev` runs
+# uvicorn with --reload, and uvicorn re-runs the lifespan on every reload, so without
+# this a backend file save would integrity-check and copy the entire database — and
+# five saves would flush every pre-session backup out of a BACKUP_KEEP-slot rotation,
+# discarding the history exactly when the work has gone wrong. The restart button
+# (see docs/dev/backend-infrastructure.md § restart loop) has the same shape, slower.
+BACKUP_MIN_AGE_SECONDS = 15 * 60
+
 
 def database_file_path() -> Path | None:
     """The filesystem path behind `settings.database_url`, or None if there is none.
@@ -44,6 +52,22 @@ def database_file_path() -> Path | None:
     if not sep or not tail or tail.startswith(":memory:"):
         return None
     return Path(tail)
+
+
+def _newest_backup_age(path: Path) -> float | None:
+    """Seconds since the newest existing backup was written, or None when there is none.
+
+    Read from mtime, not the filename stamp: the question is whether a copy was taken
+    recently, which is about when the file landed rather than what it is called.
+    """
+    backup_dir = path.parent / BACKUP_DIR_NAME
+    try:
+        mtimes = [p.stat().st_mtime for p in backup_dir.glob(f"{path.stem}-*.db")]
+    except OSError:
+        return None  # unreadable backup dir is not a reason to skip the backup
+    if not mtimes:
+        return None
+    return time.time() - max(mtimes)
 
 
 def _quick_check(path: Path) -> bool:
@@ -123,6 +147,18 @@ def run_startup_maintenance_sync() -> None:
         return
     if not path.exists():
         logger.debug("No database file at %s yet; skipping startup maintenance", path)
+        return
+
+    # Before the integrity check, not after: quick_check is a full page scan and is most
+    # of the per-reload cost this guard exists to avoid. A negative age means a copy is
+    # stamped in the future (clock skew), so fall through and back up — the safe way to
+    # be wrong is an extra copy, not a permanently skipped one.
+    age = _newest_backup_age(path)
+    if age is not None and 0 <= age < BACKUP_MIN_AGE_SECONDS:
+        logger.debug(
+            "Database backup skipped: newest copy is %.1f min old (minimum age %.0f min)",
+            age / 60, BACKUP_MIN_AGE_SECONDS / 60,
+        )
         return
 
     started = time.monotonic()

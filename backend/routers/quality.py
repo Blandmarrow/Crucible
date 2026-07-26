@@ -122,7 +122,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         ids = [d[0] for d in image_data]
         paths = [d[1] for d in image_data]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         aesthetic_scores = []
         if body.run_aesthetic:
@@ -268,7 +268,7 @@ async def embed_references(files: list[UploadFile] = File(...)):
     from backend.ml.aesthetic_scorer import extract_clip_embedding_from_bytes_sync
 
     entry = await model_manager.load_aesthetic()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     embeddings = []
     for f in files:
         img_bytes = await f.read()
@@ -286,7 +286,7 @@ async def compute_style_similarity(
     from backend.ml.similarity_scorer import compute_style_similarity as _cosine_sim
     from backend.ml.similarity_scorer import compute_combined_similarity
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     id_filter = (Image.id.in_(body.image_ids),) if body.image_ids else ()
     total_count_result = await db.execute(

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -108,6 +109,17 @@ def _fingerprint(diff) -> str:
 
 def main() -> int:
     tmp_dir = Path(tempfile.mkdtemp(prefix="crucible-migcheck-"))
+    try:
+        return _check(tmp_dir)
+    finally:
+        # Every exit from _check is a `return`, including the failure paths, so this
+        # is the only place the scratch database gets cleaned up. ignore_errors
+        # because a lingering SQLite handle (Windows) must not turn a clean report
+        # into a traceback — the directory is disposable either way.
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _check(tmp_dir: Path) -> int:
     sys.path.insert(0, str(REPO_ROOT))
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp_dir / 'check.db'}"
     os.chdir(REPO_ROOT / "backend")

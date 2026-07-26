@@ -273,7 +273,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         wd14_variant = None
         model_label = body.model
 
-        _loop = asyncio.get_event_loop()
+        _loop = asyncio.get_running_loop()
 
         if is_florence:
             variant = "promptgen" if "promptgen" in body.model else "large"
@@ -376,7 +376,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         )
                     elif is_wd14:
                         from backend.ml import wd14_tagger
-                        caption = await asyncio.get_event_loop().run_in_executor(
+                        caption = await asyncio.get_running_loop().run_in_executor(
                             None, wd14_tagger.tag_image_sync, file_path, wd14_variant, body.wd14_threshold
                         )
                 except Exception:
@@ -427,7 +427,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                             caption = caption + body.delimiter + existing_caption
 
                         if body.save_backup:
-                            await asyncio.get_event_loop().run_in_executor(
+                            await asyncio.get_running_loop().run_in_executor(
                                 None, _backup_sidecar, file_path
                             )
 
@@ -626,7 +626,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             wd14_variant = None
             model_label = step.model
 
-            _step_loop = asyncio.get_event_loop()
+            _step_loop = asyncio.get_running_loop()
 
             if is_florence:
                 variant = "promptgen" if "promptgen" in step.model else "large"
@@ -725,7 +725,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             )
                         elif is_wd14:
                             from backend.ml import wd14_tagger
-                            caption = await asyncio.get_event_loop().run_in_executor(
+                            caption = await asyncio.get_running_loop().run_in_executor(
                                 None, wd14_tagger.tag_image_sync, file_path, wd14_variant, step.wd14_threshold
                             )
                     except Exception:

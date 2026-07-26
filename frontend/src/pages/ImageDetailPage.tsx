@@ -393,9 +393,11 @@ export default function ImageDetailPage() {
     queryFn: () => imagesApi.get(imageId!),
     enabled: !!imageId,
     staleTime: 0,
-    // A 404 (deleted/moved image) is terminal — don't burn retries on it.
+    // A 404 (deleted/moved image) is terminal — don't burn retries on it. Anything
+    // else keeps the app-wide budget from App.tsx (retry: 1); this override exists
+    // only to add the 404 short-circuit, not to retry more.
     retry: (failureCount, err) =>
-      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 3,
+      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 1,
   });
 
   const { data: captionData } = useQuery({

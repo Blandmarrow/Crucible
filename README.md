@@ -73,7 +73,7 @@ Every step from raw images to a training-ready export, in order:
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
 - **Keyboard-drivable dialogs** — Esc closes, Tab cycles within the dialog, focus returns where it came from, and screen readers announce them as dialogs → [details](docs/workspace.md#dialogs)
-- **Automatic database backups** — every launch integrity-checks the database and keeps the five most recent timestamped copies beside it → [details](docs/workspace.md#database-backups)
+- **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/workspace.md#database-backups)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 

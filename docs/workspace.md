@@ -4,7 +4,9 @@ The app shell: the top bar, background jobs, server control, hardware meters, sp
 
 ## Dialogs
 
-Every dialog in the app can be driven from the keyboard and is announced as a dialog by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
+Confirmation prompts and the app's main dialogs — the folder picker, folder import, move-to-dataset, set-provenance, and the ComfyUI and version dialogs — can be driven from the keyboard and are announced as dialogs by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
+
+Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**.
 
 ## Background jobs & the top bar
 
@@ -33,10 +35,11 @@ Jobs that were running when the server stopped are not resumed — they are mark
 
 ## Database backups
 
-Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). Each time the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
+Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). When the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
 
-Two things worth knowing:
+Three things worth knowing:
 
+- A start within **15 minutes** of the newest backup does nothing — no check, no copy. Only five copies are kept, so a run of quick restarts would otherwise discard the whole backup history in a few minutes, which is the opposite of what it is for. Restarting to force a fresh copy therefore does not work; a backup is a periodic safety net, not a snapshot button. For a point-in-time copy you control, use [dataset versioning](versioning.md).
 - A database that fails the integrity check is **not** backed up. That is deliberate — copying a damaged file in would push the newest good backup one slot closer to deletion. The failure is written to the server's console output.
 - Backups are full copies on the same disk. They protect against a bad edit or a corrupted database, not against losing the drive. If a dataset matters, copy a backup somewhere else.
 

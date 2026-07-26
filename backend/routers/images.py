@@ -399,7 +399,7 @@ async def upload_images(
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
         thumb_path = str(dest_thumbs / (dest.stem + ".webp"))
-        info, gen_meta, captured = await asyncio.get_event_loop().run_in_executor(
+        info, gen_meta, captured = await asyncio.get_running_loop().run_in_executor(
             None, _write_upload_sync, upload.file, dest, thumb_path
         )
 
@@ -436,7 +436,7 @@ async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
     if not img:
         raise HTTPException(404, "Image not found")
     if img.generation_metadata is None and img.file_path and Path(img.file_path).exists():
-        gen_meta = await asyncio.get_event_loop().run_in_executor(
+        gen_meta = await asyncio.get_running_loop().run_in_executor(
             None, extract_generation_metadata, img.file_path
         )
         if gen_meta:
@@ -792,7 +792,7 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
     # Fallback: generate on demand
     p = _safe_path(img.file_path, settings.datasets_dir)
     thumb = str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
-    await asyncio.get_event_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)
+    await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)
     img.thumbnail_path = thumb
     await db.commit()
     return FileResponse(thumb)
@@ -806,12 +806,12 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     ensure_not_busy(img.dataset_id)
     await version_service.protect_file_before_overwrite(image_id, img.file_path, db)
     await db.commit()  # persist the COW hash backfill before the overwrite
-    new_w, new_h = await asyncio.get_event_loop().run_in_executor(
+    new_w, new_h = await asyncio.get_running_loop().run_in_executor(
         None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
     )
     img.width, img.height = new_w, new_h
     # Regenerate thumbnail
-    await asyncio.get_event_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
+    await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
     await db.commit()
     return {"width": new_w, "height": new_h}
 
@@ -1067,7 +1067,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
             result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
             images = result.scalars().all()
             for i, img in enumerate(images):
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
                 new_w, new_h = await loop.run_in_executor(
@@ -1101,7 +1101,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
             result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
             images = result.scalars().all()
             for i, img in enumerate(images):
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
                 new_w, new_h, rect, old_size = await loop.run_in_executor(

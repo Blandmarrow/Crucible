@@ -86,11 +86,22 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 
 - `PaneContainer` — recursive renderer; splits use `react-resizable-panels` `Group`/`Panel`/`Separator` with `orientation` prop. Installed version exports `Group`, `Panel`, `Separator` — NOT `PanelGroup`/`PanelResizeHandle`. `onLayoutChanged` receives `{ [panelId]: number }` keyed by `id` prop on each `<Panel>`. The leaf content wrapper is `display: flex; flexDirection: column` so that pages whose root div uses `flex: 1, overflowY: "auto"` (StatsPage, QualityPage, CaptioningPage, ExportPage, DatasetsPage) correctly fill the pane height and show a scrollbar. Pages that use `height: "100%"` instead (GalleryPage, FileBrowserPage) also work because `height: 100%` resolves against the flex container's definite height.
 - `PaneHeader` — 32 px header per pane: page-type `<select>`, dataset `<select>` (for pages in `NEEDS_DATASET`), split-H / split-V / close buttons.
-- `PageRenderer` — switch over `view.page` → imports and renders the matching page component.
+- `PageRenderer` — switch over `view.page` → renders the matching lazy page component from `pages/lazyPages.ts`, wrapped in its own `<Suspense>` (see § Route-level code splitting).
 
 **App integration** (`frontend/src/App.tsx`):
 
 - `MainContent` renders `<PaneContainer node={layout}>` when `paneStore.enabled`, otherwise the normal `<Routes>` tree.
 - `RouteSyncer` (child of `BrowserRouter`) uses `useEffect` on `location.pathname` to call `syncFromRoute()` when pane mode is active — keeps the primary pane in sync with sidebar/URL navigation.
 - Toggle: `<Columns2>` icon button in `TopBar` calls `paneStore.toggleEnabled()`.
+
+### Route-level code splitting
+
+Every page is `React.lazy`-loaded through **one** module, `frontend/src/pages/lazyPages.ts`, so each page ships as its own chunk instead of being pulled into the initial bundle. Its module docstring carries the full rationale.
+
+Two rules, neither of which any tool enforces:
+
+- **Add a page by adding a line to `lazyPages.ts`** — never by importing the page directly in a consumer. A direct `import GalleryPage from "./pages/GalleryPage"` compiles, lints and tests clean while silently folding that page back into the index chunk. The only symptom is a fatter `index` bundle in `npm run build` output.
+- **Both consumers import from that module**, never from a second copy. `App.tsx` (single-view `<Routes>`) and `components/pane/PageRenderer.tsx` (split view) must resolve a given page to the *same* lazy component identity, or toggling a pane between single- and split-view remounts the page from a second chunk and loses its state.
+
+Each consumer owns its own `<Suspense>`: `App.tsx` wraps the whole `<Routes>` tree, while `PageRenderer` wraps per pane — a per-pane boundary is deliberate, so a pane still fetching its chunk shows its own fallback instead of blanking a sibling pane that is already rendered.
 

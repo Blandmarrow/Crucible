@@ -415,6 +415,17 @@ def _file_size(path: Path) -> int:
         return 0
 
 
+def _scan_source_files(src: Path, preserve_structure: bool) -> tuple[list[Path], int]:
+    """Importable files under `src` and their total size. Blocking — call in an executor.
+
+    One traversal for both: `is_file()` already stats every entry, so summing sizes in
+    the same pass costs nothing beyond the stat the filter performs anyway.
+    """
+    it = src.rglob("*") if preserve_structure else src.iterdir()
+    files = [f for f in it if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    return files, sum(_file_size(f) for f in files)
+
+
 async def import_images_from_folder(
     db: AsyncSession,
     dataset: Dataset,
@@ -432,16 +443,18 @@ async def import_images_from_folder(
     if not src.exists() or not src.is_dir():
         raise ValueError(f"Folder not found: {folder_path}")
 
-    if preserve_structure:
-        image_files = [f for f in src.rglob("*") if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
-    else:
-        image_files = [f for f in src.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    # Walking the tree and stat-ing every file is unbounded blocking I/O — slow enough
+    # on a large or network-mounted folder to stall SSE progress and every other
+    # request. It is also self-contained, so the whole scan goes to a thread at once.
+    image_files, source_bytes = await asyncio.get_running_loop().run_in_executor(
+        None, _scan_source_files, src, preserve_structure
+    )
     total = len(image_files)
 
     # Every one of these files is copied into the dataset, plus a thumbnail each.
     # Check before the first copy so a too-small disk fails the job with a readable
     # message rather than leaving a partially imported folder behind.
-    require_free_space(dataset.folder_path, sum(_file_size(f) for f in image_files))
+    require_free_space(dataset.folder_path, source_bytes)
     added = 0
     failed_count = 0
     failed: list[dict] = []
@@ -476,7 +489,7 @@ async def import_images_from_folder(
             dest_file = dest_images / new_name
             thumb_path = str(dest_thumbs / (dest_file.stem + ".webp"))
 
-            info, gen_meta, caption, captured = await asyncio.get_event_loop().run_in_executor(
+            info, gen_meta, caption, captured = await asyncio.get_running_loop().run_in_executor(
                 None, _ingest_file_sync, src_file, dest_file, thumb_path, import_captions
             )
 
@@ -581,14 +594,14 @@ async def rescan_dataset(
         try:
             seen_filenames.add(f.name)
             caption = (
-                await asyncio.get_event_loop().run_in_executor(None, read_caption_sidecar, f)
+                await asyncio.get_running_loop().run_in_executor(None, read_caption_sidecar, f)
                 if import_captions else None
             )
 
             existing_img = by_filename.get(f.name)
             if existing_img is None:
                 thumb_path = thumbnail_path_for(f)
-                reg = await asyncio.get_event_loop().run_in_executor(
+                reg = await asyncio.get_running_loop().run_in_executor(
                     None, _register_file_sync, f, thumb_path
                 )
                 img = Image(
@@ -700,7 +713,7 @@ async def import_captions_from_folder(
                 # Read the source .txt and write the dataset-side sidecar in one
                 # executor hop; the ORM assignment stays on the event loop so the
                 # caption_token_count listener still fires.
-                text = await asyncio.get_event_loop().run_in_executor(
+                text = await asyncio.get_running_loop().run_in_executor(
                     None, _copy_caption_file_sync, txt, img.file_path
                 )
                 img.caption_text = text
@@ -1168,7 +1181,7 @@ async def duplicate_dataset(
 
     log = logger
     cancelled = False
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)

@@ -30,6 +30,8 @@ import argparse
 import json
 import os
 import re
+import signal
+import socketserver
 import sys
 import threading
 import time
@@ -158,6 +160,38 @@ class SplashServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
     daemon_threads = True
 
+    # Written once the accept loop is actually running; see service_actions.
+    ready_file: Path | None = None
+
+    def server_bind(self) -> None:
+        """Bind without `HTTPServer.server_bind`'s reverse-DNS lookup.
+
+        The stdlib resolves the bind address with `socket.getfqdn()` to fill in
+        `server_name` — purely cosmetic for us, and on Windows it can stall for
+        seconds against a DNS server that has nothing to say about `0.0.0.0`.
+        The socket is listening by then, so the browser's connection sits
+        accepted-but-unanswered in the backlog: a tab that spins forever with
+        no page. Bind, name it after the host, serve.
+        """
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
+    def service_actions(self) -> None:
+        """Signal readiness from inside `serve_forever`'s poll loop.
+
+        Reached only once the loop is running, which is exactly what the
+        launcher must wait for before it opens a browser — a bound socket is
+        not a serving one.
+        """
+        if self.ready_file is not None:
+            try:
+                self.ready_file.write_text("ready", encoding="utf-8")
+            except OSError:
+                pass
+            self.ready_file = None
+
 
 def _parent_alive(pid: int) -> bool:
     if os.name == "nt":
@@ -211,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="exit when this process goes away")
     ap.add_argument("--timeout", type=float, default=1800.0,
                     help="exit after this many seconds no matter what")
+    ap.add_argument("--ready-file", default=None,
+                    help="create this file once requests are actually being served")
     args = ap.parse_args(argv)
 
     SplashHandler.page = build_page().encode("utf-8")
@@ -219,21 +255,31 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         SplashHandler.favicon = None
 
+    ready = Path(args.ready_file) if args.ready_file else None
+
     try:
         server = SplashServer((args.host, args.port), SplashHandler)
     except OSError as exc:
         print(f"splash: cannot bind {args.host}:{args.port} ({exc})", file=sys.stderr)
         return 3
 
+    server.ready_file = ready
+    # The launcher stops us with SIGTERM, whose default action skips the cleanup
+    # below. Turn it into a normal unwind so the sentinel goes with us. (No
+    # effect on Windows, where Stop-Process terminates outright - the launcher
+    # clears the sentinel there, and again before every start.)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     threading.Thread(
         target=_watchdog, args=(server, args.parent_pid, args.timeout), daemon=True
     ).start()
     try:
         server.serve_forever(poll_interval=0.2)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         server.server_close()
+        if ready is not None:
+            ready.unlink(missing_ok=True)
     return 0
 
 

@@ -399,22 +399,43 @@ function Start-Splash {
     $py = "$ROOT\venv\Scripts\python.exe"
     if (-not (Test-Path $py)) { $py = "python" }
 
+    # Clear first: a sentinel left by a crash would read as "ready" instantly.
+    $ready = "$ROOT\.splash-ready"
+    if (Test-Path $ready) { Remove-Item $ready -Force -ErrorAction SilentlyContinue }
+
     try {
         $script:SplashProcess = Start-Process -FilePath $py `
-            -ArgumentList @("`"$splash`"", "--parent-pid", $PID) `
+            -ArgumentList @("`"$splash`"", "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
             -WindowStyle Hidden -PassThru
     } catch {
         $script:SplashProcess = $null
         return
     }
 
-    # Give it a moment to bind. If it is already gone the port was taken - stay
-    # quiet and leave the browser closed: uvicorn reports that conflict itself
-    # further down, and opening a browser onto someone else's server would only
-    # muddy it.
-    Start-Sleep -Milliseconds 500
-    if ($script:SplashProcess.HasExited) {
-        $script:SplashProcess = $null
+    # Wait for the sentinel, not for a fixed delay: the server writes it from
+    # inside its accept loop, so it is proof that requests are actually being
+    # answered. A bound socket is not a serving one - anything slow between the
+    # two (the stdlib's reverse-DNS lookup at bind time was one, and it is far
+    # slower on Windows) would leave the browser holding an accepted connection
+    # that never gets a reply: a tab that spins forever on a blank page.
+    $waited = 0
+    while ((-not (Test-Path $ready)) -and ($waited -lt 100)) {
+        if ($script:SplashProcess.HasExited) {
+            # Gone already - the port was taken. Stay quiet and leave the browser
+            # closed: uvicorn reports that conflict itself further down, and
+            # opening a browser onto someone else's server would only muddy it.
+            $script:SplashProcess = $null
+            return
+        }
+        Start-Sleep -Milliseconds 100
+        $waited++
+    }
+
+    if (-not (Test-Path $ready)) {
+        # Alive but not serving after 10s. Stop it rather than hand uvicorn a
+        # busy port, and start with no splash at all.
+        Write-Host "  (splash did not come up - starting without it; open the URL below once ready)" -ForegroundColor DarkGray
+        Stop-Splash
         return
     }
 
@@ -431,6 +452,8 @@ function Stop-Splash {
         }
     } catch { }
     $script:SplashProcess = $null
+    $ready = "$ROOT\.splash-ready"
+    if (Test-Path $ready) { Remove-Item $ready -Force -ErrorAction SilentlyContinue }
 }
 
 # ---------------------------------------------------------------------------

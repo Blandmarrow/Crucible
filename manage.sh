@@ -260,19 +260,40 @@ _start_splash() {
         return 0
     fi
 
+    # Clear first: a sentinel left by a crash would read as "ready" instantly.
+    local ready="$ROOT/.splash-ready"
+    rm -f "$ready"
+
     # Silenced: the only thing it has to say is "port taken", and uvicorn says
     # that far more clearly further down. Run it by hand to see the message.
-    python "$ROOT/scripts/splash_server.py" --parent-pid $$ >/dev/null 2>&1 &
+    python "$ROOT/scripts/splash_server.py" --parent-pid $$ --ready-file "$ready" \
+        >/dev/null 2>&1 &
     _SPLASH_PID=$!
 
-    # Give it a moment to bind. If it is already gone the port was taken - stay
-    # quiet and leave the browser closed: uvicorn reports that conflict itself
-    # further down, and opening a browser onto someone else's server would only
-    # muddy it.
-    sleep 0.5
-    if ! kill -0 "$_SPLASH_PID" 2>/dev/null; then
-        wait "$_SPLASH_PID" 2>/dev/null || true
-        _SPLASH_PID=""
+    # Wait for the sentinel, not for a fixed delay: the server writes it from
+    # inside its accept loop, so it is proof that requests are actually being
+    # answered. A bound socket is not a serving one - anything slow between the
+    # two (the stdlib's reverse-DNS lookup at bind time was one) would leave the
+    # browser holding an accepted connection that never gets a reply.
+    local waited=0
+    while [ ! -f "$ready" ] && [ "$waited" -lt 100 ]; do
+        if ! kill -0 "$_SPLASH_PID" 2>/dev/null; then
+            # Gone already - the port was taken. Stay quiet and leave the browser
+            # closed: uvicorn reports that conflict itself further down, and
+            # opening a browser onto someone else's server would only muddy it.
+            wait "$_SPLASH_PID" 2>/dev/null || true
+            _SPLASH_PID=""
+            return 0
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+
+    if [ ! -f "$ready" ]; then
+        # Alive but not serving after 10s. Stop it rather than hand uvicorn a
+        # busy port, and start with no splash at all.
+        echo "  (splash did not come up - starting without it; open the URL below once ready)"
+        _stop_splash
         return 0
     fi
 
@@ -287,6 +308,7 @@ _stop_splash() {
     kill "$_SPLASH_PID" 2>/dev/null || true
     wait "$_SPLASH_PID" 2>/dev/null || true
     _SPLASH_PID=""
+    rm -f "$ROOT/.splash-ready"
     return 0
 }
 

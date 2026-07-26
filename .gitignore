@@ -6,7 +6,7 @@ __pycache__/
 dataset_manager.db
 dataset_manager.db-shm
 dataset_manager.db-wal
-backups/
+/backups/
 data/
 models_cache/
 models/upscale_models/

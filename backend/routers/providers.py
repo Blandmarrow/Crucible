@@ -63,7 +63,7 @@ async def fetch_provider_models(provider_id: str, db: AsyncSession = Depends(get
         except Exception:
             return []
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     ids = await loop.run_in_executor(None, _list_models, row.base_url, row.api_key)
     return {"models": ids}
 

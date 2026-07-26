@@ -61,6 +61,9 @@ jobs:
   # and because it needs `alembic` on top of the test dependency set (the same
   # augmentation e2e-smoke.yml makes). The models import chain is what the rest of
   # the list is for — see this file's header.
+  #
+  # This job is also the reason `check_migrations.py` must stay importable with no
+  # pytest: it runs the dependency set directly, not under the test harness.
   migration-drift:
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +73,11 @@ jobs:
           python-version: "3.12"
           cache: "pip"
           cache-dependency-path: backend/requirements-dev.txt
+      # Same base list as backend-tests above (and e2e-smoke.yml), plus alembic. Keep
+      # all three in sync: a trimmed list here breaks only this job, and only whenever
+      # `backend.models`' import chain later grows one of the omitted packages — a
+      # failure that arrives detached from the change that caused it.
       - name: Install backend dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex tiktoken alembic
+        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken alembic
       - name: Check migrations against the models
         run: python scripts/check_migrations.py

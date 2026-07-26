@@ -72,10 +72,10 @@ async def analyze(
     if len(vocab) < 2:
         return {"clusters": [], "vocab_size": len(vocab), "image_count": image_count, "truncated": truncated}
 
-    entry = await model_manager.load_tag_embedder(job_id=job_id, loop=asyncio.get_event_loop(), dataset_id=dataset_id)
+    entry = await model_manager.load_tag_embedder(job_id=job_id, loop=asyncio.get_running_loop(), dataset_id=dataset_id)
     entry.in_use = True
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, tag_embedder.embed_texts_sync, vocab, entry)
         await broadcaster.emit(job_id, {
             "type": "progress", "job_id": job_id, "status": "running",

@@ -648,13 +648,13 @@ async def _run_export_loop(
                 # Uniquify within this run so two source images sharing a stem don't
                 # clobber each other's image/caption/mask (all derive from dest_img).
                 dest_img = dest_img.with_stem(_unique_stem(dest_img.stem, used_stems))
-                final_size = await asyncio.get_event_loop().run_in_executor(
+                final_size = await asyncio.get_running_loop().run_in_executor(
                     None, _write_image, src, dest_img, output_format, jpeg_quality, resize_to, strip_metadata, export_masks
                 )
                 if export_masks:
                     dets = detections_by_image.get(img.id) or []
                     excl = exclude_by_image.get(img.id) or []
-                    await asyncio.get_event_loop().run_in_executor(
+                    await asyncio.get_running_loop().run_in_executor(
                         None, _write_mask, mask_dir / (dest_img.stem + ".png"), dets, excl, final_size, mask_invert
                     )
                     masks_written += 1
@@ -667,7 +667,7 @@ async def _run_export_loop(
             if accumulate_plain or caption_format == "jsonl":
                 jsonl_entries.append({"file": dest_img.name, "caption": caption})
             else:
-                sidecar = await asyncio.get_event_loop().run_in_executor(
+                sidecar = await asyncio.get_running_loop().run_in_executor(
                     None, _write_sidecar, dest_dir, dest_img.stem, caption, caption_format or "txt"
                 )
 
@@ -708,7 +708,7 @@ async def _run_export_loop(
             pass
         raise
 
-    manifest_files = await asyncio.get_event_loop().run_in_executor(
+    manifest_files = await asyncio.get_running_loop().run_in_executor(
         None, _write_credits, manifest_target, credits, False, dest_dir
     )
 

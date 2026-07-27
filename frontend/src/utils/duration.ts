@@ -2,7 +2,7 @@
  *
  *  null is *unknown*, never 0:00. A container written to a non-seekable pipe
  *  reports a poisoned frame count and the backend stores NULL rather than a
- *  fabricated number (see docs/dev/video.md § metadata ladder); rendering that
+ *  fabricated number (see docs/dev/video-decode.md § metadata ladder); rendering that
  *  as "0:00" would turn a missing header into a claim about the video. Every
  *  video surface formats through this one helper so they cannot disagree.
  */

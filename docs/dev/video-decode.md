@@ -1,0 +1,104 @@
+# Video decode: probe and poster
+
+The cv2 decode surface for video. Two things live here today — `probe_video`, which reads a
+container header for dimensions, fps, codec and duration, and `generate_poster`, which cuts
+the single WebP frame every video card and detail view shows — and frame extraction will
+join them when it lands, since it is the same dependency and the same executor discipline.
+The `Video` model, the `videos/` storage layout, the poster-stem collision rules, ingest,
+the `/videos` endpoints and the frontend surfaces stay in `docs/dev/video.md`; tests for
+both files are indexed there under § Tests.
+
+## Metadata: the ladder and its guard
+
+`services/video_service.py::probe_video(path)` reads the container header only — no decode
+pass — and returns `{width, height, fps, codec, duration_ms, file_size_bytes}`. It is
+blocking; every caller runs it through `run_in_executor`. `cv2` is imported lazily inside
+the function, matching the convention in `backend/ml/technical_scorer.py`.
+
+- fps, dimensions and codec come straight from `cv2.VideoCapture`, which reads mp4, mkv,
+  webm, mov, avi and ts, including HEVC 10-bit and ProRes 422 HQ. It reads `.ts`, which
+  `VIDEO_EXTENSIONS` does not admit: the five containers were specified "at minimum", so
+  that is an open gap in the allowlist, not a decoder limit.
+- `CAP_PROP_FOURCC` gives a stable 4-character code, decoded by
+  `media_types.fourcc_to_code` and stored raw on the row. `codec_label` maps it for
+  display and falls back to the code itself, so an unrecognised codec renders as `apch`
+  rather than as an empty cell. The decode is NULL unless the result is ASCII **and**
+  printable — a guard, not a formality, against the `0` and `-1` that a container with no
+  usable code reports; see that function's docstring for why stripping whitespace does not
+  catch them.
+- Duration is `frames / fps`, **only** when `fps > 0` and `0 < frames < 1e9`; otherwise
+  `duration_ms` is NULL and renders as "unknown". The guard is not defensive padding: a
+  matroska written to a non-seekable pipe — no duration, no cues, which is what
+  stream-ripped and partially-copied files look like — reports
+  `CAP_PROP_FRAME_COUNT = -230584300921369408` while every other field stays correct, and a
+  naive divide stores a duration of −9.2e15 seconds. Parsing the `ffmpeg -i` banner is no
+  rescue; it prints `Duration: N/A` for exactly that file. The probe step of frame
+  extraction will backfill a true duration, since it is already decoding.
+
+**`isOpened()` is the ingest gate.** It returns False for zero-byte, truncated and
+non-video payloads and True only for something decodable, so a `.mp4` extension proving
+nothing about the bytes is handled without a second check. `probe_video` raises
+`UnreadableVideoError`; callers surface it as a readable rejection rather than a silent
+skip. Both ingest helpers copy before probing (probing the destination is what proves the
+copy readable), so both delete the destination when the probe fails — an orphan in
+`videos/` with no row would be re-registered by every later rescan.
+
+## Poster frames
+
+`video_service.generate_poster(video_path, poster_path, *, duration_ms, trim_start_ms,
+trim_end_ms, size=512)` writes one WebP and returns a bool. `probe_and_poster(path,
+poster_path)` is the ingest wrapper: it probes, then posters, and returns
+`(info, poster_path_or_None)`. All three ingest paths call the wrapper inside the executor
+hop they were already making, so a poster costs no extra round trip.
+
+OpenCV rather than ffmpeg: one seek plus one read, and cv2 is already a dependency.
+`imageio-ffmpeg` waits for extraction, where `bwdif`/crop genuinely need a filter chain.
+
+- **Seek target** is the midpoint of the *trimmed* span, `trim_start_ms + (duration_ms −
+  trim_start_ms − trim_end_ms) / 2`, not frame 0 — frame 0 of a real clip is very often a
+  black leader, which makes every card in the strip look identical. Trims are all 0 until
+  extraction writes them; threading them through now means a video whose trim points are
+  set later re-posters onto a frame inside the kept range for free.
+- **Fallback ladder**: seek and read; on failure rewind to `POS_MSEC = 0` and read the
+  first frame; on failure return False. Both rungs are reachable — a NULL duration has no
+  midpoint, and a header whose duration overshoots the stream seeks past the end. Failure
+  is always a False and never a raise (the CLAUDE.md invariant): `has_poster` stays false
+  and the UI draws a film glyph.
+- **Encode**: BGR→RGB, `PIL.Image.fromarray`, `thumbnail((size, size), LANCZOS)`, WebP at
+  quality 85. Mirrors `image_service.generate_thumbnail`, which hardcodes 256 for grid
+  thumbs; 512 here because a 16:9 poster is 512×288 and strip cards render at ~240 px on a
+  2× display. **`ImageOps.exif_transpose` is deliberately absent** and is not a violation
+  of the CLAUDE.md "always transpose first" invariant — the input is a decoded ndarray
+  handed over by cv2, not a file with an EXIF block, so it is outside that rule's scope.
+- **Written atomically**: a uniquely-named temp file in the destination directory, then
+  `os.replace`, matching `version_service._store_object`. Two concurrent lazy backfills for
+  one video are ordinary (two strip cards, or a strip and a detail view); without this one
+  request serves a half-written file the other is still writing. The poster directory is
+  `mkdir(parents=True, exist_ok=True)`'d here — Phase 0 computed it for stem globbing but
+  never created it.
+
+**Lazy backfill.** `GET /videos/{id}/poster` cuts a poster on demand when `poster_path` is
+NULL *or* the file is gone, commits the path, then serves it; it 404s only when the video
+itself will not decode. This is the `generation_metadata` backfill pattern from
+`GET /images/{image_id}`. Rows created before posters existed heal the first time anything
+looks at them — no migration, no backfill job. So `has_poster: false` is no reason for the
+UI to avoid the endpoint — both `VideoStrip`
+and `VideoDetailPage` point at it regardless, the strip falling back to the glyph on the
+`<img>` error event. The stem it heals onto comes from `unique_poster_path` against the
+claimed set (`docs/dev/video.md` § Poster stems and collisions), not from the video's own
+name, or healing one of two same-stem rows would overwrite the other's poster.
+
+A failure parks that video in `routers/videos.py::_poster_failures`, an in-process
+`{video_id: monotonic deadline}` map checked before regeneration is attempted
+(`POSTER_RETRY_AFTER_SECONDS`, 300). Because the UI points at the endpoint
+unconditionally, without it an undecodable video re-runs a full cv2 open on every strip
+render of every gallery visit — cheap per call, unbounded in visits. A `poster_failed_at`
+column is the durable form and is not worth a migration for a retry hint.
+
+`backend/config.py` sets `OPENCV_FFMPEG_LOGLEVEL=-8` at module scope. Rejecting a file is a
+normal outcome here, but each rejection makes OpenCV's ffmpeg backend print
+`[mov,mp4,…] moov atom not found` to stderr. `cv2.utils.logging.setLogLevel` does not
+suppress those — they come from libavformat, not OpenCV's logger — and the variable is read
+when the ffmpeg backend initialises, so setting it after the first `VideoCapture` is too
+late. `config.py` is the earliest reliably-imported module; `setdefault` keeps an operator
+override intact.

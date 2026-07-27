@@ -172,7 +172,7 @@ Dataset-scoped page at `/datasets/:datasetId/comfy` (PageType `"comfy"`, registe
 routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). Job type
 `comfy_generate` is in TopBar's `IMAGE_MODIFYING_JOB_TYPES` and `LIVE_IMAGE_JOB_TYPES`; it is
 the one job type whose live branch also invalidates `["dataset", id]`, because it is the one
-whose worker refreshes the stored counters per row (see `docs/dev/frontend-core.md`). API module
+whose worker refreshes the stored counters per row (see `docs/dev/frontend-jobs.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
 
 `frontend/e2e/comfy.spec.ts` covers the two journeys that need no ComfyUI server: the empty

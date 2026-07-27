@@ -16,7 +16,7 @@ imagehash>=4.3
 httpx>=0.27
 aiohttp>=3.13.3
 # Also the video metadata reader: cv2.VideoCapture supplies fps/dimensions/codec
-# for backend/services/video_service.py. See docs/dev/video.md.
+# for backend/services/video_service.py. See docs/dev/video-decode.md.
 opencv-python>=4.9
 scipy>=1.13
 numpy>=1.26

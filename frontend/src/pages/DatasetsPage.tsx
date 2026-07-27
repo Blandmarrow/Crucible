@@ -674,7 +674,7 @@ export default function DatasetsPage() {
   const datasetElementProps = (ds: Dataset): DatasetElementProps => ({
     "data-dataset-id": ds.id,
     draggable: hasAnyCategory,
-    // Pane-aware navigation: must stay go(), not useNavigate — see docs/dev/frontend-core.md
+    // Pane-aware navigation: must stay go(), not useNavigate — see docs/dev/panes-routing.md
     onClick: () => go(`/datasets/${ds.id}/gallery`, { page: "gallery", datasetId: ds.id }),
     onDragStart: (e) => {
       setDraggingDatasetId(ds.id);

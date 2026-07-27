@@ -1,9 +1,9 @@
 # Video sources
 
-Covers the `Video` model, the `videos/` storage layout, video metadata extraction, poster
-frames, the three ingest paths that can create a video, and the frontend surfaces that
-show one. Frame extraction is not built yet — this file grows as that phase lands. The
-arc's roadmap lives in `roadmap.md` at the repo root until the arc is complete.
+Covers the `Video` model, the `videos/` storage layout, metadata extraction, poster frames,
+the three ingest paths that create a video, and the frontend surfaces that show one. Frame
+extraction is not built yet — this file grows as that phase lands; the arc's roadmap lives
+in `roadmap.md` at the repo root until it is complete.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
 It is deliberately not a row in `images`, which carries ~20 image-specific columns, FK
@@ -12,9 +12,8 @@ invariant — none of which apply to a video file. Frame extraction will convert
 into ordinary `Image` rows at the boundary, so dedup, scoring, captioning, export and
 versioning stay entirely media-unaware and need no changes.
 
-**`backend/media_types.py` is the single allowlist.** It exports `IMAGE_EXTENSIONS`,
-`VIDEO_EXTENSIONS`, `MEDIA_EXTENSIONS`, `media_kind_for(suffix) -> "image" | "video" | None`,
-`video_mime(suffix)` and `codec_label(fourcc)`. Before it, three separate frozensets in
+**`backend/media_types.py` is the single allowlist**; CLAUDE.md § Shared utilities lists
+what it exports. Before it, three separate frozensets in
 `routers/filesystem.py`, `routers/images.py` and `services/dataset_service.py` decided what
 was importable, and they had drifted: only the file browser's carried `.avif`, so a folder
 of AVIFs listed fine and imported as nothing. `.avif` resolved upward when they merged.
@@ -27,10 +26,13 @@ helper signatures only, not to the schema, which splits into two tables on purpo
 **Storage layout.** Video files live flat in `{dataset.folder_path}/videos/`, created
 lazily on first ingest so image-only datasets never grow an empty directory. Poster
 thumbnails go in `{dataset}/videos/thumbnails/` — a **separate** directory, not the images
-thumbnail folder with a distinguishing suffix. Eight code paths build `occupied_thumb_stems`
-from `thumb_dir.glob("*.webp")`; a suffix convention would require all eight to learn a
-filter, and any one that forgot would be a silent thumbnail clobber. A separate directory
-means none of them change.
+thumbnail folder with a distinguishing suffix. Eight **modules** build
+`occupied_thumb_stems` from `thumb_dir.glob("*.webp")` — `routers/images.py`,
+`captioning.py`, `comfy.py`, `lut.py`, `upscaling.py`, `detection.py`,
+`services/version_service.py` and `dataset_service.py` (the count is modules, not call
+sites; `routers/images.py` alone holds seven). A suffix convention would require all eight
+to learn a filter, and any one that forgot would be a silent thumbnail clobber. A separate
+directory means none of them change.
 
 **Poster stem collisions are avoided at every site that writes a poster** — a larger set
 than the sites that pick a filename, and getting that wrong is what made two rows share one
@@ -55,11 +57,10 @@ names the user gave them.
 
 That divergence is why stored stems are a separate term from filename stems — afterwards
 the two disagree, and a set built from filenames alone would let a later upload named
-`clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives the
-*proposal* (`parent`, not `thumbnail_path_for`'s `parent.parent`, because videos are flat);
-for an existing row read `Video.poster_path` and never re-derive it. Moving the poster
-rather than the file is the opposite of image rescan's fix for the same bug — nothing
-re-derives a poster path, where eleven sites re-derive a thumbnail's. See PM-007 and
+`clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives only
+the *proposal*; for an existing row read `Video.poster_path` and never re-derive it
+(CLAUDE.md § Shared utilities). Moving the poster rather than the file is the opposite of
+image rescan's fix for the same bug — see CLAUDE.md § Key invariants, PM-007 and
 `docs/dev/image-files.md` § Importing captions & folder rescan.
 
 ## Metadata: the ladder and its guard
@@ -70,7 +71,9 @@ blocking; every caller runs it through `run_in_executor`. `cv2` is imported lazi
 the function, matching the convention in `backend/ml/technical_scorer.py`.
 
 - fps, dimensions and codec come straight from `cv2.VideoCapture`, which reads mp4, mkv,
-  webm, mov, avi and ts, including HEVC 10-bit and ProRes 422 HQ.
+  webm, mov, avi and ts, including HEVC 10-bit and ProRes 422 HQ. It reads `.ts`, which
+  `VIDEO_EXTENSIONS` does not admit: the five containers were specified "at minimum", so
+  that is an open gap in the allowlist, not a decoder limit.
 - `CAP_PROP_FOURCC` gives a stable 4-character code, decoded by
   `media_types.fourcc_to_code` and stored raw on the row. `codec_label` maps it for
   display and falls back to the code itself, so an unrecognised codec renders as `apch`
@@ -103,9 +106,8 @@ poster_path)` is the ingest wrapper: it probes, then posters, and returns
 `(info, poster_path_or_None)`. All three ingest paths call the wrapper inside the executor
 hop they were already making, so a poster costs no extra round trip.
 
-OpenCV rather than ffmpeg, because this is one seek plus one read and cv2 is already a
-dependency. `imageio-ffmpeg` waits for extraction, where `bwdif`/crop genuinely need a
-filter chain.
+OpenCV rather than ffmpeg: one seek plus one read, and cv2 is already a dependency.
+`imageio-ffmpeg` waits for extraction, where `bwdif`/crop genuinely need a filter chain.
 
 - **Seek target** is the midpoint of the *trimmed* span, `trim_start_ms + (duration_ms −
   trim_start_ms − trim_end_ms) / 2`, not frame 0 — frame 0 of a real clip is very often a
@@ -134,8 +136,8 @@ filter chain.
 NULL *or* the file is gone, commits the path, then serves it; it 404s only when the video
 itself will not decode. This is the `generation_metadata` backfill pattern from
 `GET /images/{image_id}`. Rows created before posters existed heal the first time anything
-looks at them, so the feature needed no migration and no backfill job. It follows that
-`has_poster: false` is not a reason for the UI to avoid the endpoint — both `VideoStrip`
+looks at them — no migration, no backfill job. So `has_poster: false` is no reason for the
+UI to avoid the endpoint — both `VideoStrip`
 and `VideoDetailPage` point at it regardless, the strip falling back to the glyph on the
 `<img>` error event. The stem it heals onto comes from `unique_poster_path` against the
 claimed set above, not from the video's own name, or healing one of two same-stem rows
@@ -212,9 +214,9 @@ an export manifest. Extracted frames need no special-casing — they arrive as o
 `Image` rows and count themselves.
 
 Both columns must be listed explicitly in `list_datasets`, which hand-builds each
-`DatasetOut` field by field rather than validating from the ORM row. They default to 0 on
-the schema, so omitting them reported every dataset as video-free instead of failing —
-which is exactly what happened until the dataset card tried to read them.
+`DatasetOut` field by field rather than validating from the ORM row; they default to 0, so
+omitting them reported every dataset as video-free instead of failing (CLAUDE.md § Key
+invariants).
 
 ## Endpoints
 

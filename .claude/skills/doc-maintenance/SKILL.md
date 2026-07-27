@@ -48,7 +48,9 @@ from them**. That check is yours.
 ## Splitting an oversized doc
 
 `scripts/check_docs.py` warns when a file exceeds its word budget (`TOPIC_MAX_WORDS = 3500`
-for `docs/dev/`, `USER_MAX_WORDS = 2500` for `docs/`, `CLAUDE_MAX_WORDS = 4000`) or when any
+for `docs/dev/`, `USER_MAX_WORDS = 2500` for `docs/`, `CLAUDE_MAX_WORDS = 5400` — that one
+expresses a ~250-line ceiling, converted at CLAUDE.md's own density of ~21.5 words per
+line) or when any
 single paragraph exceeds `MAX_BLOCK_WORDS` (250). Read that script's module docstring for
 why the budgets count words rather than lines — the short version is that a line budget is
 satisfiable by writing longer lines, and that is how facts end up stacked four clauses deep

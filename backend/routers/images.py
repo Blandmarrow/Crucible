@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
+from backend.media_types import media_kind_for
 from backend.licenses import (
     PROVENANCE_FIELDS,
     copy_provenance,
@@ -20,7 +21,7 @@ from backend.licenses import (
     merge_provenance,
     resolve_provenance,
 )
-from backend.models import BackgroundJob, Dataset, Image
+from backend.models import BackgroundJob, Dataset, Image, Video
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
@@ -55,11 +56,10 @@ from backend.services.image_service import (
     get_image_info,
     resize_image,
 )
+from backend.services.video_service import UnreadableVideoError, probe_video
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/images", tags=["images"])
-
-SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
 
 def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, dict | None, dict]:
@@ -75,17 +75,27 @@ def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, 
     generate_thumbnail(str(dest), thumb_path)
     return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
 
+
+def _write_video_upload_sync(src_fileobj, dest: Path) -> dict:
+    """Persist one uploaded video and read its header off the event loop.
+
+    The probe doubles as the ingest gate — cv2 cannot open a truncated or
+    zero-byte file — so a rejected upload is removed again rather than left as
+    an orphan in videos/ that no row points at. No poster frame yet; that
+    arrives with poster generation.
+    """
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(src_fileobj, f)
+    try:
+        return probe_video(dest)
+    except UnreadableVideoError:
+        dest.unlink(missing_ok=True)
+        raise
+
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
     "watermark_score", "color_score", "saturation_score", "style_similarity_score",
 })
-
-def _safe_path(path_str: str, base_dir: Path) -> Path:
-    resolved = Path(path_str).resolve()
-    if not str(resolved).startswith(str(base_dir.resolve())):
-        raise HTTPException(403, "Access denied")
-    return resolved
-
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -370,13 +380,33 @@ async def upload_images(
 
     dest_images = Path(ds.folder_path) / "images"
     dest_thumbs = Path(ds.folder_path) / "thumbnails"
+    dest_videos = Path(ds.folder_path) / "videos"
+    dest_posters = dest_videos / "thumbnails"
     added = []
+    videos_added: list[str] = []
+    # Files we would not or could not ingest. Reported rather than silently
+    # dropped: before this the loop just `continue`d and the response counted
+    # only successes, so a rejected upload looked exactly like a successful one.
+    skipped: list[dict] = []
     norm_subfolder = normalize_subfolder(subfolder)
 
     existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
     db_names: set[str] = {r[0] for r in existing_result.all()}
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
     planned_thumb_stems: set[str] = set()
+
+    existing_videos = await db.execute(select(Video.filename).where(Video.dataset_id == dataset_id))
+    video_db_names: set[str] = {r[0] for r in existing_videos.all()}
+    # Seeded from the *rows*, not only from posters on disk. Image thumbnails are
+    # written during ingest, so globbing the thumbnail directory is enough for
+    # them; a video's poster is generated in a later phase, so until then the
+    # directory is empty and globbing it alone would let `a.mp4` and `a.mkv`
+    # both claim the stem `a` — and the poster written later for one would
+    # overwrite the other's.
+    occupied_poster_stems: set[str] = {Path(n).stem for n in video_db_names}
+    if dest_posters.exists():
+        occupied_poster_stems |= {p.stem for p in dest_posters.glob("*.webp")}
+    planned_poster_stems: set[str] = set()
 
     # Append new uploads at the end of the custom order only when EVERY existing image in this
     # subfolder already has a sort_order assigned. A partial assignment (some NULLs) means the
@@ -392,8 +422,46 @@ async def upload_images(
 
     for upload in files:
         suffix = Path(upload.filename or "").suffix.lower()
-        if suffix not in SUPPORTED_EXTENSIONS:
+        kind = media_kind_for(suffix)
+        if kind is None:
+            skipped.append({"file": upload.filename or "", "reason": f"Unsupported file type: {suffix or 'no extension'}"})
             continue
+        if kind == "video":
+            # Videos are sources, not gallery images — they get a Video row and
+            # live flat in videos/. videos/ is created lazily so an image-only
+            # dataset never grows an empty directory.
+            dest_videos.mkdir(parents=True, exist_ok=True)
+            slug = slugify_filename(Path(upload.filename or "").stem) or "video"
+            # Poster thumbnails are .webp keyed by stem, exactly like image
+            # thumbnails, so `a.mp4` and `a.mkv` would collide on one poster
+            # path. Same helper, different directory pair.
+            filename = unique_filename_with_thumb(
+                dest_videos, slug, suffix, video_db_names, occupied_poster_stems, planned_poster_stems
+            )
+            dest = dest_videos / filename
+            try:
+                info = await asyncio.get_running_loop().run_in_executor(
+                    None, _write_video_upload_sync, upload.file, dest
+                )
+            except UnreadableVideoError as exc:
+                skipped.append({"file": upload.filename or "", "reason": str(exc)})
+                video_db_names.discard(filename)
+                planned_poster_stems.discard(dest.stem)
+                continue
+            db.add(Video(
+                dataset_id=dataset_id,
+                filename=filename,
+                original_filename=upload.filename or filename,
+                file_path=str(dest),
+                # A browser upload carries no provenance for a video (no EXIF
+                # equivalent we read), so everything inherits the dataset default.
+                # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.
+                **merge_provenance({}, fields=PROVENANCE_FIELDS),
+                **info,
+            ))
+            videos_added.append(filename)
+            continue
+
         raw_stem = Path(upload.filename or "").stem
         slug = slugify_filename(raw_stem) or "image"
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
@@ -424,7 +492,13 @@ async def upload_images(
 
     await db.commit()
     await refresh_stats(db, dataset_id)
-    return {"added": len(added), "files": added}
+    return {
+        "added": len(added),
+        "files": added,
+        "videos_added": len(videos_added),
+        "videos": videos_added,
+        "skipped": skipped,
+    }
 
 
 @router.get("/{image_id}", response_model=ImageOut)
@@ -776,7 +850,7 @@ async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    p = _safe_path(img.file_path, settings.datasets_dir)
+    p = safe_dataset_path(img.file_path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "File not found on disk")
     return FileResponse(str(p))
@@ -790,7 +864,7 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
     if img.thumbnail_path and Path(img.thumbnail_path).exists():
         return FileResponse(img.thumbnail_path)
     # Fallback: generate on demand
-    p = _safe_path(img.file_path, settings.datasets_dir)
+    p = safe_dataset_path(img.file_path, settings.datasets_dir)
     thumb = str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)
     img.thumbnail_path = thumb

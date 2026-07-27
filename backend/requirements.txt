@@ -8,10 +8,15 @@ sse-starlette>=3.4
 python-multipart>=0.0.9
 python-dotenv>=1.0
 pydantic-settings>=2.0
-Pillow>=10.0
+# 11.3 is the floor for AVIF decode, which backend/media_types.py lists as an
+# importable image type. AVIF is a build-time feature, so that module gates the
+# entry on features.check("avif") rather than trusting this pin.
+Pillow>=11.3
 imagehash>=4.3
 httpx>=0.27
 aiohttp>=3.13.3
+# Also the video metadata reader: cv2.VideoCapture supplies fps/dimensions/codec
+# for backend/services/video_service.py. See docs/dev/video.md.
 opencv-python>=4.9
 scipy>=1.13
 numpy>=1.26

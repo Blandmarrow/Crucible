@@ -27,11 +27,21 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 
 ## Getting images in
 
-- Drag-and-drop image files onto the gallery to add them to the dataset; a live progress bar shows how many files have been processed, and the counter persists in the top bar if you navigate away mid-upload
+- Drag-and-drop image files onto the gallery to add them to the dataset; a live progress bar shows how many files have been processed, and the counter persists in the top bar if you navigate away mid-upload. Any file Crucible will not take is named in a toast with the reason, so a rejected upload never looks like a successful one
 - **Import a folder** — the import dialog (reachable from a dataset card, the Datasets page header, or the gallery toolbar) lets you **choose the target dataset**, pick the source folder with the **"Browse…"** folder browser (or type the path), and optionally **import captions** from `.txt` sidecars next to each image (on by default). The **Preserve structure** option recursively walks subdirectories and maps each level to a logical subfolder matching the relative path; when off, all images land in the specified target subfolder. A collapsible **Source & license** section applies a source name, URL, license, and attribution to every image in the run — the one ingest path where you can type provenance in directly; anything you leave blank falls back to a scraper sidecar or the file's EXIF → [details](provenance.md)
 - **Rescan folder from disk** — a per-dataset-card button and a Rescan button in the gallery toolbar reconcile the dataset with its `images/` folder: new files on disk are registered (with thumbnails), added or changed `.txt` captions are applied, and files missing on disk are reported in a summary toast (DB records are never deleted). Enable **Auto-rescan dataset on open** in Settings to run this automatically each time you open a dataset gallery
 - **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
 - **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
+
+### Videos (experimental)
+
+Videos are **sources**, not gallery images. A video you add is stored separately from the dataset's images, in its own `videos/` folder, and is kept out of the counts you see on a dataset card: an image count never includes videos, and a dataset's size never includes them either. The point of holding a video is to extract frames from it later; those frames become ordinary images and can be scored, captioned and exported like any others.
+
+- Drop a video onto the gallery, or pick one with the upload button — `.mp4`, `.mkv`, `.webm`, `.mov` and `.avi` are accepted. A file that cannot be decoded is rejected with a message rather than stored broken
+- Tick **Include videos** in the import dialog to bring videos in with a folder import. It is off by default, so importing a mixed folder into an image dataset never quietly copies gigabytes of video. Videos always land flat — the subfolder and **Preserve structure** options apply to images only
+- **Rescan** also registers any video dropped straight into the dataset's `videos/` folder, and reports videos whose files have gone missing
+
+There is no video player, on-screen video count or frame extraction yet; this release records videos so later ones can work with them.
 
 A folder import copies every file into the dataset, so it checks first that the drive has room for them. If it does not, the import fails immediately — with the free and required sizes in the job's error — instead of stopping partway through with some images copied and some not.
 

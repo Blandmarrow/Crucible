@@ -10,7 +10,7 @@ import {
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { imagesApi } from "../api/images";
+import { imagesApi, type UploadResult } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -19,6 +19,7 @@ import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
 import { showImportSummaryToast } from "../utils/importToast";
+import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
@@ -30,6 +31,7 @@ import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilt
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
+import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -322,10 +324,14 @@ export default function GalleryPage() {
     if (rescanManualRef.current) {
       const jid = rescanJobId;
       jobsApi.get(jid).then((job) => {
-        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
-        const missing = (r.missing ?? []).length;
+        const r = job.result_data as {
+          added?: number; captions_updated?: number; missing?: unknown[];
+          videos_added?: number; videos_missing?: unknown[];
+        };
+        const missing = (r.missing ?? []).length + (r.videos_missing ?? []).length;
         toast.success(
           `Rescan complete — ${r.added ?? 0} added, ${r.captions_updated ?? 0} caption(s) updated` +
+          (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
           (missing ? `, ${missing} missing on disk` : ""),
           { id: "gallery-rescan" }
         );
@@ -567,9 +573,16 @@ export default function GalleryPage() {
     const subfolder = sf ?? uploadSubfolder;
     setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0 });
     let errors = 0;
+    // A file the server declined comes back 201 with a `skipped` entry, not an
+    // exception, so the responses are collected and tallied rather than assuming
+    // every file that did not throw was stored.
+    const results: UploadResult[] = [];
+    let skippedSoFar = 0;
     for (let i = 0; i < fileArray.length; i++) {
       try {
-        await imagesApi.uploadSingle(datasetId, fileArray[i], subfolder);
+        const res = await imagesApi.uploadSingle(datasetId, fileArray[i], subfolder);
+        results.push(res);
+        skippedSoFar += res.skipped.length;
         // Invalidate after each success so images appear in the gallery live.
         // cancelRefetch: false lets in-flight fetches finish instead of being
         // restarted on every file, coalescing rapid invalidations into fewer GETs.
@@ -577,16 +590,15 @@ export default function GalleryPage() {
       } catch {
         errors++;
       }
-      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors });
+      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors: errors + skippedSoFar });
     }
     // Final refresh to ensure the gallery is fully up-to-date
     await refetch();
     qc.invalidateQueries({ queryKey: ["datasets"] });
     qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-    const succeeded = fileArray.length - errors;
-    if (succeeded > 0) toast.success(`Uploaded ${succeeded} image(s)`);
-    if (errors > 0) toast.error(`${errors} file(s) failed to upload`);
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
+    showUploadSummaryToast(tallyUpload(results, errors));
     setUploadProgress(null);
   }, [datasetId, refetch, qc, uploadSubfolder]); // setUploadProgress omitted — Zustand setters are stable references
 
@@ -668,17 +680,17 @@ export default function GalleryPage() {
     onError: () => toast.error("Copy to dataset failed"),
   });
 
-  // Only the image-upload overlay cares about *image* drags. A .txt caption drag is
+  // Only the upload overlay cares about *media* drags. A .txt caption drag is
   // consumed per-card (which stopPropagations, so the grid's drop never fires) — gating
-  // the overlay on image presence means a caption drag never turns it on, so it can't
+  // the overlay on media presence means a caption drag never turns it on, so it can't
   // get stuck. The depth counter keeps nested child enter/leave events balanced.
-  const dragHasImage = (dt: DataTransfer | null) =>
-    !!dt && Array.from(dt.items || []).some((it) => it.kind === "file" && it.type.startsWith("image/"));
+  const dragHasMedia = (dt: DataTransfer | null) =>
+    !!dt && Array.from(dt.items || []).some(isMediaDragItem);
 
   const handleDragEnter = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes("Files")) return;
     dragDepth.current += 1;
-    if (dragHasImage(e.dataTransfer)) {
+    if (dragHasMedia(e.dataTransfer)) {
       e.preventDefault();
       setIsDragOver(true);
     }
@@ -694,10 +706,12 @@ export default function GalleryPage() {
     e.preventDefault(); // always, so the browser never opens/navigates to a dropped file
     dragDepth.current = 0;
     setIsDragOver(false);
-    // Only upload images; a stray .txt dropped on the grid gap is ignored here (per-card
-    // caption drops are handled by ImageCard and never reach this handler).
-    const imageFiles = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
-    if (!uploading && imageFiles.length) handleUpload(imageFiles);
+    // Only upload images and videos; a stray .txt dropped on the grid gap is ignored here
+    // (per-card caption drops are handled by ImageCard and never reach this handler).
+    // isMediaFile falls back to the extension because browsers report an empty `type` for
+    // .mkv and often .avi — a MIME-only filter would drop them silently.
+    const mediaFiles = Array.from(e.dataTransfer.files).filter(isMediaFile);
+    if (!uploading && mediaFiles.length) handleUpload(mediaFiles);
   };
 
   // Safety net: if a drag ends anywhere (drop outside the grid, Esc-cancel, or a child
@@ -1164,7 +1178,7 @@ export default function GalleryPage() {
               <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
             </svg>
             {uploading ? "Uploading…" : "Upload"}
-            <input type="file" multiple accept="image/*" style={{ display: "none" }}
+            <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
               onChange={(e) => e.target.files && handleUpload(e.target.files)} />
           </label>
         </div>
@@ -1366,7 +1380,7 @@ export default function GalleryPage() {
             <p>No images found. Upload or adjust filters.</p>
             <label className="btn primary" style={{ cursor: "pointer" }}>
               Upload images
-              <input type="file" multiple accept="image/*" style={{ display: "none" }}
+              <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
                 onChange={(e) => e.target.files && handleUpload(e.target.files)} />
             </label>
           </div>

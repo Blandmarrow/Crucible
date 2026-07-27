@@ -38,6 +38,7 @@ Every step from raw images to a training-ready export, in order:
 - **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/gallery.md)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
 - **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
+- **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, never mixed into the image grid (experimental; frame extraction is not built yet) → [details](docs/gallery.md)
 
 ### Image generation
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)

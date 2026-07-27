@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Folder, FolderOpen, File, Image as ImageIcon, HardDrive, Home,
+  Folder, FolderOpen, File, Film, Image as ImageIcon, HardDrive, Home,
   ChevronRight, Plus, RefreshCw, Trash2, Edit2, FolderInput,
   ArrowUp, SortAsc, SortDesc, X,
 } from "lucide-react";
@@ -156,8 +156,12 @@ function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
 
 function ImportModal({ folderPath, datasets, onClose }: { folderPath: string; datasets: Dataset[]; onClose: () => void }) {
   const [selectedId, setSelectedId] = useState(datasets[0]?.id ?? "");
+  // Mirrors ImportFolderModal's default. Offered here too, or browsing to a
+  // folder of videos and hitting Import would silently import nothing.
+  const [includeVideos, setIncludeVideos] = useState(false);
   const mutation = useMutation({
-    mutationFn: () => datasetsApi.importFolder(selectedId, folderPath),
+    mutationFn: () =>
+      datasetsApi.importFolder(selectedId, folderPath, "", false, true, undefined, includeVideos),
     onSuccess: () => { toast.success("Import started"); onClose(); },
     onError: () => toast.error("Import failed"),
   });
@@ -168,9 +172,13 @@ function ImportModal({ folderPath, datasets, onClose }: { folderPath: string; da
         <h3 style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>Import into Dataset</h3>
         <p style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 12, wordBreak: "break-all" }}>{folderPath}</p>
         <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "block", marginBottom: 6 }}>Target dataset</label>
-        <select className="select" style={{ width: "100%", marginBottom: 20 }} value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
+        <select className="select" style={{ width: "100%", marginBottom: 14 }} value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
           {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
         </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, cursor: "pointer" }}>
+          <input type="checkbox" className="checkbox" checked={includeVideos} onChange={(e) => setIncludeVideos(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>Include videos</span>
+        </label>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={() => mutation.mutate()} disabled={!selectedId || mutation.isPending}>
@@ -259,7 +267,7 @@ export default function FileBrowserPage() {
   const [currentPath, setCurrentPath] = useState<string>("");
   const [selectedEntry, setSelectedEntry] = useState<FsEntry | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [imagesOnly, setImagesOnly] = useState(false);
+  const [mediaOnly, setMediaOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [modal, setModal] = useState<Modal>(null);
@@ -302,7 +310,7 @@ export default function FileBrowserPage() {
 
   // Sorted + filtered entries
   const entries = (listing?.entries ?? [])
-    .filter((e) => !imagesOnly || e.type === "dir" || e.is_image)
+    .filter((e) => !mediaOnly || e.type === "dir" || e.media_kind !== null)
     .sort((a, b) => {
       // Dirs always first
       if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
@@ -312,6 +320,9 @@ export default function FileBrowserPage() {
       else cmp = a.modified_at.localeCompare(b.modified_at);
       return sortDir === "asc" ? cmp : -cmp;
     });
+
+  const imageCount = entries.filter((e) => e.media_kind === "image").length;
+  const videoCount = entries.filter((e) => e.media_kind === "video").length;
 
   const breadcrumbs = () => currentPath ? breadcrumbsFromPath(currentPath) : [];
 
@@ -332,7 +343,9 @@ export default function FileBrowserPage() {
     if (entry.type === "dir") {
       navigateTo(entry.path);
     } else {
-      setSelectedEntry(entry.is_image ? entry : null);
+      // The preview pane renders a still image; a video row is selectable in the
+      // listing but has no preview until poster frames exist.
+      setSelectedEntry(entry.media_kind === "image" ? entry : null);
     }
   };
 
@@ -440,8 +453,8 @@ export default function FileBrowserPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--fg-mute)", cursor: "pointer", userSelect: "none" }}>
-              <input type="checkbox" className="checkbox" checked={imagesOnly} onChange={(e) => setImagesOnly(e.target.checked)} />
-              <ImageIcon size={12} /> Images only
+              <input type="checkbox" className="checkbox" checked={mediaOnly} onChange={(e) => setMediaOnly(e.target.checked)} />
+              <ImageIcon size={12} /> Media only
             </label>
             <button className="icon-btn" onClick={() => refetch()} title="Refresh"><RefreshCw size={13} /></button>
             <button className="btn sm" onClick={() => setModal({ type: "mkdir" })} style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -483,7 +496,7 @@ export default function FileBrowserPage() {
             </div>
           ) : entries.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: "var(--fg-mute)", fontSize: 13 }}>
-              {imagesOnly ? "No image files in this folder." : "This folder is empty."}
+              {mediaOnly ? "No images or videos in this folder." : "This folder is empty."}
             </div>
           ) : (
             entries.map((entry) => {
@@ -506,10 +519,12 @@ export default function FileBrowserPage() {
                   onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <span style={{ flexShrink: 0, color: entry.type === "dir" ? "var(--accent)" : entry.is_image ? "var(--info)" : "var(--fg-dim)" }}>
+                    <span style={{ flexShrink: 0, color: entry.type === "dir" ? "var(--accent)" : entry.media_kind ? "var(--info)" : "var(--fg-dim)" }}>
                       {entry.type === "dir"
                         ? (isSelected ? <FolderOpen size={15} /> : <Folder size={15} />)
-                        : entry.is_image ? <ImageIcon size={15} /> : <File size={15} />}
+                        : entry.media_kind === "image" ? <ImageIcon size={15} />
+                        : entry.media_kind === "video" ? <Film size={15} />
+                        : <File size={15} />}
                     </span>
                     {isRenaming ? (
                       <RenameInput
@@ -540,7 +555,8 @@ export default function FileBrowserPage() {
         }}>
           <span>{entries.length} item{entries.length !== 1 ? "s" : ""}</span>
           <span>{entries.filter((e) => e.type === "dir").length} folder{entries.filter((e) => e.type === "dir").length !== 1 ? "s" : ""}</span>
-          <span>{entries.filter((e) => e.is_image).length} image{entries.filter((e) => e.is_image).length !== 1 ? "s" : ""}</span>
+          <span>{imageCount} image{imageCount !== 1 ? "s" : ""}</span>
+          {videoCount > 0 && <span>{videoCount} video{videoCount !== 1 ? "s" : ""}</span>}
         </div>
       </div>
 

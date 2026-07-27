@@ -14,13 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
-from backend.models import Dataset, Image
+from backend.media_types import IMAGE_EXTENSIONS, media_kind_for
+from backend.models import Dataset, Image, Video
 from backend.services.image_service import extract_generation_metadata, get_image_info
 from backend.utils import sanitize_abs_path
 
 router = APIRouter(prefix="/filesystem", tags=["filesystem"])
-
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".avif"}
 
 
 async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset | None:
@@ -78,7 +77,7 @@ async def list_directory(path: str = Query(...)):
                     "type": "dir" if child.is_dir() else "file",
                     "size_bytes": stat.st_size if child.is_file() else None,
                     "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    "is_image": child.suffix.lower() in IMAGE_EXTENSIONS,
+                    "media_kind": media_kind_for(child.suffix) if child.is_file() else None,
                     "extension": child.suffix.lstrip(".").upper() if child.is_file() else None,
                 })
             except (PermissionError, OSError):
@@ -147,27 +146,34 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     except PermissionError:
         raise HTTPException(403, "Access denied")
 
-    # Sync DB records for any images within the moved path
-    if src.is_file() and src.suffix.lower() in IMAGE_EXTENSIONS:
-        result = await db.execute(select(Image).where(Image.file_path == str(src)))
-        img = result.scalar_one_or_none()
-        if img:
-            img.file_path = str(new_path)
-            img.filename = new_path.name
+    # Sync DB records for any media within the moved path. Videos get the same
+    # treatment as images: a moved file whose row still points at the old path is
+    # a dangling record either way.
+    kind = media_kind_for(src.suffix) if src.is_file() else None
+    if kind is not None:
+        model = Image if kind == "image" else Video
+        result = await db.execute(select(model).where(model.file_path == str(src)))
+        row = result.scalar_one_or_none()
+        if row:
+            row.file_path = str(new_path)
+            row.filename = new_path.name
             # Update dataset if destination is inside a different dataset folder
             new_ds = await _find_dataset_for_path(db, new_path)
-            if new_ds and new_ds.id != img.dataset_id:
-                img.dataset_id = new_ds.id
+            if new_ds and new_ds.id != row.dataset_id:
+                row.dataset_id = new_ds.id
             await db.commit()
     elif src.is_dir():
-        # Update all images whose file_path started with old dir path
+        # Update every media row whose file_path started with the old dir path
         old_prefix = str(src) + os.sep
-        result = await db.execute(select(Image).where(Image.file_path.startswith(old_prefix)))
-        imgs = result.scalars().all()
-        for img in imgs:
-            rel = Path(img.file_path).relative_to(src)
-            img.file_path = str(new_path / rel)
-        if imgs:
+        touched = False
+        for model in (Image, Video):
+            result = await db.execute(select(model).where(model.file_path.startswith(old_prefix)))
+            rows = result.scalars().all()
+            for row in rows:
+                rel = Path(row.file_path).relative_to(src)
+                row.file_path = str(new_path / rel)
+            touched = touched or bool(rows)
+        if touched:
             await db.commit()
 
     return {"new_path": str(new_path)}
@@ -200,12 +206,14 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
 
     # Sync DB
     if new_path.is_file():
-        result = await db.execute(select(Image).where(Image.file_path == str(p)))
-        img = result.scalar_one_or_none()
-        if img:
-            img.file_path = str(new_path)
-            img.filename = new_path.name
-            await db.commit()
+        for model in (Image, Video):
+            result = await db.execute(select(model).where(model.file_path == str(p)))
+            row = result.scalar_one_or_none()
+            if row:
+                row.file_path = str(new_path)
+                row.filename = new_path.name
+                await db.commit()
+                break
 
     return {"new_path": str(new_path)}
 
@@ -238,12 +246,15 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
 
     # Filesystem deletion succeeded; now remove DB records.
     if not is_dir:
-        result = await db.execute(select(Image).where(Image.file_path == str(p)))
-        img = result.scalar_one_or_none()
-        if img:
-            await db.delete(img)
+        for model in (Image, Video):
+            result = await db.execute(select(model).where(model.file_path == str(p)))
+            row = result.scalar_one_or_none()
+            if row:
+                await db.delete(row)
+                break
     else:
-        await db.execute(delete(Image).where(Image.file_path.startswith(old_prefix)))
+        for model in (Image, Video):
+            await db.execute(delete(model).where(model.file_path.startswith(old_prefix)))
     await db.commit()
 
     return {"ok": True}

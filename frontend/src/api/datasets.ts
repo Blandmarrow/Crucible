@@ -48,12 +48,15 @@ export const datasetsApi = {
         source_version_id: sourceVersionId ?? null,
       })
       .then((r) => r.data),
+  // include_videos is opt-in: a video is orders of magnitude larger than the
+  // images beside it, so a mixed folder must not silently pull gigabytes in.
+  // Videos land flat in videos/, ignoring subfolder and preserve_structure.
   importFolder: (
     id: string, folder_path: string, subfolder = "", preserve_structure = false,
-    import_captions = true, provenance?: DatasetProvenance,
+    import_captions = true, provenance?: DatasetProvenance, include_videos = false,
   ) =>
     client.post<{ job_id: string }>(`/datasets/${id}/import`, {
-      folder_path, subfolder, preserve_structure, import_captions, ...provenance,
+      folder_path, subfolder, preserve_structure, import_captions, include_videos, ...provenance,
     }).then((r) => r.data),
   rescan: (id: string, import_captions = true) =>
     client.post<{ job_id: string }>(`/datasets/${id}/rescan`, { import_captions }).then((r) => r.data),

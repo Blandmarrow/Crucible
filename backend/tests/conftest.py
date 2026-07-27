@@ -144,6 +144,48 @@ def jpeg_bytes(color=(200, 60, 20), size=(16, 16)) -> bytes:
     return buf.getvalue()
 
 
+def mp4_bytes(frames: int = 25, size=(64, 48), fps: float = 25.0) -> bytes:
+    """A real, decodable .mp4 — the video counterpart of `png_bytes`.
+
+    The repo ships no sample media, so video fixtures are synthesized. cv2's
+    VideoWriter cannot write to a buffer, hence the temp file. `mp4v` is the
+    fourcc to use: `avc1` needs an h264 encoder that is not present in the
+    opencv-python wheel, and its writer silently fails to open. 50 frames at
+    64x48 come to about 3.4 KB.
+
+    Each frame gets a different flat colour so shot/frame-picking code has
+    something to distinguish, and the file stays trivially compressible.
+    """
+    import tempfile
+
+    import cv2
+    import numpy as np
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "fixture.mp4"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+        assert writer.isOpened(), "cv2 could not open an mp4v VideoWriter"
+        for i in range(frames):
+            writer.write(np.full((size[1], size[0], 3), (i * 5) % 255, np.uint8))
+        writer.release()
+        return path.read_bytes()
+
+
+async def upload_video(env, dataset_id: str, name: str = "a.mp4", data: bytes | None = None) -> dict:
+    """Upload one video through the gallery upload endpoint and return its row."""
+    r = await env.client.post(
+        f"{API}/images/upload",
+        params={"dataset_id": dataset_id},
+        files=[("files", (name, data if data is not None else mp4_bytes(), "video/mp4"))],
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["videos"], f"video was not ingested: {body}"
+    filename = body["videos"][0]
+    listing = (await env.client.get(f"{API}/videos/", params={"dataset_id": dataset_id})).json()
+    return next(v for v in listing if v["filename"] == filename)
+
+
 async def upload_image(env, dataset_id: str, name: str = "a.png", data: bytes | None = None) -> dict:
     """Upload one image and return its row. The endpoint returns filenames only."""
     r = await env.client.post(

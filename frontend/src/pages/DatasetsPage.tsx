@@ -17,6 +17,7 @@ import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
 import { apiErrorDetail } from "../utils/apiError";
 import { showImportSummaryToast } from "../utils/importToast";
+import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
 import type { Dataset } from "../types";
@@ -358,12 +359,16 @@ export default function DatasetsPage() {
       const dsId = rescanJobProgress.dataset_id;
       if (dsId) invalidateDatasetCaches(dsId);
       jobsApi.get(rescanJobId).then((job) => {
-        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
+        const r = job.result_data as {
+          added?: number; captions_updated?: number; missing?: unknown[];
+          videos_added?: number; videos_missing?: unknown[];
+        };
         const added = r.added ?? 0;
         const captions = r.captions_updated ?? 0;
-        const missing = (r.missing ?? []).length;
+        const missing = (r.missing ?? []).length + (r.videos_missing ?? []).length;
         toast.success(
           `Rescan complete — ${added} added, ${captions} caption(s) updated` +
+          (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
           (missing ? `, ${missing} missing on disk` : "")
         );
       }).catch(() => toast.success("Rescan complete"));
@@ -585,11 +590,16 @@ export default function DatasetsPage() {
   const handleCardDrop = useCallback(async (datasetId: string, files: FileList) => {
     if (!files.length) return;
     try {
-      await imagesApi.upload(datasetId, Array.from(files));
+      // The dropped files are not filtered client-side: unlike the gallery grid
+      // there is no competing per-card caption-drop gesture here, and sending
+      // everything is what lets the server name what it declined. Reporting
+      // files.length as images would call a rejected upload a successful one.
+      const res = await imagesApi.upload(datasetId, Array.from(files));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      toast.success(`Uploaded ${files.length} image(s)`);
+      qc.invalidateQueries({ queryKey: ["videos", datasetId] });
+      showUploadSummaryToast(tallyUpload([res]));
     } catch {
       toast.error("Upload failed");
     }

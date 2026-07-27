@@ -59,7 +59,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Word budgets. See the module docstring for why these are words and not lines.
-CLAUDE_MAX_WORDS = 4000   # always loaded into every conversation — the tightest budget
+# CLAUDE_MAX_WORDS was raised from 4000 to express a ceiling of roughly 250 lines,
+# which is the form the limit was requested in. It is applied in words because that
+# is the only unit this script can enforce meaningfully — a line budget is satisfied
+# by writing longer lines. The conversion used CLAUDE.md's own density at the time,
+# 186 lines to 3994 words, i.e. ~21.5 words per line.
+CLAUDE_MAX_WORDS = 5400   # always loaded into every conversation — still the tightest budget
 TOPIC_MAX_WORDS = 3500    # docs/dev/*.md — one subsystem per file
 USER_MAX_WORDS = 2500     # docs/*.md — end-user docs
 README_MAX_WORDS = 2500   # the landing page

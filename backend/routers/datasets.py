@@ -239,6 +239,7 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
                 import_captions=body.import_captions,
+                include_videos=body.include_videos,
                 provenance={
                     "source_name": body.source_name,
                     "source_url": body.source_url,

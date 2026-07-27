@@ -47,6 +47,10 @@ class DatasetImportWithOptions(ProvenanceDefaults):
     subfolder: str = ""
     preserve_structure: bool = False
     import_captions: bool = True
+    # Opt-in: a video is orders of magnitude larger than the images beside it,
+    # so a mixed folder imported into an image dataset must not silently pull
+    # gigabytes in. Videos land flat in videos/, ignoring subfolder/preserve_structure.
+    include_videos: bool = False
 
 
 class DatasetRescanRequest(BaseModel):
@@ -88,6 +92,10 @@ class DatasetOut(BaseModel):
     image_count: int
     captioned_count: int
     total_size_bytes: int
+    # Videos are counted apart from image_count/total_size_bytes on purpose —
+    # see backend/models/dataset.py and docs/dev/video.md.
+    video_count: int = 0
+    video_size_bytes: int = 0
     preview_image_ids: list[str] = []
     current_branch_id: str | None = None
     source_name: str = ""

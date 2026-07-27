@@ -90,6 +90,21 @@ def sanitize_abs_path(path: str) -> Path:
     return p
 
 
+def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
+    """Resolve a stored file path and refuse anything outside `base_dir` (HTTP 403).
+
+    The paths this guards come from the DB rather than a request body, but a row
+    can carry a path written by an earlier import, a rename, or a hand edit — so
+    every endpoint that turns a stored path into a FileResponse runs it through
+    here. Used by the image file/thumbnail routes and the video file/poster
+    routes; never re-inline the prefix check.
+    """
+    resolved = Path(path_str).resolve()
+    if not str(resolved).startswith(str(base_dir.resolve())):
+        raise HTTPException(403, "Access denied")
+    return resolved
+
+
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments."""
     parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]

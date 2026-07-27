@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
-from backend.models import Dataset, Image
+from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from backend.models import Dataset, Image, Video
 from backend.services.caption_service import _write_txt_sidecar
 from backend.services.image_service import (
     extract_generation_metadata,
@@ -22,11 +23,10 @@ from backend.services.image_service import (
     get_image_info,
     read_provenance_sidecar,
 )
-from backend.utils import copy_with_sidecar, read_caption_sidecar, require_free_space, thumbnail_path_for
+from backend.services.video_service import UnreadableVideoError, probe_video
+from backend.utils import copy_with_sidecar, read_caption_sidecar, require_free_space, thumbnail_path_for, unique_filename_with_thumb
 
 logger = logging.getLogger(__name__)
-
-SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
 # Cap on how many per-file error details we retain in a job summary (failed_count keeps the full tally).
 _MAX_FAILED_DETAILS = 50
@@ -415,15 +415,48 @@ def _file_size(path: Path) -> int:
         return 0
 
 
-def _scan_source_files(src: Path, preserve_structure: bool) -> tuple[list[Path], int]:
-    """Importable files under `src` and their total size. Blocking — call in an executor.
+def _scan_source_files(
+    src: Path, preserve_structure: bool, include_videos: bool = False
+) -> tuple[list[Path], list[Path], int]:
+    """Importable files under `src`, split by kind, plus their combined size.
 
-    One traversal for both: `is_file()` already stats every entry, so summing sizes in
-    the same pass costs nothing beyond the stat the filter performs anyway.
+    Blocking — call in an executor. One traversal for all three: `is_file()`
+    already stats every entry, so summing sizes in the same pass costs nothing
+    beyond the stat the filter performs anyway. The combined size is what feeds
+    `require_free_space`, so video bytes are covered automatically whenever
+    they are being imported.
     """
     it = src.rglob("*") if preserve_structure else src.iterdir()
-    files = [f for f in it if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
-    return files, sum(_file_size(f) for f in files)
+    images: list[Path] = []
+    videos: list[Path] = []
+    for f in it:
+        if not f.is_file():
+            continue
+        suffix = f.suffix.lower()
+        if suffix in IMAGE_EXTENSIONS:
+            images.append(f)
+        elif include_videos and suffix in VIDEO_EXTENSIONS:
+            videos.append(f)
+    return images, videos, sum(_file_size(f) for f in images + videos)
+
+
+def _ingest_video_sync(src_file: Path, dest_file: Path) -> dict:
+    """Copy one video into the dataset and read its header. Blocking.
+
+    `shutil.copy2` rather than `copy_with_sidecar`: a video carries no `.txt`
+    caption companion — captions belong to the frames extracted from it.
+
+    A file that fails the probe is removed again. The copy has to happen first
+    (probing the destination is what proves the copy itself is readable), so
+    without this an undecodable source would leave an orphan in videos/ that no
+    DB row points at — and rescan would then try to register it on every run.
+    """
+    shutil.copy2(src_file, dest_file)
+    try:
+        return probe_video(dest_file)
+    except UnreadableVideoError:
+        dest_file.unlink(missing_ok=True)
+        raise
 
 
 async def import_images_from_folder(
@@ -435,6 +468,7 @@ async def import_images_from_folder(
     preserve_structure: bool = False,
     import_captions: bool = True,
     provenance: dict | None = None,
+    include_videos: bool = False,
 ) -> dict:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -446,20 +480,22 @@ async def import_images_from_folder(
     # Walking the tree and stat-ing every file is unbounded blocking I/O — slow enough
     # on a large or network-mounted folder to stall SSE progress and every other
     # request. It is also self-contained, so the whole scan goes to a thread at once.
-    image_files, source_bytes = await asyncio.get_running_loop().run_in_executor(
-        None, _scan_source_files, src, preserve_structure
+    image_files, video_files, source_bytes = await asyncio.get_running_loop().run_in_executor(
+        None, _scan_source_files, src, preserve_structure, include_videos
     )
-    total = len(image_files)
+    total = len(image_files) + len(video_files)
 
     # Every one of these files is copied into the dataset, plus a thumbnail each.
     # Check before the first copy so a too-small disk fails the job with a readable
-    # message rather than leaving a partially imported folder behind.
+    # message rather than leaving a partially imported folder behind. `source_bytes`
+    # spans both kinds, so an import that includes videos is preflighted for them.
     require_free_space(dataset.folder_path, source_bytes)
     added = 0
+    videos_added = 0
     failed_count = 0
     failed: list[dict] = []
 
-    from backend.utils import slugify_filename, unique_filename_with_thumb
+    from backend.utils import slugify_filename
 
     dest_images = Path(dataset.folder_path) / "images"
     dest_thumbs = Path(dataset.folder_path) / "thumbnails"
@@ -539,11 +575,121 @@ async def import_images_from_folder(
                 "message": f"Importing {src_file.name}",
             })
 
+    # Videos, after the images. They land flat in videos/ regardless of
+    # preserve_structure — subfolders are an image-side concept, and a video's
+    # extracted frames get their own subfolder at extraction time instead.
+    if video_files and not (job_id and job_queue.cancel_requested(job_id)):
+        # Created lazily, so an image-only dataset never grows an empty videos/.
+        dest_videos = Path(dataset.folder_path) / "videos"
+        dest_posters = dest_videos / "thumbnails"
+        dest_videos.mkdir(parents=True, exist_ok=True)
+
+        existing_videos = await db.execute(select(Video.filename).where(Video.dataset_id == dataset.id))
+        video_db_names: set[str] = {r[0] for r in existing_videos.all()}
+        # Seeded from the rows as well as from disk: a video's poster is written
+        # in a later phase, so the poster directory is empty for now and globbing
+        # it alone would let `a.mp4` and `a.mkv` both claim the stem `a`.
+        occupied_poster_stems: set[str] = {Path(n).stem for n in video_db_names}
+        if dest_posters.exists():
+            occupied_poster_stems |= {p.stem for p in dest_posters.glob("*.webp")}
+        planned_poster_stems: set[str] = set()
+
+        for j, src_file in enumerate(video_files):
+            if job_id and job_queue.cancel_requested(job_id):
+                break
+            try:
+                slug = slugify_filename(src_file.stem) or "video"
+                new_name = unique_filename_with_thumb(
+                    dest_videos, slug, src_file.suffix.lower(), video_db_names,
+                    occupied_poster_stems, planned_poster_stems,
+                )
+                dest_file = dest_videos / new_name
+                info = await asyncio.get_running_loop().run_in_executor(
+                    None, _ingest_video_sync, src_file, dest_file
+                )
+                db.add(Video(
+                    dataset_id=dataset.id,
+                    filename=new_name,
+                    original_filename=src_file.name,
+                    file_path=str(dest_file),
+                    # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.
+                    **merge_provenance(provenance, fields=PROVENANCE_FIELDS),
+                    **info,
+                ))
+                videos_added += 1
+            except Exception as exc:  # skip broken files, continue import
+                failed_count += 1
+                if len(failed) < _MAX_FAILED_DETAILS:
+                    failed.append({"file": src_file.name, "error": str(exc)})
+                logger.warning("import: failed for %s", src_file, exc_info=True)
+
+            if (j + 1) % 200 == 0:
+                await db.commit()
+
+            if job_id and j % 10 == 0:
+                done = len(image_files) + j + 1
+                await broadcaster.emit(job_id, {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "job_type": "import",
+                    "status": "running",
+                    "done": done,
+                    "total": total,
+                    "percent": round(done / total * 100, 1),
+                    "current_item": src_file.name,
+                    "message": f"Importing {src_file.name}",
+                })
+
     await db.commit()
     await refresh_stats(db, dataset.id)
     if job_id:
         job_queue.raise_if_cancelled(job_id)
-    return {"added": added, "failed_count": failed_count, "failed": failed}
+    return {"added": added, "videos_added": videos_added, "failed_count": failed_count, "failed": failed}
+
+
+async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
+    """Reconcile videos/ with the `videos` table. Returns {videos_added, videos_missing}.
+
+    Its own pass because the image rescan walks `images_dir.rglob("*")`, which
+    cannot see videos/ at all. The walk here is a **flat** glob: videos are never
+    nested, and flat conveniently skips the videos/thumbnails/ child directory
+    that would otherwise be scanned for video files on every run.
+
+    Callers commit and refresh stats — this only stages rows.
+    """
+    videos_dir = Path(dataset.folder_path) / "videos"
+    if not videos_dir.exists():
+        return {"videos_added": 0, "videos_missing": []}
+
+    disk_videos = [f for f in videos_dir.glob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS]
+
+    existing = await db.execute(select(Video).where(Video.dataset_id == dataset.id))
+    by_filename: dict[str, Video] = {v.filename: v for v in existing.scalars().all()}
+
+    seen: set[str] = set()
+    videos_added = 0
+    for f in disk_videos:
+        seen.add(f.name)
+        if f.name in by_filename:
+            continue
+        try:
+            info = await asyncio.get_running_loop().run_in_executor(None, probe_video, f)
+        except UnreadableVideoError:
+            # Not a failure worth reporting: an undecodable file in videos/ is
+            # simply not a video we can register. Leave it on disk untouched.
+            logger.info("rescan: skipping undecodable video %s", f)
+            continue
+        db.add(Video(
+            dataset_id=dataset.id,
+            filename=f.name,
+            original_filename=f.name,
+            file_path=str(f),
+            **info,
+        ))
+        videos_added += 1
+
+    videos_missing = [fn for fn in by_filename if fn not in seen]
+    return {"videos_added": videos_added, "videos_missing": videos_missing}
 
 
 async def rescan_dataset(
@@ -552,23 +698,26 @@ async def rescan_dataset(
     job_id: str | None = None,
     import_captions: bool = True,
 ) -> dict:
-    """Reconcile a dataset's DB records with the files on disk under images/.
+    """Reconcile a dataset's DB records with the files on disk under images/ and videos/.
 
     - Files on disk not in the DB are registered (thumbnail + sidecar caption).
     - DB records whose file is missing on disk are reported (never removed).
     - Existing records pick up changed/added .txt sidecars when import_captions is set.
-    Returns {added, captions_updated, missing, total_on_disk}.
+    Returns {added, videos_added, captions_updated, missing, videos_missing, total_on_disk}.
     """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
     images_dir = Path(dataset.folder_path) / "images"
     if not images_dir.exists():
-        return {"added": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0}
+        # videos/ can exist without images/ — reconcile it either way.
+        vids = await _rescan_videos(db, dataset)
+        await refresh_stats(db, dataset.id)
+        return {"added": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0, **vids}
 
     disk_files = [
         f for f in images_dir.rglob("*")
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
     ]
     total = len(disk_files)
 
@@ -654,6 +803,10 @@ async def rescan_dataset(
         if fn not in seen_filenames
     ]
 
+    # Videos are reported under their own keys rather than folded into `missing`,
+    # whose entries are image-shaped ({subfolder, filename}).
+    vids = {"videos_added": 0, "videos_missing": []} if cancelled else await _rescan_videos(db, dataset)
+
     await db.commit()
     await refresh_stats(db, dataset.id)
     if cancelled:
@@ -665,6 +818,7 @@ async def rescan_dataset(
         "total_on_disk": total,
         "failed_count": failed_count,
         "failed": failed,
+        **vids,
     }
 
 
@@ -763,11 +917,25 @@ async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:
     )
     captioned_count = captioned.scalar() or 0
 
+    # Videos are counted into their own columns, never folded into image_count
+    # or total_size_bytes: a video is ~100x the size of the frames it yields, so
+    # folding it in would make every dataset card read as bloated, and
+    # image_count is what a user compares against an export manifest. Extracted
+    # frames need no special-casing — they arrive as ordinary Image rows above.
+    vid = await db.execute(
+        select(func.count(Video.id), func.sum(Video.file_size_bytes)).where(
+            Video.dataset_id == dataset_id
+        )
+    )
+    vid_row = vid.one()
+
     ds = await db.get(Dataset, dataset_id)
     if ds:
         ds.image_count = image_count
         ds.captioned_count = captioned_count
         ds.total_size_bytes = total_size
+        ds.video_count = vid_row[0] or 0
+        ds.video_size_bytes = vid_row[1] or 0
         ds.updated_at = datetime.utcnow()
         await db.commit()
 

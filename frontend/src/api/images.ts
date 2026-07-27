@@ -1,6 +1,18 @@
 import client from "./client";
 import type { ImageDetail, ImageListItem } from "../types";
 
+export interface UploadResult {
+  added: number;
+  files: string[];
+  /** Videos land in the `videos` table, not `images`. */
+  videos_added: number;
+  videos: string[];
+  /** Files the server declined, with a human-readable reason. Returned with a
+   *  201 rather than an error status, because one bad file in a multi-file
+   *  upload must not fail the rest. */
+  skipped: { file: string; reason: string }[];
+}
+
 export interface BatchMoveSubfolderResult {
   moved: number;
   subfolder: string;
@@ -105,21 +117,29 @@ export const imagesApi = {
   thumbnailUrl: (id: string) => `/api/v1/images/${id}/thumbnail`,
   thumbnailUrlVersioned: (id: string, updatedAt: string) =>
     `/api/v1/images/${id}/thumbnail?v=${Date.parse(updatedAt)}`,
-  upload: (dataset_id: string, files: File[], subfolder = "") => {
+  /** Upload several files in one request. Same contract as `uploadSingle`: videos
+   *  are routed to Video rows, and anything declined comes back in `skipped` with
+   *  a reason rather than as an HTTP error — report it with
+   *  `utils/uploadToast.ts`, or a rejected upload reads as a successful one. */
+  upload: (dataset_id: string, files: File[], subfolder = ""): Promise<UploadResult> => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
     const qs = subfolder ? `&subfolder=${encodeURIComponent(subfolder)}` : "";
     return client.post(`/images/upload?dataset_id=${dataset_id}${qs}`, form, {
       headers: { "Content-Type": "multipart/form-data" },
-    });
+    }).then((r) => r.data);
   },
-  uploadSingle: (dataset_id: string, file: File, subfolder = "") => {
+  /** Upload one file. A video is routed to a Video row rather than an Image;
+   *  a file the server will not or cannot ingest comes back in `skipped` with a
+   *  reason, NOT as an HTTP error — check it, or a rejected upload reads as a
+   *  successful one. */
+  uploadSingle: (dataset_id: string, file: File, subfolder = ""): Promise<UploadResult> => {
     const form = new FormData();
     form.append("files", file);
     const qs = subfolder ? `&subfolder=${encodeURIComponent(subfolder)}` : "";
     return client.post(`/images/upload?dataset_id=${dataset_id}${qs}`, form, {
       headers: { "Content-Type": "multipart/form-data" },
-    });
+    }).then((r) => r.data);
   },
   resize: (id: string, opts: { width?: number; height?: number; scale?: number; maintain_ar?: boolean }) =>
     client.post(`/images/${id}/resize`, opts).then((r) => r.data),

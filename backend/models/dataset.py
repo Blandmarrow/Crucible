@@ -24,6 +24,12 @@ class Dataset(Base):
     image_count: Mapped[int] = mapped_column(Integer, default=0)
     captioned_count: Mapped[int] = mapped_column(Integer, default=0)
     total_size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Videos are counted separately and deliberately excluded from image_count
+    # and total_size_bytes: a video is ~100x the size of the frames it yields,
+    # so folding it in would make every dataset card read as bloated, and
+    # image_count is what a user compares against an export manifest.
+    video_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    video_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
     current_branch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
@@ -36,4 +42,7 @@ class Dataset(Base):
 
     images: Mapped[list["Image"]] = relationship(  # noqa: F821 — SQLAlchemy resolves the string forward ref via its registry
         "Image", back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
+    )
+    videos: Mapped[list["Video"]] = relationship(  # noqa: F821 — SQLAlchemy resolves the string forward ref via its registry
+        "Video", back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
     )

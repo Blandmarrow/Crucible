@@ -57,6 +57,10 @@ export interface Dataset {
   image_count: number;
   captioned_count: number;
   total_size_bytes: number;
+  /** Videos are counted apart from image_count/total_size_bytes — a video is
+   *  orders of magnitude larger than the frames it yields. */
+  video_count: number;
+  video_size_bytes: number;
   preview_image_ids: string[];
   current_branch_id: string | null;
   /** Provenance defaults inherited by images whose own field is unset. */
@@ -258,6 +262,43 @@ export interface BooruTag {
   count: number;
   category: string;
   source: string;
+}
+
+/** A source video. Videos are not Images: separate table, separate folder
+ *  (`{dataset}/videos/`), separate stats. Frames extracted from a video become
+ *  ordinary Image rows. */
+export interface Video {
+  id: string;
+  dataset_id: string;
+  filename: string;
+  original_filename: string;
+  width: number | null;
+  height: number | null;
+  file_size_bytes: number | null;
+  /** null when the container header carried no trustworthy frame count —
+   *  render "unknown", never 0. */
+  duration_ms: number | null;
+  fps: number | null;
+  /** Raw FOURCC as stored; `codec_label` is the display form. */
+  codec: string | null;
+  codec_label: string;
+  has_poster: boolean;
+  created_at: string;
+  updated_at: string;
+  /** Decode fixups replayed by frame extraction. All-null crop means no crop. */
+  crop_x: number | null;
+  crop_y: number | null;
+  crop_w: number | null;
+  crop_h: number | null;
+  deinterlace: string;
+  trim_start_ms: number;
+  trim_end_ms: number;
+  /** Raw provenance: null/"" means inherited from the dataset. */
+  source_name: string | null;
+  source_url: string | null;
+  license: string | null;
+  attribution: string | null;
+  provenance: Record<string, unknown> | null;
 }
 
 export interface ModelInfo {

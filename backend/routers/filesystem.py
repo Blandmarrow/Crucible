@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
-from backend.media_types import IMAGE_EXTENSIONS, media_kind_for
+from backend.media_types import IMAGE_EXTENSIONS, media_kind_for, video_mime
 from backend.models import Dataset, Image, Video
 from backend.services.image_service import extract_generation_metadata, get_image_info
 from backend.utils import sanitize_abs_path
@@ -92,15 +92,27 @@ async def list_directory(path: str = Query(...)):
     return {"path": str(p), "entries": entries}
 
 
-# ── Image preview ─────────────────────────────────────────────────────────────
+# ── Media preview ─────────────────────────────────────────────────────────────
 
 @router.get("/preview")
-async def preview_image(path: str = Query(...)):
+async def preview_media(path: str = Query(...)):
+    """Serve any ingestible media file for the browser's preview panel.
+
+    Videos are served through the same route as images rather than a second
+    endpoint: FileResponse supplies `accept-ranges` and 206 on its own, which is
+    all a <video> needs to seek. The path is client-supplied and only
+    `sanitize_abs_path`-checked — the same deliberate local-desktop posture this
+    endpoint has always had for images (see docs/dev/workspace.md § Path
+    safety); widening the extension allowlist adds no new exposure class.
+    """
     p = sanitize_abs_path(path)
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "File not found")
-    if p.suffix.lower() not in IMAGE_EXTENSIONS:
-        raise HTTPException(400, "Not an image file")
+    kind = media_kind_for(p.suffix)
+    if kind is None:
+        raise HTTPException(400, "Not a previewable media file")
+    if kind == "video":
+        return FileResponse(str(p), media_type=video_mime(p.suffix))
     mime, _ = mimetypes.guess_type(str(p))
     return FileResponse(str(p), media_type=mime or "image/png")
 

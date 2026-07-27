@@ -121,6 +121,14 @@ One thing the plan got wrong: poster-stem collisions are **not** covered by glob
 `videos/thumbnails/` the way image thumbnails are, because no poster exists until
 Phase 1 writes one, so that directory is empty and `a.mp4`/`a.mkv` both claim stem
 `a`. The occupied-stem set is seeded from existing `Video.filename` stems instead.
+Still true after Phase 1: a row whose poster could not be cut, or one created before
+posters existed, has nothing on disk to glob.
+
+And the note was still too narrow. It reasoned only about sites that *pick* a filename, so
+`_rescan_videos` — which adopts the names it finds — and the poster backfill both shipped
+without the guard, and two same-stem containers dropped into `videos/` clobbered each
+other's poster. Fixed by disambiguating the *poster* there rather than the file, the
+opposite of the image walk's fix; see PM-007 and `docs/dev/video.md`.
 
 - Consolidate the three image-extension allowlists (`routers/filesystem.py`,
   `routers/images.py`, `services/dataset_service.py`) into one shared module,
@@ -204,12 +212,37 @@ Phase 1 writes one, so that directory is empty and `a.mp4`/`a.mkv` both claim st
   change. Export iterates `Image` rows and never walks the folder, so videos cannot
   leak into an export — no change.
 
-## Phase 1 — Preview UI
+## Phase 1 — Preview UI — **built**
 
-Videos visible and playable inside the dataset.
+Videos visible, playable and manageable inside the dataset. Subsystem detail lives in
+`docs/dev/video.md`; the notes below are kept as the record of what was decided.
+Deviations from the plan as written:
 
-- Poster-frame thumbnail generation via ffmpeg (single seek, mid-file or first
-  post-trim frame).
+- **Posters use OpenCV, not the ffmpeg this section names.** It is one seek plus one
+  read, and cv2 was already a dependency; `imageio-ffmpeg` earns its place in Phase 2,
+  where `bwdif`/crop need a real filter chain. Posters are cut at ingest **and** lazily
+  backfilled on the first `GET /poster`, which is how rows created in Phase 0 heal
+  without a migration or a backfill job.
+- **Strip multi-select is deferred to Phase 2.** Its only consumer is batch extraction,
+  and a checkbox that enables nothing is worse than no checkbox. The local `Set<string>`
+  and shift-range described below land together with the batch-extract button.
+- **Extraction history is deferred to Phase 2.** It reads `Image.source_video_id`, a
+  Phase 2 column; the migration and its three mirror sites land with the code that
+  writes them.
+- **Per-video provenance is read-only.** `VideoOut` already returns the resolved
+  `provenance`, so the detail view renders it through the existing `LicenseBadge`.
+  Generalizing `ProvenancePanel` off `ImageDetail` is a real refactor with no payoff
+  here — a video inherits the dataset default at ingest, and folder import sets it.
+- **File-browser video preview shipped here**, closing the Phase 0 note below:
+  `GET /filesystem/preview` widened to `MEDIA_EXTENSIONS`.
+- One thing the plan did not anticipate: `list_datasets` hand-builds each `DatasetOut`
+  field by field and never got Phase 0's two video columns, which default to 0 — so the
+  list endpoint reported every dataset as video-free and the card badge below could not
+  work until that was fixed.
+
+- Poster-frame thumbnail generation (single seek, mid-file or first post-trim
+  frame) — shipped with OpenCV, not the ffmpeg originally written here; see the
+  first deviation note above.
 - **Videos strip/tab in `GalleryPage`**: poster thumbs + duration badges,
   collapsed/hidden when the dataset has no videos so image-only datasets look
   unchanged.

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -56,7 +56,7 @@ from backend.services.image_service import (
     get_image_info,
     resize_image,
 )
-from backend.services.video_service import UnreadableVideoError, probe_video
+from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -76,18 +76,18 @@ def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, 
     return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
 
 
-def _write_video_upload_sync(src_fileobj, dest: Path) -> dict:
-    """Persist one uploaded video and read its header off the event loop.
+def _write_video_upload_sync(src_fileobj, dest: Path, poster_path: Path) -> tuple[dict, str | None]:
+    """Persist one uploaded video, read its header and cut its poster off the event loop.
 
     The probe doubles as the ingest gate — cv2 cannot open a truncated or
     zero-byte file — so a rejected upload is removed again rather than left as
-    an orphan in videos/ that no row points at. No poster frame yet; that
-    arrives with poster generation.
+    an orphan in videos/ that no row points at. The poster is not a gate: a
+    video whose frames will not decode still ingests with `poster_path` NULL.
     """
     with open(dest, "wb") as f:
         shutil.copyfileobj(src_fileobj, f)
     try:
-        return probe_video(dest)
+        return probe_and_poster(dest, poster_path)
     except UnreadableVideoError:
         dest.unlink(missing_ok=True)
         raise
@@ -395,17 +395,15 @@ async def upload_images(
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
     planned_thumb_stems: set[str] = set()
 
-    existing_videos = await db.execute(select(Video.filename).where(Video.dataset_id == dataset_id))
-    video_db_names: set[str] = {r[0] for r in existing_videos.all()}
-    # Seeded from the *rows*, not only from posters on disk. Image thumbnails are
-    # written during ingest, so globbing the thumbnail directory is enough for
-    # them; a video's poster is generated in a later phase, so until then the
-    # directory is empty and globbing it alone would let `a.mp4` and `a.mkv`
-    # both claim the stem `a` — and the poster written later for one would
-    # overwrite the other's.
-    occupied_poster_stems: set[str] = {Path(n).stem for n in video_db_names}
-    if dest_posters.exists():
-        occupied_poster_stems |= {p.stem for p in dest_posters.glob("*.webp")}
+    existing_videos = await db.execute(
+        select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == dataset_id)
+    )
+    existing_video_rows = [(r.id, r.filename, r.poster_path) for r in existing_videos.all()]
+    video_db_names: set[str] = {fn for _, fn, _ in existing_video_rows}
+    # Seeded from the *rows*, not only from posters on disk: a row whose poster
+    # could not be cut, or one whose stem was disambiguated by rescan, is not
+    # findable by globbing alone. See video_service.claimed_poster_stems.
+    occupied_poster_stems = claimed_poster_stems(existing_video_rows, dest_posters)
     planned_poster_stems: set[str] = set()
 
     # Append new uploads at the end of the custom order only when EVERY existing image in this
@@ -440,8 +438,8 @@ async def upload_images(
             )
             dest = dest_videos / filename
             try:
-                info = await asyncio.get_running_loop().run_in_executor(
-                    None, _write_video_upload_sync, upload.file, dest
+                info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                    None, _write_video_upload_sync, upload.file, dest, Path(poster_path_for(dest))
                 )
             except UnreadableVideoError as exc:
                 skipped.append({"file": upload.filename or "", "reason": str(exc)})
@@ -453,6 +451,7 @@ async def upload_images(
                 filename=filename,
                 original_filename=upload.filename or filename,
                 file_path=str(dest),
+                poster_path=poster_path,
                 # A browser upload carries no provenance for a video (no EXIF
                 # equivalent we read), so everything inherits the dataset default.
                 # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.

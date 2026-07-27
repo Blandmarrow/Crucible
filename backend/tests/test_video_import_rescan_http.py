@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.services.dataset_service import _scan_source_files
-from backend.tests.conftest import API, api_env, mp4_bytes, png_bytes, run, wait_for_job
+from backend.tests.conftest import API, api_env, mp4_bytes, png_bytes, run, upload_video, wait_for_job
 
 
 def _seed_source(src: Path) -> None:
@@ -251,5 +251,86 @@ def test_rescan_ignores_the_poster_directory(tmp_path):
 
             async with env.Session() as db:
                 assert (await db.execute(select(Video))).scalar_one().filename == "real.mp4"
+
+    run(scenario())
+
+
+def test_two_containers_sharing_a_stem_get_separate_posters(tmp_path):
+    """`clip.mp4` and `clip.mkv` are two legitimate videos whose posters would
+    both be `thumbnails/clip.webp`. Rescan cannot rename what the user dropped
+    in, so it moves the *poster* instead — the second gets `clip_001.webp`.
+    Without this the second poster written overwrote the first and both rows
+    pointed at one file, so one strip card showed the other video's frame and
+    deleting either unlinked the survivor's poster."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            vdir = Path(ds["folder_path"]) / "videos"
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "clip.mp4").write_bytes(mp4_bytes(frames=10))
+            (vdir / "clip.mkv").write_bytes(mp4_bytes(frames=10))
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["videos_added"] == 2
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Video))).scalars().all()
+
+            # Both files keep the names the user gave them — only the poster moved.
+            assert {row.filename for row in rows} == {"clip.mp4", "clip.mkv"}
+            posters = {row.poster_path for row in rows}
+            assert len(posters) == 2, f"posters collided: {posters}"
+            assert all(Path(p).exists() for p in posters)
+            assert {Path(p).stem for p in posters} == {"clip", "clip_001"}
+
+    run(scenario())
+
+
+def test_a_rescan_with_no_collision_renames_nothing(tmp_path):
+    """The guard above must not fire on ordinary input: the file being
+    registered is already sitting in videos/, so a naive uniqueness check would
+    see its own name occupied and step every poster to `_001`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            vdir = Path(ds["folder_path"]) / "videos"
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "solo.mp4").write_bytes(mp4_bytes(frames=10))
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            await wait_for_job(env, r.json()["job_id"])
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Video))).scalar_one()
+            assert row.filename == "solo.mp4"
+            assert row.poster_path.endswith("/videos/thumbnails/solo.webp")
+
+    run(scenario())
+
+
+def test_an_upload_will_not_take_a_poster_stem_rescan_disambiguated(tmp_path):
+    """The half of the claimed set a filename glob cannot supply. After the
+    rescan above, a row holds filename `clip.mkv` with poster `clip_001.webp` —
+    the two stems have diverged. An upload named `clip_001` must still not take
+    that poster, which it would if the occupied set were seeded from filename
+    stems alone."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            vdir = Path(ds["folder_path"]) / "videos"
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "clip.mp4").write_bytes(mp4_bytes(frames=10))
+            (vdir / "clip.mkv").write_bytes(mp4_bytes(frames=10))
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            await wait_for_job(env, r.json()["job_id"])
+
+            await upload_video(env, ds["id"], "clip_001.mp4")
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Video))).scalars().all()
+            posters = {row.poster_path for row in rows}
+            assert len(posters) == len(rows) == 3, f"posters collided: {posters}"
+            assert all(Path(p).exists() for p in posters)
 
     run(scenario())

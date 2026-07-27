@@ -9,6 +9,7 @@ export type PageType =
   | "export"
   | "file-browser"
   | "image-detail"
+  | "video-detail"
   | "booru"
   | "bulk-edit"
   | "consolidate"
@@ -19,6 +20,7 @@ export interface PaneView {
   page: PageType;
   datasetId?: string;
   imageId?: string;
+  videoId?: string;
 }
 
 interface PaneContextValue {

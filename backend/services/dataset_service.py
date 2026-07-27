@@ -23,8 +23,16 @@ from backend.services.image_service import (
     get_image_info,
     read_provenance_sidecar,
 )
-from backend.services.video_service import UnreadableVideoError, probe_video
-from backend.utils import copy_with_sidecar, read_caption_sidecar, require_free_space, thumbnail_path_for, unique_filename_with_thumb
+from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
+from backend.utils import (
+    copy_with_sidecar,
+    poster_path_for,
+    read_caption_sidecar,
+    require_free_space,
+    thumbnail_path_for,
+    unique_filename_with_thumb,
+    unique_poster_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -440,8 +448,8 @@ def _scan_source_files(
     return images, videos, sum(_file_size(f) for f in images + videos)
 
 
-def _ingest_video_sync(src_file: Path, dest_file: Path) -> dict:
-    """Copy one video into the dataset and read its header. Blocking.
+def _ingest_video_sync(src_file: Path, dest_file: Path, poster_file: Path) -> tuple[dict, str | None]:
+    """Copy one video into the dataset, read its header and cut its poster. Blocking.
 
     `shutil.copy2` rather than `copy_with_sidecar`: a video carries no `.txt`
     caption companion — captions belong to the frames extracted from it.
@@ -450,10 +458,11 @@ def _ingest_video_sync(src_file: Path, dest_file: Path) -> dict:
     (probing the destination is what proves the copy itself is readable), so
     without this an undecodable source would leave an orphan in videos/ that no
     DB row points at — and rescan would then try to register it on every run.
+    A failed *poster* is not a failed import; it just leaves the path NULL.
     """
     shutil.copy2(src_file, dest_file)
     try:
-        return probe_video(dest_file)
+        return probe_and_poster(dest_file, poster_file)
     except UnreadableVideoError:
         dest_file.unlink(missing_ok=True)
         raise
@@ -584,14 +593,14 @@ async def import_images_from_folder(
         dest_posters = dest_videos / "thumbnails"
         dest_videos.mkdir(parents=True, exist_ok=True)
 
-        existing_videos = await db.execute(select(Video.filename).where(Video.dataset_id == dataset.id))
-        video_db_names: set[str] = {r[0] for r in existing_videos.all()}
-        # Seeded from the rows as well as from disk: a video's poster is written
-        # in a later phase, so the poster directory is empty for now and globbing
-        # it alone would let `a.mp4` and `a.mkv` both claim the stem `a`.
-        occupied_poster_stems: set[str] = {Path(n).stem for n in video_db_names}
-        if dest_posters.exists():
-            occupied_poster_stems |= {p.stem for p in dest_posters.glob("*.webp")}
+        existing_videos = await db.execute(
+            select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == dataset.id)
+        )
+        existing_video_rows = existing_videos.all()
+        video_db_names: set[str] = {r.filename for r in existing_video_rows}
+        occupied_poster_stems = claimed_poster_stems(
+            [(r.id, r.filename, r.poster_path) for r in existing_video_rows], dest_posters
+        )
         planned_poster_stems: set[str] = set()
 
         for j, src_file in enumerate(video_files):
@@ -604,14 +613,15 @@ async def import_images_from_folder(
                     occupied_poster_stems, planned_poster_stems,
                 )
                 dest_file = dest_videos / new_name
-                info = await asyncio.get_running_loop().run_in_executor(
-                    None, _ingest_video_sync, src_file, dest_file
+                info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                    None, _ingest_video_sync, src_file, dest_file, Path(poster_path_for(dest_file))
                 )
                 db.add(Video(
                     dataset_id=dataset.id,
                     filename=new_name,
                     original_filename=src_file.name,
                     file_path=str(dest_file),
+                    poster_path=poster_path,
                     # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.
                     **merge_provenance(provenance, fields=PROVENANCE_FIELDS),
                     **info,
@@ -664,7 +674,23 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
     disk_videos = [f for f in videos_dir.glob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS]
 
     existing = await db.execute(select(Video).where(Video.dataset_id == dataset.id))
-    by_filename: dict[str, Video] = {v.filename: v for v in existing.scalars().all()}
+    rows = existing.scalars().all()
+    by_filename: dict[str, Video] = {v.filename: v for v in rows}
+
+    # Rescan *adopts* the filenames it finds — it cannot rename a file the user
+    # dropped in here — so unlike upload/import/rename it cannot dodge a stem
+    # collision by picking a different name. `clip.mp4` and `clip.mkv` are two
+    # legitimate videos that would both want `thumbnails/clip.webp`, and the
+    # second poster written would clobber the first, leaving two rows pointing at
+    # one file. So the *poster* moves instead: the second gets `clip_001.webp`.
+    #
+    # This is the opposite choice from the image walk below, which does rename
+    # the file. The asymmetry is deliberate: eleven sites re-derive an image's
+    # thumbnail path from its filename, so an image's thumbnail stem must stay
+    # equal to its own; nothing re-derives a poster path — every consumer reads
+    # `Video.poster_path`.
+    poster_dir = videos_dir / "thumbnails"
+    claimed = claimed_poster_stems([(v.id, v.filename, v.poster_path) for v in rows], poster_dir)
 
     seen: set[str] = set()
     videos_added = 0
@@ -672,8 +698,12 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
         seen.add(f.name)
         if f.name in by_filename:
             continue
+        poster_target = unique_poster_path(poster_dir, f.stem, claimed)
+        claimed.add(poster_target.stem)  # keep the set honest across this run
         try:
-            info = await asyncio.get_running_loop().run_in_executor(None, probe_video, f)
+            info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                None, probe_and_poster, f, poster_target
+            )
         except UnreadableVideoError:
             # Not a failure worth reporting: an undecodable file in videos/ is
             # simply not a video we can register. Leave it on disk untouched.
@@ -684,6 +714,7 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
             filename=f.name,
             original_filename=f.name,
             file_path=str(f),
+            poster_path=poster_path,
             **info,
         ))
         videos_added += 1
@@ -713,7 +744,7 @@ async def rescan_dataset(
         # videos/ can exist without images/ — reconcile it either way.
         vids = await _rescan_videos(db, dataset)
         await refresh_stats(db, dataset.id)
-        return {"added": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0, **vids}
+        return {"added": 0, "renamed": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0, **vids}
 
     disk_files = [
         f for f in images_dir.rglob("*")
@@ -729,8 +760,31 @@ async def rescan_dataset(
     for img in existing.scalars().all():
         by_filename[img.filename] = img
 
+    # Thumbnails are .webp keyed by stem, so `a.png` and `a.jpg` dropped into
+    # images/ by hand both resolve to `thumbnails/a.webp` — the second written
+    # clobbers the first and two rows end up sharing one picture. Every other
+    # creation path in the app avoids this by picking a free name through
+    # `unique_filename_with_thumb`; rescan is one of only two that adopt a name
+    # off disk instead, so it has to disambiguate here.
+    #
+    # It resolves the clash by renaming the *file*, where video rescan renames
+    # the *poster*. The asymmetry is deliberate: eleven sites re-derive an
+    # image's thumbnail path from its filename (rename, move, copy, crop,
+    # extension change, captioning's rename-on-caption, duplicate_dataset and
+    # four versioning paths), so an image whose thumbnail stem drifted from its
+    # own would have that thumbnail silently orphaned by the next such
+    # operation. Nothing re-derives a poster path — every consumer reads
+    # `Video.poster_path`.
+    thumbs_dir = Path(dataset.folder_path) / "thumbnails"
+    occupied_thumb_stems: set[str] = (
+        {p.stem for p in thumbs_dir.glob("*.webp")} if thumbs_dir.exists() else set()
+    )
+    planned_thumb_stems: set[str] = set()
+    db_names: set[str] = set(by_filename)
+
     seen_filenames: set[str] = set()
     added = 0
+    renamed = 0
     captions_updated = 0
     failed_count = 0
     failed: list[dict] = []
@@ -749,6 +803,36 @@ async def rescan_dataset(
 
             existing_img = by_filename.get(f.name)
             if existing_img is None:
+                # Flat images/ only. A nested file carries two separate defects
+                # that predate this guard — the reconcile key above is the bare
+                # filename, so images/sub/a.png is treated as already-existing
+                # whenever images/a.png is registered, and thumbnail_path_for
+                # resolves it to images/thumbnails/ rather than the dataset's
+                # own, with subfolder="" hardcoded below. Disambiguating against
+                # the wrong thumbnail directory would not help, so nested files
+                # keep behaving exactly as they did.
+                if f.parent == images_dir:
+                    # disk_exclude is what keeps this from renaming *every* file
+                    # it finds: unlike an import, the file is already sitting in
+                    # images/, so without it `unique_filename` sees its own name
+                    # occupied and steps straight to `_001`. Its own stem is
+                    # likewise absent from occupied_thumb_stems — nothing has
+                    # generated its thumbnail yet.
+                    new_name = unique_filename_with_thumb(
+                        images_dir, f.stem, f.suffix.lower(),
+                        db_names, occupied_thumb_stems, planned_thumb_stems,
+                        disk_exclude={f.name},
+                    )
+                    if new_name != f.name:
+                        # The file only, not its .txt sidecar — the deliberate
+                        # exception to the rename_with_sidecar rule. The two
+                        # files share a stem, so a single `a.txt` belongs to
+                        # both equally and moving it would take it away from the
+                        # image that kept the name. `caption` above was read
+                        # before this, so nothing is lost either way.
+                        f = f.rename(images_dir / new_name)
+                        seen_filenames.add(f.name)
+                        renamed += 1
                 thumb_path = thumbnail_path_for(f)
                 reg = await asyncio.get_running_loop().run_in_executor(
                     None, _register_file_sync, f, thumb_path
@@ -813,6 +897,10 @@ async def rescan_dataset(
         job_queue.raise_if_cancelled(job_id)
     return {
         "added": added,
+        # Files rescan had to rename because another image already owned their
+        # stem. Reported rather than silent: rescan otherwise never touches a
+        # file, so a name changing under the user needs to say so.
+        "renamed": renamed,
         "captions_updated": captions_updated,
         "missing": missing,
         "total_on_disk": total,

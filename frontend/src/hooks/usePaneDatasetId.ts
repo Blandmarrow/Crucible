@@ -12,3 +12,9 @@ export function usePaneImageId(): string | undefined {
   const { imageId } = useParams<{ imageId: string }>();
   return ctx?.view.imageId ?? imageId;
 }
+
+export function usePaneVideoId(): string | undefined {
+  const ctx = usePaneContext();
+  const { videoId } = useParams<{ videoId: string }>();
+  return ctx?.view.videoId ?? videoId;
+}

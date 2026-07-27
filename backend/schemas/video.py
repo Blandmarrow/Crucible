@@ -3,6 +3,12 @@ from pydantic import BaseModel
 from backend.schemas import UtcDatetime
 
 
+class RenameVideoRequest(BaseModel):
+    """New filename stem only — the container extension is never user-settable."""
+
+    new_stem: str
+
+
 class VideoOut(BaseModel):
     id: str
     dataset_id: str

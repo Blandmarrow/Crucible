@@ -370,6 +370,50 @@ def thumbnail_path_for(image_path: Path | str) -> str:
     return str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
 
 
+def poster_path_for(video_path: Path | str) -> str:
+    """Derive the .webp poster path for a video sitting in a dataset videos/ folder.
+
+    `parent`, not thumbnail_path_for's `parent.parent`: videos live *flat* in
+    `{dataset}/videos/` and their posters in `{dataset}/videos/thumbnails/`, so
+    the poster directory is one level down from the video, not one level up.
+
+    This is only the *proposal*. Unlike an image thumbnail, a poster name is not
+    guaranteed to match its video's stem — rescan adopts filenames off disk and
+    can meet two containers sharing a stem, so it resolves this through
+    `unique_poster_path`. Read `Video.poster_path` for an existing row; never
+    re-derive it.
+    """
+    p = Path(video_path)
+    return str(p.parent / "thumbnails" / (p.stem + ".webp"))
+
+
+def unique_poster_path(poster_dir: Path, stem: str, claimed: set[str]) -> Path:
+    """Return a poster path whose stem is neither claimed nor already on disk.
+
+    Tries `{stem}.webp`, then `{stem}_001.webp`, `_002`, … — the same counter
+    convention as `unique_filename`, so a disambiguated poster reads like every
+    other disambiguated name in the app.
+
+    The counterpart to `unique_filename_with_thumb` for the paths that *adopt* a
+    filename instead of picking one (video rescan, the poster backfill). Those
+    cannot rename the user's file to dodge a stem collision, so they move the
+    poster instead. Build `claimed` with
+    `video_service.claimed_poster_stems`; this helper does not mutate it, so a
+    caller looping over several videos must add each chosen stem itself.
+    """
+    def _free(candidate_stem: str) -> bool:
+        return candidate_stem not in claimed and not (poster_dir / f"{candidate_stem}.webp").exists()
+
+    if _free(stem):
+        return poster_dir / f"{stem}.webp"
+    counter = 1
+    while True:
+        candidate = f"{stem}_{counter:03d}"
+        if _free(candidate):
+            return poster_dir / f"{candidate}.webp"
+        counter += 1
+
+
 def subsume_tags(tags: list[str]) -> list[str]:
     """Drop any tag that is a whole-word subsequence of a longer tag in the same list.
 

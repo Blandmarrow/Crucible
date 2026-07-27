@@ -6,6 +6,8 @@ pins one edge of that separation. If a change makes a video land in `images` —
 as an Image row, in images/, or inside image_count — one of these fails.
 """
 
+from pathlib import Path
+
 from sqlalchemy import select
 
 from backend.models import Image, Video
@@ -37,7 +39,8 @@ def test_upload_creates_a_video_row_not_an_image_row(tmp_path):
             assert video.file_path.endswith("/videos/episode_01.mp4")
             assert video.width == 64 and video.height == 48
             assert video.duration_ms == 1000  # 25 frames at 25 fps
-            assert video.poster_path is None  # poster generation is a later phase
+            assert video.poster_path.endswith("/videos/thumbnails/episode_01.webp")
+            assert Path(video.poster_path).exists()
 
     run(scenario())
 
@@ -171,6 +174,26 @@ def test_videos_are_counted_separately_from_images(tmp_path):
             assert after["total_size_bytes"] == before["total_size_bytes"]
             assert after["video_count"] == 1
             assert after["video_size_bytes"] == video["file_size_bytes"] > 0
+
+    run(scenario())
+
+
+def test_the_dataset_list_reports_video_stats_too(tmp_path):
+    """`GET /datasets/` hand-builds each DatasetOut field by field, and both
+    video columns default to 0 on the schema — so an omission there reports
+    every dataset as video-free instead of failing. The dataset card reads this
+    endpoint, not the detail one, which is why it needs its own test."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4")
+
+            listing = (await env.client.get(f"{API}/datasets/")).json()
+            row = next(d for d in listing if d["id"] == ds["id"])
+            detail = (await env.client.get(f"{API}/datasets/{ds['id']}")).json()
+
+            assert row["video_count"] == detail["video_count"] == 1
+            assert row["video_size_bytes"] == detail["video_size_bytes"] == video["file_size_bytes"]
 
     run(scenario())
 

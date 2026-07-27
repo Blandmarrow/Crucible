@@ -21,9 +21,9 @@ Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered
 | Endpoint | Purpose |
 |---|---|
 | `GET /roots` | Windows drive roots (`C:\`, `D:\`, …) |
-| `GET /list?path=` | Directory listing — dirs first, then files, both alphabetical; `is_image` flag for image extensions |
-| `GET /preview?path=` | Serve image file directly (`FileResponse`) |
-| `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB |
+| `GET /list?path=` | Directory listing — dirs first, then files, both alphabetical; `media_kind` per entry (`"image"`, `"video"` or null), replacing the older `is_image` boolean |
+| `GET /preview?path=` | Serve any file in `MEDIA_EXTENSIONS` directly (`FileResponse`); videos get `video_mime` as the content type, and the `FileResponse` supplies the Range/206 a `<video>` needs to seek |
+| `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB. Image-only on purpose: a video container carries no EXIF or generation parameters |
 | `POST /move` | Move file/dir; syncs `Image.file_path`, `Image.filename`, `Image.dataset_id` when path is inside a dataset folder |
 | `POST /rename` | Rename in place; same DB sync |
 | `POST /delete` | Delete file or directory (recursive); deletes files from filesystem first, then removes `Image` DB records — so a failed FS deletion leaves DB records intact |

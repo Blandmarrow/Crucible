@@ -4,6 +4,7 @@ import {
   DatasetsPage,
   GalleryPage,
   ImageDetailPage,
+  VideoDetailPage,
   CaptioningPage,
   QualityPage,
   StatsPage,
@@ -21,6 +22,7 @@ function renderPage(view: PaneView) {
     case "datasets":     return <DatasetsPage />;
     case "gallery":      return <GalleryPage />;
     case "image-detail": return <ImageDetailPage />;
+    case "video-detail": return <VideoDetailPage />;
     case "captioning":   return <CaptioningPage />;
     case "quality":      return <QualityPage />;
     case "stats":        return <StatsPage />;

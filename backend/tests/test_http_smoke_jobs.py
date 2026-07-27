@@ -7,10 +7,12 @@ tag subsumption. Each enqueues over HTTP and drives the worker with `wait_for_jo
 router-shaped crash otherwise stays hidden behind a green service-level suite.
 None of these touch a GPU or an ML model.
 """
+from pathlib import Path
+
 from sqlalchemy import select
 
 from backend.models.image import Image
-from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
+from backend.tests.conftest import API, api_env, jpeg_bytes, png_bytes, run, upload_image, wait_for_job
 
 
 # --- export --------------------------------------------------------------
@@ -107,6 +109,69 @@ def test_dataset_rescan_reports_a_deleted_file(tmp_path):
             async with env.Session() as db:
                 row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one_or_none()
                 assert row is not None
+
+    run(scenario())
+
+
+def test_rescan_renames_a_file_whose_stem_another_image_owns(tmp_path):
+    """Thumbnails are .webp keyed by stem, so `a.png` and `a.jpg` hand-dropped
+    into images/ both resolve to `thumbnails/a.webp`: the second written
+    clobbered the first and two rows shared one picture in the grid.
+
+    Rescan is one of only two paths that adopt a filename off disk rather than
+    picking a free one, so it has to disambiguate. It renames the *file* — not
+    the thumbnail, the way video rescan moves the poster — because eleven sites
+    re-derive an image's thumbnail path from its filename, and a thumbnail stem
+    that drifted from its own would be orphaned by the next rename or move."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("rescan-collide")
+            images_dir = Path(ds["folder_path"]) / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            (images_dir / "a.png").write_bytes(png_bytes())
+            (images_dir / "a.jpg").write_bytes(jpeg_bytes())
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["added"] == 2
+            assert job["result_data"]["renamed"] == 1
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+
+            # One kept its name; the other stepped the counter. Which one wins is
+            # rglob order, so assert the shape rather than a specific winner.
+            names = {row.filename for row in rows}
+            assert names in ({"a.png", "a_001.jpg"}, {"a.jpg", "a_001.png"}), names
+            thumbs = {row.thumbnail_path for row in rows}
+            assert len(thumbs) == 2, f"thumbnails collided: {thumbs}"
+            assert all(Path(t).exists() for t in thumbs)
+            assert all(Path(row.file_path).exists() for row in rows)
+
+    run(scenario())
+
+
+def test_an_ordinary_rescan_renames_nothing(tmp_path):
+    """The guard above must not fire on ordinary input. Every file rescan finds
+    is already sitting in images/, so without `disk_exclude` the uniquifier sees
+    each file's own name occupied and steps every one of them to `_001`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("rescan-plain")
+            images_dir = Path(ds["folder_path"]) / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            (images_dir / "solo.png").write_bytes(png_bytes())
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["added"] == 1
+            assert job["result_data"]["renamed"] == 0
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Image))).scalar_one()
+            assert row.filename == "solo.png"
+            assert (images_dir / "solo.png").exists()
 
     run(scenario())
 

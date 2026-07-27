@@ -93,8 +93,8 @@ A three-panel filesystem explorer built into the app:
 
 - Left panel: drive roots + quick-access shortcut to the datasets folder
 - Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Media only** toggle to hide anything that is neither an image nor a video, context menu (rename / delete / import into dataset)
-- Right panel: image preview + dimensions/format/size metadata + generation metadata (A1111 / ComfyUI)
-- Videos are listed with a film-strip icon and counted in the status bar. They have no preview panel yet, but they can be imported
+- Right panel: preview + size and modified date. For an image, also dimensions/format and generation metadata (A1111 / ComfyUI); for a video, a player you can scrub
+- Videos are listed with a film-strip icon and counted in the status bar
 - Create folders, rename files and directories, delete items (syncs DB records automatically)
 - Import any folder of images directly into an existing dataset without leaving the browser; tick **Include videos** to bring video files in as well
 

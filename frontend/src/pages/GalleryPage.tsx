@@ -23,6 +23,7 @@ import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
+import VideoStrip from "../components/gallery/VideoStrip";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
@@ -325,13 +326,16 @@ export default function GalleryPage() {
       const jid = rescanJobId;
       jobsApi.get(jid).then((job) => {
         const r = job.result_data as {
-          added?: number; captions_updated?: number; missing?: unknown[];
+          added?: number; renamed?: number; captions_updated?: number; missing?: unknown[];
           videos_added?: number; videos_missing?: unknown[];
         };
         const missing = (r.missing ?? []).length + (r.videos_missing ?? []).length;
         toast.success(
           `Rescan complete — ${r.added ?? 0} added, ${r.captions_updated ?? 0} caption(s) updated` +
           (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
+          // Called out because rescan otherwise never touches a file: a name
+          // changing under the user has to be visible, not inferred later.
+          (r.renamed ? `, ${r.renamed} renamed to avoid a name clash` : "") +
           (missing ? `, ${missing} missing on disk` : ""),
           { id: "gallery-rescan" }
         );
@@ -926,6 +930,11 @@ export default function GalleryPage() {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, paddingTop: 4 }}>
             <span className="badge dot good">{dataset?.image_count ?? 0} images</span>
+            {(dataset?.video_count ?? 0) > 0 && (
+              <span className="badge dot">
+                {dataset?.video_count} {dataset?.video_count === 1 ? "video" : "videos"}
+              </span>
+            )}
             <span className="badge dot info">{dataset?.captioned_count ?? 0} captioned</span>
             {flaggedCount > 0 && <span className="badge dot warn">{flaggedCount} uncaptioned</span>}
           </div>
@@ -1213,6 +1222,12 @@ export default function GalleryPage() {
           </div>
         </div>
       )}
+
+      {/* Source videos. Outside the DndContext below on purpose: inside it the
+          cards would join the grid's collision detection and its subfolder drop
+          targets, and inside the grid's scroll container they would also sit
+          under the drag-to-upload handler. Renders nothing without videos. */}
+      <VideoStrip datasetId={datasetId} />
 
       {/* Grid area with subfolder sidebar. One DndContext spans both so image cards
           can be dragged from the grid onto a subfolder row. */}

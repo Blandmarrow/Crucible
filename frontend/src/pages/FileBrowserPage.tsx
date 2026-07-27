@@ -103,7 +103,7 @@ function RenameInput({ initial, onConfirm, onCancel }: { initial: string; onConf
   );
 }
 
-// ── Image Preview Panel ───────────────────────────────────────────────────────
+// ── Media Preview Panel ───────────────────────────────────────────────────────
 
 interface PreviewPanelProps {
   entry: FsEntry;
@@ -111,10 +111,14 @@ interface PreviewPanelProps {
 }
 
 function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
+  const isVideo = entry.media_kind === "video";
   const { data: meta } = useQuery({
     queryKey: ["fs-image-meta", entry.path],
     queryFn: () => filesystemApi.imageMeta(entry.path),
     staleTime: 60_000,
+    // Image-only: /image-meta reads EXIF and generation parameters, neither of
+    // which a container carries. /preview serves both kinds; this does not.
+    enabled: !isVideo,
   });
 
   return (
@@ -128,11 +132,24 @@ function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
       </div>
 
       <div style={{ background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", padding: 8, minHeight: 160 }}>
-        <img
-          src={filesystemApi.previewUrl(entry.path)}
-          alt={entry.name}
-          style={{ maxWidth: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 4 }}
-        />
+        {isVideo ? (
+          // preload="metadata" so selecting a file in the list does not pull a
+          // whole clip off disk. Seeking works because /preview returns a
+          // FileResponse, which supplies Range/206 on its own.
+          <video
+            key={entry.path}
+            controls
+            preload="metadata"
+            src={filesystemApi.previewUrl(entry.path)}
+            style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 4, outline: "none" }}
+          />
+        ) : (
+          <img
+            src={filesystemApi.previewUrl(entry.path)}
+            alt={entry.name}
+            style={{ maxWidth: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 4 }}
+          />
+        )}
       </div>
 
       <div style={{ padding: "10px 12px", fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -343,9 +360,9 @@ export default function FileBrowserPage() {
     if (entry.type === "dir") {
       navigateTo(entry.path);
     } else {
-      // The preview pane renders a still image; a video row is selectable in the
-      // listing but has no preview until poster frames exist.
-      setSelectedEntry(entry.media_kind === "image" ? entry : null);
+      // Both media kinds preview; anything else (a .txt, a .json) has no panel
+      // and clears the selection.
+      setSelectedEntry(entry.media_kind ? entry : null);
     }
   };
 

@@ -360,7 +360,7 @@ export default function DatasetsPage() {
       if (dsId) invalidateDatasetCaches(dsId);
       jobsApi.get(rescanJobId).then((job) => {
         const r = job.result_data as {
-          added?: number; captions_updated?: number; missing?: unknown[];
+          added?: number; renamed?: number; captions_updated?: number; missing?: unknown[];
           videos_added?: number; videos_missing?: unknown[];
         };
         const added = r.added ?? 0;
@@ -369,6 +369,9 @@ export default function DatasetsPage() {
         toast.success(
           `Rescan complete — ${added} added, ${captions} caption(s) updated` +
           (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
+          // Kept in step with GalleryPage's rescan toast: rescan otherwise never
+          // touches a file, so a rename has to be reported rather than inferred.
+          (r.renamed ? `, ${r.renamed} renamed to avoid a name clash` : "") +
           (missing ? `, ${missing} missing on disk` : "")
         );
       }).catch(() => toast.success("Rescan complete"));
@@ -867,6 +870,15 @@ export default function DatasetsPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--fg-dim)", fontSize: 11.5 }}>
             <span className="mono">{ds.captioned_count}/{ds.image_count} captioned</span>
+            {/* Hidden at zero — a "0 videos" pill on every image-only dataset is
+                pure noise. Videos are counted apart from image_count, so this is
+                additional information, not a breakdown of the stat tiles above.
+                Kept in step with the compact row renderer below. */}
+            {ds.video_count > 0 && (
+              <span className="badge" title={`${formatSize(ds.video_size_bytes)} of video`}>
+                {ds.video_count} {ds.video_count === 1 ? "video" : "videos"}
+              </span>
+            )}
             {ds.source_name && (
               <span style={{
                 minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -948,6 +960,9 @@ export default function DatasetsPage() {
           color: "var(--fg-dim)", fontFeatureSettings: '"tnum"',
         }}>
           <span>{ds.image_count.toLocaleString()} img</span>
+          {/* Same hidden-at-zero rule as the card footer; both renderers change
+              together or the two views disagree about the same dataset. */}
+          {ds.video_count > 0 && <span>{ds.video_count.toLocaleString()} vid</span>}
           <span style={{ color: "var(--accent)" }}>{pct}%</span>
           <span>{formatSize(ds.total_size_bytes)}</span>
         </span>

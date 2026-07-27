@@ -91,6 +91,12 @@ async def list_datasets(
             image_count=ds.image_count,
             captioned_count=ds.captioned_count,
             total_size_bytes=ds.total_size_bytes,
+            # Counted apart from image_count/total_size_bytes, and listed here
+            # explicitly because this response is hand-built field by field: both
+            # video columns default to 0 on DatasetOut, so omitting them reported
+            # every dataset as video-free rather than failing.
+            video_count=ds.video_count,
+            video_size_bytes=ds.video_size_bytes,
             preview_image_ids=previews[ds.id],
             current_branch_id=ds.current_branch_id,
             source_name=ds.source_name,

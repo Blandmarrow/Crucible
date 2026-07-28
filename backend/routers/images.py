@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -881,6 +882,26 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
     return FileResponse(thumb)
 
 
+def _record_in_place(img: Image, op: str, **params) -> None:
+    """Append a `processing_history` entry for an operation that overwrote the file.
+
+    Every in-place overwrite must record one. `Image.processing_history` is the
+    only durable signal that a row's pixels are no longer what produced it, and
+    video re-extraction reads it as its skip guard: a frame carrying any op other
+    than `reextract` is left alone, because re-cutting it from the source would
+    silently discard the edit (`docs/dev/video-reextract.md`).
+
+    List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
+    by equality, so mutating the loaded list in place looks unchanged and the
+    UPDATE is skipped (CLAUDE.md § Key invariants).
+    """
+    now = datetime.now(timezone.utc)
+    img.processing_history = (img.processing_history or []) + [
+        {"op": op, **params, "at": now.isoformat()}
+    ]
+    img.updated_at = now
+
+
 @router.post("/{image_id}/resize")
 async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
@@ -893,6 +914,7 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
         None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
     )
     img.width, img.height = new_w, new_h
+    _record_in_place(img, "resize", width=new_w, height=new_h)
     # Regenerate thumbnail
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
     await db.commit()
@@ -936,6 +958,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             img.file_size_bytes = info["file_size_bytes"]
             img.format = info["format"]
             img.phash = info["phash"]
+            _record_in_place(img, "crop", rect=[body.x, body.y, body.width, body.height])
             # Replace crop changed geometry: remap this image's detections.
             await remap_detections_for_crop(
                 db, img.id, (body.x, body.y, body.width, body.height), old_size
@@ -994,6 +1017,11 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     updated.width = info["width"]
                     updated.height = info["height"]
                     updated.file_size_bytes = info["file_size_bytes"]
+                    _record_in_place(
+                        updated, "crop_upscale",
+                        rect=replace_cfg["crop_rect"],
+                        model=Path(replace_cfg["upscale_model"]).name,
+                    )
                     # Remap detections only now that the upscale succeeded (a
                     # failed upscale raises above and never reaches here). The
                     # crop rect is in the OLD (pre-crop) transposed frame.
@@ -1157,6 +1185,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                     None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar
                 )
                 img.width, img.height = new_w, new_h
+                _record_in_place(img, "resize", width=new_w, height=new_h)
                 if img.thumbnail_path:
                     await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
                 await broadcaster.emit(job_id, {
@@ -1191,6 +1220,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                     None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
                 )
                 img.width, img.height = new_w, new_h
+                _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
                 # Aspect crop changed geometry: remap this image's detections.
                 await remap_detections_for_crop(session, img.id, rect, old_size)
                 if img.thumbnail_path:

@@ -347,6 +347,46 @@ def test_a_second_run_is_not_self_skipped(tmp_path):
     run(scenario())
 
 
+def test_every_in_place_overwrite_marks_the_frame_as_edited(tmp_path):
+    """The guard is only as good as what writes `processing_history`.
+
+    Upscale, LUT and detection-crop always recorded an entry; the crop and resize
+    paths in `routers/images.py` did not, so a frame cropped in place stayed
+    silently eligible and pass 2 would have discarded the crop. Asserted through
+    the *preview*, since that is what decides.
+
+    `POST /images/batch/crop` and `/batch/resize` record one too, but cannot be
+    driven from here: `POST /images/{image_id}/crop` is declared first and reads
+    `batch` as an image id, so both have been unreachable since they shipped
+    (nothing in the frontend calls them either). Left alone here — un-shadowing a
+    dead endpoint is not this feature's change to make.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            assert len(frames) >= 2, "the fixture must produce enough frames for this"
+            cropped, resized = frames[0], frames[1]
+
+            r = await env.client.post(f"{API}/images/{cropped.id}/crop", json={
+                "x": 0, "y": 0, "width": 80, "height": 60, "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            r = await env.client.post(f"{API}/images/{resized.id}/resize", json={"scale": 0.5})
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                for row_id, op in ((cropped.id, "crop"), (resized.id, "resize")):
+                    row = await db.get(Image, row_id)
+                    assert [e["op"] for e in (row.processing_history or [])] == [op], row_id
+
+            preview = (await _preview(env, video_id=video["id"])).json()
+            assert preview["eligible"] == len(frames) - 2
+            assert _reasons(preview) == {"already edited in place": 2}
+
+    run(scenario())
+
+
 def test_a_frame_edited_in_place_by_upscale_is_skipped(tmp_path):
     """`backend/models/image.py` states this rule: a replace-mode upscale keeps a
     frame's lineage while the pixels stop being the extracted frame, so

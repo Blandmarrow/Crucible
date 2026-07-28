@@ -71,6 +71,18 @@ the pixels stop being the extracted frame. The `reextract` exclusion is load-bea
 without it pass 2 refuses to run a second time, because its own history entry looks like
 third-party editing. Anything that is not a dict counts as an unknown edit and skips.
 
+**The guard is only as good as what writes `processing_history`.** Upscale, LUT and
+detection-crop always recorded an entry; the four in-place paths in `routers/images.py` —
+`resize`, replace-mode `crop`, the `crop_upscale` replace job, `batch_resize` and
+`batch_crop` — did not, so a frame cropped in place stayed silently eligible and pass 2
+would have discarded the crop. They now all go through `images._record_in_place(img, op,
+**params)`, which is the single writer: list-concat reassignment, never `.append()`
+(CLAUDE.md § Key invariants), plus the `updated_at` bump. Add a call there in any future
+path that overwrites an image file. (`POST /images/batch/crop` and `/batch/resize` are
+unreachable today — `POST /images/{image_id}/crop` is declared first and reads `batch` as an
+image id, and nothing in the frontend calls either — so their entries are written but
+untestable over HTTP.)
+
 **In-flight dedupe lives in the resolver**, not the enqueue path, so the preview is honest
 about it too — and it now runs in **both directions**: `_videos_with_running_extractions`
 matches `video_extract` *and* `video_reextract`, because a pass-1 `replace` deletes the very

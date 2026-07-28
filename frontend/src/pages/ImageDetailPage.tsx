@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Scissors } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
@@ -33,7 +33,7 @@ import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
-import ReextractFramesForm from "../components/video/ReextractFramesForm";
+import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
@@ -347,12 +347,17 @@ export default function ImageDetailPage() {
     setCropInitialArea(null);
   }, [imageId]);
 
+  // The two form dialogs this page opens over the image. Both are scoped to
+  // `imageId`, so letting the arrow keys through would re-query the preview for a
+  // *different* image while the dialog still names the old one.
+  const formModalOpen = showCropDetect || showReextract;
+
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
   // or this pane is not the active pane in split-pane mode.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (showDeleteConfirm) return;
+      if (showDeleteConfirm || formModalOpen) return;
       const target = e.target as HTMLElement;
       const inTextField =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -376,10 +381,10 @@ export default function ImageDetailPage() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   useEffect(() => {
-    const anyModalOpen = showDetectModal || showDeleteConfirm;
+    const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Delete") return;
       const target = e.target as HTMLElement;
@@ -390,7 +395,7 @@ export default function ImageDetailPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showDetectModal, showDeleteConfirm]);
+  }, [showDetectModal, showDeleteConfirm, formModalOpen]);
 
   const { data: image, isLoading: imageLoading, isError: imageError } = useQuery({
     queryKey: ["image", imageId],
@@ -2192,22 +2197,16 @@ export default function ImageDetailPage() {
 
       {/* Re-extract at full res modal */}
       {showReextract && datasetId && imageId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Scissors size={15} /> Re-extract at Full Resolution
-            </h4>
-            <ReextractFramesForm
-              datasetId={datasetId}
-              imageIds={[imageId]}
-              onSuccess={() => {
-                qc.invalidateQueries({ queryKey: ["image", imageId] });
-                setShowReextract(false);
-              }}
-              onCancel={() => setShowReextract(false)}
-            />
-          </div>
-        </div>
+        <ReextractFramesModal
+          datasetId={datasetId}
+          imageIds={[imageId]}
+          title="Re-extract at Full Resolution"
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["image", imageId] });
+            setShowReextract(false);
+          }}
+          onClose={() => setShowReextract(false)}
+        />
       )}
     </div>
   );

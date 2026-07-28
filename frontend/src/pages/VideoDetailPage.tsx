@@ -11,7 +11,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import JobProgressBar from "../components/common/JobProgressBar";
 import LicenseBadge from "../components/common/LicenseBadge";
 import ExtractFramesModal from "../components/video/ExtractFramesModal";
-import ReextractFramesForm from "../components/video/ReextractFramesForm";
+import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import { extractPhaseLabel, useVideoExtractJobs } from "../hooks/useVideoExtractJobs";
 import { formatDuration } from "../utils/duration";
 import { apiErrorDetail } from "../utils/apiError";
@@ -397,26 +397,22 @@ export default function VideoDetailPage() {
       )}
 
       {reextractSubfolder !== null && datasetId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Scissors size={15} /> Re-extract at Full Resolution
-            </h4>
+        <ReextractFramesModal
+          datasetId={datasetId}
+          videoId={video.id}
+          subfolder={reextractSubfolder}
+          title="Re-extract at Full Resolution"
+          headerExtra={
             <p className="text-xs mb-1" style={{ color: "var(--fg-mute)" }}>
               {video.filename} · {reextractSubfolder || "root"}
             </p>
-            <ReextractFramesForm
-              datasetId={datasetId}
-              videoId={video.id}
-              subfolder={reextractSubfolder}
-              onSuccess={() => {
-                qc.invalidateQueries({ queryKey: ["video-frames", videoId] });
-                setReextractSubfolder(null);
-              }}
-              onCancel={() => setReextractSubfolder(null)}
-            />
-          </div>
-        </div>
+          }
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["video-frames", videoId] });
+            setReextractSubfolder(null);
+          }}
+          onClose={() => setReextractSubfolder(null)}
+        />
       )}
 
       {showDeleteConfirm && (

@@ -150,8 +150,11 @@ test('the re-extract form reports what it can and cannot do', async ({ page, req
   const preview = page.waitForResponse(
     (res) => res.url().includes('/api/v1/videos/reextract/preview') && res.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: 'Re-extract' }).click()
-  const modal = page.locator('.card', { hasText: 'Re-extract at Full Resolution' })
+  const opener = page.getByRole('button', { name: 'Re-extract' })
+  await opener.click()
+  // A real dialog, not a bare overlay: `ReextractFramesModal` spreads
+  // `useModalBehavior`, so this is `role="dialog"` and Escape closes it.
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
   await expect(modal).toBeVisible()
   expect((await preview).status()).toBe(200)
 
@@ -165,8 +168,18 @@ test('the re-extract form reports what it can and cannot do', async ({ page, req
   await expect(modal.getByRole('spinbutton')).toHaveAttribute('placeholder', 'native')
   await expect(modal.getByText(/Quality scores were measured on the triage frames/)).toBeVisible()
 
+  // Long edge is bounded client-side. `min="64"` on the input enforces nothing on
+  // a typed value, so without this `30` reached the API and came back a raw 422.
+  await modal.getByRole('spinbutton').fill('30')
+  await expect(modal.getByText(/whole number between 64 and 16384/)).toBeVisible()
+  await modal.getByRole('spinbutton').fill('')
+  await expect(modal.getByText(/whole number between 64 and 16384/)).toHaveCount(0)
+
   // Nothing is eligible, so the expensive button is not even offered.
   await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
-  await modal.getByRole('button', { name: 'Cancel' }).click()
+
+  // Escape closes and focus returns to the button that opened it.
+  await page.keyboard.press('Escape')
   await expect(modal).toHaveCount(0)
+  await expect(opener).toBeFocused()
 })

@@ -6,7 +6,7 @@ import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
-import ReextractFramesForm from "../video/ReextractFramesForm";
+import ReextractFramesModal from "../video/ReextractFramesModal";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -1077,20 +1077,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
       {/* Re-extract at full res modal */}
       {showReextract && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Scissors size={15} /> Re-extract at Full Resolution — {count} Selected
-            </h4>
-            {datasetBreakdown}
-            <ReextractFramesForm
-              datasetId={datasetId}
-              imageIds={ids}
-              onSuccess={() => setShowReextract(false)}
-              onCancel={() => setShowReextract(false)}
-            />
-          </div>
-        </div>
+        <ReextractFramesModal
+          datasetId={datasetId}
+          imageIds={ids}
+          title={`Re-extract at Full Resolution — ${count} Selected`}
+          headerExtra={datasetBreakdown}
+          onSuccess={() => setShowReextract(false)}
+          onClose={() => setShowReextract(false)}
+        />
       )}
 
       {/* LUT modal */}

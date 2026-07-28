@@ -8,6 +8,10 @@ import { apiErrorDetail } from "../../utils/apiError";
 import { useJobStore } from "../../store/jobStore";
 import type { VideoReextractRequest } from "../../types";
 
+/** Mirrors `VideoReextractRequest.max_long_edge`'s `ge`/`le` on the server. */
+const LONG_EDGE_MIN = 64;
+const LONG_EDGE_MAX = 16384;
+
 interface Props {
   datasetId: string;
   /** Exactly one scope, mirroring the request. */
@@ -107,12 +111,20 @@ export default function ReextractFramesForm({
     if (done.length === jobIds.length) onSuccess?.();
   }, [activeJobs, jobIds, datasetId, qc, onSuccess]);
 
+  // `max_long_edge` is `ge=64, le=16384` server-side, and an input's `min`/`max`
+  // attributes enforce nothing on a typed value — `30` used to reach the API and
+  // come back as a raw 422 toast. Empty stays valid: it means native resolution.
+  const parsedLongEdge = maxLongEdge.trim() === "" ? null : Number(maxLongEdge);
+  const longEdgeInvalid =
+    parsedLongEdge !== null &&
+    (!Number.isInteger(parsedLongEdge) || parsedLongEdge < LONG_EDGE_MIN || parsedLongEdge > LONG_EDGE_MAX);
+
   const runMutation = useMutation({
     mutationFn: () =>
       videosApi.reextract({
         ...scope,
         format,
-        max_long_edge: parseInt(maxLongEdge) > 0 ? parseInt(maxLongEdge) : null,
+        max_long_edge: parsedLongEdge,
         label: jobLabel.trim() || undefined,
       }),
     onSuccess: (data) => {
@@ -193,14 +205,20 @@ export default function ReextractFramesForm({
         </label>
         <input
           type="number"
-          min="64"
-          max="16384"
+          min={LONG_EDGE_MIN}
+          max={LONG_EDGE_MAX}
           className="input"
           style={{ width: 110 }}
           placeholder="native"
           value={maxLongEdge}
           onChange={(e) => setMaxLongEdge(e.target.value)}
+          aria-invalid={longEdgeInvalid || undefined}
         />
+        {longEdgeInvalid && (
+          <p className="text-xs" style={{ color: "var(--bad)", margin: "4px 0 0" }}>
+            Must be a whole number between {LONG_EDGE_MIN} and {LONG_EDGE_MAX}, or empty for native.
+          </p>
+        )}
       </div>
 
       <p className="text-xs" style={{ color: "var(--fg-mute)" }}>
@@ -239,7 +257,7 @@ export default function ReextractFramesForm({
         <button
           className="btn-primary flex items-center gap-2"
           onClick={() => runMutation.mutate()}
-          disabled={eligible === 0 || running || runMutation.isPending}
+          disabled={eligible === 0 || running || runMutation.isPending || longEdgeInvalid}
         >
           <Scissors size={14} /> {running ? "Re-extracting…" : "Re-extract"}
         </button>

@@ -62,6 +62,18 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   const [deinterlace, setDeinterlace] = useState<"" | "bwdif">(primary.deinterlace === "bwdif" ? "bwdif" : "");
   const [selectedSample, setSelectedSample] = useState(0);
 
+  // Which decode fixups the user actually changed this session. Everything in
+  // step 1 is seeded from the **primary** video but written by the endpoint to
+  // **every** video in the batch, so sending an untouched control clears the
+  // other videos' stored settings — opening a batch whose primary happens to
+  // carry no crop and pressing Extract wiped every other video's rect. The API
+  // is built for this: `None` means "leave the row alone" for all four fields,
+  // so an untouched control sends `undefined`. It also makes the single-video
+  // case a no-op instead of a rewrite.
+  const [cropTouched, setCropTouched] = useState(false);
+  const [deinterlaceTouched, setDeinterlaceTouched] = useState(false);
+  const [trimTouched, setTrimTouched] = useState(false);
+
   // ── Step 2 state ───────────────────────────────────────────────────────────
   const [framesPerShot, setFramesPerShot] = useState(1);
   const [pick, setPick] = useState<"sharpest" | "middle">("sharpest");
@@ -130,6 +142,14 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   const samples = probe?.samples ?? [];
   const sample = samples[Math.min(selectedSample, Math.max(samples.length - 1, 0))];
 
+  // The filter this run will actually use. Without the coercion a row carrying
+  // `"bwdif"` from an earlier run, opened on a host that has since lost
+  // imageio-ffmpeg, submits `"bwdif"` behind a disabled checkbox and takes the
+  // endpoint's 503 — the one case its own `effective` check cannot cover,
+  // because the request *does* send the field.
+  const effectiveDeinterlace: "" | "bwdif" = caps.deinterlace === false ? "" : deinterlace;
+  const deinterlaceCoerced = effectiveDeinterlace !== deinterlace;
+
   // The primary video's extraction history: the replace-mode label needs the
   // number *before* anything is deleted.
   const { data: framesSummary } = useQuery({
@@ -151,19 +171,36 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   const videoIds = useMemo(() => videos.map((v) => v.id), [videos]);
   const liveJobs = useVideoExtractJobs(videoIds, startedJobIds);
 
+  // Derived during render rather than reset in the radio's `onChange` — the
+  // idiom this file already uses for `lastProbe`, and `VideoStrip` for
+  // `selectionFor`. In `new_subfolder` mode the router steps the chosen name
+  // through `_step_subfolder`, so picking an existing subfolder there silently
+  // becomes `{name}_2`; the option must not be offered at all. A reset in the
+  // handler cannot be relied on either way: a `<select>` whose value matches no
+  // option renders *blank* while the state still holds the old path, which is
+  // worse than the bug. Deriving also preserves the add-mode choice across a
+  // round trip through the other modes, and mirrors `effectiveDeinterlace`.
+  const effectiveSubSelect =
+    mode === "new_subfolder" && subSelect !== SUB_AUTO && subSelect !== SUB_CUSTOM
+      ? SUB_AUTO
+      : subSelect;
+
   async function handleSubmit() {
     setSubmitting(true);
     try {
       const res = await videosApi.extract({
         video_ids: videoIds,
-        crop,
+        // Untouched decode fixups are omitted, not sent — see `cropTouched`.
+        crop: cropTouched ? crop : undefined,
         // `crop: null` alone is ambiguous — it also means "leave the stored rect
         // alone". This modal always shows the stored rect, so an empty rect here
         // really is the user clearing it.
-        clear_crop: crop === null,
-        deinterlace,
-        trim_start_ms: trimUnavailable ? undefined : trimStart,
-        trim_end_ms: trimUnavailable ? undefined : trimEnd,
+        clear_crop: cropTouched ? crop === null : undefined,
+        // Sent when coerced even if untouched: that is the only way off a stale
+        // `"bwdif"` this host can no longer run.
+        deinterlace: deinterlaceTouched || deinterlaceCoerced ? effectiveDeinterlace : undefined,
+        trim_start_ms: trimUnavailable || !trimTouched ? undefined : trimStart,
+        trim_end_ms: trimUnavailable || !trimTouched ? undefined : trimEnd,
         sensitivity,
         min_shot_ms: minShotMs,
         detector_frame_skip: frameSkip,
@@ -189,9 +226,9 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   }
 
   function resolvedSubfolder(): string {
-    if (subSelect === SUB_AUTO) return "";
-    if (subSelect === SUB_CUSTOM) return subCustom.trim();
-    return subSelect;
+    if (effectiveSubSelect === SUB_AUTO) return "";
+    if (effectiveSubSelect === SUB_CUSTOM) return subCustom.trim();
+    return effectiveSubSelect;
   }
 
   const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Extract frames" });
@@ -214,7 +251,9 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
         <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" }}>
           <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
             {batch
-              ? <>Previewing <b>{primary.filename}</b> — these settings apply to all {videos.length} videos</>
+              ? <>Previewing <b>{primary.filename}</b> — these settings apply to all {videos.length} videos.
+                The crop, deinterlacer and trim shown are this video's; each is written to the whole
+                batch only if you change it here, and otherwise every video keeps its own.</>
               : <span className="mono">{primary.filename}</span>}
           </div>
 
@@ -228,6 +267,18 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
             <>
               {probeQuery.isPending && !probe && (
                 <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>Sampling the video…</p>
+              )}
+
+              {/* Naming exactly what is lost, because extraction itself needs no
+                  probe — only this step's previews do. Capabilities come from
+                  their own route, so the warnings below survive this. */}
+              {!probe && !probeQuery.isPending && (
+                <p style={{ fontSize: 11.5, color: "var(--warn)", margin: 0 }}>
+                  This video could not be sampled, so there is no crop preview, no detected
+                  matte and no interlace or telecine warning. Extraction does not need any of
+                  them — it will run with whatever crop, deinterlacer and trims are already
+                  stored on the video.
+                </p>
               )}
 
               {samples.length > 0 && (
@@ -255,7 +306,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                   frameW={frameW}
                   frameH={frameH}
                   rect={crop}
-                  onChange={setCrop}
+                  onChange={(r) => { setCrop(r); setCropTouched(true); }}
                 />
               )}
 
@@ -263,7 +314,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 <button
                   className="btn ghost sm"
                   disabled={!probe?.crop}
-                  onClick={() => probe?.crop && setCrop(probe.crop)}
+                  onClick={() => { if (probe?.crop) { setCrop(probe.crop); setCropTouched(true); } }}
                   title={probe?.crop ? "Apply the matte the probe detected" : "No letterbox matte was detected"}
                 >
                   Use detected
@@ -273,7 +324,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                     {Math.round((probe.crop_confidence ?? 0) * 100)}% of samples agreed
                   </span>
                 )}
-                <button className="btn ghost sm" onClick={() => setCrop(null)} disabled={!crop}>
+                <button className="btn ghost sm" onClick={() => { setCrop(null); setCropTouched(true); }} disabled={!crop}>
                   Clear crop
                 </button>
               </div>
@@ -289,13 +340,22 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 <input
                   type="checkbox"
                   className="checkbox"
-                  checked={deinterlace === "bwdif"}
+                  checked={effectiveDeinterlace === "bwdif"}
                   disabled={caps.deinterlace === false}
-                  onChange={(e) => setDeinterlace(e.target.checked ? "bwdif" : "")}
+                  onChange={(e) => { setDeinterlace(e.target.checked ? "bwdif" : ""); setDeinterlaceTouched(true); }}
                 />
                 Deinterlace (bwdif)
                 {caps.deinterlace === false && <span style={{ color: "var(--fg-dim)" }}>— imageio-ffmpeg not installed</span>}
               </label>
+
+              {deinterlaceCoerced && (
+                <p style={{ fontSize: 11.5, color: "var(--warn)", margin: 0 }}>
+                  This video has <span className="mono">bwdif</span> saved from an earlier run,
+                  but imageio-ffmpeg is not installed here, so extracting would fail. Running it
+                  now extracts without deinterlacing <b>and clears the saved setting</b> — you
+                  will have to switch it back on once the package is installed.
+                </p>
+              )}
 
               <div>
                 <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 4 }}>Trim</div>
@@ -303,7 +363,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                   durationMs={durationMs}
                   startMs={trimStart}
                   endMs={trimEnd}
-                  onChange={(s, e) => { setTrimStart(s); setTrimEnd(e); }}
+                  onChange={(s, e) => { setTrimStart(s); setTrimEnd(e); setTrimTouched(true); }}
                   disabled={trimUnavailable}
                   disabledNote="This container will not seek, so trimming is unavailable"
                 />
@@ -377,9 +437,14 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                     <input type="radio" name="extract-mode" checked={mode === "add"} onChange={() => setMode("add")} />
-                    {previousCount > 0 && lastSubfolder !== undefined
-                      ? <>Add to <span className="mono">{lastSubfolder || "the dataset root"}</span></>
-                      : "Add to the existing subfolder"}
+                    {/* `framesSummary` is the *primary* video's history, but the
+                        router resolves "previous" per video — so naming one
+                        subfolder would be a lie for the rest of a batch. */}
+                    {batch
+                      ? "Add to each video's own previous subfolder"
+                      : previousCount > 0 && lastSubfolder !== undefined
+                        ? <>Add to <span className="mono">{lastSubfolder || "the dataset root"}</span></>
+                        : "Add to the existing subfolder"}
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "var(--bad)" }}>
                     <input type="radio" name="extract-mode" checked={mode === "replace"} onChange={() => setMode("replace")} />
@@ -395,16 +460,26 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
               {mode !== "replace" && (
                 <div>
                   <label className="label" style={{ fontSize: 12 }}>Subfolder</label>
-                  <select className="select" style={{ fontSize: 12 }} value={subSelect} onChange={(e) => setSubSelect(e.target.value)}>
-                    <option value={SUB_AUTO}>Automatic — named after the video</option>
-                    {subfolders.filter((sf) => sf.path !== "").map((sf) => (
+                  <select className="select" style={{ fontSize: 12 }} value={effectiveSubSelect} onChange={(e) => setSubSelect(e.target.value)}>
+                    {/* The two modes resolve an empty subfolder differently, so
+                        one label for both was wrong in whichever mode it did not
+                        describe. */}
+                    <option value={SUB_AUTO}>
+                      {mode === "add"
+                        ? "Automatic — this video's previous subfolder"
+                        : "Automatic — a new subfolder named after the video"}
+                    </option>
+                    {/* Existing subfolders are offered in `add` mode only: in
+                        `new_subfolder` the router steps the name it is given, so
+                        picking one here would silently produce `{name}_2`. */}
+                    {mode === "add" && subfolders.filter((sf) => sf.path !== "").map((sf) => (
                       <option key={sf.path} value={sf.path}>
                         {sf.path} ({sf.image_count} image{sf.image_count !== 1 ? "s" : ""})
                       </option>
                     ))}
                     <option value={SUB_CUSTOM}>Name it…</option>
                   </select>
-                  {subSelect === SUB_CUSTOM && (
+                  {effectiveSubSelect === SUB_CUSTOM && (
                     <input
                       className="input"
                       style={{ marginTop: 6, fontSize: 12 }}
@@ -414,6 +489,15 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                       autoFocus
                     />
                   )}
+                  <p style={{ fontSize: 11.5, color: "var(--fg-dim)", margin: "6px 0 0" }}>
+                    {mode === "new_subfolder"
+                      ? <>A name that is already taken is stepped — <span className="mono">foo</span>,{" "}
+                        <span className="mono">foo_2</span>, <span className="mono">foo_3</span> across a
+                        batch. To put a whole batch in <i>one</i> folder, choose “Add to…” and name it there.</>
+                      : <>Only subfolders that already hold images are listed. The dataset root is
+                        reachable here through “Automatic”, for a video whose last extraction went
+                        there.</>}
+                  </p>
                 </div>
               )}
 
@@ -451,7 +535,11 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
               <button className="btn ghost" onClick={onClose}>Cancel</button>
               {step === 2 && <button className="btn ghost" onClick={() => setStep(1)}>Back</button>}
               {step === 1 ? (
-                <button className="btn primary" onClick={() => setStep(2)} disabled={!probe}>Next</button>
+                // `POST /videos/extract` needs no probe at all, so gating Next on one
+                // made an unprobeable video permanently un-extractable. Mirrors the
+                // "Sampling the video…" gate above; `retry: false` settles `isPending`
+                // on the first error, so a failure never leaves this stuck.
+                <button className="btn primary" onClick={() => setStep(2)} disabled={probeQuery.isPending && !probe}>Next</button>
               ) : (
                 <button className="btn primary" onClick={handleSubmit} disabled={submitting}>
                   {submitting ? "Starting…" : `Extract from ${videos.length} video${videos.length === 1 ? "" : "s"}`}

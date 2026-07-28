@@ -131,11 +131,11 @@ CANDIDATE_WALK_LIMIT = 400
 
 
 def capabilities() -> dict:
-    """What this install can actually do. Rides on the probe response.
-
-    Not its own route: the modal always probes before it offers any of these
-    controls, so a separate endpoint would be one more thing to keep in sync for
-    no extra information. Both entries are False on a fresh checkout until
+    """What this install can actually do. Rides on the probe response, and is
+    also served on its own by `GET /videos/capabilities` — a video that will not
+    probe still extracts, so the modal needs an answer that does not depend on
+    one. Pure and cheap enough to be a request-path call either way. Both entries
+    are False on a fresh checkout until
     `manage.sh update` installs the two optional dependencies, and that is
     useful — the degraded branches run for real in CI rather than only in
     theory.

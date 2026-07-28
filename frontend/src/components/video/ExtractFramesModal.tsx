@@ -110,8 +110,18 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
     if (probeQuery.error) toast.error(apiErrorDetail(probeQuery.error, "Could not probe this video"));
   }, [probeQuery.error]);
 
+  // Read in preference to `probe.capabilities`: a video that will not probe
+  // still extracts, and the deinterlace gate and shot-detection warning have to
+  // keep working when it doesn't. Server-side pure, so one long-lived cache
+  // entry covers every modal in the session.
+  const { data: serverCaps } = useQuery({
+    queryKey: ["extract-capabilities"],
+    queryFn: () => videosApi.capabilities(),
+    staleTime: 60 * 60_000,
+  });
+
   const probe = probeQuery.data ?? lastProbe;
-  const caps = probe?.capabilities ?? {};
+  const caps = serverCaps ?? probe?.capabilities ?? {};
   const frameW = probe?.width ?? primary.width ?? 0;
   const frameH = probe?.height ?? primary.height ?? 0;
   const durationMs = probe?.duration_ms ?? primary.duration_ms ?? 0;

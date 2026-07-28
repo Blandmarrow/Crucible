@@ -1,5 +1,6 @@
 import client from "./client";
 import type {
+  ExtractCapabilities,
   Video,
   VideoExtractRequest,
   VideoExtractResult,
@@ -34,6 +35,13 @@ export const videosApi = {
     client.patch(`/videos/${id}/rename`, { new_stem }).then((r) => r.data),
 
   delete: (id: string): Promise<void> => client.delete(`/videos/${id}`).then(() => undefined),
+
+  /** What the extraction backend can do, independently of any one video. These
+   *  also ride on the probe response, but a video that will not probe still
+   *  extracts — so the modal reads this in preference and keeps its capability
+   *  warnings working. Pure server-side; cache it hard. */
+  capabilities: (): Promise<ExtractCapabilities> =>
+    client.get("/videos/capabilities").then((r) => r.data),
 
   /** Sample a video for the extraction modal's first step. A plain request, not a
    *  job — twelve seeks finish before the modal has finished animating. Writes

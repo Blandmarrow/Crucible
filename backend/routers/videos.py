@@ -96,6 +96,25 @@ async def list_videos(dataset_id: str = Query(...), db: AsyncSession = Depends(g
     return [_to_out(v, ds) for v in result.scalars().all()]
 
 
+@router.get("/capabilities")
+async def get_extract_capabilities() -> dict:
+    """What this install can actually do, independently of any one video.
+
+    **Declared above `/{video_id}` on purpose** — FastAPI matches in declaration
+    order, so a literal path segment that could be read as a path parameter has
+    to come first.
+
+    These also ride on the probe response, which is where the modal reads them
+    from when it has one. They need their own route because a video that will not
+    probe still extracts: without this, a probe failure leaves the deinterlace
+    checkbox and the shot-detection warning with nothing to consult, so a host
+    without imageio-ffmpeg would offer a filter that 503s. Pure, and answers in
+    microseconds after the first import attempt, so the frontend caches it with a
+    long `staleTime` rather than refetching per modal.
+    """
+    return video_extract.capabilities()
+
+
 @router.get("/{video_id}", response_model=VideoOut)
 async def get_video(video_id: str, db: AsyncSession = Depends(get_db)):
     video = await db.get(Video, video_id)

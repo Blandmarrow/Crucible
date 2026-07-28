@@ -158,9 +158,16 @@ thread finishes one frame and discards it. `re` never releases the GIL, which is
 
 **The probe's only write is metadata correction** — `duration_ms`, plus `width`/`height`/
 `fps` if they were NULL. Crop, deinterlace and trims are deliberately *not* written here:
-the modal re-probes on every trim-handle drag, and a preview must not commit. `capabilities`
-rides on this response rather than a separate route, since the modal always probes before
-offering any control they gate.
+the modal re-probes on every trim-handle drag, and a preview must not commit.
+
+`capabilities` rides on this response *and* has its own `GET /videos/capabilities`, because
+a video that will not probe still extracts — without the standalone route a probe failure
+leaves the deinterlace checkbox and the shot-detection warning with nothing to consult, and a
+host lacking imageio-ffmpeg would offer a filter that 503s. It is pure and answers in
+microseconds, so the frontend holds it in one long-`staleTime` `["extract-capabilities"]`
+query and prefers it over `probe.capabilities`. **Declared above `GET /videos/{video_id}`**:
+FastAPI matches in declaration order, so below it the literal segment is read as a video id
+and 404s. A test pins that ordering.
 
 `POST /videos/extract` takes 1–50 `video_ids` and creates **one job per video**.
 

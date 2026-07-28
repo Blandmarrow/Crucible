@@ -182,6 +182,25 @@ def test_probe_rejects_an_out_of_range_sample_count(tmp_path):
     run(scenario())
 
 
+def test_capabilities_has_its_own_route_and_is_not_shadowed(tmp_path):
+    """The route exists so a video that will not probe can still be configured.
+
+    The shadowing half is the real risk: `/capabilities` is a literal segment
+    competing with `GET /videos/{video_id}`, and FastAPI matches in declaration
+    order — moved below it, this returns a 404 "Video not found" instead.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.get(f"{API}/videos/capabilities")
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert set(body) == set(video_extract.capabilities())
+            assert isinstance(body["shot_detection"], bool)
+            assert isinstance(body["deinterlace"], bool)
+
+    run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Extract — the happy path
 # ---------------------------------------------------------------------------

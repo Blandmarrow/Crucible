@@ -1286,6 +1286,17 @@ export default function StatsPage() {
 
   // ── Conditional visibility ──
   const hasQualityScores  = Object.keys(stats.blur_distribution).length > 0;
+  // `score_coverage.technical` is a single count of `blur_score`, but the technical
+  // scorer has gained columns over time (color/saturation in quality-v2, luminance in
+  // the video arc). A dataset scored before a column existed reports 100% technical
+  // coverage next to an empty histogram for that column, and a bare "No data" reads
+  // as a bug rather than as "the scorer has not run since this was added".
+  const rescoreHint = (entries: ChartEntry[]) =>
+    entries.length === 0 && hasQualityScores ? (
+      <div style={{ fontSize: 10.5, color: "var(--fg-mute)", marginTop: 6 }}>
+        Not recorded on this dataset — re-run the Technical scorer.
+      </div>
+    ) : undefined;
   const hasFlags          = Object.values(stats.quality_flag_counts).some((v) => v > 0);
   const hasCoverage       = Object.values(stats.score_coverage).some((v) => v > 0);
   const hasCooccurrence   = (cooccurrence?.tags.length ?? 0) > 0;
@@ -1574,10 +1585,10 @@ export default function StatsPage() {
         {(show("aesthetic", "color_richness") || show("aesthetic", "saturation")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "color_richness") && show("aesthetic", "saturation") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("aesthetic", "color_richness") && (
-              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} storageKey={datasetId ? `stats-hist-edges-color-${datasetId}` : undefined} />
+              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} storageKey={datasetId ? `stats-hist-edges-color-${datasetId}` : undefined} footer={rescoreHint(colorData)} />
             )}
             {show("aesthetic", "saturation") && (
-              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} storageKey={datasetId ? `stats-hist-edges-saturation-${datasetId}` : undefined} />
+              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} storageKey={datasetId ? `stats-hist-edges-saturation-${datasetId}` : undefined} footer={rescoreHint(satData)} />
             )}
           </div>
         )}
@@ -1592,11 +1603,11 @@ export default function StatsPage() {
       >
         {hasQualityScores && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 14 }}>
-            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")}       storageKey={datasetId ? `stats-hist-edges-blur-${datasetId}` : undefined} />}
-            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined} />}
-            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} />}
+            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")}       storageKey={datasetId ? `stats-hist-edges-blur-${datasetId}` : undefined}       footer={rescoreHint(blurData)} />}
+            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined}      footer={rescoreHint(noiseData)} />}
+            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} footer={rescoreHint(uniData)} />}
             {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-watermark-${datasetId}` : undefined} />}
-            {show("technical", "luminance")  && <HistPanel title="Brightness"       subtitle="higher = brighter" entries={lumData}      onBarClick={open("Brightness")}      rawValues={sv?.luminance_score}  defaultEdgeStr={DEFAULT_EDGES.luminance}  fb={mkScore("luminance_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-luminance-${datasetId}` : undefined} />}
+            {show("technical", "luminance")  && <HistPanel title="Brightness"       subtitle="higher = brighter" entries={lumData}      onBarClick={open("Brightness")}      rawValues={sv?.luminance_score}  defaultEdgeStr={DEFAULT_EDGES.luminance}  fb={mkScore("luminance_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-luminance-${datasetId}` : undefined}  footer={rescoreHint(lumData)} />}
           </div>
         )}
       </CategorySection>

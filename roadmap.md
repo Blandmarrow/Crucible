@@ -446,6 +446,14 @@ keep/reject gate once sketched here stayed **deferred out of this arc** — see 
   imports cv2, and CI has no OpenCV — matching the coverage shape of every other technical
   score. The wiring is tested instead, at request level:
   `backend/tests/test_luminance_score_http.py` and `test_frames_from_video_filter.py`.
+- **Pre-existing scored datasets were not accounted for.** The plan reasoned about frames,
+  which are extracted after the migration and therefore scored with the column present. On
+  an image dataset last scored before it, `luminance_score` is NULL — yet
+  `score_coverage["technical"]` counts `blur_score` alone, so Stats reports 100% technical
+  next to an empty Brightness histogram, and the filter and sort return nothing. Fixed as a
+  hint on the panel (`HistPanel`'s `footer`) rather than a coverage-per-column change,
+  covering the six panels the technical scorer writes; the same staleness already applied
+  to `color_score`/`saturation_score` from quality-v2.
 
 ## Phase 4 — Pass 2: full-res re-extraction
 

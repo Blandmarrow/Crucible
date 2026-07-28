@@ -37,6 +37,14 @@ Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers wr
 | **DINOv2** | 768-dim final-layer embedding + all 12 transformer-layer CLS tokens for per-layer style analysis |
 | **NSFW** | NSFW score 0–1 (Marqo `nsfw-image-detection-384` ViT classifier), flag `is_nsfw` |
 
+The Technical scorer has gained metrics over time, and a score is only recorded by the
+run that computed it. A dataset scored before a metric existed keeps every other value
+but has nothing for that one, so its histogram on [Statistics](statistics.md) is empty
+and its gallery filter and sort return nothing — even though the page still reports the
+dataset as fully scored, because coverage is counted on blur alone. Brightness is the
+current case: it arrived with video frame extraction, so anything scored before that
+needs a Technical re-run. The Statistics panel says as much in place of a bare "No data".
+
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
 compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it.

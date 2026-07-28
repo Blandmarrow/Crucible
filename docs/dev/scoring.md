@@ -14,6 +14,8 @@ Quality scorers and what they add to `Image`:
 
 `luminance_score` is mean grayscale normalised to 0–1 (0 = black, 1 = white), taken from the `gray` array `score_technical_sync` already computes for blur/noise/uniformity — no extra decode. It has **no quality flag**, deliberately: a score with no flag needs no `threshold_settings` column, no Settings row and no `ALLOWED_FLAG_KEYS` entry, and `is_uniform` already flags a solid black frame. It is not mirrored on `VersionImageState` (see `NOT_MIRRORED` in `backend/tests/test_video_lineage_mirrors.py` — scored, not authored). The score exists for **all** images, but the question it answers is a video-frame one: a triage pass dumps hundreds of frames into a subfolder and the usable-brightness ones have to be separable from night scenes, fades to black and blown-out flashes. See `docs/dev/video-extract.md`.
 
+The column is NULL until the technical scorer runs again, and nothing detects that: `score_coverage["technical"]` counts `blur_score` alone, so a dataset scored before the column existed reports full technical coverage beside an empty Brightness histogram. Stats carries the re-score hint that says so — see `docs/dev/statistics.md` (`score_coverage`). The same staleness applies to `color_score`/`saturation_score` on anything last scored before quality-v2, and to whatever technical column is added next.
+
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
 |---|---|---|---|

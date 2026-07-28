@@ -8,7 +8,10 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import JobProgressBar from "../components/common/JobProgressBar";
 import LicenseBadge from "../components/common/LicenseBadge";
+import ExtractFramesModal from "../components/video/ExtractFramesModal";
+import { extractPhaseLabel, useVideoExtractJobs } from "../hooks/useVideoExtractJobs";
 import { formatDuration } from "../utils/duration";
 import { apiErrorDetail } from "../utils/apiError";
 import { safeExternalUrl } from "../utils/url";
@@ -37,6 +40,13 @@ export default function VideoDetailPage() {
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showExtract, setShowExtract] = useState(false);
+
+  // Live for this video whether or not the modal is open — the job outlives the
+  // window that started it, and the persisted id survives a reload too.
+  const watchedVideoIds = useMemo(() => (videoId ? [videoId] : []), [videoId]);
+  const extractJobs = useVideoExtractJobs(watchedVideoIds);
+  const extractJob = videoId ? extractJobs.get(videoId) : undefined;
 
   const { data: video, isError } = useQuery({
     queryKey: ["video", videoId],
@@ -57,6 +67,15 @@ export default function VideoDetailPage() {
     queryKey: ["videos", datasetId],
     queryFn: () => videosApi.list(datasetId!),
     enabled: !!datasetId,
+  });
+
+  // Where this video's frames ended up. Also the number in the delete confirm —
+  // "the frames survive" is the non-obvious half of that contract, and it reads
+  // as a claim rather than a fact without a count attached.
+  const { data: framesSummary } = useQuery({
+    queryKey: ["video-frames", videoId],
+    queryFn: () => videosApi.framesSummary(videoId!),
+    enabled: !!videoId,
   });
 
   const { currentIndex, prevId, nextId } = useMemo(() => {
@@ -89,7 +108,7 @@ export default function VideoDetailPage() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (showDeleteConfirm) return;
+      if (showDeleteConfirm || showExtract) return;
       const target = e.target as HTMLElement;
       if (
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -101,7 +120,7 @@ export default function VideoDetailPage() {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevId, nextId, showDeleteConfirm, paneCtx, activePaneId, datasetId]);
+  }, [prevId, nextId, showDeleteConfirm, showExtract, paneCtx, activePaneId, datasetId]);
 
   const renameMutation = useMutation({
     mutationFn: () => videosApi.rename(videoId!, renameStem),
@@ -121,6 +140,11 @@ export default function VideoDetailPage() {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.removeQueries({ queryKey: ["video", videoId] });
+      qc.removeQueries({ queryKey: ["video-frames", videoId] });
+      // The frames survive with their lineage cut, so every image payload that
+      // carried a source_video_id for this video is now wrong.
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["image"] });
       setShowDeleteConfirm(false);
       toast.success("Video deleted");
       if (nextId) goTo(nextId);
@@ -269,11 +293,48 @@ export default function VideoDetailPage() {
           )}
         </div>
 
+        {/* Extraction history. Hidden entirely when there is none — an empty
+            panel implies something failed. Each row deep-links the gallery at
+            that subfolder via the pane view's `subfolder` field. */}
+        {(framesSummary?.total ?? 0) > 0 && (
+          <div className="p-4 border-b border-gray-700/50 space-y-2">
+            <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Extracted frames</h3>
+            <div className="space-y-1">
+              {framesSummary!.groups.map((g) => (
+                <button
+                  key={g.subfolder}
+                  className="btn-ghost btn-sm w-full flex items-center justify-between gap-2"
+                  style={{ fontSize: 11.5 }}
+                  onClick={() =>
+                    paneGo(
+                      `/datasets/${datasetId}/gallery?subfolder=${encodeURIComponent(g.subfolder)}`,
+                      { page: "gallery", datasetId, subfolder: g.subfolder },
+                    )
+                  }
+                  title={`Show these frames in the gallery`}
+                >
+                  <span>{g.count} frame{g.count === 1 ? "" : "s"}</span>
+                  <span className="font-mono truncate" style={{ color: "var(--fg-mute)" }}>
+                    {g.subfolder || "root"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="p-4 space-y-2">
+          {extractJob && (
+            <JobProgressBar
+              message={extractPhaseLabel(extractJob)}
+              percent={Math.max(0, extractJob.percent ?? 0)}
+            />
+          )}
           <button
             className="btn-ghost btn-sm w-full flex items-center justify-center gap-1.5"
-            disabled
-            title="Frame extraction arrives in a later release"
+            onClick={() => setShowExtract(true)}
+            disabled={!!extractJob}
+            title={extractJob ? "An extraction is already running for this video" : "Turn this video into frames"}
           >
             <Scissors size={14} /> Extract frames
           </button>
@@ -287,13 +348,29 @@ export default function VideoDetailPage() {
         </div>
       </div>
 
+      {showExtract && (
+        <ExtractFramesModal
+          datasetId={datasetId}
+          videos={[video]}
+          onClose={() => {
+            setShowExtract(false);
+            qc.invalidateQueries({ queryKey: ["video-frames", videoId] });
+          }}
+        />
+      )}
+
       {showDeleteConfirm && (
         <ConfirmDialog
           danger
           title="Delete video?"
           // The Phase 0 contract, stated because it is not what a user expects:
-          // DELETE /videos/{id} never touches Image rows.
-          message={`Delete "${video.filename}" and its poster from disk. Extracted frames are not deleted.`}
+          // DELETE /videos/{id} never touches Image rows. With a count attached —
+          // the frames keep their files and lose only the link back here.
+          message={
+            (framesSummary?.total ?? 0) > 0
+              ? `Delete "${video.filename}" and its poster from disk. ${framesSummary!.total} extracted frame(s) keep their files but lose their link back to this video.`
+              : `Delete "${video.filename}" and its poster from disk. Extracted frames are not deleted.`
+          }
           confirmLabel="Delete"
           onConfirm={() => deleteMutation.mutate()}
           onCancel={() => setShowDeleteConfirm(false)}

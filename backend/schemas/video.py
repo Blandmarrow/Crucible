@@ -119,6 +119,20 @@ class VideoExtractResult(BaseModel):
     skipped: list[dict] = []
 
 
+class VideoFramesGroup(BaseModel):
+    """One subfolder this video has extracted frames into."""
+
+    # "" is the dataset root, a real group — never render it as "no subfolder".
+    subfolder: str
+    count: int
+    last_extracted_at: UtcDatetime | None = None
+
+
+class VideoFramesSummary(BaseModel):
+    total: int
+    groups: list[VideoFramesGroup] = []
+
+
 class VideoOut(BaseModel):
     id: str
     dataset_id: str

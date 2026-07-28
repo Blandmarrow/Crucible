@@ -39,8 +39,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # `opencv-python-headless` is here and not in backend-tests.yml's list for
+      # one reason: cv2 is the video *ingest gate*, so without it a video upload
+      # 400s rather than being skipped, and video-extract.spec.ts would fail
+      # rather than degrade. `scenedetect` and `imageio-ffmpeg` stay absent on
+      # purpose — that makes CI exercise the `capabilities: false` branches (the
+      # disabled deinterlace toggle, the fixed-interval-sampling warning) for
+      # real. Headless because there is no display; it costs ~60 MB and ~20 s.
       - name: Install backend dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken uvicorn alembic
+        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken uvicorn alembic opencv-python-headless
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

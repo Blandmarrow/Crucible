@@ -1,5 +1,12 @@
 import client from "./client";
-import type { Video } from "../types";
+import type {
+  Video,
+  VideoExtractRequest,
+  VideoExtractResult,
+  VideoFramesSummary,
+  VideoProbeRequest,
+  VideoProbeResult,
+} from "../types";
 
 export const videosApi = {
   list: (dataset_id: string): Promise<Video[]> =>
@@ -27,4 +34,20 @@ export const videosApi = {
     client.patch(`/videos/${id}/rename`, { new_stem }).then((r) => r.data),
 
   delete: (id: string): Promise<void> => client.delete(`/videos/${id}`).then(() => undefined),
+
+  /** Sample a video for the extraction modal's first step. A plain request, not a
+   *  job — twelve seeks finish before the modal has finished animating. Writes
+   *  nothing but metadata correction, so it is safe to re-run on every trim drag. */
+  probe: (id: string, body: VideoProbeRequest): Promise<VideoProbeResult> =>
+    client.post(`/videos/${id}/probe`, body).then((r) => r.data),
+
+  /** One job per video — `video_ids` is a batch, not a merge. Also the request
+   *  that commits the confirmed crop/deinterlace/trims to the Video rows. */
+  extract: (body: VideoExtractRequest): Promise<VideoExtractResult> =>
+    client.post("/videos/extract", body).then((r) => r.data),
+
+  /** Where this video's frames live, grouped by subfolder, newest first. Feeds
+   *  the history panel, the delete-confirm count and the replace-mode label. */
+  framesSummary: (id: string): Promise<VideoFramesSummary> =>
+    client.get(`/videos/${id}/frames-summary`).then((r) => r.data),
 };

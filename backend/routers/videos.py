@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import delete as sa_delete, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -20,6 +20,8 @@ from backend.schemas.video import (
     VideoExtractJob,
     VideoExtractRequest,
     VideoExtractResult,
+    VideoFramesGroup,
+    VideoFramesSummary,
     VideoOut,
     VideoProbeRequest,
     VideoProbeResult,
@@ -174,6 +176,41 @@ async def get_video_poster(video_id: str, db: AsyncSession = Depends(get_db)):
         p = target
 
     return FileResponse(str(p), media_type="image/webp")
+
+
+@router.get("/{video_id}/frames-summary", response_model=VideoFramesSummary)
+async def get_video_frames_summary(video_id: str, db: AsyncSession = Depends(get_db)):
+    """Where this video's extracted frames live, grouped by subfolder.
+
+    The server-side counterpart of the rowcount `delete_video` logs, and it feeds
+    three surfaces: the extraction history panel, the delete-confirm count, and
+    the extraction modal's "Replace (deletes N previous frames)" label — all of
+    which need the number *before* anything is destroyed.
+    """
+    video = await db.get(Video, video_id)
+    if not video:
+        raise HTTPException(404, "Video not found")
+
+    rows = (await db.execute(
+        select(
+            Image.subfolder,
+            func.count(Image.id).label("count"),
+            func.max(Image.created_at).label("last_extracted_at"),
+        )
+        .where(Image.source_video_id == video_id)
+        # "" is a real subfolder here (frames at the dataset root), so the group
+        # by is on the raw column and nothing coalesces it away.
+        .group_by(Image.subfolder)
+        .order_by(func.max(Image.created_at).desc())
+    )).all()
+
+    groups = [
+        VideoFramesGroup(
+            subfolder=r.subfolder or "", count=r.count, last_extracted_at=r.last_extracted_at
+        )
+        for r in rows
+    ]
+    return VideoFramesSummary(total=sum(g.count for g in groups), groups=groups)
 
 
 @router.post("/{video_id}/probe", response_model=VideoProbeResult)
@@ -558,10 +595,19 @@ def _make_extract_runner(cfg: dict, dataset_id: str):
     return _run_with_stats
 
 
-async def _emit(job_id: str, phase: str, fraction: float, **extra) -> None:
+async def _emit(job_id: str, phase: str, fraction: float, *, video_id: str, **extra) -> None:
+    """Emit one progress event for an extraction job.
+
+    `video_id` is keyword-only and required so no call site can forget it: a batch
+    runs one job per video, and without the key a frontend holding every event in
+    one store cannot tell which video a payload belongs to. This mirrors
+    `comfy_prompts`' `plan_id`, which exists for exactly the same reason.
+    `jobStore` merges partials by job id, so the key survives onto the queue's
+    terminal event, which does not carry it.
+    """
     await broadcaster.emit(job_id, {
         "type": "progress", "job_id": job_id, "job_type": "video_extract",
-        "status": "running", "phase": phase,
+        "status": "running", "phase": phase, "video_id": video_id,
         "percent": _phase_percent(phase, fraction),
         **extra,
     })
@@ -619,7 +665,10 @@ async def _detect_with_progress(
         if total and read > 0 and elapsed > 5.0:
             remaining = elapsed / read * max(total - read, 0)
             message += f", about {int(remaining // 60)}m {int(remaining % 60)}s left"
-        await _emit(job_id, "detecting", fraction, message=message, done=read, total=total)
+        await _emit(
+            job_id, "detecting", fraction,
+            video_id=video.id, message=message, done=read, total=total,
+        )
     return await future
 
 
@@ -663,7 +712,10 @@ async def _delete_previous_frames(
         await session.commit()
         for f in files:
             f.unlink(missing_ok=True)
-    await _emit(job_id, "replacing", 1.0, message=f"Removed {len(rows)} previous frame(s)")
+    await _emit(
+        job_id, "replacing", 1.0,
+        video_id=video_id, message=f"Removed {len(rows)} previous frame(s)",
+    )
     return len(rows)
 
 
@@ -703,7 +755,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
             video.duration_ms = measured
             await session.commit()
         else:
-            await _emit(job_id, "detecting", 0.0, message=(
+            await _emit(job_id, "detecting", 0.0, video_id=video.id, message=(
                 "This container reports no usable duration and will not seek, so progress "
                 "is indeterminate and the tail trim is ignored"
             ))
@@ -712,7 +764,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
     require_free_space(images_dir, 0)
 
     # 3. Shot detection — the long phase, and the one most likely to fail.
-    await _emit(job_id, "detecting", 0.0, message="Detecting shots…")
+    await _emit(job_id, "detecting", 0.0, video_id=video.id, message="Detecting shots…")
     shots, method = await _detect_with_progress(job_id, src, video=video, cfg=cfg)
     counts["method"] = method
     if method == "cancelled" or job_queue.cancel_requested(job_id):
@@ -722,7 +774,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
     if method == "uniform":
         # A user who asked for shot detection and silently got time slicing has
         # been handed a different feature. Say so.
-        await _emit(job_id, "detecting", 1.0, message=(
+        await _emit(job_id, "detecting", 1.0, video_id=video.id, message=(
             f"No shot boundaries were found, so frames were sampled at fixed intervals "
             f"({len(shots)} windows)"
         ))
@@ -866,7 +918,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
 
         await _emit(
             job_id, "extracting", done / max(total_frames, 1),
-            done=done, total=total_frames,
+            video_id=video.id, done=done, total=total_frames,
             shot=shot_pos + 1, shots=len(shots),
             image_id=last_image_id,
             message=f"Shot {shot_pos + 1} of {len(shots)}",
@@ -991,8 +1043,8 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await refresh_stats(db, dataset_id)
     # 204 carries no body, and the confirm dialog that needs this number runs
-    # *before* the delete anyway — it will read GET /videos/{id}/frames-summary
-    # (Stage B), which this rowcount is the server-side counterpart of.
+    # *before* the delete anyway — it reads GET /videos/{id}/frames-summary,
+    # which this rowcount is the server-side counterpart of.
     # Logged because "the frames survived" is the non-obvious half of the
     # contract and the only place it is observable server-side.
     if frames_orphaned:

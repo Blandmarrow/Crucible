@@ -54,6 +54,13 @@ class ImageOut(BaseModel):
     # backend.licenses.resolve_provenance. Populated by the router.
     provenance: dict | None = None
 
+    # Frame lineage. Set only on images produced by video frame extraction;
+    # `source_video_id` goes NULL when the source video is deleted, while the
+    # timestamp and shot index survive it.
+    source_video_id: str | None = None
+    source_timestamp_ms: int | None = None
+    source_shot_index: int | None = None
+
     model_config = {"from_attributes": True}
 
 
@@ -86,6 +93,9 @@ class ImageListItem(BaseModel):
     # which is NULL whenever the image inherits; the router overwrites it with
     # the resolved value before responding. "" when neither level records one.
     license: str | None = ""
+    # Lineage marker only — the gallery card needs no timestamp or shot index,
+    # and this payload is paid per row on every page.
+    source_video_id: str | None = None
 
     model_config = {"from_attributes": True}
 

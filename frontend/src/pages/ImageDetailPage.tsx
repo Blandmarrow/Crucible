@@ -9,7 +9,9 @@ import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
 import { imagesApi } from "../api/images";
+import { videosApi } from "../api/videos";
 import { captionsApi } from "../api/captions";
+import { formatDuration } from "../utils/duration";
 import { tagConsolidationApi } from "../api/tagConsolidation";
 import { captioningApi, type DelimiterMode } from "../api/captioning";
 import DelimiterControls from "../components/caption/DelimiterControls";
@@ -404,6 +406,18 @@ export default function ImageDetailPage() {
     queryKey: ["caption", imageId],
     queryFn: () => captionsApi.get(imageId!),
     enabled: !!imageId,
+  });
+
+  // The video this frame was extracted from, for the lineage line below. Same
+  // `["video", id]` key VideoDetailPage uses, so navigating there is a cache hit.
+  // A frame keeps its timestamp and shot index after the video is deleted, but
+  // `source_video_id` goes NULL — so this query simply stops running.
+  const sourceVideoId = image?.source_video_id ?? null;
+  const { data: sourceVideo } = useQuery({
+    queryKey: ["video", sourceVideoId],
+    queryFn: () => videosApi.get(sourceVideoId!),
+    enabled: !!sourceVideoId,
+    retry: false,
   });
 
   const { data: modelsData } = useQuery({
@@ -1568,6 +1582,31 @@ export default function ImageDetailPage() {
               </>
             )}
           </div>
+
+          {/* Frame lineage. Without it, a frame moved out of its extraction
+              subfolder can no longer say where it came from. */}
+          {image.source_video_id && (
+            <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap mt-1">
+              <span>From</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() =>
+                  paneGo(`/datasets/${datasetId}/video/${image.source_video_id}`, {
+                    page: "video-detail", datasetId, videoId: image.source_video_id!,
+                  })
+                }
+              >
+                <span className="font-mono">{sourceVideo?.filename ?? "source video"}</span>
+              </button>
+              {image.source_timestamp_ms !== null && image.source_timestamp_ms !== undefined && (
+                <span>· {formatDuration(image.source_timestamp_ms)}</span>
+              )}
+              {image.source_shot_index !== null && image.source_shot_index !== undefined && (
+                <span>· shot {image.source_shot_index}</span>
+              )}
+            </div>
+          )}
 
           {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 ? (
             <DinoLayerBreakdown scores={image.dino_layer_scores} />

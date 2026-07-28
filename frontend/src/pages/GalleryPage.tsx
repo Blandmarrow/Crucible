@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ArrowRightFromLine, Copy } from "lucide-react";
-import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
+import { usePaneDatasetId, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
@@ -161,7 +161,25 @@ export default function GalleryPage() {
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
     saved?.activeSubfolder == null ? undefined : saved.activeSubfolder
   );
+  // A link that asked for a particular subfolder (video extraction history, and
+  // the Phase 3 lineage filter after it). Applied by the effect below rather than
+  // read directly: `activeSubfolder` is otherwise restored from localStorage and
+  // then owned by the sidebar, and a deep link must not take that ownership away.
+  const linkedSubfolder = usePaneGallerySubfolder();
+  const [appliedSubfolder, setAppliedSubfolder] = useState<string | undefined>(undefined);
   const [uploadSubfolder, setUploadSubfolder] = useState("");
+  // Apply the deep link on arrival, and again whenever the incoming value
+  // *changes* — but never twice for the same value, or it would fight a user who
+  // arrived here and then clicked a different folder in the sidebar. `undefined`
+  // means "no link asked for anything", which is why this records the last
+  // applied value rather than a boolean: "" is a real target (the dataset root).
+  // Adjusted during render, not in an effect, so the previous subfolder's images
+  // are never fetched and painted first.
+  if (linkedSubfolder !== undefined && appliedSubfolder !== linkedSubfolder) {
+    setAppliedSubfolder(linkedSubfolder);
+    setActiveSubfolder(linkedSubfolder);
+    setPage(1);
+  }
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);

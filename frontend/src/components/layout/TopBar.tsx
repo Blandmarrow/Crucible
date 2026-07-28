@@ -19,8 +19,8 @@ import { Columns2, RefreshCw } from "lucide-react";
 // server is still polled after this — it only changes what the overlay says.
 const RESTART_SLOW_MS = 25_000;
 
-const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
+const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own
@@ -200,6 +200,20 @@ export default function TopBar() {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
         }
+        // video_extract writes three things the generic image invalidations above
+        // do not cover: a subfolder (all three modes can create one), the Video
+        // row itself (the endpoint commits the confirmed crop/deinterlace/trims),
+        // and this video's extraction history.
+        if (progress.job_type === "video_extract") {
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
+          }
+          if (progress.video_id) {
+            qc.invalidateQueries({ queryKey: ["video", progress.video_id] });
+            qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          }
+        }
       }
       // Live gallery updates while a captioning or ComfyUI-generate job runs — the
       // gallery would otherwise not refresh until the job completes (#39).
@@ -213,6 +227,14 @@ export default function TopBar() {
         if (currentDone > prevDone) {
           captionDoneRef.current.set(jobId, currentDone);
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          // Frames land in a subfolder that may not exist yet, so the sidebar
+          // needs it as the run fills. Deliberately NOT ["dataset", id]: that
+          // live invalidation is scoped to workers refreshing Dataset.image_count
+          // per row, and video_extract's refresh_stats is terminal-only — it
+          // would be one refetch per shot returning an unchanged number.
+          if (progress.job_type === "video_extract") {
+            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+          }
           if (progress.job_type === "comfy_generate") {
             qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
             // Sidebar/gallery image counters, so they climb with the run instead of

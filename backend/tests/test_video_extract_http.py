@@ -36,6 +36,7 @@ from backend.tests.conftest import (
     mp4_bytes,
     mp4_shots_bytes,
     run,
+    upload_image,
     upload_video,
     wait_for_job,
 )
@@ -880,5 +881,176 @@ def test_the_job_label_names_the_video_and_the_frame_count(tmp_path):
             assert r2.json()["skipped"] or r2.json()["jobs"]
 
             await wait_for_job(env, job_id, timeout=120)
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# frames-summary, lineage on the image schemas, and the SSE video_id
+# ---------------------------------------------------------------------------
+
+
+def test_frames_summary_groups_by_subfolder_newest_extraction_first(tmp_path):
+    """Rows are written directly rather than extracted: the ordering claim is
+    about `MAX(created_at)` per group, and only an explicit timestamp pins it —
+    three real extractions land within the same second."""
+    async def scenario():
+        from datetime import datetime, timedelta
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+            other = await upload_video(env, ds["id"], "other.mp4", SHOTS_MP4)
+
+            base = datetime(2026, 1, 1, 12, 0, 0)
+            async with env.Session() as db:
+                for subfolder, n, offset in (("clip", 2, 0), ("", 1, 60), ("clip_2", 3, 120)):
+                    for i in range(n):
+                        db.add(Image(
+                            dataset_id=ds["id"],
+                            filename=f"{subfolder or 'root'}_{i}.jpg",
+                            subfolder=subfolder,
+                            file_path=f"/tmp/{subfolder or 'root'}_{i}.jpg",
+                            source_video_id=video["id"],
+                            created_at=base + timedelta(seconds=offset + i),
+                        ))
+                # Another video's frames must not appear in this video's summary.
+                db.add(Image(
+                    dataset_id=ds["id"], filename="other_0.jpg", subfolder="other",
+                    file_path="/tmp/other_0.jpg", source_video_id=other["id"],
+                    created_at=base + timedelta(seconds=999),
+                ))
+                await db.commit()
+
+            r = await env.client.get(f"{API}/videos/{video['id']}/frames-summary")
+            assert r.status_code == 200, r.text
+            body = r.json()
+
+            assert body["total"] == 6
+            # Newest extraction leads, and "" is a real group (the dataset root),
+            # never folded into "no subfolder".
+            assert [g["subfolder"] for g in body["groups"]] == ["clip_2", "", "clip"]
+            assert [g["count"] for g in body["groups"]] == [3, 1, 2]
+            assert body["groups"][0]["last_extracted_at"].startswith("2026-01-01T12:02:02")
+
+    run(scenario())
+
+
+def test_frames_summary_is_zero_for_a_video_that_has_never_been_extracted(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            r = await env.client.get(f"{API}/videos/{video['id']}/frames-summary")
+            assert r.status_code == 200, r.text
+            assert r.json() == {"total": 0, "groups": []}
+
+    run(scenario())
+
+
+def test_frames_summary_404s_for_an_unknown_video(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await env.create_dataset("d")
+            r = await env.client.get(f"{API}/videos/nope/frames-summary")
+            assert r.status_code == 404, r.text
+
+    run(scenario())
+
+
+def test_frames_summary_reflects_a_real_extraction(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            body, jobs = await _extract_and_wait(env, [video["id"]])
+            assert [j["status"] for j in jobs] == ["completed"], jobs
+
+            r = await env.client.get(f"{API}/videos/{video['id']}/frames-summary")
+            assert r.json() == {
+                "total": 3,
+                "groups": [{
+                    "subfolder": body["jobs"][0]["subfolder"],
+                    "count": 3,
+                    "last_extracted_at": r.json()["groups"][0]["last_extracted_at"],
+                }],
+            }
+            assert r.json()["groups"][0]["last_extracted_at"].endswith("+00:00")
+
+    run(scenario())
+
+
+def test_lineage_is_visible_from_the_frame_side(tmp_path):
+    """Without this a frame moved out of its subfolder can no longer say where it
+    came from. The list payload carries the marker only — no timestamps, because
+    it is paid per row on every gallery page."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+            uploaded = await upload_image(env, ds["id"], "plain.png")
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]])
+            assert [j["status"] for j in jobs] == ["completed"], jobs
+
+            listing = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            frames = [i for i in listing if i["filename"] != "plain.png"]
+            assert len(frames) == 3
+            assert {i["source_video_id"] for i in frames} == {video["id"]}
+            assert "source_timestamp_ms" not in frames[0]
+
+            r = await env.client.get(f"{API}/images/{frames[0]['id']}")
+            assert r.status_code == 200, r.text
+            detail = r.json()
+            assert detail["source_video_id"] == video["id"]
+            assert detail["source_timestamp_ms"] is not None
+            assert detail["source_shot_index"] is not None
+
+            # An ordinary upload has no lineage at all, on either payload.
+            assert next(i for i in listing if i["id"] == uploaded["id"])["source_video_id"] is None
+            plain = (await env.client.get(f"{API}/images/{uploaded['id']}")).json()
+            assert plain["source_video_id"] is None
+            assert plain["source_timestamp_ms"] is None
+            assert plain["source_shot_index"] is None
+
+    run(scenario())
+
+
+def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
+    """A batch runs one job per video, so a frontend holding every event in one
+    store cannot route a payload without this key. Asserted across the whole run
+    rather than on `_emit` in isolation — the risk is a call site that forgot."""
+    async def scenario():
+        from backend.workers.progress import broadcaster
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            seen: list[dict] = []
+            real_emit = broadcaster.emit
+
+            async def capturing(job_id, payload):
+                seen.append(payload)
+                return await real_emit(job_id, payload)
+
+            monkeypatch.setattr(broadcaster, "emit", capturing)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]])
+            assert [j["status"] for j in jobs] == ["completed"], jobs
+
+            # `phase` is what distinguishes the job's own payloads from the
+            # queue's generic lifecycle events (pending/running/completed), which
+            # carry no video_id and are not expected to — `jobStore` merges
+            # partials by job id, so the key survives onto the terminal event.
+            progress = [
+                p for p in seen
+                if p.get("job_type") == "video_extract" and "phase" in p
+            ]
+            assert progress, seen
+            assert all(p.get("video_id") == video["id"] for p in progress), progress
+            assert {p["phase"] for p in progress} >= {"detecting", "extracting"}
 
     run(scenario())

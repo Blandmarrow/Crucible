@@ -21,7 +21,8 @@ Allows the main content area to be split into any number of nested panes, each i
 PaneLeaf  { type: "leaf"; id: string; view: PaneView }
 PaneSplit { type: "split"; id: string; direction: "horizontal"|"vertical";
             sizes: [number, number]; children: [PaneTree, PaneTree] }
-PaneView  { page: PageType; datasetId?: string; imageId?: string }
+PaneView  { page: PageType; datasetId?: string; imageId?: string;
+            videoId?: string; subfolder?: string }
 ```
 
 All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSizes`, `updateFirstLeaf`) are pure functions — the store holds a single immutable `layout: PaneTree` root. `syncFromRoute(view)` updates only the first leaf (left-to-top traversal) when URL navigation occurs, preserving all other panes.
@@ -32,6 +33,8 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 |---|---|
 | `usePaneDatasetId()` | Returns `ctx?.view.datasetId ?? useParams().datasetId` — works both inside and outside pane mode |
 | `usePaneImageId()` | Same pattern for `imageId` |
+| `usePaneVideoId()` | Same pattern for `videoId` |
+| `usePaneGallerySubfolder()` | Same pattern for `subfolder`, except the fallback is `useSearchParams().get("subfolder")` rather than a route param — a subfolder is a filter, not an identity, so there is no route segment for it. `paneGo` writes both, so pane state wins in split view and the query string covers the routed case. `""` is a real value (the dataset root); `undefined` means no link asked for anything. `GalleryPage` applies it once per *change* so a deep link never fights the sidebar — see `docs/dev/video-ui.md` |
 | `usePaneNavigate()` | Returns `{ go(url, view), back(fallbackView) }`. **Inside a pane**: calls `paneStore.setView(paneId, view)`. **Outside**: calls `navigate(url)`. All intra-app navigation that may occur inside a pane MUST use this hook; raw `navigate()` calls change the URL and trigger `RouteSyncer` which only updates pane 1. |
 
 **Components** (`frontend/src/components/pane/`):

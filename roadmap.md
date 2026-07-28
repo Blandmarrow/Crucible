@@ -266,14 +266,37 @@ Deviations from the plan as written:
 - `DatasetsPage` cards get a video-count badge, hidden at zero, fed by the
   `video_count` column from Phase 0.
 
-## Phase 2 — Extraction v1 — **backend built (Stage A)**
+## Phase 2 — Extraction v1 — **built**
 
 The core deliverable: shot-segmented triage extraction as a background job. Backend detail
-now lives in `docs/dev/video-extract.md`; the notes below are kept as the record of what was
-decided. The frontend (`ExtractFramesModal`, `VideoStrip` multi-select, extraction history)
-is Stage B and is not built.
+now lives in `docs/dev/video-extract.md` and the frontend in `docs/dev/video-ui.md`; the
+notes below are kept as the record of what was decided. Stage A shipped the backend, Stage B
+the `ExtractFramesModal`, `VideoStrip` multi-select and the extraction history.
 
 **Deviations from the plan as written, all deliberate:**
+
+- **Stage B added three small backend pieces the plan did not name.**
+  `GET /videos/{id}/frames-summary` (the grouped frame counts three surfaces need *before*
+  anything is deleted); `video_id` on every `video_extract` SSE payload, keyword-only on
+  `_emit` so no call site can forget it — a batch runs one job per video and one `jobStore`
+  holds every event, exactly `comfy_prompts`' `plan_id`; and the three lineage columns on
+  `ImageOut` (`source_video_id` alone on `ImageListItem`, which is paid per row on every
+  gallery page), without which a frame moved out of its subfolder can no longer say where it
+  came from.
+- **`PaneView` gained `subfolder`.** The history panel has to link into the gallery, and
+  `GalleryPage.activeSubfolder` was reachable only from `localStorage`. `usePaneGallerySubfolder`
+  falls back to a query param rather than a route segment, because a subfolder is a filter,
+  not an identity — and Phase 3's lineage filter will want a sibling of it.
+- **The shared `SubfolderPicker` extraction was dropped.** The Stage A outline claimed four
+  hand-rolled subfolder pickers; there are two genuine pick-or-create ones
+  (`MoveToDatasetModal`, `CropToDetectionForm`) and the rest are read-only filters. A third
+  call site does not earn a refactor inside a feature branch — left to `/simplify`.
+- **`docs/dev/video.md` § Frontend was split out to `docs/dev/video-ui.md`.** The extraction
+  frontend is larger than the ingest backend it was sharing a file with.
+- **`opencv-python-headless` joined the e2e CI job's pip list.** cv2 is the video *ingest
+  gate*, so without it a video upload 400s rather than being skipped and the new journey
+  would fail rather than degrade. `scenedetect` and `imageio-ffmpeg` stay absent on purpose:
+  CI then exercises the `capabilities: false` branches for real.
 
 - **Decode is OpenCV + numpy; ffmpeg runs `bwdif` and nothing else.** "The ffmpeg binary
   does the extraction filter chain (bwdif deinterlace, crop)" over-assigns: a crop is a

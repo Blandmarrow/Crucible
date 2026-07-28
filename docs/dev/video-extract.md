@@ -281,9 +281,21 @@ restarted, plus `shot`/`shots` and `image_id` (mirroring `crop_to_detection`, so
 can invalidate per-image caches). Detection emits at most every 0.5 s and extraction once
 per shot — `broadcaster` queues are `maxsize=200` and drop on overflow.
 
+It also carries **`video_id`**, which is `_emit`'s only keyword-only, no-default parameter
+so that no call site can forget it. A batch runs one job per video and the frontend holds
+every event in one `jobStore`, so without the key a payload cannot be routed to the right
+video — exactly `comfy_prompts`' `plan_id`, and for the same reason. `jobStore` merges
+partials by job id, so the key survives onto the queue's terminal event, which does not
+carry it.
+
 ## Frame lineage
 
 Extracted frames carry `source_video_id`, `source_timestamp_ms` and `source_shot_index`.
 CLAUDE.md § Key invariants states the mirroring rule those columns live under; the eight
 sites that must carry them are pinned by `backend/tests/test_video_lineage_mirrors.py`,
 whose structural test fails for the *next* unmirrored `Image` column.
+
+All three are exposed on `ImageOut`, and `source_video_id` alone on `ImageListItem` — the
+gallery card needs no timestamp or shot index, and that payload is paid per row on every
+page. Both schemas are `from_attributes` over a `select(Image)`, so no construction site
+changed. `ImageDetailPage` renders them as a lineage line (`docs/dev/video-ui.md`).

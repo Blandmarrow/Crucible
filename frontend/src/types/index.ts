@@ -142,6 +142,10 @@ export interface ImageListItem {
    * means inherited — read `provenance` there for the resolved view.
    */
   license: string | null;
+  /** Frame lineage marker — set only on images produced by video extraction, and
+   *  cleared when the source video is deleted. The list payload carries the id
+   *  alone; timestamps and shot index live on `ImageDetail`. */
+  source_video_id: string | null;
 }
 
 export interface GenerationMetadata {
@@ -190,6 +194,11 @@ export interface ImageDetail extends ImageListItem {
    *  `source_meta` lives here only — it is a scraper's raw payload and was
    *  duplicated at the top level, on a response refetched per arrow-key nav. */
   provenance: ResolvedProvenance | null;
+  /** Where in the source video this frame came from. Both survive the video's
+   *  deletion — a frame keeps knowing its position even once `source_video_id`
+   *  has gone null. */
+  source_timestamp_ms: number | null;
+  source_shot_index: number | null;
 }
 
 export interface ResolvedProvenance {
@@ -249,6 +258,16 @@ export interface JobProgress {
   /** comfy_prompts: prompts asked for. `total` becomes the created count when the
    *  job completes, so the shortfall is only visible by comparing against this. */
   requested?: number;
+  /** video_extract: which of a batch's N jobs this is. Exactly `plan_id`'s role —
+   *  one job per video, one store holding every event. */
+  video_id?: string;
+  /** video_extract: "detecting" | "replacing" | "extracting". One monotone
+   *  percent spans all three, so this is the only way to label the stage. */
+  phase?: string;
+  /** video_extract: shot counters, for a "shot 12 of 340" line the generic
+   *  done/total (which counts frames) cannot give. */
+  shot?: number;
+  shots?: number;
   /** True only on the frontend's own cancel-button write, never on a server event
    *  (`useSSE` force-clears it). TopBar's terminal-status watcher skips optimistic
    *  entries so invalidation waits for the backend to actually finish cancelling. */
@@ -299,6 +318,110 @@ export interface Video {
   license: string | null;
   attribution: string | null;
   provenance: Record<string, unknown> | null;
+}
+
+/** `Video.crop_*` column order, in *frame* coordinates. The backend snaps to even
+ *  numbers and treats a full-frame rect as no crop at all, so the value stored is
+ *  not necessarily the value sent — re-read the Video row after an extract. */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** What the extraction backend can actually do, from the probe response.
+ *  `shot_detection: false` means frames get sampled at fixed intervals;
+ *  `deinterlace: false` means the filter is unavailable, not merely off. */
+export interface ExtractCapabilities {
+  shot_detection?: boolean;
+  deinterlace?: boolean;
+  scenedetect_version?: string;
+  ffmpeg_version?: string;
+}
+
+export interface VideoProbeRequest {
+  samples?: number;
+  trim_start_ms?: number;
+  trim_end_ms?: number;
+  max_edge?: number;
+}
+
+export interface VideoProbeSample {
+  timestamp_ms: number;
+  /** A `data:image/jpeg;base64,…` URL — never a path; there is no endpoint that
+   *  would serve a temp preview file. */
+  data_url: string;
+}
+
+export interface VideoProbeResult {
+  samples: VideoProbeSample[];
+  /** null means no matte was found, which is different from "not looked for". */
+  crop: CropRect | null;
+  crop_confidence: number;
+  interlace: boolean;
+  /** Detected, not corrected — only bwdif ships. */
+  telecine: boolean;
+  /** "unknown" means the container will not seek, so the samples are head-only
+   *  and the tail trim is unavailable. */
+  duration_source: "header" | "measured" | "unknown";
+  duration_ms: number | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  samples_failed: number;
+  truncated: boolean;
+  warnings: string[];
+  capabilities: ExtractCapabilities;
+}
+
+export interface VideoExtractRequest {
+  video_ids: string[];
+  crop?: CropRect | null;
+  /** Not redundant with `crop: null` — that means "leave the stored rect alone",
+   *  this means "the user cleared it". */
+  clear_crop?: boolean;
+  deinterlace?: "" | "bwdif" | null;
+  trim_start_ms?: number | null;
+  /** Milliseconds cut off the *tail*, not an end position. */
+  trim_end_ms?: number | null;
+  sensitivity?: number;
+  min_shot_ms?: number;
+  detector_frame_skip?: number;
+  max_shots?: number;
+  frames_per_shot?: number;
+  pick?: "sharpest" | "middle";
+  candidates?: number;
+  long_edge?: number;
+  mode?: "add" | "new_subfolder" | "replace";
+  subfolder?: string | null;
+  label?: string | null;
+}
+
+export interface VideoExtractJob {
+  video_id: string;
+  filename: string;
+  job_id: string;
+  subfolder: string;
+}
+
+export interface VideoExtractResult {
+  jobs: VideoExtractJob[];
+  /** Videos already covered by a pending or running extraction. Named rather
+   *  than silently folded in; the rest of the batch still enqueues. */
+  skipped: { video_id: string; filename: string; reason: string }[];
+}
+
+export interface VideoFramesGroup {
+  /** "" is the dataset root — a real group, never "no subfolder". */
+  subfolder: string;
+  count: number;
+  last_extracted_at: string | null;
+}
+
+export interface VideoFramesSummary {
+  total: number;
+  groups: VideoFramesGroup[];
 }
 
 export interface ModelInfo {

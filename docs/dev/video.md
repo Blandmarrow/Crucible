@@ -1,18 +1,18 @@
 # Video sources
 
 Covers the `Video` model, the `videos/` storage layout and its poster-stem rules, the three
-ingest paths that create a video, the `/videos` endpoints, and the frontend surfaces that
-show one. The cv2 decode surface itself — the metadata probe, the duration search and
-poster generation — is in `docs/dev/video-decode.md`, and frame extraction is in
-`docs/dev/video-extract.md`. The arc's roadmap lives in `roadmap.md` at the repo root until
-it is complete.
+ingest paths that create a video, and the `/videos` endpoints. The cv2 decode surface itself
+— the metadata probe, the duration search and poster generation — is in
+`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-extract.md`, and every
+screen that shows a video is in `docs/dev/video-ui.md`. The arc's roadmap lives in
+`roadmap.md` at the repo root until it is complete.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
 It is deliberately not a row in `images`, which carries ~20 image-specific columns, FK
 cascades to detections, and the load-bearing "thumbnails are `.webp` keyed by stem"
-invariant — none of which apply to a video file. Frame extraction will convert a video
+invariant — none of which apply to a video file. Frame extraction converts a video
 into ordinary `Image` rows at the boundary, so dedup, scoring, captioning, export and
-versioning stay entirely media-unaware and need no changes.
+versioning stay entirely media-unaware and needed no changes.
 
 **`backend/media_types.py` is the single allowlist**; CLAUDE.md § Shared utilities lists
 what it exports. Before it, three separate frozensets in
@@ -133,7 +133,8 @@ invariants).
 `backend/routers/videos.py`, prefix `/videos`: `GET /` (by `dataset_id`), `GET /{id}`,
 `GET /{id}/file`, `GET /{id}/poster` (the lazy backfill and its retry backoff are in
 `docs/dev/video-decode.md` § Poster frames), `POST /{id}/probe` and `POST /extract` (both
-in `docs/dev/video-extract.md` § The endpoints), `PATCH /{id}/rename`, `DELETE /{id}`.
+in `docs/dev/video-extract.md` § The endpoints), `GET /{id}/frames-summary`,
+`PATCH /{id}/rename`, `DELETE /{id}`.
 Both file responses go through `utils.safe_dataset_path`, promoted out of
 `routers/images.py` so the video routes are not importing a private helper from another
 router.
@@ -149,6 +150,17 @@ claim about the bytes and `video_mime` picks the browser's decoder from it; and 
 to a stem the row already holds steps the counter (`clip` → `clip_001.mp4`) because no
 `disk_exclude` is passed — `rename_image` does the same, and the tests pin it so the two
 cannot drift apart.
+
+`GET /{id}/frames-summary` answers `{total, groups: [{subfolder, count,
+last_extracted_at}]}` — one `GROUP BY Image.subfolder` over `source_video_id`, ordered by
+`MAX(created_at)` descending so the most recent extraction leads, 404 on an unknown video.
+`""` is a real group (frames at the dataset root), never coalesced into "no subfolder". It
+is the server-side counterpart of the rowcount `delete_video` logs, and it feeds three
+surfaces that all need the number *before* anything is destroyed: the extraction history
+panel, the delete-confirm count, and the modal's "Replace (deletes N previous frames)"
+label. There is deliberately **no** `source_video_id` filter on `GET /images/` yet — that
+is the roadmap's "frames from video X" gallery filter; the history panel links by subfolder
+instead.
 
 The **file browser preview** widened with this phase: `GET /filesystem/preview` accepts
 anything in `MEDIA_EXTENSIONS` and serves the video branch with `video_mime`, so one route
@@ -182,49 +194,10 @@ silently re-registers, undoing the delete.
 
 ## Frontend
 
-`frontend/src/utils/duration.ts::formatDuration(ms)` → `"4:12"`, `"1:02:33"`, `"—"` for
-NULL. Every video surface formats through it, because NULL is *unknown* and must never
-render as `0:00` — that would turn a missing header into a claim about the video.
-`videosApi.posterUrlVersioned(id, updatedAt)` mirrors `imagesApi.thumbnailUrlVersioned`:
-the poster URL is keyed by id alone, so a regenerated or renamed poster would otherwise
-serve stale from cache.
-
-**`components/gallery/VideoStrip.tsx`** — a collapsible horizontal strip above the image
-grid, keyed on `["videos", datasetId]` (already invalidated after upload and rescan).
-Renders `null` when the dataset has no videos, so an image-only dataset looks untouched.
-Collapse state persists per dataset under `VIDEO_STRIP_COLLAPSED_KEY`. Cards show the
-poster (or a `Film` glyph), a duration badge and the filename, and open the detail view
-via `usePaneNavigate`.
-
-It is mounted in `GalleryPage` **outside** the `<DndContext>` and outside the grid's
-scroll container, and that placement is load-bearing: inside the context the cards would
-join the grid's collision detection and its subfolder drop targets, and inside the
-container they would sit under the drag-to-upload handler. There is no selection here yet
-— its only consumer would be batch extraction, and a checkbox that enables nothing is
-worse than no checkbox.
-
-**`pages/VideoDetailPage.tsx`** — player, metadata grid, inline rename, read-only
-provenance via `LicenseBadge`, a disabled "Extract frames" button and delete. No crop,
-upscale, LUT, detection or caption: those belong to the frames. Prev/next needs none of
-the gallery's nav-context plumbing — `["videos", datasetId]` is a single unpaginated
-query, so the page indexes into it directly and `gallery-nav-*`, `injectNavId` and the
-boundary prefetches do not apply. The arrow-key handler carries the usual
-active-pane and text-field guards **plus** one for `VIDEO` focus, since the browser binds
-arrows to seek there. The delete confirmation states the Phase 0 contract explicitly —
-*"Extracted frames are not deleted"* — because `DELETE /videos/{id}` never touches `Image`
-rows and that is not what a user expects.
-
-Route registration follows the six-site pattern in `docs/dev/panes-routing.md`
-(§ Route-level code splitting). The `/datasets/:id/video/:vid` regex in `routeToView` sits
-**above** the generic `dsPageMatch`, same hazard as the image regex: the generic pattern
-also matches and would yield an invalid `page: "video"`. `video-detail` is deliberately
-absent from `PaneHeader.PAGE_OPTIONS`, exactly as `image-detail` is — the dropdown cannot
-supply a `videoId`.
-
-`DatasetsPage` shows a video pill in the card footer and a `N vid` entry in the compact
-row, both hidden at zero and both changed together. `FileBrowserPage` renders a `<video
-controls preload="metadata">` in its preview panel for a `media_kind === "video"` entry
-and skips the image-only `["fs-image-meta", path]` query for it.
+Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the two-step
+`ExtractFramesModal` with `CropOverlay`/`TrimBar`, the extraction history, the frame
+lineage line and the job re-attach hook — is in `docs/dev/video-ui.md`. Split out of this
+file when the extraction frontend landed; the two are read together but sized apart.
 
 ## What is free, and what is not
 

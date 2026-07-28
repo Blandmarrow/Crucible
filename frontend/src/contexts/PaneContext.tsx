@@ -21,6 +21,10 @@ export interface PaneView {
   datasetId?: string;
   imageId?: string;
   videoId?: string;
+  /** Gallery only: which subfolder to open at. A deep-link target, not a record
+   *  of what the user has since clicked — GalleryPage applies it once per change
+   *  and otherwise leaves its own state alone. "" is the dataset root. */
+  subfolder?: string;
 }
 
 interface PaneContextValue {

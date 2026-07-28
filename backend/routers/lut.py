@@ -16,7 +16,7 @@ from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,26 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     dest_path_str = str(dest_images / new_filename)
 
                 if replace:
+                    # Where `apply_lut_sync` will actually write. For .gif/.bmp/
+                    # .tiff/.avif that is a *different* path — PNG is the fallback
+                    # format — so the collision has to be caught before the write,
+                    # not after: an unregistered file hand-dropped into images/ has
+                    # no DB row guarding it, and by the time the save has run it is
+                    # already gone.
+                    _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+                    if planned_out != str(src_path) and Path(planned_out).exists():
+                        logger.warning(
+                            "LUT: %s would be written as %s, which already exists on disk — skipped",
+                            img.filename, Path(planned_out).name,
+                        )
+                        await broadcaster.emit(job_id, {
+                            "type": "progress", "job_id": job_id, "job_type": "batch_lut",
+                            "status": "running", "done": i + 1, "total": len(images),
+                            "percent": round((i + 1) / len(images) * 100, 1),
+                            "current_item": img.filename,
+                            "message": f"Skipped: {Path(planned_out).name} already exists on disk",
+                        })
+                        continue
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
 
@@ -156,6 +176,23 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     now = datetime.now(timezone.utc)
                     img.file_size_bytes = info["file_size_bytes"]
                     img.updated_at = now
+                    if Path(actual_out_path) != src_path:
+                        # `normalize_image_format` falls back to PNG for .gif,
+                        # .bmp, .tiff and .avif — all in IMAGE_EXTENSIONS — so a
+                        # replace-mode grade of one of those writes a *different*
+                        # file. Without this the row keeps pointing at the stale
+                        # original, which is also left on disk.
+                        #
+                        # A pure extension change moves nothing derived: the stem
+                        # is unchanged, so the thumbnail ({stem}.webp) and the
+                        # caption sidecar ({stem}.txt) stay exactly where they
+                        # are, and no other row can hold the name because every
+                        # image-name-picking site rejects an occupied *stem* in
+                        # any extension.
+                        src_path.unlink(missing_ok=True)
+                        img.filename = Path(actual_out_path).name
+                        img.file_path = actual_out_path
+                        img.format = info["format"]
                     img.processing_history = (img.processing_history or []) + [{
                         "op": "lut",
                         "lut": lut_filename,

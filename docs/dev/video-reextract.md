@@ -45,11 +45,19 @@ asked for when the format falls back to PNG.
 
 `render_at_timestamps` is the pass-2 decoder beside it: one `read_positions` call per
 target (which already applies `apply_orientation`, normalizes ffmpeg's RGB→BGR at one
-boundary, wraps the generator in `contextlib.closing` and calls `require_deinterlace`),
-targets walked in ascending timestamp order, and each frame released before the next seek —
-never a `list[np.ndarray]`, per that module's RSS rule. `WrittenFrame.pick` carries the
-index of the target it came from, since the ascending walk reorders the output;
-`shot_index` is `-1` because pass 2 knows nothing about shots.
+boundary, wraps the generator in `contextlib.closing` and calls `require_deinterlace`), and
+each frame released before the next seek — never a `list[np.ndarray]`, per that module's
+RSS rule. `WrittenFrame.pick` carries the index of the target it came from, since the
+ascending order reorders the output; `shot_index` is `-1` because pass 2 knows nothing
+about shots.
+
+**Each target gets its own decoder open** — every `read_positions` call opens and releases
+its own `cv2.VideoCapture`, or spawns its own ffmpeg subprocess on the deinterlace path.
+There is no shared forward walk through the file; the ascending order buys page-cache
+locality on the container, nothing more. The job compounds it deliberately by passing one
+timestamp per call: the per-frame structure is what buys the cancel check, the COW
+protect+commit, the "does it re-open" verification and the progress event, and batching
+would mean N temp files coexisting against a disk preflight that budgets for one.
 
 ## Target resolution — one function, two callers
 
@@ -72,10 +80,11 @@ without it pass 2 refuses to run a second time, because its own history entry lo
 third-party editing. Anything that is not a dict counts as an unknown edit and skips.
 
 **The guard is only as good as what writes `processing_history`.** Upscale, LUT and
-detection-crop always recorded an entry; the four in-place paths in `routers/images.py` —
+detection-crop always recorded an entry; the five in-place paths in `routers/images.py` —
 `resize`, replace-mode `crop`, the `crop_upscale` replace job, `batch_resize` and
 `batch_crop` — did not, so a frame cropped in place stayed silently eligible and pass 2
-would have discarded the crop. They now all go through `images._record_in_place(img, op,
+would have discarded the crop (`docs/dev/postmortems/PM-010`). They now all go through
+`images._record_in_place(img, op,
 **params)`, which is the single writer: list-concat reassignment, never `.append()`
 (CLAUDE.md § Key invariants), plus the `updated_at` bump. Add a call there in any future
 path that overwrites an image file. (`POST /images/batch/crop` and `/batch/resize` are
@@ -118,15 +127,28 @@ wrapper verbatim, including its three load-bearing details — see
    busts `imagesApi.thumbnailUrlVersioned`) and a `reextract` entry appended to
    `processing_history` by list-concat reassignment, never `.append()`.
 
-`done` is the **committed** count — frames a gallery refetch would actually see, the PM-008
-invariant — and it must be non-decreasing. Step 4 commits mid-frame, so the pending-row
-counter is reset there rather than derived from `rewritten % N`; deriving it would report
-`done` low and fire `TopBar`'s high-water mark late. Commits land every
-`EXTRACT_COMMIT_EVERY` (25) and disk is re-checked every 100 written, committing first.
+Steps 2–7 sit inside a `try`/`finally` that unlinks the temp. The name carries a real image
+extension and sits in `images/`, so a survivor is a file `rescan_dataset` would adopt as a
+new image. The `finally` reads the **live** `tmp` binding — it is rebound to the written
+path after the render, because `_write_frame` may have fallen back to PNG — and
+`missing_ok=True` makes it a no-op once `os.replace` has consumed it. A `SIGKILL` is still
+outside what a `finally` covers; that residue is accepted, not claimed fixed.
+
+**`done` is the committed count** — frames a gallery refetch would actually see, the PM-008
+invariant — and it must be non-decreasing. **The job commits once per frame**, immediately
+before the progress event, and `done` is `counts["rewritten"]` with no pending-row
+correction. That is not a batching choice: step 4 *has* to commit mid-frame for the COW
+hook, so any `EXTRACT_COMMIT_EVERY`-style threshold would never be reached and `done` would
+lag one frame behind for the whole run, topping the bar out at `N-1 / N` until the terminal
+event. `EXTRACT_COMMIT_EVERY` plays no part here — it belongs to pass 1. Disk is re-checked
+every `EXTRACT_DISK_RECHECK_EVERY` (100) written, after the commit and the emit, because
+`require_free_space` raises straight out of the job.
+
 A circuit breaker mirroring `EXTRACT_MAX_CONSECUTIVE_FAILURES` aborts a run whose video has
 gone unreadable mid-job; frames already rewritten stay, and the job ends `failed`, not
-`cancelled`. Cancellation keeps everything already written — the files are real and their
-COW backups exist.
+`cancelled`. `_rewrite` returns `(reason, is_fault)` rather than a bare reason so the
+breaker can tell a decode fault from a refusal — see § The extension change. Cancellation
+keeps everything already written: the files are real and their COW backups exist.
 
 ## The extension change
 
@@ -152,9 +174,12 @@ own `clip_s0001_00.png`. No `unique_filename_with_thumb` call is needed here, no
 
 The one real hazard is a file with **no DB row to guard it** — hand-dropped into `images/`
 and not yet rescanned. That is refused: the temp is unlinked, the frame counted failed, and
-the original left untouched.
+the original left untouched. The refusal is **exempt from the circuit breaker** — it is a
+name collision, not a decode fault, and the video is demonstrably readable — so it returns
+`is_fault=False` and a directory of squatters reports every frame instead of aborting after
+ten. It still counts as `failed`: the user asked for that frame and did not get it.
 
-**The same gap existed in LUT replace mode and is now closed.** `apply_lut_sync` calls
+**The same gap existed in LUT replace mode and is now closed** (`docs/dev/postmortems/PM-009`). `apply_lut_sync` calls
 `normalize_image_format`, which falls back to PNG for `.gif`/`.bmp`/`.tiff`/`.avif` — all in
 `IMAGE_EXTENSIONS` — so a replace-mode grade of one of those writes a different file; the
 row used to keep pointing at the stale original, which was also left on disk.
@@ -170,10 +195,21 @@ call, job ids and invalidation. On mount it calls the preview endpoint and rende
 accounting grouped by reason, so 300 identical skips read as one line. Controls: a
 JPEG/PNG radio, an optional max long edge (empty = native) and an optional job label. The
 stale-scores note sits above the submit button and is repeated in the completion toast built
-from `result_data`. Job tracking uses `SelectionToolbar`'s `detectJobIds` array shape — one
-job per video, so several ids.
+from `result_data`. Max long edge is validated client-side against the server's `ge=64,
+le=16384` (empty stays valid, meaning native): submit is disabled with the bound shown
+inline, rather than letting `30` reach the API and return a raw 422 toast. Job tracking uses
+`SelectionToolbar`'s `detectJobIds` array shape — one job per video, so several ids.
 
-Three entry points, all opening that one form:
+`ReextractFramesModal` wraps it for all three entry points: `useModalBehavior` (Escape, Tab
+cycling, focus return, `role="dialog"`), the overlay and `.card` panel, a `title` and an
+optional `headerExtra` slot — `SelectionToolbar`'s dataset breakdown, `VideoDetailPage`'s
+`{filename} · {subfolder}` line. A component rather than a hook call per page because the
+hook must not be called conditionally and every entry point renders behind a flag;
+`useModalBehavior`'s docstring rules out a *generic* wrapper, so a feature-specific one is
+the sanctioned shape. Backdrop-click closing stays off, matching `ExtractFramesModal` — the
+sibling on the same page.
+
+Three entry points, all opening that one modal:
 
 - **`SelectionToolbar`** — rendered unconditionally like the other thirteen actions rather
   than gated on lineage. The store holds ids only (`selectedIds` + `datasetByImageId`) and a
@@ -181,7 +217,11 @@ Three entry points, all opening that one form:
   exactly the selections that matter; the preview endpoint does the honest accounting
   instead. The flag joins `anyModalOpen` so the Delete-key handler stays suppressed.
 - **`ImageDetailPage`** — a `re-extract` button on the existing lineage row, scoped to that
-  one image.
+  one image. Its flag joins `showCropDetect` in `formModalOpen`, which suppresses **both**
+  window-level key handlers: without it ArrowLeft/Right navigated the page underneath the
+  open dialog, and since the form is passed `imageIds={[imageId]}` from the route the
+  preview silently re-queried for a different image while the dialog still named the old
+  one.
 - **`VideoDetailPage`** — a per-row action on the extraction-history panel, scoped by
   `{videoId, subfolder}`, which is the only scope that panel has and the reason the request
   accepts it. `null` is closed and `""` is the dataset root, a real subfolder.
@@ -200,9 +240,12 @@ byte-identical to the decoded frame, and the seek-exactness check above).
 `backend/tests/test_video_reextract_http.py` covers the endpoints and the job: preview and
 enqueue agreeing on the same skip set, the COW hook restoring triage pixels from a
 pre-existing snapshot, a second run not self-skipping, the extension swap and its
-round-trip, the unregistered-file refusal, a temp that will not re-open leaving the original
-intact, cancel, the 507 and 503 gates, in-flight dedupe in both directions, route shadowing
-and the SSE invariants. `backend/tests/test_lut_replace_extension_http.py` covers the LUT
-half. `frontend/e2e/video-extract.spec.ts` opens the form from the gallery toolbar and
-asserts the preview accounting; CI has no `scenedetect`, so no lineage-carrying frame exists
-there and the run is deliberately never submitted.
+round-trip, the unregistered-file refusal and a whole run of them completing rather than
+tripping the breaker, a temp that will not re-open leaving the original intact, a raise
+between the render and the swap leaving no temp behind, cancel, the 507 and 503 gates,
+in-flight dedupe in both directions, route shadowing and the SSE invariants (including
+`done` reaching `N`). `backend/tests/test_lut_replace_extension_http.py` covers the LUT
+half. `frontend/e2e/video-extract.spec.ts` opens the modal from the gallery toolbar and
+asserts the preview accounting, the long-edge bound, and that it is a real dialog (Escape
+closes, focus returns to the opener); CI has no `scenedetect`, so no lineage-carrying frame
+exists there and the run is deliberately never submitted.

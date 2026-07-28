@@ -94,7 +94,8 @@ def _write_video_upload_sync(src_fileobj, dest: Path, poster_path: Path) -> tupl
 
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-    "watermark_score", "color_score", "saturation_score", "style_similarity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
 })
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
@@ -136,6 +137,7 @@ async def list_images(
     format_filter: str | None = None,
     score_filters: str | None = Query(None),
     subfolder: str | None = Query(None),
+    source_video_id: str | None = Query(None),
     detection_label: str | None = Query(None),
     detection_label_exact: str | None = Query(None),
     detection_score_min: float | None = Query(None),
@@ -206,6 +208,14 @@ async def list_images(
             (Image.subfolder == subfolder)
             | Image.subfolder.like(escaped_subfolder + "/%", escape="\\")
         )
+
+    # Frame lineage — every frame this video produced, wherever curation has since
+    # filed it. The column is indexed, so this is a plain equality: no join, no
+    # EXISTS. Truthiness rather than `is not None` (unlike `subfolder`, "" carries
+    # no meaning here), and no allowlist — the value is an opaque uuid and an
+    # unknown one correctly returns zero rows.
+    if source_video_id:
+        q = q.where(Image.source_video_id == source_video_id)
 
     if detection_label:
         q = q.where(
@@ -1469,7 +1479,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
         Image.quality_flags, Image.aesthetic_score, Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
-        Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
+        Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
         Image.generation_metadata, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
@@ -1588,6 +1598,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             watermark_score=row.watermark_score,
             color_score=row.color_score,
             saturation_score=row.saturation_score,
+            luminance_score=row.luminance_score,
             style_similarity_score=row.style_similarity_score,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,

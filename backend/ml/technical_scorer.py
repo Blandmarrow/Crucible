@@ -35,7 +35,7 @@ def score_technical_sync(
         return {
             "blur_score": 0.0, "noise_score": 0.0, "is_blurry": True, "is_noisy": False,
             "uniformity_score": 0.0, "is_uniform": True,
-            "color_score": 0.0, "saturation_score": 0.0,
+            "color_score": 0.0, "saturation_score": 0.0, "luminance_score": 0.0,
         }
 
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
@@ -64,6 +64,10 @@ def score_technical_sync(
     hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
     saturation_score = float(np.mean(hsv[:, :, 1]) / 255.0)
 
+    # Brightness — mean grayscale, normalised. Reuses the `gray` array above,
+    # so it costs one pass over an array already in cache and no extra decode.
+    luminance_score = float(np.mean(gray) / 255.0)
+
     return {
         "blur_score": round(blur_score, 3),
         "noise_score": round(noise_score, 3),
@@ -73,6 +77,7 @@ def score_technical_sync(
         "is_uniform": uniformity_score < uniformity_threshold,
         "color_score": round(color_score, 3),
         "saturation_score": round(saturation_score, 4),
+        "luminance_score": round(luminance_score, 4),  # 0.0 = black, 1.0 = white
     }
 
 
@@ -101,7 +106,7 @@ async def score_images_technical(
             scores = {
                 "blur_score": 0.0, "noise_score": 0.0, "is_blurry": False, "is_noisy": False,
                 "uniformity_score": 0.0, "is_uniform": False,
-                "color_score": 0.0, "saturation_score": 0.0,
+                "color_score": 0.0, "saturation_score": 0.0, "luminance_score": 0.0,
             }
         results.append(scores)
 

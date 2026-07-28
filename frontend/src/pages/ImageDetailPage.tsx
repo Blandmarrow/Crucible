@@ -1575,6 +1575,12 @@ export default function ImageDetailPage() {
                 <span>{(image.saturation_score * 100).toFixed(0)}%</span>
               </>
             )}
+            {image.luminance_score !== null && image.luminance_score !== undefined && (
+              <>
+                <span className="text-gray-500">Brightness</span>
+                <span>{(image.luminance_score * 100).toFixed(0)}%</span>
+              </>
+            )}
             {image.style_similarity_score !== null && image.style_similarity_score !== undefined && (
               <>
                 <span className="text-gray-500">Style match</span>
@@ -1605,6 +1611,20 @@ export default function ImageDetailPage() {
               {image.source_shot_index !== null && image.source_shot_index !== undefined && (
                 <span>· shot {image.source_shot_index}</span>
               )}
+              {/* The reverse-direction affordance: from one frame to every sibling
+                  this video produced, wherever curation has since filed them. */}
+              <span>·</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() =>
+                  paneGo(`/datasets/${datasetId}/gallery?source_video_id=${image.source_video_id}`, {
+                    page: "gallery", datasetId, sourceVideoId: image.source_video_id!,
+                  })
+                }
+              >
+                all frames
+              </button>
             </div>
           )}
 

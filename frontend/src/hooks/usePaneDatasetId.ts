@@ -34,3 +34,17 @@ export function usePaneGallerySubfolder(): string | undefined {
   const [params] = useSearchParams();
   return ctx?.view.subfolder ?? params.get("subfolder") ?? undefined;
 }
+
+/**
+ * The video whose frames a gallery link asked to show, or undefined for "no
+ * lineage filter asked for".
+ *
+ * The sibling of `usePaneGallerySubfolder`, and for the same reason: `routeToView`
+ * parses the pathname only, so the query-string fallback is what carries the link
+ * in the routed (non-split) case.
+ */
+export function usePaneGallerySourceVideo(): string | undefined {
+  const ctx = usePaneContext();
+  const [params] = useSearchParams();
+  return ctx?.view.sourceVideoId ?? params.get("source_video_id") ?? undefined;
+}

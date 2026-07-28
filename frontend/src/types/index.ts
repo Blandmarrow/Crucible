@@ -89,6 +89,7 @@ export interface DatasetStats {
   watermark_distribution: Record<string, number>;
   color_distribution: Record<string, number>;
   saturation_distribution: Record<string, number>;
+  luminance_distribution: Record<string, number>;
   megapixel_distribution: Record<string, number>;
   file_size_distribution: Record<string, number>;
   file_size_summary: Record<string, number>;
@@ -127,6 +128,7 @@ export interface ImageListItem {
   watermark_score: number | null;
   color_score: number | null;
   saturation_score: number | null;
+  luminance_score: number | null;
   style_similarity_score: number | null;
   dino_layer_scores: Record<string, number> | null;
   quality_flags: Record<string, unknown>;

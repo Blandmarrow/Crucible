@@ -43,6 +43,7 @@ class Image(Base):
     watermark_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     color_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     saturation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    luminance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     style_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     clip_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     dino_embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)

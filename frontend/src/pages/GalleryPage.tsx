@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ArrowRightFromLine, Copy } from "lucide-react";
-import { usePaneDatasetId, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
+import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
@@ -24,6 +24,7 @@ import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import VideoStrip from "../components/gallery/VideoStrip";
+import { videosApi } from "../api/videos";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
@@ -47,6 +48,7 @@ const SCORE_FIELDS = [
   { value: "uniformity_score",       label: "Uniformity",        short: "Uniformity" },
   { value: "color_score",            label: "Color",             short: "Color"      },
   { value: "saturation_score",       label: "Saturation",        short: "Saturation" },
+  { value: "luminance_score",        label: "Brightness (0–1)",  short: "Bright"     },
 ];
 
 interface SubfolderNode extends SubfolderInfo {
@@ -99,7 +101,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string };
   } catch {}
   return null;
 }
@@ -180,6 +182,22 @@ export default function GalleryPage() {
     setActiveSubfolder(linkedSubfolder);
     setPage(1);
   }
+  // The lineage filter: every frame a video produced, wherever curation has since
+  // filed it. Same deep-link discipline as `appliedSubfolder` above — applied once
+  // per incoming *change*, so the "Frames from" select stays the user's afterwards.
+  const [frameVideoId, setFrameVideoId] = useState<string | undefined>(saved?.frameVideoId || undefined);
+  const linkedVideo = usePaneGallerySourceVideo();
+  const [appliedVideo, setAppliedVideo] = useState<string | undefined>(undefined);
+  if (linkedVideo !== undefined && appliedVideo !== linkedVideo) {
+    setAppliedVideo(linkedVideo);
+    setFrameVideoId(linkedVideo);
+    // Load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder`
+    // undefined, so a subfolder restored from localStorage would silently
+    // intersect the lineage filter and show an empty grid. Lineage spans
+    // subfolders — that is the whole point of it.
+    setActiveSubfolder(undefined);
+    setPage(1);
+  }
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
@@ -193,8 +211,8 @@ export default function GalleryPage() {
   const isCustomOrder = sortOpt.sort === "sort_order";
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasRestoredScroll = useRef(false);
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -255,11 +273,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
       );
     }, 350);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -267,11 +285,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
         );
       } catch {}
     };
@@ -297,6 +315,21 @@ export default function GalleryPage() {
   });
 
   const subfolderTree = useMemo(() => buildSubfolderTree(subfolders), [subfolders]);
+
+  // The dataset's videos, for the "Frames from" select. Same query key as
+  // `VideoStrip`, so this shares its cache entry rather than fetching again.
+  const { data: videos, isSuccess: videosLoaded } = useQuery({
+    queryKey: ["videos", datasetId],
+    queryFn: () => videosApi.list(datasetId!),
+    enabled: !!datasetId,
+  });
+  // Stale-id guard, derived during render like `appliedSubfolder` above. A video
+  // deleted (or a filter restored into a different dataset) would otherwise leave
+  // a permanently empty grid behind a `<select>` rendering blank — the same class
+  // of problem `licenseFilter`'s vocabulary bounds-check solves.
+  if (frameVideoId && videosLoaded && !videos?.some(v => v.id === frameVideoId)) {
+    setFrameVideoId(undefined);
+  }
 
   useEffect(() => {
     setUploadSubfolder(activeSubfolder ?? "");
@@ -393,8 +426,8 @@ export default function GalleryPage() {
     : undefined;
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
   );
 
   const { data: images = [], isLoading, refetch } = useQuery({
@@ -411,6 +444,7 @@ export default function GalleryPage() {
         quality_flag: qualityFilter || undefined,
         score_filters: scoreFiltersParam,
         subfolder: activeSubfolder,
+        source_video_id: frameVideoId || undefined,
         detection_label: detectionLabel || undefined,
         license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
         license_filter:
@@ -764,6 +798,7 @@ export default function GalleryPage() {
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
     setLicenseFilter("");
     setActiveSubfolder(undefined);
+    setFrameVideoId(undefined);
     hasRestoredScroll.current = true;
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     toast.success("Gallery filters reset");
@@ -1019,6 +1054,21 @@ export default function GalleryPage() {
             </optgroup>
           )}
         </select>
+
+        {/* Frame lineage. Rendered only when the dataset actually has videos —
+            the same "look untouched for image-only datasets" rule VideoStrip
+            follows. Unlike the subfolder sidebar this survives curation: the
+            lineage column does not move when a frame is renamed or re-filed. */}
+        {videos && videos.length > 0 && (
+          <select className="select" style={{ width: "auto" }} value={frameVideoId ?? ""}
+            aria-label="Filter by source video"
+            onChange={(e) => { setFrameVideoId(e.target.value || undefined); resetPage(); }}>
+            <option value="">All images</option>
+            {videos.map((v) => (
+              <option key={v.id} value={v.id}>Frames from {v.filename}</option>
+            ))}
+          </select>
+        )}
 
         <button
           className="btn ghost sm"

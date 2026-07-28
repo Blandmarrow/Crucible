@@ -184,6 +184,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     img.uniformity_score = t.get("uniformity_score")
                     img.color_score = t.get("color_score")
                     img.saturation_score = t.get("saturation_score")
+                    img.luminance_score = t.get("luminance_score")
                     flags = dict(img.quality_flags or {})
                     flags["is_blurry"] = t.get("is_blurry", False)
                     flags["is_noisy"] = t.get("is_noisy", False)

@@ -4,7 +4,7 @@ Inspect the composition of a dataset — score distributions, caption lengths, t
 
 Available from: the **Stats** sidebar item on any dataset page.
 
-- 14+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, watermark, megapixels, file size, aspect ratio, caption length, caption token distribution, style similarity, quality flags
+- 15+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, brightness, watermark, megapixels, file size, aspect ratio, caption length, caption token distribution, style similarity, quality flags
   - **Caption token distribution** uses GPT-2 BPE tokenisation and highlights captions that exceed CLIP's 77-token truncation limit
 - Editable histogram bucket edges — rebucketing runs entirely client-side against raw score arrays
 - Top-500 tag frequency chart and tag co-occurrence matrix

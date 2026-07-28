@@ -71,6 +71,9 @@ export interface ImageListParams {
   format_filter?: string;
   score_filters?: string;
   subfolder?: string;
+  /** Frame lineage: only images extracted from this video, in whatever subfolder
+   *  curation has since moved them to. */
+  source_video_id?: string;
   detection_label?: string;
   detection_label_exact?: string;
   detection_score_min?: number;

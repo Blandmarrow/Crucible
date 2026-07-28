@@ -26,6 +26,7 @@ class ImageOut(BaseModel):
     nsfw_score: float | None = None
     color_score: float | None = None
     saturation_score: float | None = None
+    luminance_score: float | None = None
     style_similarity_score: float | None = None
     dino_layer_scores: dict | None = None
     has_dino_layer_embeddings: bool = False
@@ -79,6 +80,7 @@ class ImageListItem(BaseModel):
     watermark_score: float | None = None
     color_score: float | None = None
     saturation_score: float | None = None
+    luminance_score: float | None = None
     style_similarity_score: float | None = None
     dino_layer_scores: dict | None = None
     quality_flags: dict[str, Any]

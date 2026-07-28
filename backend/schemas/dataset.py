@@ -126,6 +126,7 @@ class DatasetStats(BaseModel):
     watermark_distribution: dict[str, int] = {}
     color_distribution: dict[str, int] = {}
     saturation_distribution: dict[str, int] = {}
+    luminance_distribution: dict[str, int] = {}
     megapixel_distribution: dict[str, int] = {}
     file_size_distribution: dict[str, int] = {}
     file_size_summary: dict[str, float] = {}

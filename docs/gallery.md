@@ -18,7 +18,7 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 ## Browsing images
 
 - Gallery view with search (filename or caption text), pagination, and sort
-- Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label
+- Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label. In a dataset that holds videos, a **Frames from** dropdown narrows the grid to the frames one video produced — wherever you have since moved or renamed them (see [Videos](video.md))
 - Filter by **license** — any single license, any free-text license already recorded in this dataset (listed under **Used in this dataset**), or **Missing license only** to find images with no license at either the image or dataset level → [details](provenance.md)
 - Organize images into subfolders (logical groupings — images stay flat on disk); move or copy images or entire subfolders to a different dataset in one operation
 - Select images with the checkbox in each thumbnail's top-left corner (shift-click a card to extend a range). If the checkbox feels too small to hit comfortably, **Settings → Gallery → Selection checkbox size** scales it from 14 to 32 px

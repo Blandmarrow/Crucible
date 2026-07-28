@@ -30,6 +30,11 @@ const COLOR_EDGES  = [10, 20, 40, 60];
 const COLOR_LABELS = ["0–10", "10–20", "20–40", "40–60", "60+"];
 const SAT_EDGES    = [10, 20, 40, 60];
 const SAT_LABELS   = ["0–10", "10–20", "20–40", "40–60", "60+"];
+// Brightness is the 0–1 mean grayscale, so the edges are fractions. They must
+// match `lum_edges` in dataset_service._aggregate_dataset_stats exactly — the
+// backend only pre-computes the initial distribution; an edit rebuckets here.
+const LUM_EDGES    = [0.15, 0.3, 0.5, 0.7];
+const LUM_LABELS   = ["<0.15", "0.15–0.3", "0.3–0.5", "0.5–0.7", "0.7+"];
 const MP_EDGES     = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 const MP_LABELS    = ["<0.25", "0.25–0.5", "0.5–1", "1–2", "2–4", "4–8", "8+"];
 const FS_EDGES_MB  = [0.1, 0.5, 1.0, 2.0, 5.0];
@@ -95,7 +100,7 @@ type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captio
 type ItemId =
   | "score_guide" | "quality_flags" | "score_coverage" | "licenses"
   | "aesthetic_score" | "style_sim" | "color_richness" | "saturation"
-  | "blur" | "noise" | "uniformity" | "watermark"
+  | "blur" | "noise" | "uniformity" | "watermark" | "luminance"
   | "aspect_ratio" | "megapixels" | "file_size" | "file_formats"
   | "caption_wc" | "caption_tc" | "top_tags" | "cooccurrence"
   | "det_overview" | "det_labels" | "det_models" | "det_score" | "det_coverage" | "det_per_image";
@@ -268,6 +273,7 @@ const DEFAULT_EDGES: Record<string, string> = {
   watermark:  "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9",
   color:      "10, 20, 40, 60",
   saturation: "10, 20, 40, 60",
+  luminance:  "0.15, 0.3, 0.5, 0.7",
   style_sim:  "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9",
   megapixels: "0.25, 0.5, 1, 2, 4, 8",
   file_size:  "0.1, 0.5, 1, 2, 5",
@@ -329,6 +335,7 @@ const STATS_CONFIG: StatsCategoryDef[] = [
     { id: "noise",      label: "Noise score"      },
     { id: "uniformity", label: "Uniformity score" },
     { id: "watermark",  label: "Watermark score"  },
+    { id: "luminance",  label: "Brightness"       },
   ]},
   { id: "properties", label: "Image Properties",   items: [
     { id: "aspect_ratio", label: "Aspect ratio" },
@@ -589,6 +596,7 @@ function ImageLightbox({
     { label: "Watermark",  value: img.watermark_score  != null ? img.watermark_score.toFixed(2)  : null },
     { label: "Color",      value: img.color_score      != null ? img.color_score.toFixed(1)      : null },
     { label: "Saturation", value: img.saturation_score != null ? img.saturation_score.toFixed(1) : null },
+    { label: "Brightness", value: img.luminance_score  != null ? img.luminance_score.toFixed(2)  : null },
   ].filter((s) => s.value != null);
 
   return (
@@ -925,6 +933,7 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStat
     ["mean_watermark_score",       meanOf(sv?.watermark_score)],
     ["mean_color_score",           meanOf(sv?.color_score)],
     ["mean_saturation_score",      meanOf(sv?.saturation_score)],
+    ["mean_luminance_score",       meanOf(sv?.luminance_score)],
     ["mean_style_similarity_score",meanOf(sv?.style_similarity_score)],
 
     ...section("AESTHETIC SCORE DISTRIBUTION"),
@@ -947,6 +956,9 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStat
 
     ...section("SATURATION DISTRIBUTION"),
     ...dist("saturation", stats.saturation_distribution),
+
+    ...section("BRIGHTNESS DISTRIBUTION"),
+    ...dist("luminance", stats.luminance_distribution),
 
     ...section("STYLE SIMILARITY DISTRIBUTION"),
     ...dist("style_sim", stats.style_similarity_distribution ?? {}),
@@ -1244,6 +1256,7 @@ export default function StatsPage() {
   const uniData       = scoreEntries(stats.uniformity_distribution, UNI_LABELS,   UNI_EDGES,   "uniformity_score", "asc");
   const colorData     = scoreEntries(stats.color_distribution,      COLOR_LABELS, COLOR_EDGES, "color_score",      "asc");
   const satData       = scoreEntries(stats.saturation_distribution, SAT_LABELS,   SAT_EDGES,   "saturation_score", "asc");
+  const lumData       = scoreEntries(stats.luminance_distribution,  LUM_LABELS,   LUM_EDGES,   "luminance_score",  "asc");
   const watermarkData = wmEntries(stats.watermark_distribution);
   const megapixelData = mpEntries(stats.megapixel_distribution);
   const fileSizeData  = fsEntries(stats.file_size_distribution);
@@ -1583,6 +1596,7 @@ export default function StatsPage() {
             {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined} />}
             {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} />}
             {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-watermark-${datasetId}` : undefined} />}
+            {show("technical", "luminance")  && <HistPanel title="Brightness"       subtitle="higher = brighter" entries={lumData}      onBarClick={open("Brightness")}      rawValues={sv?.luminance_score}  defaultEdgeStr={DEFAULT_EDGES.luminance}  fb={mkScore("luminance_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-luminance-${datasetId}` : undefined} />}
           </div>
         )}
       </CategorySection>

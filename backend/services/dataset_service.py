@@ -1047,6 +1047,11 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     color_labels =     ["0–10", "10–20", "20–40", "40–60", "60+"]
     sat_edges =        [10, 20, 40, 60]
     sat_labels =       ["0–10", "10–20", "20–40", "40–60", "60+"]
+    # Brightness is the 0–1 mean grayscale, so its edges are fractions. They must
+    # stay numerically identical to DEFAULT_EDGES.luminance on the frontend, which
+    # rebuckets client-side from the raw score-values array once a user edits them.
+    lum_edges =        [0.15, 0.3, 0.5, 0.7]
+    lum_labels =       ["<0.15", "0.15–0.3", "0.3–0.5", "0.5–0.7", "0.7+"]
     mp_edges =         [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
     mp_labels =        ["<0.25", "0.25–0.5", "0.5–1", "1–2", "2–4", "4–8", "8+"]
     fs_edges =         [0.1, 0.5, 1.0, 2.0, 5.0]
@@ -1070,6 +1075,7 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     wm_dist: dict[str, int] = {}
     color_dist: dict[str, int] = {}
     sat_dist: dict[str, int] = {}
+    lum_dist: dict[str, int] = {}
     mp_dist: dict[str, int] = {}
     fs_dist: dict[str, int] = {}
     wc_dist: dict[str, int] = {}
@@ -1138,6 +1144,9 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         if r.saturation_score is not None:
             b = _bucket(r.saturation_score, sat_edges, sat_labels)
             sat_dist[b] = sat_dist.get(b, 0) + 1
+        if r.luminance_score is not None:
+            b = _bucket(r.luminance_score, lum_edges, lum_labels)
+            lum_dist[b] = lum_dist.get(b, 0) + 1
 
         # Watermark
         if r.watermark_score is not None:
@@ -1200,6 +1209,7 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         "watermark_distribution": dict(sorted(wm_dist.items())),
         "color_distribution": _ordered(color_dist, color_labels),
         "saturation_distribution": _ordered(sat_dist, sat_labels),
+        "luminance_distribution": _ordered(lum_dist, lum_labels),
         "megapixel_distribution": _ordered(mp_dist, mp_labels),
         "file_size_distribution": _ordered(fs_dist, fs_labels),
         "file_size_summary": fs_summary,
@@ -1228,6 +1238,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
         Image.blur_score, Image.noise_score, Image.uniformity_score,
         Image.watermark_score, Image.color_score, Image.saturation_score,
+        Image.luminance_score,
         Image.file_size_bytes,
         Image.style_similarity_score,
     ).where(Image.dataset_id == dataset_id)
@@ -1380,6 +1391,7 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
         Image.watermark_score,
         Image.color_score,
         Image.saturation_score,
+        Image.luminance_score,
         Image.style_similarity_score,
         Image.width,
         Image.height,
@@ -1397,7 +1409,8 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
     def _collect() -> dict:
         score_fields = [
             "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-            "watermark_score", "color_score", "saturation_score", "style_similarity_score",
+            "watermark_score", "color_score", "saturation_score", "luminance_score",
+            "style_similarity_score",
         ]
         out: dict[str, list[float]] = {f: [] for f in score_fields}
         out["megapixels"] = []
@@ -1460,7 +1473,7 @@ async def duplicate_dataset(
             Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
             Image.quality_flags, Image.aesthetic_score, Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
-            Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
+            Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
             Image.generation_metadata, Image.processing_history, Image.sort_order,
             Image.source_name, Image.source_url, Image.license, Image.attribution,
             Image.source_meta,
@@ -1514,6 +1527,7 @@ async def duplicate_dataset(
                     watermark_score=row.watermark_score,
                     color_score=row.color_score,
                     saturation_score=row.saturation_score,
+                    luminance_score=row.luminance_score,
                     style_similarity_score=row.style_similarity_score,
                     dino_layer_scores=row.dino_layer_scores,
                     generation_metadata=row.generation_metadata,

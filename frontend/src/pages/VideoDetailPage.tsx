@@ -300,6 +300,24 @@ export default function VideoDetailPage() {
           <div className="p-4 border-b border-gray-700/50 space-y-2">
             <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Extracted frames</h3>
             <div className="space-y-1">
+              {/* The lineage filter, above the per-subfolder rows. The two answer
+                  different questions: a subfolder row is "where did this extraction
+                  land", this is "every frame this video ever produced, wherever it
+                  now lives" — and only the second survives a move or a rename. */}
+              <button
+                className="btn-ghost btn-sm w-full flex items-center justify-between gap-2"
+                style={{ fontSize: 11.5 }}
+                onClick={() =>
+                  paneGo(
+                    `/datasets/${datasetId}/gallery?source_video_id=${video.id}`,
+                    { page: "gallery", datasetId, sourceVideoId: video.id },
+                  )
+                }
+                title="Show every frame extracted from this video, in any subfolder"
+              >
+                <span>Show all {framesSummary!.total} frames</span>
+                <span style={{ color: "var(--fg-mute)" }}>any subfolder</span>
+              </button>
               {framesSummary!.groups.map((g) => (
                 <button
                   key={g.subfolder}

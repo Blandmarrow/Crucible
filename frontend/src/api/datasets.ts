@@ -9,6 +9,7 @@ export interface ScoreValues {
   watermark_score: number[];
   color_score: number[];
   saturation_score: number[];
+  luminance_score: number[];
   style_similarity_score: number[];
   megapixels: number[];
   file_size_mb: number[];

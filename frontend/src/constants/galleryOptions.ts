@@ -25,6 +25,11 @@ export const SORT_OPTIONS = [
   { label: "Style similarity ↓",  sort: "style_similarity_score", order: "desc" },
   { label: "Colorfulness ↓",      sort: "color_score",            order: "desc" },
   { label: "Custom order",       sort: "sort_order",             order: "asc"  },
+  // Append only, never insert: `sortIdx` is persisted as an *index* into this
+  // array in `gallery-state-${datasetId}`, so a mid-array insert silently
+  // changes the sort of every saved gallery.
+  { label: "Brightness ↓",        sort: "luminance_score",        order: "desc" },
+  { label: "Brightness ↑",        sort: "luminance_score",        order: "asc"  },
 ] as const;
 
 /** Sentinel value for the gallery's "missing license only" filter option. */

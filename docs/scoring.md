@@ -11,7 +11,7 @@ Tick the scorers you want and start the run — they execute together in one bac
 | Scorer | Cost |
 |---|---|
 | **Aesthetic score · LAION** — CLIP-based aesthetic predictor (1–10), trained on human ratings | GPU · 2.1 GB |
-| **Technical · OpenCV** — blur, noise, near-uniform, color richness, duplicates | CPU only |
+| **Technical · OpenCV** — blur, noise, near-uniform, color richness, brightness, duplicates | CPU only |
 | **Watermark detection** — CLIP zero-shot classification for text overlays and logos | GPU · 2.1 GB |
 | **Style embeddings · CLIP** — required for the style-similarity workflow below | GPU · 2.1 GB |
 | **DINOv2 embeddings** — object-aware embedding; usable alone or alongside CLIP | GPU · 1.2 GB |
@@ -30,7 +30,7 @@ Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers wr
 
 | Scorer | Metrics |
 |---|---|
-| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation — then duplicate grouping across the dataset |
+| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation, brightness (mean grayscale, 0–1) — then duplicate grouping across the dataset |
 | **Aesthetic** | Aesthetic score 1–10 (LAION improved aesthetic predictor, CLIP ViT-L/14) |
 | **Watermark** | Watermark score 0–1 (CLIP zero-shot), flag `has_watermark` |
 | **Style embeddings** | 768-dim CLIP ViT-L/14 embedding per image |

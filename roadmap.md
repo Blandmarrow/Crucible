@@ -409,18 +409,43 @@ the `ExtractFramesModal`, `VideoStrip` multi-select and the extraction history.
 - Disk preflight via `require_free_space`; frames inherit provenance from the
   video's row (which inherited from the dataset at ingest).
 
-## Phase 3 — Curation glue
+## Phase 3 — Curation glue — **built**
 
-Make the existing cascade sing for frames.
+Make the existing cascade sing for frames. Two items, no new subsystem. The VLM
+keep/reject gate once sketched here stayed **deferred out of this arc** — see Later arcs.
 
 - `luminance_score` in `technical_scorer` (pure OpenCV, applies to *all* images;
   frames get it in the normal triage scoring pass) + Stats histogram/filter via the
   validator-keyed schema — enables stratifying for bright frames at the end.
+  Documented in `docs/dev/scoring.md` and `docs/dev/statistics.md`.
 - "Frames from video X" gallery filter (lineage-based), so a video's output is
-  addressable beyond its subfolder.
+  addressable beyond its subfolder. Documented in `docs/dev/video-ui.md` and
+  `docs/dev/gallery.md`.
 
-Those two items are the whole phase. The VLM keep/reject gate that was previously
-sketched here is **deferred out of this arc** — see Later arcs.
+**Deviations from the plan as written, all small and deliberate:**
+
+- **`luminance_score` has no quality flag, by decision.** A score with no flag needs no
+  `threshold_settings` column, no Settings row and no `ALLOWED_FLAG_KEYS` entry, and
+  `is_uniform` already flags a solid black frame. It is likewise **not mirrored** on
+  `VersionImageState`, joining `saturation_score`/`nsfw_score` in `NOT_MIRRORED` under the
+  existing *"scored, not authored; recomputed on demand"* reason — which is what
+  `test_video_lineage_mirrors.py` demanded the moment the column existed.
+- **`SORT_OPTIONS` gained `Brightness ↓`/`↑` by appending, never inserting.** `sortIdx` is
+  persisted as an *index* into that array, so a mid-array insert silently changes the sort
+  of every saved gallery. The rule is now a comment on the array itself.
+- **The lineage filter clears `activeSubfolder` when a deep link applies it.** Arriving via
+  `?source_video_id=` leaves `linkedSubfolder` undefined, so a subfolder restored from
+  `localStorage` would silently intersect the filter and show an empty grid. Paired with a
+  render-derived stale-id guard, so a deleted video self-clears instead of stranding an
+  empty gallery behind a blank `<select>`.
+- **`_apply_bulk_filters` / `BulkFilterBase` deliberately did *not* learn the filter.** Bulk
+  ops take explicit ids from `SelectionToolbar` or are subfolder-scoped by design; widening
+  that base class touches `bulk_count`/`bulk_delete`/`bulk_rename`/`bulk_provenance` at once
+  for no demonstrated need.
+- **No unit test of the luminance formula.** It lives in `score_technical_sync`, which
+  imports cv2, and CI has no OpenCV — matching the coverage shape of every other technical
+  score. The wiring is tested instead, at request level:
+  `backend/tests/test_luminance_score_http.py` and `test_frames_from_video_filter.py`.
 
 ## Phase 4 — Pass 2: full-res re-extraction
 

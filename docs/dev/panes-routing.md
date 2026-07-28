@@ -22,7 +22,7 @@ PaneLeaf  { type: "leaf"; id: string; view: PaneView }
 PaneSplit { type: "split"; id: string; direction: "horizontal"|"vertical";
             sizes: [number, number]; children: [PaneTree, PaneTree] }
 PaneView  { page: PageType; datasetId?: string; imageId?: string;
-            videoId?: string; subfolder?: string }
+            videoId?: string; subfolder?: string; sourceVideoId?: string }
 ```
 
 All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSizes`, `updateFirstLeaf`) are pure functions — the store holds a single immutable `layout: PaneTree` root. `syncFromRoute(view)` updates only the first leaf (left-to-top traversal) when URL navigation occurs, preserving all other panes.
@@ -35,6 +35,7 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 | `usePaneImageId()` | Same pattern for `imageId` |
 | `usePaneVideoId()` | Same pattern for `videoId` |
 | `usePaneGallerySubfolder()` | Same pattern for `subfolder`, except the fallback is `useSearchParams().get("subfolder")` rather than a route param — a subfolder is a filter, not an identity, so there is no route segment for it. `paneGo` does **not** write both — `usePaneNavigate`'s `go` sets the pane view *or* calls `navigate(url)`, never both — so it is this fallback chain that covers the pane and routed cases. `""` is a real value (the dataset root); `undefined` means no link asked for anything. `GalleryPage` applies it once per *change* so a deep link never fights the sidebar — see `docs/dev/video-ui.md` |
+| `usePaneGallerySourceVideo()` | The lineage sibling of the row above: `ctx?.view.sourceVideoId ?? useSearchParams().get("source_video_id")`. Gallery-only, a deep-link target for "every frame this video produced". Unlike `subfolder`, `""` carries no meaning — the value is an opaque uuid. `routeToView` parses the pathname only, which is exactly why the query-string fallback exists. See `docs/dev/video-ui.md` |
 | `usePaneNavigate()` | Returns `{ go(url, view), back(fallbackView) }`. **Inside a pane**: calls `paneStore.setView(paneId, view)`. **Outside**: calls `navigate(url)`. All intra-app navigation that may occur inside a pane MUST use this hook; raw `navigate()` calls change the URL and trigger `RouteSyncer` which only updates pane 1. |
 
 **Components** (`frontend/src/components/pane/`):

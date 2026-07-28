@@ -45,6 +45,7 @@ NOT_MIRRORED = {
     "phash",                 # recomputed from the restored file
     "nsfw_score",            # scored, not authored; recomputed on demand
     "saturation_score",
+    "luminance_score",
     "clip_embedding",        # blobs: megabytes per row, recomputed on demand
     "dino_embedding",
     "dino_layer_embeddings",

@@ -7,10 +7,12 @@ The scorers are loaded and evicted through the shared model manager — see `doc
 Quality scorers and what they add to `Image`:
 | Module | Columns written | Notes |
 |---|---|---|
-| `ml/technical_scorer.py` | `blur_score`, `noise_score`, `uniformity_score`, `color_score`, `saturation_score`; flags `is_blurry`, `is_noisy`, `is_uniform` | Pure OpenCV/numpy, no GPU |
+| `ml/technical_scorer.py` | `blur_score`, `noise_score`, `uniformity_score`, `color_score`, `saturation_score`, `luminance_score`; flags `is_blurry`, `is_noisy`, `is_uniform` | Pure OpenCV/numpy, no GPU |
 | `ml/aesthetic_scorer.py` | `aesthetic_score` (1–10), `watermark_score` (0–1), flag `has_watermark`, `clip_embedding` (BLOB, float16) | CLIP ViT-L-14; text encoder used for zero-shot watermark; image encoder for embeddings |
 | `ml/dino_scorer.py` | `dino_embedding` (BLOB, float16), `dino_layer_embeddings` (BLOB, float16) | `dino_embedding`: final-layer CLS token, 768-dim. `dino_layer_embeddings`: all 12 transformer-layer CLS tokens concatenated, 18 432 bytes (12 × 768 × float16); layer N (1-indexed) at offset `(N-1)*768*2`. `slice_layer_embedding(blob, layer)` extracts one layer's bytes. |
 | `ml/similarity_scorer.py` | — | CPU-only. `compute_style_similarity(ref_bytes, cand_bytes)` — cosine similarity of candidates to mean reference. `compute_combined_similarity(ref_clip, cand_clip, ref_dino, cand_dino, clip_w=0.38, dino_w=0.62)` — weighted blend of CLIP and DINOv2 cosine similarities. |
+
+`luminance_score` is mean grayscale normalised to 0–1 (0 = black, 1 = white), taken from the `gray` array `score_technical_sync` already computes for blur/noise/uniformity — no extra decode. It has **no quality flag**, deliberately: a score with no flag needs no `threshold_settings` column, no Settings row and no `ALLOWED_FLAG_KEYS` entry, and `is_uniform` already flags a solid black frame. It is not mirrored on `VersionImageState` (see `NOT_MIRRORED` in `backend/tests/test_video_lineage_mirrors.py` — scored, not authored). The score exists for **all** images, but the question it answers is a video-frame one: a triage pass dumps hundreds of frames into a subfolder and the usable-brightness ones have to be separable from night scenes, fades to black and blown-out flashes. See `docs/dev/video-extract.md`.
 
 Flag thresholds:
 | Flag | Column | Default threshold | Source |

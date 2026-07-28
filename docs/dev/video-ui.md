@@ -281,6 +281,29 @@ fires on arrival and on a *change* of the incoming value but never fights a user
 clicks a different subfolder in the sidebar. `undefined` means "no link asked for
 anything", which is why the record is the value and not a boolean: `""` is a real target.
 
+**The lineage filter** is that mechanism's sibling, answering what the subfolder link
+cannot: curation moves and re-files frames, so the extraction subfolder stops being a
+handle, while `Image.source_video_id` does not move. `PaneView.sourceVideoId` and
+`usePaneGallerySourceVideo()` mirror `subfolder` / `usePaneGallerySubfolder()` exactly,
+except the query-string fallback is `source_video_id` and `""` carries no meaning (an opaque
+uuid). `GalleryPage` holds it as `frameVideoId` and applies an incoming link during render
+against an `appliedVideo` record — **clearing `activeSubfolder` when it does**. That is
+load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder` undefined, so a
+subfolder restored from `gallery-state-${datasetId}` would silently intersect the filter and
+show an empty grid. Lineage spans subfolders; that is the point.
+
+A **stale-id guard**, derived during render like `appliedSubfolder`, drops `frameVideoId`
+once `["videos", datasetId]` resolves without a match — otherwise a deleted video leaves a
+permanently empty gallery behind a blank `<select>`, the problem `licenseFilter`'s
+vocabulary bounds-check solves. That `<select>` renders only when the dataset has videos and
+reuses `VideoStrip`'s query cache rather than fetching again; see `docs/dev/gallery.md`
+§ Gallery filters for its state and persistence.
+
+Two entry points feed it: a **"Show all N frames"** row above `VideoDetailPage`'s
+per-subfolder rows (which keep their `?subfolder=` links — "where did this extraction land"
+is a different question), and a small **"all frames"** link on the `ImageDetailPage` lineage
+row, the reverse-direction affordance that lets a moved frame find its siblings.
+
 ## Elsewhere
 
 `DatasetsPage` shows a video pill in the card footer and a `N vid` entry in the compact

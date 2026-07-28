@@ -28,8 +28,11 @@ const UNI_EDGES    = [5, 10, 20, 40];
 const UNI_LABELS   = ["0–5", "5–10", "10–20", "20–40", "40+"];
 const COLOR_EDGES  = [10, 20, 40, 60];
 const COLOR_LABELS = ["0–10", "10–20", "20–40", "40–60", "60+"];
-const SAT_EDGES    = [10, 20, 40, 60];
-const SAT_LABELS   = ["0–10", "10–20", "20–40", "40–60", "60+"];
+// Saturation is mean HSV S on 0–1, not the 0–100 range COLOR_EDGES covers. Must
+// match `sat_edges` in dataset_service._aggregate_dataset_stats exactly — the
+// backend only pre-computes the initial distribution; an edit rebuckets here.
+const SAT_EDGES    = [0.1, 0.2, 0.4, 0.6];
+const SAT_LABELS   = ["<0.1", "0.1–0.2", "0.2–0.4", "0.4–0.6", "0.6+"];
 // Brightness is the 0–1 mean grayscale, so the edges are fractions. They must
 // match `lum_edges` in dataset_service._aggregate_dataset_stats exactly — the
 // backend only pre-computes the initial distribution; an edit rebuckets here.
@@ -272,7 +275,7 @@ const DEFAULT_EDGES: Record<string, string> = {
   uniformity: "5, 10, 20, 40",
   watermark:  "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9",
   color:      "10, 20, 40, 60",
-  saturation: "10, 20, 40, 60",
+  saturation: "0.1, 0.2, 0.4, 0.6",
   luminance:  "0.15, 0.3, 0.5, 0.7",
   style_sim:  "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9",
   megapixels: "0.25, 0.5, 1, 2, 4, 8",
@@ -595,7 +598,7 @@ function ImageLightbox({
     { label: "Blur",       value: img.blur_score       != null ? img.blur_score.toFixed(1)       : null },
     { label: "Watermark",  value: img.watermark_score  != null ? img.watermark_score.toFixed(2)  : null },
     { label: "Color",      value: img.color_score      != null ? img.color_score.toFixed(1)      : null },
-    { label: "Saturation", value: img.saturation_score != null ? img.saturation_score.toFixed(1) : null },
+    { label: "Saturation", value: img.saturation_score != null ? img.saturation_score.toFixed(2) : null },
     { label: "Brightness", value: img.luminance_score  != null ? img.luminance_score.toFixed(2)  : null },
   ].filter((s) => s.value != null);
 

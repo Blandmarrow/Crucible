@@ -665,9 +665,16 @@ async def _detect_with_progress(
         if total and read > 0 and elapsed > 5.0:
             remaining = elapsed / read * max(total - read, 0)
             message += f", about {int(remaining // 60)}m {int(remaining % 60)}s left"
+        # `done`/`total` are pinned to zero, not omitted: `jobStore` merges
+        # partials by job id, so an omitted key silently inherits whatever the
+        # client last held. They must stay zero here because the job's counter
+        # means one thing for the whole run — *frames a gallery refetch would
+        # see* — and this phase writes none. The decoded-frame count and its ETA
+        # ride on `message`; `_phase_percent` drives the bar. Same shape as
+        # `tag_consolidation_service`'s non-per-item phases.
         await _emit(
             job_id, "detecting", fraction,
-            video_id=video.id, message=message, done=read, total=total,
+            video_id=video.id, message=message, done=0, total=0,
         )
     return await future
 
@@ -755,7 +762,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
             video.duration_ms = measured
             await session.commit()
         else:
-            await _emit(job_id, "detecting", 0.0, video_id=video.id, message=(
+            await _emit(job_id, "detecting", 0.0, video_id=video.id, done=0, total=0, message=(
                 "This container reports no usable duration and will not seek, so progress "
                 "is indeterminate and the tail trim is ignored"
             ))
@@ -764,7 +771,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
     require_free_space(images_dir, 0)
 
     # 3. Shot detection — the long phase, and the one most likely to fail.
-    await _emit(job_id, "detecting", 0.0, video_id=video.id, message="Detecting shots…")
+    await _emit(job_id, "detecting", 0.0, video_id=video.id, done=0, total=0, message="Detecting shots…")
     shots, method = await _detect_with_progress(job_id, src, video=video, cfg=cfg)
     counts["method"] = method
     if method == "cancelled" or job_queue.cancel_requested(job_id):
@@ -774,7 +781,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
     if method == "uniform":
         # A user who asked for shot detection and silently got time slicing has
         # been handed a different feature. Say so.
-        await _emit(job_id, "detecting", 1.0, video_id=video.id, message=(
+        await _emit(job_id, "detecting", 1.0, video_id=video.id, done=0, total=0, message=(
             f"No shot boundaries were found, so frames were sampled at fixed intervals "
             f"({len(shots)} windows)"
         ))
@@ -901,7 +908,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
                 written_since_commit += 1
                 written_since_disk_check += 1
 
-        done = (shot_pos + 1) * frames_per_shot
+        planned = (shot_pos + 1) * frames_per_shot
         if written_since_commit >= EXTRACT_COMMIT_EVERY:
             # Commit as we go so the gallery fills live rather than staying empty
             # for the length of the job.
@@ -916,9 +923,15 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
             written_since_commit = 0
             require_free_space(images_dir, 0)
 
+        # `done` is the *committed* frame count, not the planned one: the live
+        # gallery invalidation in `TopBar` is a per-job monotonic high-water mark
+        # on `done`, so it must step exactly when new rows become visible — once
+        # per commit, not once per shot. The bar keeps its per-shot smoothness
+        # because `fraction` is still planned frames.
         await _emit(
-            job_id, "extracting", done / max(total_frames, 1),
-            video_id=video.id, done=done, total=total_frames,
+            job_id, "extracting", planned / max(total_frames, 1),
+            video_id=video.id,
+            done=counts["written"] - written_since_commit, total=total_frames,
             shot=shot_pos + 1, shots=len(shots),
             image_id=last_image_id,
             message=f"Shot {shot_pos + 1} of {len(shots)}",
@@ -926,7 +939,7 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
 
         if consecutive_failures >= EXTRACT_MAX_CONSECUTIVE_FAILURES or (
             shot_pos + 1 >= EXTRACT_FAILURE_RATE_AFTER_SHOTS
-            and counts["failed"] > EXTRACT_MAX_FAILURE_RATE * done
+            and counts["failed"] > EXTRACT_MAX_FAILURE_RATE * planned
         ):
             # Frames already written stay — they are real. The job is `failed`,
             # not `cancelled`: nobody asked for this.

@@ -281,6 +281,21 @@ restarted, plus `shot`/`shots` and `image_id` (mirroring `crop_to_detection`, so
 can invalidate per-image caches). Detection emits at most every 0.5 s and extraction once
 per shot — `broadcaster` queues are `maxsize=200` and drop on overflow.
 
+**`done` means one thing for the whole job: frames a gallery refetch would actually see.**
+Detection pins `done: 0, total: 0` — explicitly, never by omission, because `jobStore` merges
+partials by job id and an omitted key inherits whatever the client last held — and the
+decoded-frame count with its ETA rides on `message` instead. Extraction then carries the
+**committed** count (`written − written_since_commit`), which steps once per
+`EXTRACT_COMMIT_EVERY` rather than once per shot, while `_emit`'s `fraction` stays on
+*planned* frames so the bar keeps its per-shot smoothness. Both halves are required by
+`TopBar`'s live gallery invalidation, a per-job monotonic high-water mark on `done`
+(`docs/dev/frontend-jobs.md`): counting decoded frames during detection fires it twice a
+second while nothing has been written and then leaves it silent for the only phase that
+writes anything, and counting *planned* frames during extraction refetches identical data 24
+times out of 25. `backend/tests/test_video_extract_http.py` pins the invariant — no
+`detecting` payload with a non-zero `done`, and `done` non-decreasing across the run — rather
+than the field names. See `docs/dev/postmortems/PM-008-video-extract-progress-counter.md`.
+
 It also carries **`video_id`**, which is `_emit`'s only keyword-only, no-default parameter
 so that no call site can forget it. A batch runs one job per video and the frontend holds
 every event in one `jobStore`, so without the key a payload cannot be routed to the right
@@ -294,6 +309,10 @@ Extracted frames carry `source_video_id`, `source_timestamp_ms` and `source_shot
 CLAUDE.md § Key invariants states the mirroring rule those columns live under; the eight
 sites that must carry them are pinned by `backend/tests/test_video_lineage_mirrors.py`,
 whose structural test fails for the *next* unmirrored `Image` column.
+
+`source_shot_index` is **0-based**, and matches the `_sNNNN_` in the frame's own filename.
+`ImageDetailPage` therefore renders *"shot 0"* deliberately; it is not off by one against the
+*"Shot 1 of N"* progress message, which numbers shots for a human watching a bar.
 
 All three are exposed on `ImageOut`, and `source_video_id` alone on `ImageListItem` — the
 gallery card needs no timestamp or shot index, and that payload is paid per row on every

@@ -333,7 +333,16 @@ export default function TopBar() {
                 : <div className="pp-fill" style={{ width: `${runningJob.percent ?? 0}%` }} />
               }
             </div>
-            {(runningJob.percent ?? 0) >= 0 && (
+            {/* `total > 0` and not merely `percent >= 0`: a job whose phase
+                counts nothing reports a real percent beside a meaningless
+                `0 / 0`. Two cases today — `video_extract`'s detection phase,
+                which pins both counters to zero because it writes nothing, and
+                `ml/download_progress.py`'s `emit_sync`, which hardcodes
+                `done: 0, total: 0` while supplying a real percent. Safe for
+                everything else: the only jobs created with `total_items=0`
+                (import, rescan, duplicate, the three exports, video_extract)
+                all set a real total in their own first worker emit. */}
+            {(runningJob.percent ?? 0) >= 0 && (runningJob.total ?? 0) > 0 && (
               <span className="pp-num mono">{runningJob.done ?? 0} / {runningJob.total ?? 0}</span>
             )}
             <button

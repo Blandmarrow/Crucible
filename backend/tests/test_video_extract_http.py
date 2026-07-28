@@ -1053,4 +1053,17 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
             assert all(p.get("video_id") == video["id"] for p in progress), progress
             assert {p["phase"] for p in progress} >= {"detecting", "extracting"}
 
+            # One meaning for the whole job: `done` counts frames a gallery
+            # refetch would actually see. Detection writes none, so it must not
+            # report any — and the count can never go backwards, which is what
+            # `TopBar`'s per-job high-water-mark live gate depends on. Pinned as
+            # an invariant rather than on the field names, because the defect
+            # this guards was two phases each counting something different.
+            assert not [p for p in progress if p["phase"] == "detecting" and p.get("done")], progress
+            counts = [p["done"] for p in progress if "done" in p]
+            assert counts == sorted(counts), progress
+            assert all(
+                p["done"] <= p["total"] for p in progress if p["phase"] == "extracting"
+            ), progress
+
     run(scenario())

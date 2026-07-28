@@ -11,6 +11,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import JobProgressBar from "../components/common/JobProgressBar";
 import LicenseBadge from "../components/common/LicenseBadge";
 import ExtractFramesModal from "../components/video/ExtractFramesModal";
+import ReextractFramesForm from "../components/video/ReextractFramesForm";
 import { extractPhaseLabel, useVideoExtractJobs } from "../hooks/useVideoExtractJobs";
 import { formatDuration } from "../utils/duration";
 import { apiErrorDetail } from "../utils/apiError";
@@ -41,6 +42,9 @@ export default function VideoDetailPage() {
   const [renameStem, setRenameStem] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showExtract, setShowExtract] = useState(false);
+  // The subfolder whose frames pass 2 is being asked about — `null` is closed,
+  // and `""` is the dataset root, a real subfolder throughout the codebase.
+  const [reextractSubfolder, setReextractSubfolder] = useState<string | null>(null);
 
   // Live for this video whether or not the modal is open — the job outlives the
   // window that started it, and the persisted id survives a reload too.
@@ -108,7 +112,7 @@ export default function VideoDetailPage() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (showDeleteConfirm || showExtract) return;
+      if (showDeleteConfirm || showExtract || reextractSubfolder !== null) return;
       const target = e.target as HTMLElement;
       if (
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -120,7 +124,7 @@ export default function VideoDetailPage() {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevId, nextId, showDeleteConfirm, showExtract, paneCtx, activePaneId, datasetId]);
+  }, [prevId, nextId, showDeleteConfirm, showExtract, reextractSubfolder, paneCtx, activePaneId, datasetId]);
 
   const renameMutation = useMutation({
     mutationFn: () => videosApi.rename(videoId!, renameStem),
@@ -319,23 +323,35 @@ export default function VideoDetailPage() {
                 <span style={{ color: "var(--fg-mute)" }}>any subfolder</span>
               </button>
               {framesSummary!.groups.map((g) => (
-                <button
-                  key={g.subfolder}
-                  className="btn-ghost btn-sm w-full flex items-center justify-between gap-2"
-                  style={{ fontSize: 11.5 }}
-                  onClick={() =>
-                    paneGo(
-                      `/datasets/${datasetId}/gallery?subfolder=${encodeURIComponent(g.subfolder)}`,
-                      { page: "gallery", datasetId, subfolder: g.subfolder },
-                    )
-                  }
-                  title={`Show these frames in the gallery`}
-                >
-                  <span>{g.count} frame{g.count === 1 ? "" : "s"}</span>
-                  <span className="font-mono truncate" style={{ color: "var(--fg-mute)" }}>
-                    {g.subfolder || "root"}
-                  </span>
-                </button>
+                <div key={g.subfolder} className="flex items-center gap-1">
+                  <button
+                    className="btn-ghost btn-sm flex-1 flex items-center justify-between gap-2"
+                    style={{ fontSize: 11.5 }}
+                    onClick={() =>
+                      paneGo(
+                        `/datasets/${datasetId}/gallery?subfolder=${encodeURIComponent(g.subfolder)}`,
+                        { page: "gallery", datasetId, subfolder: g.subfolder },
+                      )
+                    }
+                    title={`Show these frames in the gallery`}
+                  >
+                    <span>{g.count} frame{g.count === 1 ? "" : "s"}</span>
+                    <span className="font-mono truncate" style={{ color: "var(--fg-mute)" }}>
+                      {g.subfolder || "root"}
+                    </span>
+                  </button>
+                  {/* Pass 2, scoped by (video, subfolder) rather than by ids —
+                      which is the only scope this panel has, and why the request
+                      accepts it at all. */}
+                  <button
+                    className="btn-ghost btn-sm"
+                    style={{ padding: "0 6px" }}
+                    onClick={() => setReextractSubfolder(g.subfolder)}
+                    title="Re-extract these frames from the source at full resolution"
+                  >
+                    <Scissors size={12} />
+                  </button>
+                </div>
               ))}
             </div>
           </div>
@@ -378,6 +394,29 @@ export default function VideoDetailPage() {
             qc.invalidateQueries({ queryKey: ["video-frames", videoId] });
           }}
         />
+      )}
+
+      {reextractSubfolder !== null && datasetId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Scissors size={15} /> Re-extract at Full Resolution
+            </h4>
+            <p className="text-xs mb-1" style={{ color: "var(--fg-mute)" }}>
+              {video.filename} · {reextractSubfolder || "root"}
+            </p>
+            <ReextractFramesForm
+              datasetId={datasetId}
+              videoId={video.id}
+              subfolder={reextractSubfolder}
+              onSuccess={() => {
+                qc.invalidateQueries({ queryKey: ["video-frames", videoId] });
+                setReextractSubfolder(null);
+              }}
+              onCancel={() => setReextractSubfolder(null)}
+            />
+          </div>
+        </div>
       )}
 
       {showDeleteConfirm && (

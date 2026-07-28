@@ -4,7 +4,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Scissors } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
@@ -33,6 +33,7 @@ import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
+import ReextractFramesForm from "../components/video/ReextractFramesForm";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
@@ -180,6 +181,7 @@ export default function ImageDetailPage() {
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
   const [showDetectModal, setShowDetectModal] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showReextract, setShowReextract] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
   const [detectPrompt, setDetectPrompt] = useState("");
@@ -1625,6 +1627,19 @@ export default function ImageDetailPage() {
               >
                 all frames
               </button>
+              {/* Pass 2, from the one place that already knows this image is a
+                  frame. The form still asks the server what it can do — the row
+                  proves lineage, not that the video is still on disk or that the
+                  pixels have not since been edited in place. */}
+              <span>·</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() => setShowReextract(true)}
+                title="Re-cut this frame from the source video at full resolution"
+              >
+                re-extract
+              </button>
             </div>
           )}
 
@@ -2170,6 +2185,26 @@ export default function ImageDetailPage() {
                 setShowCropDetect(false);
               }}
               onCancel={() => setShowCropDetect(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Re-extract at full res modal */}
+      {showReextract && datasetId && imageId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Scissors size={15} /> Re-extract at Full Resolution
+            </h4>
+            <ReextractFramesForm
+              datasetId={datasetId}
+              imageIds={[imageId]}
+              onSuccess={() => {
+                qc.invalidateQueries({ queryKey: ["image", imageId] });
+                setShowReextract(false);
+              }}
+              onCancel={() => setShowReextract(false)}
             />
           </div>
         </div>

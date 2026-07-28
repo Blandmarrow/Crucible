@@ -19,8 +19,8 @@ import { Columns2, RefreshCw } from "lucide-react";
 // server is still polled after this — it only changes what the overlay says.
 const RESTART_SLOW_MS = 25_000;
 
-const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract"]);
+const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own
@@ -212,6 +212,17 @@ export default function TopBar() {
           if (progress.video_id) {
             qc.invalidateQueries({ queryKey: ["video", progress.video_id] });
             qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          }
+        }
+        // Pass 2 rewrites frames in place, changing width/height/phash and the
+        // file itself. The singular ["image"] key is otherwise only invalidated
+        // for detection, so an open detail pane would keep showing the triage
+        // dimensions and thumbnail. No subfolder/video invalidation: it creates
+        // no subfolder and touches no Video row.
+        if (progress.job_type === "video_reextract") {
+          qc.invalidateQueries({ queryKey: ["image"] });
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
           }
         }
       }

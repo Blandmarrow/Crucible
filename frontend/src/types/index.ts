@@ -414,6 +414,37 @@ export interface VideoExtractResult {
   skipped: { video_id: string; filename: string; reason: string }[];
 }
 
+/** Pass 2: re-cut already-extracted frames from their source video at full
+ *  resolution. Exactly one scope — `image_ids` for a gallery selection, or
+ *  `video_id` (optionally narrowed by `subfolder`) for a whole triage batch. */
+export interface VideoReextractRequest {
+  image_ids?: string[];
+  video_id?: string;
+  subfolder?: string;
+  /** PNG is a lossless capture and changes the file extension; the stem, the
+   *  thumbnail and the .txt sidecar all stay where they are. */
+  format?: "jpeg" | "png";
+  /** Omitted = native resolution, which is the point of pass 2. */
+  max_long_edge?: number | null;
+  label?: string | null;
+}
+
+export interface VideoReextractGroup {
+  video_id: string;
+  filename: string;
+  frames: number;
+  /** null on the preview endpoint, which resolves without writing anything. */
+  job_id: string | null;
+}
+
+export interface VideoReextractResult {
+  groups: VideoReextractGroup[];
+  /** Every frame the run will not touch, with a reason a user can act on. */
+  skipped: { image_id: string; filename: string; reason: string }[];
+  eligible: number;
+  total: number;
+}
+
 export interface VideoFramesGroup {
   /** "" is the dataset root — a real group, never "no subfolder". */
   subfolder: string;

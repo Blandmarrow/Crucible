@@ -132,3 +132,41 @@ test('a failed probe still reaches step 2, and says what is missing', async ({ p
 
   await dialog.getByRole('button', { name: 'Cancel' }).click()
 })
+
+// Pass 2 — the gallery entry point. The button is deliberately ungated: the
+// selection store holds ids only and a selection can span pages and datasets, so
+// the *preview endpoint* is what says what will actually run. CI has no
+// scenedetect, so no lineage-carrying frame can exist here — which makes this the
+// honest test of the accounting, and the reason it is never submitted.
+test('the re-extract form reports what it can and cannot do', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  // The gallery checkbox is an overlay div on the card, not an <input>.
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const preview = page.waitForResponse(
+    (res) => res.url().includes('/api/v1/videos/reextract/preview') && res.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Re-extract' }).click()
+  const modal = page.locator('.card', { hasText: 'Re-extract at Full Resolution' })
+  await expect(modal).toBeVisible()
+  expect((await preview).status()).toBe(200)
+
+  // The accounting, straight from the endpoint that would do the work.
+  await expect(modal.getByText('0 frames from 0 videos will be re-extracted')).toBeVisible()
+  await expect(modal.getByText('1 skipped (not extracted from a video)')).toBeVisible()
+
+  // The controls, and the note that pass 2 does not re-score.
+  await expect(modal.getByRole('radio', { name: 'JPEG' })).toBeChecked()
+  await expect(modal.getByRole('radio', { name: /PNG/ })).toBeVisible()
+  await expect(modal.getByRole('spinbutton')).toHaveAttribute('placeholder', 'native')
+  await expect(modal.getByText(/Quality scores were measured on the triage frames/)).toBeVisible()
+
+  // Nothing is eligible, so the expensive button is not even offered.
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+  await modal.getByRole('button', { name: 'Cancel' }).click()
+  await expect(modal).toHaveCount(0)
+})

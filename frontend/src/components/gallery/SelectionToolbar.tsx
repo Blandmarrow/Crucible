@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
+import ReextractFramesForm from "../video/ReextractFramesForm";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -95,6 +96,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showReextract, setShowReextract] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -434,7 +436,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showMoveSubfolder || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showReextract || showMoveSubfolder || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -499,6 +501,18 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
           <Crop size={14} /> Crop
+        </button>
+        {/* Rendered unconditionally like the other thirteen actions rather than
+            gated on lineage: the store holds ids only, and a selection can span
+            pages and datasets, so any client-side gate would be wrong for exactly
+            the selections that matter. The preview endpoint does the honest
+            accounting instead. */}
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowReextract(true)}
+          title="Re-cut video frames from their source at full resolution"
+        >
+          <Scissors size={14} /> Re-extract
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
@@ -1056,6 +1070,24 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               imageIds={ids}
               onSuccess={() => setShowCropDetect(false)}
               onCancel={() => setShowCropDetect(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Re-extract at full res modal */}
+      {showReextract && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Scissors size={15} /> Re-extract at Full Resolution — {count} Selected
+            </h4>
+            {datasetBreakdown}
+            <ReextractFramesForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => setShowReextract(false)}
+              onCancel={() => setShowReextract(false)}
             />
           </div>
         </div>

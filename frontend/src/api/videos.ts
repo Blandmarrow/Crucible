@@ -7,6 +7,8 @@ import type {
   VideoFramesSummary,
   VideoProbeRequest,
   VideoProbeResult,
+  VideoReextractRequest,
+  VideoReextractResult,
 } from "../types";
 
 export const videosApi = {
@@ -53,6 +55,17 @@ export const videosApi = {
    *  that commits the confirmed crop/deinterlace/trims to the Video rows. */
   extract: (body: VideoExtractRequest): Promise<VideoExtractResult> =>
     client.post("/videos/extract", body).then((r) => r.data),
+
+  /** Resolves a re-extraction without writing anything. Shares one resolver with
+   *  `reextract`, so the accounting it reports is exactly what the jobs will do. */
+  reextractPreview: (body: VideoReextractRequest): Promise<VideoReextractResult> =>
+    client.post("/videos/reextract/preview", body).then((r) => r.data),
+
+  /** Pass 2 — re-cut curated frames at full resolution, one job per video. The
+   *  frames are rewritten *in place*: same row, same id, same filename unless the
+   *  format changes the extension. */
+  reextract: (body: VideoReextractRequest): Promise<VideoReextractResult> =>
+    client.post("/videos/reextract", body).then((r) => r.data),
 
   /** Where this video's frames live, grouped by subfolder, newest first. Feeds
    *  the history panel, the delete-confirm count and the replace-mode label. */

@@ -21,6 +21,8 @@ from backend.services import video_extract as ve
 from backend.services.video_service import UnreadableVideoError, measure_duration_ms
 from backend.tests.conftest import frame_colour, mp4_bytes, mp4_corrupt_bytes, mp4_shots_bytes
 
+pytest.importorskip("cv2", reason="opencv is not installed")
+
 needs_scenedetect = pytest.mark.skipif(
     not ve.capabilities()["shot_detection"], reason="scenedetect is not installed"
 )

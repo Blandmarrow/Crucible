@@ -21,6 +21,8 @@ import pytest
 from backend.services.video_service import UnreadableVideoError, probe_video
 from backend.tests.conftest import mp4_bytes
 
+pytest.importorskip("cv2", reason="opencv is not installed")
+
 
 def test_probe_reads_dimensions_fps_and_codec(tmp_path):
     p = tmp_path / "clip.mp4"

@@ -17,10 +17,17 @@ name: backend-tests
 # missing one fails at *collection*, taking down the whole suite rather than
 # just the HTTP tests — which is exactly how this list was found to be short.
 #
-# Deliberately NO torch-sized / GPU / cv2 deps: technical_scorer
-# imports cv2 lazily inside score_technical_sync, and no test imports torch or an
-# ML model. Keep it that way — if a new test needs torch-sized dependencies,
-# reconsider the test design before growing this install step.
+# Deliberately NO torch-sized / GPU deps: no test imports torch or an ML model.
+# Keep it that way — if a new test needs torch-sized dependencies, reconsider the
+# test design before growing this install step.
+#
+# cv2 is the one carve-out, installed as a separate step below. The video suite
+# is ~250 tests and cv2 is its decode gate: without it three modules error at
+# *collection* and the rest fail rather than skip, so leaving it out meant no
+# video test was ever enforced here. Same reasoning e2e-smoke.yml gives for the
+# same package. Note the deliberate divergence from backend/requirements.txt,
+# which pins the GUI `opencv-python` for real use — do not "fix" CI back to it:
+# that wheel links libGL.so.1, which a headless runner does not have.
 
 on:
   pull_request:
@@ -53,6 +60,21 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install test dependencies
         run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken -r backend/requirements-dev.txt
+      # Separate step so a failure here is legible on its own. Order matters:
+      # opencv-python-headless first, then scenedetect WITHOUT its deps —
+      # scenedetect hard-requires `opencv-python` (the GUI wheel, ~90 MB, links
+      # libGL.so.1). Both wheels provide the same `cv2` package, so headless +
+      # --no-deps + the three remaining runtime deps is the only combination that
+      # gets shot detection without the GL-linked wheel. Installing cv2 *without*
+      # scenedetect is not worth doing: the three scenedetect-gated modules are
+      # ~70 tests and the bulk of the video HTTP coverage. imageio-ffmpeg stays
+      # out: no test needs the real bwdif path — both 503 tests monkeypatch
+      # `capabilities`.
+      - name: Install video test dependencies
+        run: |
+          pip install opencv-python-headless
+          pip install --no-deps scenedetect
+          pip install click platformdirs tqdm
       - name: Run backend tests
         run: python -m pytest backend/tests/ -q
 

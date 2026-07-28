@@ -26,6 +26,8 @@ from PIL import Image as PilImage
 from backend.services.video_service import generate_poster, probe_and_poster, probe_video
 from backend.tests.conftest import mp4_bytes
 
+pytest.importorskip("cv2", reason="opencv is not installed")
+
 
 def _fixture(tmp_path: Path, name: str = "clip.mp4", **kwargs) -> Path:
     p = tmp_path / name
@@ -153,6 +155,31 @@ def test_replacing_an_existing_poster_never_leaves_a_partial_file(tmp_path):
 
     assert _grey(dest) == pytest.approx(125, abs=20)
     assert [p.name for p in dest.parent.iterdir()] == ["clip.webp"]
+
+
+def test_a_failed_write_leaves_no_temp_file_behind(tmp_path, monkeypatch):
+    """The atomic-write tests above only cover the success path. A save that
+    raises must take its temp with it: the temp sits in the poster directory, so
+    a survivor is a `.tmp` file the next `thumbnails/*.webp` stem scan would see.
+
+    `generate_poster` imports PIL *inside the function*, so there is no module
+    attribute to patch — the class method is the hook. Distinct from
+    `test_probe_and_poster_swallows_a_poster_failure` below, which is about the
+    caller and asserts nothing about what is left on disk.
+    """
+    src = _fixture(tmp_path)
+    dest = tmp_path / "t" / "clip.webp"
+
+    def boom(self, *a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(PilImage.Image, "save", boom)
+
+    with pytest.raises(OSError):
+        generate_poster(src, dest, duration_ms=1000)
+
+    assert not dest.exists()
+    assert list(dest.parent.iterdir()) == []
 
 
 def test_probe_and_poster_returns_the_path_only_on_success(tmp_path):

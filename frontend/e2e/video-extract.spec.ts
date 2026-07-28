@@ -2,10 +2,18 @@ import { test, expect } from '@playwright/test'
 import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi } from './helpers'
 
 // The frame-extraction surface, GPU-free: the video strip and its selection, the
-// two-step modal, and the controls each step owns. **Extract is never clicked** —
-// the job decodes the whole file and needs scenedetect, which CI does not have,
-// so a click here would fail the job body rather than the page. Same convention
-// as quality.spec.ts.
+// two-step modal, the controls each step owns, and one journey that actually
+// runs an extraction end to end.
+//
+// **Extract really is clicked**, in `an extraction runs end to end…` only. The
+// earlier reading — that a real run needs scenedetect, which CI lacks — was
+// wrong: without scenedetect `detect_shots` falls back to `_uniform_shots`,
+// which is pure arithmetic over the clip's span and needs nothing but opencv.
+// `mp4Buffer()` is 2 s, so that fallback yields a single window and the whole
+// run is over in about a second. Nothing below asserts a shot *count*: with
+// scenedetect installed (a dev machine after `manage.sh update`) the detector
+// runs for real and may find more, and pinning the number would be pinning the
+// fallback rather than the feature.
 //
 // CI runs with `capabilities: { shot_detection: false, deinterlace: false }`
 // (only opencv is installed), and a dev machine after `manage.sh update` runs
@@ -182,4 +190,190 @@ test('the re-extract form reports what it can and cannot do', async ({ page, req
   await page.keyboard.press('Escape')
   await expect(modal).toHaveCount(0)
   await expect(opener).toBeFocused()
+})
+
+// The one journey that runs a real extraction. Four surfaces are folded into it
+// rather than split across four specs, because none of them can exist without
+// one: the progress block, the extraction-history panel, the `?source_video_id=`
+// gallery deep link, and the frame's lineage line. Four specs would be four
+// extractions for the coverage of one.
+test('an extraction runs end to end and its frame appears with lineage', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-run-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  // The dataset-card video badge — two lines here rather than a spec of its own.
+  // Scoped to this dataset's card: the suite shares one DB, so earlier specs
+  // leave datasets carrying videos of their own.
+  await page.goto('/datasets')
+  await expect(
+    page.getByTestId(`dataset-card-${ds.id}`).getByText('1 video', { exact: true }),
+  ).toBeVisible()
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+
+  // `extract-running` appears as soon as the 200 lands. The settled text is the
+  // legal wait target for "terminal": `useVideoExtractJobs` filters terminal
+  // statuses out, so the row falls back to this label the moment the job stops
+  // being live, and it persists until the modal closes.
+  await expect(dialog.getByTestId('extract-running')).toBeVisible()
+  await expect(dialog.getByText('Finished or no longer reporting')).toBeVisible({ timeout: 30_000 })
+
+  // That label renders for a *failed* job too, so the outcome is cross-checked
+  // through the API rather than inferred from the page.
+  const summary = await (await request.get(`/api/v1/videos/${video.id}/frames-summary`)).json()
+  expect(summary.total).toBeGreaterThan(0)
+  const frames = await (
+    await request.get('/api/v1/images/', { params: { dataset_id: ds.id, source_video_id: video.id } })
+  ).json()
+  expect(frames).toHaveLength(summary.total)
+
+  // Closing invalidates `video-frames`, so the history panel appears — hidden
+  // entirely until an extraction exists, which is why it has never been covered.
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByRole('heading', { name: 'Extracted frames' })).toBeVisible()
+  const showAll = page.getByRole('button', { name: `Show all ${summary.total} frames` })
+  await expect(showAll).toBeVisible()
+
+  // The lineage deep link: `?source_video_id=` lands on a filtered gallery.
+  await showAll.click()
+  await expect(page).toHaveURL(new RegExp(`source_video_id=${video.id}`))
+  const tiles = page.getByTestId(/^select-/)
+  await expect(tiles).toHaveCount(summary.total)
+
+  // And from a frame back to its source — the line only a frame renders.
+  await page.getByRole('button', { name: frames[0].filename }).first().click()
+  const lineage = page.getByText('From', { exact: true })
+  await expect(lineage).toBeVisible()
+  await expect(page.getByRole('button', { name: 'clip.mp4' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'all frames' })).toBeVisible()
+})
+
+// Re-attachment after a reload, fully stubbed — no job is ever started. The hook
+// re-seeds `jobStore` from a persisted id and matches everything after that by
+// `video_id`, and that seeding is exactly what a reload destroys and what no
+// other test can reach: a real job finishes far too fast to reload into.
+test('a running extraction is re-attached after a reload', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-reattach-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+  const jobId = 'stub-job-running'
+
+  const jobRow = (status: string) => ({
+    id: jobId, job_type: 'video_extract', label: 'Extract - clip.mp4',
+    status, dataset_id: ds.id, total_items: 3, done_items: 1,
+    error_msg: null, result_data: {}, config: {},
+    created_at: new Date().toISOString(), started_at: new Date().toISOString(),
+    finished_at: null,
+  })
+
+  // `videoExtractJobKey(videoId)`, holding `persistentState`'s envelope.
+  await page.addInitScript(
+    ([key, id]) => localStorage.setItem(key, JSON.stringify({ jobId: id })),
+    [`video-extract-job-${video.id}`, jobId],
+  )
+  await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobRow('running')) }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+
+  // The synthetic event the recovery effect writes carries no phase and no
+  // message, so `extractPhaseLabel` falls through to its default.
+  await expect(page.getByText('Starting…')).toBeVisible()
+  // Only true if the hook matched the seeded job to *this* video by `video_id`.
+  await expect(page.getByRole('button', { name: 'Extract frames' }))
+    .toHaveAttribute('title', 'Show the running extraction')
+
+  // The twin: a persisted id whose job has since gone terminal shows no bar, and
+  // the key is cleared so the lookup is not repeated on every future mount.
+  await page.unroute(`**/api/v1/jobs/${jobId}`)
+  await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobRow('completed')) }),
+  )
+  await page.reload()
+
+  await expect(page.getByRole('button', { name: 'Extract frames' }))
+    .toHaveAttribute('title', 'Turn this video into frames')
+  await expect(page.getByText('Starting…')).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), `video-extract-job-${video.id}`))
+    .toBe(JSON.stringify({ jobId: null }))
+})
+
+// Rename and delete from the detail page. Neither has any coverage, and both are
+// destructive enough that "the button exists" is not the interesting claim — the
+// row afterwards is.
+test('a video can be renamed and deleted from its detail page', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-video-crud-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+  await page.getByTitle('Rename (the extension is kept)').click()
+
+  // Enter, not the Save icon: the input has its own Enter handler, so the
+  // unlabelled icon button never needs a selector of its own.
+  const patch = page.waitForResponse(
+    (res) => res.url().includes(`/videos/${video.id}/rename`) && res.request().method() === 'PATCH',
+  )
+  await page.getByRole('textbox').fill('renamed')
+  await page.keyboard.press('Enter')
+  expect((await patch).status()).toBe(200)
+
+  // The info grid, not the toast — toasts auto-dismiss, and the grid is what a
+  // user reads afterwards. `.nth(1)` because the page header carries the name too;
+  // both updating is the point, so a `.first()` here would pass on a stale grid.
+  await expect(page.getByText('renamed.mp4')).toHaveCount(2)
+  await expect(page.getByText('renamed.mp4').nth(1)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Delete video' }).click()
+  const confirm = page.getByRole('dialog', { name: 'Delete video?' })
+  await expect(confirm).toBeVisible()
+  await expect(confirm.getByText(/Extracted frames are not deleted/)).toBeVisible()
+  await confirm.getByRole('button', { name: 'Delete' }).click()
+
+  // A one-video dataset, so the post-delete navigation takes the deterministic
+  // `paneGo` branch back to the gallery rather than stepping to a sibling.
+  await expect(page).toHaveURL(new RegExp(`/datasets/${ds.id}/gallery`))
+  await expect(page.getByRole('button', { name: 'renamed.mp4' })).toHaveCount(0)
+})
+
+// The `Include videos` toggle. Its backend behaviour is covered three times over
+// in test_video_import_rescan_http.py; the only untested claim is the *wiring*,
+// so the import POST is stubbed and the request body is the assertion. A real
+// folder import here would drag in three interacting subsystems for one checkbox.
+test('the import modal sends include_videos when the box is ticked', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-import-videos-${Date.now()}`)
+
+  let body: Record<string, unknown> | null = null
+  let target: string | null = null
+  await page.route('**/api/v1/datasets/*/import', (route) => {
+    body = route.request().postDataJSON()
+    target = new URL(route.request().url()).pathname.split('/').at(-2) ?? null
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"job_id":"stub"}' })
+  })
+
+  await page.goto('/datasets')
+  await page.getByTitle('Import folder').first().click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  // Picked explicitly: which card is first depends on the page's sort and on
+  // every dataset the earlier specs left behind.
+  await dialog.getByRole('combobox').first().selectOption(ds.id)
+
+  const include = dialog.getByRole('checkbox', { name: 'Include videos' })
+  await expect(dialog.getByText(/land flat/)).toHaveCount(0)
+  await include.check()
+  // The explanatory paragraph is the only visible consequence of ticking it.
+  await expect(dialog.getByText(/land flat/)).toBeVisible()
+
+  await dialog.getByRole('textbox').first().fill('/tmp/e2e-import-source')
+  await dialog.getByRole('button', { name: 'Import' }).click()
+
+  await expect.poll(() => body).not.toBeNull()
+  expect(target).toBe(ds.id)
+  expect(body!.include_videos).toBe(true)
 })

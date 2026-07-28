@@ -19,14 +19,24 @@ at a video the destination dataset does not contain; where in a video a frame
 came from is a fact about the frame and travels with it.
 """
 
+import importlib.util
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.models.versioning import VersionImageState
 from backend.services import version_service
 from backend.tests.conftest import API, api_env, run, upload_image, upload_video, wait_for_job
+
+# Per-test rather than a module-level `pytest.importorskip`: the four structural
+# guards below need no video at all, and they are the ones CLAUDE.md relies on to
+# fail CI when a new `Image` column goes unmirrored. Skipping *those* on a machine
+# without opencv would drop the coverage that matters most here.
+needs_cv2 = pytest.mark.skipif(
+    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+)
 
 LINEAGE = ("source_video_id", "source_timestamp_ms", "source_shot_index")
 
@@ -106,6 +116,7 @@ def test_version_image_state_does_not_carry_a_video_foreign_key():
     assert "source_video_id" not in fks
 
 
+@needs_cv2
 def test_images_source_video_id_is_set_null_on_delete():
     """Belt-and-braces behind the explicit UPDATE in `DELETE /videos/{id}`.
     Asserted against the DDL because the test harness builds its schema with
@@ -140,6 +151,7 @@ async def _make_frame(env, dataset_id: str, *, video_id: str, name: str = "frame
     return img
 
 
+@needs_cv2
 def test_snapshot_and_restore_preserve_lineage(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -186,6 +198,7 @@ def test_snapshot_and_restore_preserve_lineage(tmp_path):
     run(scenario())
 
 
+@needs_cv2
 def test_cross_dataset_copy_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -215,6 +228,7 @@ def test_cross_dataset_copy_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     run(scenario())
 
 
+@needs_cv2
 def test_cross_dataset_move_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     """A move is an UPDATE in place, so lineage survives unless it is explicitly
     cleared — the row would land in the target still pointing at a video the
@@ -242,6 +256,7 @@ def test_cross_dataset_move_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     run(scenario())
 
 
+@needs_cv2
 def test_duplicate_dataset_from_disk_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -275,6 +290,7 @@ def test_duplicate_dataset_from_disk_nulls_the_video_id_and_keeps_the_rest(tmp_p
     run(scenario())
 
 
+@needs_cv2
 def test_duplicate_dataset_from_a_snapshot_nulls_the_video_id_and_keeps_the_rest(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -307,6 +323,7 @@ def test_duplicate_dataset_from_a_snapshot_nulls_the_video_id_and_keeps_the_rest
     run(scenario())
 
 
+@needs_cv2
 def test_deleting_a_video_leaves_its_frames_with_null_lineage_and_intact_files(tmp_path):
     """Frames are curated data. Deleting a source must not destroy them, and the
     timestamp and shot index survive — a frame keeps knowing where in a video it
@@ -332,6 +349,7 @@ def test_deleting_a_video_leaves_its_frames_with_null_lineage_and_intact_files(t
     run(scenario())
 
 
+@needs_cv2
 def test_a_derivative_of_a_frame_has_no_lineage(tmp_path):
     """`copy_provenance` returns the five provenance keys and nothing else, so
     crop/upscale/LUT/detection-crop derivatives inherit no lineage — the pixels

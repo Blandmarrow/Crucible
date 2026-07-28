@@ -9,10 +9,13 @@ playback still appeared to work, so the 206 path is pinned here.
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.tests.conftest import API, api_env, mp4_bytes, run, upload_image, upload_video, wait_for_job
+
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 
 def test_list_and_detail(tmp_path):
@@ -324,6 +327,41 @@ def test_delete_404s_for_an_unknown_video(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             r = await env.client.delete(f"{API}/videos/nope")
+            assert r.status_code == 404
+
+    run(scenario())
+
+
+def test_delete_409s_while_the_dataset_is_busy(tmp_path):
+    """The file assertion is the point: delete unlinks the video and its poster
+    *before* deleting the row, so a guard that ran too late would already have
+    destroyed bytes by the time it raised."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import dataset_busy
+
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4")
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                path, poster = row.file_path, row.poster_path
+
+            with dataset_busy.busy(ds["id"], "versioning"):
+                r = await env.client.delete(f"{API}/videos/{video['id']}")
+            assert r.status_code == 409, r.text
+
+            assert Path(path).exists()
+            assert poster and Path(poster).exists()
+            async with env.Session() as db:
+                assert await db.get(Video, video["id"]) is not None
+
+    run(scenario())
+
+
+def test_detail_404s_for_an_unknown_video(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.get(f"{API}/videos/nope")
             assert r.status_code == 404
 
     run(scenario())

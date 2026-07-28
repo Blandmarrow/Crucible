@@ -19,6 +19,8 @@ from PIL import Image as PilImage
 from backend.services import video_extract as ve
 from backend.tests.conftest import mp4_shots_bytes
 
+pytest.importorskip("cv2", reason="opencv is not installed")
+
 
 @pytest.fixture(scope="module")
 def shots_mp4(tmp_path_factory) -> Path:

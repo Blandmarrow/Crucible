@@ -40,12 +40,16 @@ from backend.tests.conftest import (
     upload_video,
     wait_for_job,
 )
-from backend.utils import DISK_FLOOR_BYTES
+from backend.utils import DISK_FLOOR_BYTES, InsufficientDiskSpaceError
 
 pytestmark = pytest.mark.skipif(
     not video_extract.capabilities()["shot_detection"],
     reason="scenedetect is not installed",
 )
+
+# `pytestmark` is evaluated after the module body, so it cannot protect the line
+# below: without cv2 this module errors at *collection* rather than skipping.
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 SHOTS_MP4 = mp4_shots_bytes()
 
@@ -606,6 +610,108 @@ def test_a_full_disk_is_a_507_before_any_job_exists(tmp_path, monkeypatch):
                     select(BackgroundJob).where(BackgroundJob.job_type == "video_reextract")
                 )).scalars().all()
             assert jobs == []
+
+    run(scenario())
+
+
+def test_a_disk_that_fills_mid_rewrite_fails_the_job(tmp_path, monkeypatch):
+    """Pass 1's twin (`test_a_disk_that_fills_mid_run_…`), against the one
+    structural difference: pass 2 has no commit interval, only the disk recheck.
+    Same harness — gate the router's own `require_free_space` on "has any frame
+    been rendered yet", so both pre-loop preflights pass and the in-loop check is
+    the first call that raises."""
+    import threading
+
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            assert len(frames) > 1, "a single frame cannot show a mid-run failure"
+
+            rendered = threading.Event()
+            real_render = video_extract.render_at_timestamps
+            real_require = videos_router.require_free_space
+
+            def render_spy(*a, **kw):
+                try:
+                    return real_render(*a, **kw)
+                finally:
+                    rendered.set()
+
+            def require_spy(target_dir, needed_bytes=0, **kw):
+                if rendered.is_set():
+                    raise InsufficientDiskSpaceError(
+                        "Not enough disk space on the destination volume."
+                    )
+                return real_require(target_dir, needed_bytes, **kw)
+
+            monkeypatch.setattr(video_extract, "render_at_timestamps", render_spy)
+            monkeypatch.setattr(videos_router, "require_free_space", require_spy)
+            monkeypatch.setattr(videos_router, "EXTRACT_DISK_RECHECK_EVERY", 1)
+
+            r = await _reextract(env, video_id=video["id"])
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["groups"][0]["job_id"], timeout=180)
+
+            assert job["status"] == "failed", job
+            assert "disk space" in (job["error_msg"] or "")
+
+            # What was rewritten stays, at its new size, with its file intact —
+            # and nothing was left half-swapped.
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            grown = [i for i in rows if i.width and i.width > 160]
+            assert grown, "the check fired before anything was rewritten"
+            for img in rows:
+                assert Path(img.file_path).exists()
+            images_dir = Path(rows[0].file_path).parent
+            assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
+
+    run(scenario())
+
+
+def test_reextract_409s_while_the_dataset_is_busy(tmp_path):
+    """Ordering trap: the guard sits *after* `_resolve_reextract_targets` and
+    after the `if not groups: return` early exit, so a dataset with nothing
+    extracted gets a 200 with an empty result and would pass for the wrong
+    reason. Hence a real pass 1 first."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import dataset_busy
+
+            ds = await env.create_dataset("d")
+            video, _frames = await _triage(env, ds["id"], long_edge=160)
+
+            with dataset_busy.busy(ds["id"], "versioning"):
+                r = await _reextract(env, video_id=video["id"])
+            assert r.status_code == 409, r.text
+
+            async with env.Session() as db:
+                jobs = (await db.execute(
+                    select(BackgroundJob).where(BackgroundJob.job_type == "video_reextract")
+                )).scalars().all()
+            assert jobs == []
+
+    run(scenario())
+
+
+def test_a_reextract_with_nothing_to_do_does_not_409(tmp_path):
+    """The twin of the test above, recording that ordering deliberately: the
+    empty-result early exit is reached before the busy guard, so a request that
+    would rewrite nothing is a 200 even mid-restore. It writes nothing either."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import dataset_busy
+
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            with dataset_busy.busy(ds["id"], "versioning"):
+                r = await _reextract(env, video_id=video["id"])
+            assert r.status_code == 200, r.text
+            assert r.json()["groups"] == []
 
     run(scenario())
 

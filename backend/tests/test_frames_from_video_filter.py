@@ -29,6 +29,10 @@ pytestmark = pytest.mark.skipif(
     reason="scenedetect is not installed",
 )
 
+# `pytestmark` is evaluated after the module body, so it cannot protect the line
+# below: without cv2 this module errors at *collection* rather than skipping.
+pytest.importorskip("cv2", reason="opencv is not installed")
+
 SHOTS_MP4 = mp4_shots_bytes()
 
 

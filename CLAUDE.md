@@ -51,7 +51,9 @@ source venv/bin/activate && python -m pytest backend/tests/ -q
 ```
 
 Request-level tests drive `backend.main.app` over httpx (see
-`backend/tests/conftest.py`); everything else is service-level. Coverage is opt-in:
+`backend/tests/conftest.py`); everything else is service-level. Anything needing a
+decodable video is gated on cv2 — see `docs/dev/video.md` (§ cv2 in CI, and the skip
+convention) before adding a test or a CI dependency there. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
@@ -147,7 +149,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/export.md` | Export (kohya/ai-toolkit/plain): shared loop, stem uniquification, filters incl. license/commercial/no-derivatives, resize, metadata stripping, loss masks, disk preflight, CREDITS.md/licenses.csv | Working on `ExportPage` or `export_service.py` | ~3180 |
 | `docs/dev/bulk-ops.md` | Bulk caption find/replace/regex, bulk image rename/delete/count/reorder, detection-driven cropping (`detection_crop_rect`) and the crop detection remap | Working on `BulkEditPage`, `CropToDetectionForm`, or a `bulk-*` endpoint | ~2480 |
 | `docs/dev/tag-consolidation.md` | MiniLM tag embedder, analyze/apply background jobs, whole-tag (non-substring) rewrite, preview/confirm UI | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` | ~890 |
-| `docs/dev/video.md` | `Video` model and `videos/` layout, `media_types.py` allowlist, poster stems and collisions, video ingest via upload/folder-import/rescan, the `/videos` endpoints incl. rename, range serving and `frames-summary` | Working on videos, video ingest, the `/videos` endpoints, or any file-extension allowlist | ~2605 |
+| `docs/dev/video.md` | `Video` model and `videos/` layout, `media_types.py` allowlist, poster stems and collisions, video ingest via upload/folder-import/rescan, the `/videos` endpoints incl. rename, range serving and `frames-summary`, the cv2 CI install and test skip convention | Working on videos, video ingest, the `/videos` endpoints, any file-extension allowlist, or a cv2-gated test | ~2930 |
 | `docs/dev/video-ui.md` | `VideoStrip` and its selection, `VideoDetailPage`, `ExtractFramesModal` + `CropOverlay`/`TrimBar`, the extraction history panel, the `useVideoExtractJobs` re-attach hook, the frame-lineage line, and the gallery subfolder + "frames from video" deep links | Working on any video screen, the extraction modal, or the frame lineage filter | ~3465 |
 | `docs/dev/video-decode.md` | cv2 probe ladder and its duration guard, `measure_duration_ms` seek search, `isOpened()` as ingest gate, container rotation, poster generation and the fallback ladder, lazy backfill and retry backoff | Working on video probe/metadata, video duration, or poster frames | ~1530 |
 | `docs/dev/video-extract.md` | Pass 1 — triage frame extraction: probe sampling and its RSS rule, the PySceneDetect contract and cost cliff, shot rendering, `POST /videos/probe` and `/videos/extract`, the `video_extract` job | Working on frame extraction, shot detection, or the extract/probe endpoints | ~3070 |

@@ -14,10 +14,13 @@ first view — and the poster written then would overwrite this one's.
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Video
 from backend.tests.conftest import API, api_env, run, upload_video
+
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 
 def _row(env, video_id):

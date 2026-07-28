@@ -10,9 +10,19 @@ hits constantly. Each test drives one router through `backend.main.app` over
 `httpx.ASGITransport` (see conftest.py): roughly one happy path plus one failure
 per router, chosen so no monkeypatched fakes are needed.
 """
+import importlib.util
 import json
 
+import pytest
+
 from backend.tests.conftest import API, api_env, mp4_bytes, png_bytes, run, upload_image
+
+# Two tests here encode a real container; the rest of the module is media-free.
+# Per-test rather than a module-level `pytest.importorskip("cv2")` so a machine
+# without opencv keeps the whole CRUD smoke sweep.
+needs_cv2 = pytest.mark.skipif(
+    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+)
 
 
 # --- datasets ------------------------------------------------------------
@@ -243,6 +253,7 @@ def test_filesystem_roots_and_list(tmp_path):
     run(scenario())
 
 
+@needs_cv2
 def test_filesystem_preview_serves_images_and_videos_but_nothing_else(tmp_path):
     """One route for both kinds. The video branch is what lets the browser's
     preview panel play a clip: FileResponse supplies Range/206 on its own, and
@@ -275,6 +286,7 @@ def test_filesystem_preview_serves_images_and_videos_but_nothing_else(tmp_path):
     run(scenario())
 
 
+@needs_cv2
 def test_filesystem_image_meta_stays_image_only(tmp_path):
     """/preview widened to all media; /image-meta deliberately did not — there
     is no generation metadata to read out of a container."""

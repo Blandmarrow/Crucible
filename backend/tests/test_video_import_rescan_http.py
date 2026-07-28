@@ -12,11 +12,14 @@ Rescan needs its own pass at all because the image walk is
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.services.dataset_service import _scan_source_files
 from backend.tests.conftest import API, api_env, mp4_bytes, png_bytes, run, upload_video, wait_for_job
+
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 
 def _seed_source(src: Path) -> None:

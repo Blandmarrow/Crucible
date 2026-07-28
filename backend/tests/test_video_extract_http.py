@@ -40,12 +40,16 @@ from backend.tests.conftest import (
     upload_video,
     wait_for_job,
 )
-from backend.utils import DISK_FLOOR_BYTES
+from backend.utils import DISK_FLOOR_BYTES, InsufficientDiskSpaceError
 
 pytestmark = pytest.mark.skipif(
     not video_extract.capabilities()["shot_detection"],
     reason="scenedetect is not installed",
 )
+
+# `pytestmark` is evaluated after the module body, so it cannot protect the line
+# below: without cv2 this module errors at *collection* rather than skipping.
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 SHOTS_MP4 = mp4_shots_bytes()
 
@@ -178,6 +182,35 @@ def test_probe_rejects_an_out_of_range_sample_count(tmp_path):
             video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
             r = await env.client.post(f"{API}/videos/{video['id']}/probe", json={"samples": 99})
             assert r.status_code == 422
+
+    run(scenario())
+
+
+def test_a_probe_that_takes_too_long_is_a_504(tmp_path, monkeypatch):
+    """A probe runs in the *request*, so a video on slow storage would otherwise
+    hold a worker until the client gives up. Both halves are patched — the
+    constant (read at call time) and the sampler — because the alternative, a
+    genuinely slow decode, would be the flakiest test in the repo."""
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            real = video_extract.probe_samples
+
+            def slow(*a, **kw):
+                import time as _time
+                _time.sleep(0.5)
+                return real(*a, **kw)
+
+            monkeypatch.setattr(videos_router, "PROBE_TIMEOUT_SECONDS", 0.01)
+            monkeypatch.setattr(video_extract, "probe_samples", slow)
+
+            r = await env.client.post(f"{API}/videos/{video['id']}/probe", json={"samples": 3})
+            assert r.status_code == 504, r.text
+            assert "too long" in r.json()["detail"]
 
     run(scenario())
 
@@ -504,6 +537,101 @@ def test_a_full_disk_is_a_507_before_any_job_exists(tmp_path, monkeypatch):
     run(scenario())
 
 
+def test_a_disk_that_fills_mid_run_fails_the_job_and_keeps_what_it_committed(
+    tmp_path, monkeypatch
+):
+    """The other half of the disk story: the request path 507s, the *mid-run*
+    path fails the job. `EXTRACT_DISK_RECHECK_EVERY` is 100 in production, so
+    nothing else here ever reaches the in-loop check.
+
+    Not patched on `shutil.disk_usage` like the 507 test above: that fake would
+    also trip the request-path preflight and both pre-loop preflights, and
+    counting calls to time it is brittle. Gating the router's own symbol on "has
+    any frame rendered yet" puts the failure exactly where it belongs — both
+    pre-loop checks run before any render and pass, and the in-loop check is the
+    first call afterwards.
+    """
+    import threading
+
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            rendered = threading.Event()
+            real_render = video_extract.render_shot
+            real_require = videos_router.require_free_space
+
+            def render_spy(*a, **kw):
+                try:
+                    return real_render(*a, **kw)
+                finally:
+                    rendered.set()
+
+            def require_spy(target_dir, needed_bytes=0, **kw):
+                if rendered.is_set():
+                    raise InsufficientDiskSpaceError(
+                        "Not enough disk space on the destination volume."
+                    )
+                return real_require(target_dir, needed_bytes, **kw)
+
+            monkeypatch.setattr(video_extract, "render_shot", render_spy)
+            monkeypatch.setattr(videos_router, "require_free_space", require_spy)
+            monkeypatch.setattr(videos_router, "EXTRACT_DISK_RECHECK_EVERY", 1)
+
+            r = await _extract(env, [video["id"]])
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["jobs"][0]["job_id"], timeout=120)
+
+            # 1. The distinction this test exists for.
+            assert job["status"] == "failed", job
+            assert "disk space" in (job["error_msg"] or "")
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            assert rows, "the check fired before anything was written, proving nothing"
+
+            # 2. The invariant the in-loop comment claims: the commit happens
+            #    *before* the check, so no file exists without a row.
+            images_dir = Path(rows[0].file_path).parent
+            assert len(list(images_dir.glob("*.jpg"))) == len(rows)
+
+            # 3. Frames already written are kept.
+            for img in rows:
+                assert Path(img.file_path).exists()
+
+            # 4. `_run_with_stats` refreshed the counters on the raise path.
+            detail = (await env.client.get(f"{API}/datasets/{ds['id']}")).json()
+            assert detail["image_count"] == len(rows)
+
+    run(scenario())
+
+
+def test_extract_409s_while_the_dataset_is_busy(tmp_path):
+    """The versioning guard, asserted through its contract (the 409) rather than
+    `dataset_busy._busy`. The empty job table is half the point: a guard that ran
+    after the enqueue would leave a job to rewrite the very files a restore is
+    reading."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import dataset_busy
+
+            ds = await env.create_dataset("d")
+            # Before the flag: ingesting the video needs an unbusy dataset.
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            with dataset_busy.busy(ds["id"], "versioning"):
+                r = await _extract(env, [video["id"]])
+            assert r.status_code == 409, r.text
+
+            async with env.Session() as db:
+                assert (await db.execute(select(BackgroundJob))).scalars().all() == []
+
+    run(scenario())
+
+
 def test_a_second_extraction_for_the_same_video_is_skipped(tmp_path):
     """`rescan_folder`'s precedent: the duplicate is named and the rest of the
     batch still enqueues."""
@@ -595,6 +723,33 @@ def test_new_subfolder_steps_past_a_name_another_video_already_uses(tmp_path):
     run(scenario())
 
 
+def test_a_declared_but_empty_subfolder_still_blocks_the_default_name(tmp_path):
+    """`_existing_subfolders` unions the *declared* names onto the occupied ones,
+    and the test above cannot reach that half — it seeds every name with images.
+    A subfolder a user declared and has not filled yet is theirs; an extraction
+    must step past it rather than pour frames into it.
+
+    No job needs to finish: the resolved name is in the 200 body.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/subfolders", json={"path": "clip"}
+            )
+            assert r.status_code == 201, r.text
+
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+            r = await _extract(env, [video["id"]])
+            assert r.status_code == 200, r.text
+            assert r.json()["jobs"][0]["subfolder"] == "clip_2"
+
+            for job in r.json()["jobs"]:
+                await wait_for_job(env, job["job_id"], timeout=120)
+
+    run(scenario())
+
+
 def test_re_extracting_one_video_steps_to_a_fresh_subfolder(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -674,6 +829,52 @@ def test_replace_removes_the_previous_frames_rows_files_and_thumbnails(tmp_path)
                 i.filename for i in sorted(after, key=lambda x: x.filename)
             ]
             assert len(list(thumbs_dir.glob("*.webp"))) == 3
+
+    run(scenario())
+
+
+def test_the_replace_step_holds_the_dataset_busy_flag(tmp_path, monkeypatch):
+    """Extraction as a whole does *not* take the busy flag — the replace step
+    does, and only that step. It deletes N rows, N files and N thumbnails, which
+    is exactly the class a versioning restore must not race, and nothing else
+    observes that it is held.
+
+    Observed through `ensure_not_busy` from inside the delete loop rather than by
+    reading `dataset_busy._busy`: the private dict is not the contract, the 409
+    is. A real HTTP request from in here would be worse than useless — the job's
+    session holds an uncommitted transaction at that point, so a second writer on
+    the same SQLite file is a deadlock waiting to happen.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.services import dataset_busy, version_service
+
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+            await _extract_and_wait(env, [video["id"]])
+
+            real = version_service.mark_image_deleted_in_versions
+            seen: list[str | None] = []
+
+            async def spy(image_id, file_path, session):
+                try:
+                    dataset_busy.ensure_not_busy(ds["id"])
+                except Exception as exc:
+                    seen.append(getattr(exc, "detail", str(exc)))
+                else:
+                    seen.append(None)
+                return await real(image_id, file_path, session)
+
+            monkeypatch.setattr(version_service, "mark_image_deleted_in_versions", spy)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], mode="replace")
+            assert jobs[0]["status"] == "completed", jobs
+
+            assert seen, "the replace step deleted nothing, so it proved nothing"
+            assert all(s and "Replacing extracted frames" in s for s in seen), seen
+
+            # And it is released again — held for the delete step, not the job.
+            dataset_busy.ensure_not_busy(ds["id"])
 
     run(scenario())
 
@@ -1084,5 +1285,59 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
             assert all(
                 p["done"] <= p["total"] for p in progress if p["phase"] == "extracting"
             ), progress
+
+    run(scenario())
+
+def test_the_commit_interval_makes_frames_visible_before_the_job_ends(tmp_path, monkeypatch):
+    """`EXTRACT_COMMIT_EVERY` never fires under any other test here — the fixture
+    writes six frames and the shipped value is 25 — yet it is the whole reason
+    the gallery fills live instead of staying empty for the length of a job.
+
+    `done` is `counts["written"] - written_since_commit`, so it steps once per
+    commit and not once per shot. With the interval at 1 the emitted sequence is
+    [2, 4, 6]; the control half below shows the same run reports [0, 0, 0]
+    unpatched, which records the constant's *purpose* rather than its plumbing.
+    """
+    async def capture(env, video_id, monkeypatch, *, commit_every=None):
+        from backend.routers import videos as videos_router
+        from backend.workers.progress import broadcaster
+
+        seen: list[dict] = []
+        real_emit = broadcaster.emit
+
+        async def capturing(job_id, payload):
+            seen.append(payload)
+            return await real_emit(job_id, payload)
+
+        monkeypatch.setattr(broadcaster, "emit", capturing)
+        if commit_every is not None:
+            monkeypatch.setattr(videos_router, "EXTRACT_COMMIT_EVERY", commit_every)
+
+        _body, jobs = await _extract_and_wait(
+            env, [video_id], frames_per_shot=2, mode="replace",
+        )
+        assert jobs[0]["status"] == "completed", jobs
+        monkeypatch.undo()
+        return [
+            p["done"] for p in seen
+            if p.get("job_type") == "video_extract" and p.get("phase") == "extracting"
+        ]
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            stepped = await capture(env, video["id"], monkeypatch, commit_every=1)
+            assert stepped == [2, 4, 6], stepped
+
+            # Control: the same run with the shipped interval commits only at the
+            # end, so every payload reports nothing committed yet.
+            flat = await capture(env, video["id"], monkeypatch)
+            assert flat == [0, 0, 0], flat
+
+            # Either way the frames are all there once the job is done.
+            async with env.Session() as db:
+                assert len((await db.execute(select(Image))).scalars().all()) == 6
 
     run(scenario())

@@ -785,6 +785,11 @@ export default function DatasetsPage() {
       <div
         key={ds.id}
         {...datasetElementProps(ds)}
+        // The card is a plain <div> with no role and no accessible name, and its
+        // contents (counts, badges) repeat across every card, so an e2e
+        // assertion about *this* dataset's card has nothing else to scope to.
+        // One of the ≤3 testids frontend/e2e/helpers.ts budgets for.
+        data-testid={`dataset-card-${ds.id}`}
         style={{
           background: "var(--surface-1)",
           border: `1px solid ${dragOverId === ds.id ? "var(--accent)" : "var(--line)"}`,

@@ -272,3 +272,34 @@ The repo ships no sample media, so `conftest.mp4_bytes()` synthesizes a real `.m
 `cv2.VideoWriter`. Use the `mp4v` fourcc: `avc1` needs an h264 encoder the opencv-python
 wheel does not carry and its writer silently fails to open. `VideoWriter` cannot write to a
 buffer, hence the temp file.
+
+### cv2 in CI, and the skip convention
+
+`backend-tests.yml` installs opencv **and** scenedetect, in a step of its own after the
+main install. Before that it installed neither, so the ~250 tests above had never once run
+in CI: three modules errored at *collection* and the rest failed rather than skipped. Two
+rules keep both halves working.
+
+**Order and flags are load-bearing.** `pip install opencv-python-headless`, then
+`pip install --no-deps scenedetect`, then its three remaining runtime deps (`click`,
+`platformdirs`, `tqdm`). scenedetect hard-requires `opencv-python` — the GUI wheel, ~90 MB,
+linking `libGL.so.1`, which a headless runner does not have — and both wheels provide the
+same `cv2` package, so this is the only combination that gets shot detection without the
+GL-linked one. This is a **deliberate divergence** from `backend/requirements.txt`, which
+pins the GUI wheel for real use; "fixing" CI back to it hits libGL. `imageio-ffmpeg` stays
+out: no test needs the real `bwdif` path, and both 503 tests monkeypatch `capabilities`.
+
+**Guard placement decides error vs skip.** A `pytestmark = skipif(...)` is consulted only
+*after* the module body has run, so it cannot protect a module-level constant like
+`SHOTS_MP4 = mp4_shots_bytes()` — those three modules need
+`pytest.importorskip("cv2")` on the line immediately before it. Modules that only touch cv2
+inside tests (`mp4_bytes` imports it lazily) take the same one-liner after the imports.
+Where a module is *mostly* media-free, use a per-test `needs_cv2` mark instead: a
+module-level skip in `test_video_lineage_mirrors.py` would drop the structural mirror guard,
+and in `test_http_smoke_crud.py` / `test_conflict_paths_http.py` it would drop whole
+unrelated sweeps. `test_video_frames.py` is guarded by **neither** — it is pure numpy
+against `video_frames.py`, which has no cv2 import at all.
+
+Verify both worlds after touching this:
+`python -c "import sys; sys.modules['cv2']=None; import pytest; pytest.main(['backend/tests/','-q'])"`
+must report skips and zero failures or errors.

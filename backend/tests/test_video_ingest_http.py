@@ -8,10 +8,22 @@ as an Image row, in images/, or inside image_count — one of these fails.
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
-from backend.tests.conftest import API, api_env, jpeg_bytes, mp4_bytes, run, upload_image, upload_video
+from backend.tests.conftest import (
+    API,
+    api_env,
+    jpeg_bytes,
+    mp4_bytes,
+    run,
+    upload_image,
+    upload_video,
+    wait_for_job,
+)
+
+pytest.importorskip("cv2", reason="opencv is not installed")
 
 
 def test_upload_creates_a_video_row_not_an_image_row(tmp_path):
@@ -174,6 +186,46 @@ def test_videos_are_counted_separately_from_images(tmp_path):
             assert after["total_size_bytes"] == before["total_size_bytes"]
             assert after["video_count"] == 1
             assert after["video_size_bytes"] == video["file_size_bytes"] > 0
+
+    run(scenario())
+
+
+def test_a_duplicated_dataset_carries_no_videos(tmp_path):
+    """`duplicate_dataset` copies `Image` rows only. That is deliberate — a
+    duplicate is for branching a *curation*, and re-copying gigabytes of source
+    footage to do it would be the wrong trade — but nothing says the consequence
+    anywhere, so it is one refactor away from being "fixed" into a surprise.
+
+    The lineage suite already pins the row side of this. What it does not pin is
+    the user-visible half: the clone's counters and its folder on disk.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            await upload_image(env, src["id"], "a.png")
+            await upload_video(env, src["id"], "clip.mp4")
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate", json={"new_name": "copy"}
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            listing = (await env.client.get(f"{API}/datasets/")).json()
+            clone = next(d for d in listing if d["name"] == "copy")
+            assert clone["image_count"] == 1
+            assert clone["video_count"] == 0
+            assert clone["video_size_bytes"] == 0
+
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Video).where(Video.dataset_id == clone["id"])
+                )).scalars().all()
+            assert rows == []
+
+            videos_dir = Path(clone["folder_path"]) / "videos"
+            assert not videos_dir.exists() or not list(videos_dir.glob("*.mp4"))
 
     run(scenario())
 

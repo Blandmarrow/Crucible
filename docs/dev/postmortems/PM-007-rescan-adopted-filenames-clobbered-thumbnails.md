@@ -61,7 +61,8 @@ Two follow-on rules:
 ### Why it wasn't caught the first time
 
 The occupied-stem reasoning was written down and then applied by pattern-matching on the
-wrong feature. `roadmap.md` recorded poster-stem collisions as a solved problem, and
+wrong feature. The arc's roadmap (since retired into the `docs/dev/video*.md` files)
+recorded poster-stem collisions as a solved problem, and
 `docs/dev/video.md` stated the rule as *"every site that picks a video filename does this:
 upload, folder import and rename"* — which is literally true and complete for the sites it
 names. Nobody asked whether a site could write a poster **without** picking a filename.

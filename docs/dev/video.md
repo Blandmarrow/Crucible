@@ -3,9 +3,10 @@
 Covers the `Video` model, the `videos/` storage layout and its poster-stem rules, the three
 ingest paths that create a video, and the `/videos` endpoints. The cv2 decode surface itself
 — the metadata probe, the duration search and poster generation — is in
-`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-extract.md`, and every
-screen that shows a video is in `docs/dev/video-ui.md`. The arc's roadmap lives in
-`roadmap.md` at the repo root until it is complete.
+`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-extract.md` (pass 1) and
+`docs/dev/video-reextract.md` (pass 2), and every screen that shows a video is in
+`docs/dev/video-ui.md`. The arc's roadmap was retired into these files when pass 2 landed,
+the same way the detection arc's was.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
 It is deliberately not a row in `images`, which carries ~20 image-specific columns, FK
@@ -158,9 +159,10 @@ last_extracted_at}]}` — one `GROUP BY Image.subfolder` over `source_video_id`,
 is the server-side counterpart of the rowcount `delete_video` logs, and it feeds three
 surfaces that all need the number *before* anything is destroyed: the extraction history
 panel, the delete-confirm count, and the modal's "Replace (deletes N previous frames)"
-label. There is deliberately **no** `source_video_id` filter on `GET /images/` yet — that
-is the roadmap's "frames from video X" gallery filter; the history panel links by subfolder
-instead.
+label. It answers a different question from `GET /images/`'s `source_video_id` filter, which
+shipped later: a group here is *where an extraction landed* and stops being useful the
+moment a frame is moved out, while the filter finds every frame a video ever produced
+wherever curation has since filed it (`docs/dev/video-ui.md`).
 
 The **file browser preview** widened with this phase: `GET /filesystem/preview` accepts
 anything in `MEDIA_EXTENSIONS` and serves the video branch with `video_mime`, so one route

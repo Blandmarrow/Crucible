@@ -48,6 +48,40 @@ Above those subfolder rows sits **Show all N frames**. The two are not the same 
 
 Frames also make one scorer more useful than it is for ordinary images. A triage pass drops hundreds of them into a subfolder, and the first thing you want to know is which are of usable brightness — a video has night scenes, fades to black and blown-out flashes in a way a curated image set usually does not. Running the **Technical** scorer records a brightness value for every image, which shows up as a *Brightness* histogram on [Statistics](statistics.md), a **Brightness** score filter and a sort order in the gallery, and a row on the image detail panel. Brightness is newer than the rest of the Technical scorer, so a dataset last scored before it existed has none of it recorded: the histogram, the filter and the sort all come up empty until you run Technical over that dataset again. Statistics says so on the panel rather than leaving you with a bare "No data".
 
+## Re-extracting at full resolution
+
+Extraction is meant to be done twice. The first pass writes small frames on purpose — a
+long episode can produce hundreds, and a 1024px frame is enough to score it, spot
+duplicates and decide what is worth keeping. Once you have thrown the rest away,
+**Re-extract** goes back to the video and cuts the survivors again at full size.
+
+It is not an upscale. Crucible recorded the exact moment each frame came from, so it seeks
+back to that moment in the original file and decodes it fresh, replaying the same crop and
+deinterlacer the first pass used. The frames are replaced in place: same images, same
+subfolder, same captions and scores, just bigger.
+
+Three places offer it: select frames in the gallery and press **Re-extract**; open a single
+frame and use the **re-extract** link on the line that names its source video; or, on a
+video's page, use the scissors beside any row under **Extracted frames** to do a whole
+batch at once.
+
+The dialog first says what it can actually do — *"38 frames from 2 videos will be
+re-extracted · 3 skipped (already edited in place)"* — because not everything selected can
+be. A frame is skipped when it did not come from a video, when its source video has been
+deleted or moved off disk, or when it has since been cropped, upscaled or graded in place:
+those pixels are no longer the extracted frame, and re-cutting would silently throw the
+edit away. Selecting ordinary images alongside frames is harmless; they are simply counted
+as skipped.
+
+Two choices: **JPEG** or **PNG** (lossless, and larger), and a **max long edge** left empty
+for the video's native resolution. Choosing PNG changes the file extension; nothing else
+moves — captions and thumbnails stay attached, and the old file is removed.
+
+Quality scores are deliberately left alone, since they were measured on the small frames.
+The dialog says so and so does the completion message; re-run scoring if you want numbers
+that describe the full-resolution images. If you took a snapshot beforehand, restoring it
+brings the original small frames back.
+
 ## Optional packages
 
 Two things need optional packages that `manage.sh update` / `manage.ps1 update` installs. Without them the dialog says so rather than failing: deinterlacing is switched off and unavailable, and without cut detection frames are sampled at fixed intervals instead of at shot boundaries. A video that had deinterlacing switched on before the package went missing is a special case — the dialog warns that extracting now will run without it *and* forget the setting, so you would switch it back on once the package is installed.

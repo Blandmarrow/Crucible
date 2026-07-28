@@ -7,6 +7,10 @@ the job re-attach hook they share. The backend behind them is in `docs/dev/video
 (model, storage, `/videos` endpoints) and `docs/dev/video-extract.md` (the probe/extract
 endpoints and the `video_extract` job).
 
+`ReextractFramesForm` and its three entry points — two of which sit on surfaces described
+below, the lineage line and the extraction history panel — are documented with the rest of
+pass 2 in `docs/dev/video-reextract.md`.
+
 `frontend/src/utils/duration.ts::formatDuration(ms)` → `"4:12"`, `"1:02:33"`, `"—"` for
 NULL. Every video surface formats through it, because NULL is *unknown* and must never
 render as `0:00` — that would turn a missing header into a claim about the video.

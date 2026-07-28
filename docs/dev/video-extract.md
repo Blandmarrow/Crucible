@@ -10,6 +10,11 @@ measurement and the poster frame stay in `docs/dev/video-decode.md`; the `Video`
 storage layout, the poster-stem rules and the rest of the `/videos` surface stay in
 `docs/dev/video.md`, which also indexes the tests for all of it.
 
+**This file is pass 1 only.** Everything here writes cheap triage frames so a long file can
+be curated quickly; turning the survivors into full-resolution training data is pass 2, in
+`docs/dev/video-reextract.md`. The two share `_write_frame` (below) and nothing else — pass
+2 re-seeks a recorded timestamp and never detects a shot or picks a frame.
+
 **Why the modules split this way.** `docs/dev/video-decode.md` once promised extraction would
 join the probe and the poster in `video_service.py`. It should not, and the reason is the test
 suite. `video_frames.py` needs no video — it takes an `ndarray` and returns a number or a rect
@@ -137,10 +142,14 @@ because `pick_index`'s luma-outlier rejection is defined against the median of t
 candidate set (`docs/dev/video-heuristics.md`) and so can change the winner retroactively.
 A second seek-and-decode costs about 7.5 ms.
 
-The crop is clamped against `frame.shape`, which is the authority — headers lie, and
-container rotation swaps the axes. As in `generate_poster`, `ImageOps.exif_transpose` is
-deliberately absent and is not a violation of the "always transpose first" invariant: the
-input is a decoded ndarray, not a file with an EXIF block.
+The crop → resize → save → thumbnail tail is **`_write_frame`**, shared with pass 2 so the
+two cannot drift on format or quality. The crop is clamped there against `frame.shape`,
+which is the authority — headers lie, and container rotation swaps the axes — and the
+format comes from the output suffix through `utils.normalize_image_format` +
+`image_save_kwargs`, whose JPEG kwargs are pass 1's existing `quality=95, subsampling=0`.
+As in `generate_poster`, `ImageOps.exif_transpose` is deliberately absent and is not a
+violation of the "always transpose first" invariant: the input is a decoded ndarray, not a
+file with an EXIF block.
 
 ## The endpoints
 
@@ -189,7 +198,9 @@ videos, since a `(None, None)` entry makes the dimension set non-uniform.
 Videos already covered by a pending or running extraction come back under `skipped`
 (`rescan_folder`'s precedent) and the rest still enqueue — **resolved first, before any
 validation or write**, so a video extracting nothing keeps its stored fixups and a rect that
-will never be applied cannot 400 the batch.
+will never be applied cannot 400 the batch. That check is
+`_videos_with_running_extractions`, and it matches **both** job types: a `replace` here
+deletes the very rows a running pass 2 is rewriting.
 
 **A crop is normalized, not rejected.** Only genuine overflow (`x + w > width`, per row,
 skipping NULL dimensions) is a 400; the rest goes through `clamp_crop` once, and the

@@ -79,6 +79,7 @@ Key functions:
 | `backend/routers/upscaling.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/detection.py` | `crop_to_detection` `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
+| `backend/routers/videos.py` | `_run_reextraction`'s per-frame `_rewrite` — calls `protect_file_before_overwrite` before swapping the full-resolution frame in. Unlike the rows above it verifies the new file re-opens *first*, so a frame that fails is never protected-then-not-overwritten (`docs/dev/video-reextract.md`) |
 | `backend/routers/quality.py` | `resolve_duplicates`, delete branch — calls `mark_image_deleted_in_versions` per row, then `refresh_stats` per dataset |
 | `backend/routers/images.py` | `batch_move_dataset` — calls `mark_image_deleted_in_versions` per moved image *before* the dataset_id updates (a cross-dataset move is a deletion from the source dataset's history; without the backup, pre-move snapshots could never materialize the image) |
 | `backend/services/version_service.py` | `restore_snapshot`, Pass 1 — calls `protect_file_before_overwrite` (gated: only files that will actually be overwritten/moved/deleted, hash passed as `precomputed_sha256`) before any file operation, backing current content into the pre-restore snapshot so the restore is undoable in auto mode |

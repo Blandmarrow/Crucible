@@ -10,6 +10,7 @@ The order images travel through the app:
 |---|---|---|
 | 1 | Import images, organize datasets, browse and filter the gallery | [Datasets & Gallery](gallery.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
+| 1 | Hold videos as sources and extract frames from them, shot by shot | [Videos & Frame Extraction](video.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
 | 3 | Score for aesthetics, technical quality, watermarks, NSFW, and style | [Quality Scoring](scoring.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
@@ -23,6 +24,7 @@ The order images travel through the app:
 | Sidebar item | Documented in |
 |---|---|
 | Datasets, Gallery, image detail | [gallery.md](gallery.md) |
+| Videos strip, video detail | [video.md](video.md) |
 | Captioning | [captioning.md](captioning.md) |
 | Score images | [scoring.md](scoring.md) |
 | Stats | [statistics.md](statistics.md) |

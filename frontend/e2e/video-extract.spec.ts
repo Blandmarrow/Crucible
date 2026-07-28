@@ -66,7 +66,7 @@ test('a video can be driven through the extraction modal', async ({ page, reques
   await expect(mode(/^Replace/)).toBeVisible()
   // Nothing has been extracted yet, so Replace says so instead of naming a count.
   await expect(dialog.getByText('Replace (nothing to replace yet)')).toBeVisible()
-  await expect(dialog.getByRole('spinbutton', { name: /Frames per shot|^$/ }).first()).toBeVisible()
+  await expect(dialog.getByRole('spinbutton', { name: /Frames per shot/ })).toBeVisible()
 
   // Close without submitting — the expensive button is never pressed.
   await dialog.getByRole('button', { name: 'Cancel' }).click()
@@ -74,4 +74,61 @@ test('a video can be driven through the extraction modal', async ({ page, reques
 
   // No frames were produced, so the history panel stays hidden entirely.
   await expect(page.getByRole('heading', { name: 'Extracted frames' })).toHaveCount(0)
+})
+
+// The two modes resolve a subfolder differently — `new_subfolder` steps whatever
+// name it is given through `_step_subfolder`, so offering an existing folder
+// there would silently produce `{name}_2`. The control has to differ, and this is
+// the only automated check that it does.
+test('existing subfolders are offered in Add mode only', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-sub-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+  // A subfolder that actually holds an image, or the dropdown lists nothing in
+  // either mode and the assertion below passes for the wrong reason.
+  await uploadViaApi(request, ds.id, 'still.png', 'existing')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+
+  const options = () => dialog.getByTestId('extract-subfolder').locator('option').allTextContents()
+
+  // New subfolder (the default): Automatic + Name it…, nothing else.
+  expect(await options()).toHaveLength(2)
+  expect((await options()).join(' | ')).toContain('a new subfolder named after the video')
+
+  await dialog.getByRole('radio', { name: /^Add to/ }).check()
+  const added = await options()
+  expect(added).toHaveLength(3)
+  // The label changes too: an empty subfolder means something different here.
+  expect(added.join(' | ')).toContain("this video's previous subfolder")
+  expect(added.join(' | ')).toContain('existing')
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+})
+
+// Extraction needs no probe — only step 1's previews do — so a video whose probe
+// fails must still be extractable. It was not: `Next` was gated on the probe.
+test('a failed probe still reaches step 2, and says what is missing', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-noprobe-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.route('**/api/v1/videos/*/probe', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe failed"}' }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  await expect(dialog.getByText(/could not be sampled/)).toBeVisible()
+  const next = dialog.getByRole('button', { name: 'Next' })
+  await expect(next).toBeEnabled()
+  await next.click()
+  await expect(dialog.getByRole('radio', { name: /^New subfolder/ })).toBeChecked()
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
 })

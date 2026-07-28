@@ -5,7 +5,7 @@
 Extracted frames did **not** appear in the gallery while a `video_extract` job ran, and the
 new subfolder did not appear in the sidebar — both only materialized when the job finished.
 That contradicted the modal's own footer (*"Frames appear in the gallery as they are
-written"*), `docs/gallery.md`, and the `TopBar` comment describing the branch that was
+written"*), `docs/video.md`, and the `TopBar` comment describing the branch that was
 supposed to make it happen.
 
 The `TopBar` running-job pill made the same defect visible directly: it counted up to

@@ -22,7 +22,7 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 Every step from raw images to a training-ready export, in order:
 
-1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/gallery.md), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/gallery.md)
+1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/gallery.md), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
 2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
@@ -38,8 +38,8 @@ Every step from raw images to a training-ready export, in order:
 - **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/gallery.md)
 - **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
 - **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
-- **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, browsable in a strip above the image grid with poster frames, an inline player, rename and delete (experimental) → [details](docs/gallery.md)
-- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export → [details](docs/gallery.md)
+- **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, browsable in a strip above the image grid with poster frames, an inline player, rename and delete (experimental) → [details](docs/video.md)
+- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export → [details](docs/video.md)
 
 ### Image generation
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
@@ -278,6 +278,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 |---|---|
 | Feature index | [docs/features.md](docs/features.md) |
 | Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
+| Videos & Frame Extraction | [docs/video.md](docs/video.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |

@@ -106,6 +106,10 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
         trim_end_ms: debouncedTrim.end,
       }),
     staleTime: 5 * 60_000,
+    // Each entry holds eight base64 JPEGs — ~350 KB — and the debounced trim
+    // drag mints a new key per handle position, so the 5-minute default keeps a
+    // drag's worth of them resident long after the modal has closed.
+    gcTime: 60_000,
     // A probe failure is reported once and kept; retrying a 504 on slow storage
     // just spends another 25 s arriving at the same answer.
     retry: false,
@@ -170,6 +174,40 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   );
   const videoIds = useMemo(() => videos.map((v) => v.id), [videos]);
   const liveJobs = useVideoExtractJobs(videoIds, startedJobIds);
+
+  // One row per video with a job to show, whether this modal started it or found
+  // it already running. A **union** keyed by video id, not "result if present,
+  // otherwise liveJobs": submit A+B+C with A already extracting and the endpoint
+  // returns A under `skipped` only, so the otherwise-form would drop A's live bar
+  // the instant the response landed and leave an amber line for the video working
+  // hardest. `result.jobs` goes first because it alone carries `filename` and the
+  // resolved `subfolder`.
+  const rows = useMemo<ProgressRow[]>(() => {
+    const out: ProgressRow[] = [];
+    const seen = new Set<string>();
+    for (const j of result?.jobs ?? []) {
+      out.push({ videoId: j.video_id, jobId: j.job_id, filename: j.filename, subfolder: j.subfolder });
+      seen.add(j.video_id);
+    }
+    for (const [videoId, p] of liveJobs) {
+      // `useVideoExtractJobs` returns every live extraction in the app, not only
+      // this modal's, so the membership check is load-bearing.
+      if (seen.has(videoId) || !videoIds.includes(videoId)) continue;
+      out.push({
+        videoId,
+        jobId: p.job_id,
+        filename: videos.find((v) => v.id === videoId)?.filename ?? videoId,
+      });
+    }
+    return out;
+  }, [result, liveJobs, videoIds, videos]);
+
+  // A video that produced a row is being watched, so its amber "already
+  // extracting" line would only contradict the bar directly above it.
+  const skipped = useMemo(
+    () => (result?.skipped ?? []).filter((s) => !rows.some((r) => r.videoId === s.video_id)),
+    [result, rows],
+  );
 
   // Derived during render rather than reset in the radio's `onChange` — the
   // idiom this file already uses for `lastProbe`, and `VideoStrip` for
@@ -257,12 +295,19 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
               : <span className="mono">{primary.filename}</span>}
           </div>
 
+          {/* Deliberately **not** a view swap on `liveJobs.size > 0`:
+              `useVideoExtractJobs` filters terminal statuses, so the view would
+              empty the instant a run finished and dump the user back into a fresh
+              probe. The full swap stays gated on `result` alone — terminal-stable
+              — and a run this modal did not start is shown as a block *above* the
+              step content instead, following `GeneratePromptsModal`. Reopening
+              over a live job then lands on step 1 with a watchable, cancellable
+              bar on top, and a mixed batch can still be configured for the videos
+              that are not busy. No view state, no latch, no vanish-on-complete. */}
+          {!result && rows.length > 0 && <ExtractProgressList rows={rows} liveJobs={liveJobs} skipped={[]} />}
+
           {result ? (
-            <RunningView
-              result={result}
-              liveJobs={liveJobs}
-              videos={videos}
-            />
+            <ExtractProgressList rows={rows} liveJobs={liveJobs} skipped={skipped} />
           ) : step === 1 ? (
             <>
               {probeQuery.isPending && !probe && (
@@ -460,7 +505,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
               {mode !== "replace" && (
                 <div>
                   <label className="label" style={{ fontSize: 12 }}>Subfolder</label>
-                  <select className="select" style={{ fontSize: 12 }} value={effectiveSubSelect} onChange={(e) => setSubSelect(e.target.value)}>
+                  <select className="select" style={{ fontSize: 12 }} data-testid="extract-subfolder" value={effectiveSubSelect} onChange={(e) => setSubSelect(e.target.value)}>
                     {/* The two modes resolve an empty subfolder differently, so
                         one label for both was wrong in whichever mode it did not
                         describe. */}
@@ -553,48 +598,75 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   );
 }
 
-/** One row per started job, plus the videos the server refused to double-start. */
-function RunningView({
-  result, liveJobs, videos,
-}: {
-  result: VideoExtractResult;
-  liveJobs: Map<string, JobProgress>;
-  videos: Video[];
-}) {
-  const nameFor = (videoId: string) =>
-    result.jobs.find((j) => j.video_id === videoId)?.filename
-    ?? videos.find((v) => v.id === videoId)?.filename
-    ?? videoId;
+/** One extraction being watched, whether this modal started it or found it live. */
+interface ProgressRow {
+  videoId: string;
+  jobId: string;
+  filename: string;
+  /** Only a row built from the extract response knows where the frames land. A
+   *  row derived from a live job does not, and must render nothing rather than
+   *  fall back to "root" — which would be a guess printed as a fact. */
+  subfolder?: string;
+}
 
+/** The live extractions, plus any video the server refused to double-start.
+ *
+ *  Rendered in two places for the same run: on its own once this modal has
+ *  submitted, and above the step content when it mounted over a job that was
+ *  already going. Keyed by video id, because the same video reached by both
+ *  routes is one row.
+ */
+function ExtractProgressList({
+  rows, liveJobs, skipped,
+}: {
+  rows: ProgressRow[];
+  liveJobs: Map<string, JobProgress>;
+  skipped: VideoExtractResult["skipped"];
+}) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {result.jobs.map((j) => {
-        const live = liveJobs.get(j.video_id);
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }} data-testid="extract-running">
+      {rows.map((r) => {
+        const live = liveJobs.get(r.videoId);
         return (
-          <div key={j.job_id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div key={r.videoId} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               <span className="mono" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {nameFor(j.video_id)}
+                {r.filename}
               </span>
-              <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>→ {j.subfolder || "root"}</span>
+              {r.subfolder !== undefined && (
+                <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>→ {r.subfolder || "root"}</span>
+              )}
               {live && (
-                <button className="icon-btn" title="Cancel this extraction" onClick={() => jobsApi.cancel(j.job_id)}>×</button>
+                // No optimistic `jobStore` write here, unlike TopBar's pill: this
+                // block *is* `liveJobs`, so marking the job cancelled at click
+                // time would empty the map and yank the row away before the
+                // backend had actually cancelled anything.
+                <button className="icon-btn" title="Cancel this extraction" onClick={() => jobsApi.cancel(r.jobId)}>×</button>
               )}
             </div>
             <JobProgressBar
               message={live ? extractPhaseLabel(live) : "Finished or no longer reporting"}
-              percent={Math.max(0, live?.percent ?? 100)}
+              // `?? 0` for a live job, not `?? 100`: the queue's `pending` event
+              // carries no percent, and the queue is serial, so a 3-video batch
+              // otherwise showed two *full* bars labelled "Queued". The clamp
+              // stays — `JobProgressBar` interpolates `width: ${percent}%` raw,
+              // and an invalid `width: -1%` is dropped, leaving `width: auto`,
+              // i.e. a full bar again.
+              percent={live ? Math.max(0, live.percent ?? 0) : 100}
             />
           </div>
         );
       })}
 
-      {result.skipped.map((s) => (
+      {skipped.map((s) => (
         <div key={s.video_id} style={{ fontSize: 12, color: "var(--warn)" }}>
           {s.filename} — {s.reason}
         </div>
       ))}
 
+      {/* No promise that another run can always be started: `POST
+          /videos/extract` calls `ensure_not_busy`, so a second submit landing
+          during another video's replace step 409s. */}
       <p style={{ fontSize: 11.5, color: "var(--fg-dim)", margin: 0 }}>
         Frames appear in the gallery as they are written. Closing this window is safe —
         the jobs keep running.

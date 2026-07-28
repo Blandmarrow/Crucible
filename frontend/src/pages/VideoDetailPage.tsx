@@ -333,8 +333,11 @@ export default function VideoDetailPage() {
           <button
             className="btn-ghost btn-sm w-full flex items-center justify-center gap-1.5"
             onClick={() => setShowExtract(true)}
-            disabled={!!extractJob}
-            title={extractJob ? "An extraction is already running for this video" : "Turn this video into frames"}
+            // Deliberately **not** disabled while a job runs. The modal re-attaches
+            // to a live run and shows it as a block above step 1, so disabling this
+            // made the documented "reopen to watch it" path unreachable from the
+            // one entry point that gated on it — `VideoStrip` never did.
+            title={extractJob ? "Show the running extraction" : "Turn this video into frames"}
           >
             <Scissors size={14} /> Extract frames
           </button>

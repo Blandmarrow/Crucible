@@ -186,6 +186,10 @@ function VideoCard({
     <div
       role="button"
       tabIndex={0}
+      // Without this the card takes its name from its contents — the checkbox's
+      // "Select clip.mp4", the duration badge and the filename all concatenated,
+      // so a screen reader announces "Select clip.mp4 0:02 clip.mp4".
+      aria-label={video.filename}
       onClick={(e) => { if (e.shiftKey) onSelect(true); else onOpen(); }}
       onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
       onKeyDown={(e) => {

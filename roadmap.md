@@ -323,6 +323,16 @@ the `ExtractFramesModal`, `VideoStrip` multi-select and the extraction history.
   the way out of any raise, following `comfy_generate`'s `_run_with_stats`. The plan's own
   test list asked for "stats refreshed" and "cancel keeps written frames" as separate cases
   and never crossed them, which is why it slipped.
+- **A review of Stage B corrected eight code defects and four doc inaccuracies**, three of
+  which broke promises the shipped UI already made: the job's `done` counter meant "frames
+  decoded" in one phase and "frames planned" in another, so frames never appeared in the
+  gallery mid-run (PM-008); the modal did not re-attach to a live job on reopen, and
+  `VideoDetailPage` disabled the only button that would have opened it; and a batch
+  extraction wrote the previewed video's crop, deinterlacer and trims to every other selected
+  video, silently wiping their stored rects. The rest were dead ends a user could not escape
+  (an unprobeable video, a stale `bwdif`, an existing subfolder picked in the wrong mode) plus
+  `GET /videos/capabilities`, a queued-job progress bar that rendered full, and a persist
+  effect writing localStorage on every SSE event app-wide.
 
 - **Probe endpoint is a plain request, not a job.** Measured: 8 seek+decode
   operations cost 0.060 s total, 7.5 ms each. Run it through `run_in_executor`

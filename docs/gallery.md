@@ -32,44 +32,7 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 - **Rescan folder from disk** — a per-dataset-card button and a Rescan button in the gallery toolbar reconcile the dataset with its `images/` folder: new files on disk are registered (with thumbnails), added or changed `.txt` captions are applied, and files missing on disk are reported in a summary toast (DB records are never deleted). If two files you dropped in differ only by extension — `photo.png` and `photo.jpg` — one is renamed to `photo_001.jpg`, because both would otherwise share a single preview thumbnail and one would replace the other. The summary toast says how many were renamed; nothing else about your files is changed. Enable **Auto-rescan dataset on open** in Settings to run this automatically each time you open a dataset gallery
 - **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
 - **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
-
-### Videos (experimental)
-
-Videos are **sources**, not gallery images. A video you add is stored separately from the dataset's images, in its own `videos/` folder, and is kept out of the counts you see on a dataset card: an image count never includes videos, and a dataset's size never includes them either. The point of holding a video is to extract frames from it; those frames become ordinary images and can be scored, captioned and exported like any others.
-
-- Drop a video onto the gallery, or pick one with the upload button — `.mp4`, `.mkv`, `.webm`, `.mov` and `.avi` are accepted. A file that cannot be decoded is rejected with a message rather than stored broken
-- Tick **Include videos** in the import dialog to bring videos in with a folder import. It is off by default, so importing a mixed folder into an image dataset never quietly copies gigabytes of video. Videos always land flat — the subfolder and **Preserve structure** options apply to images only
-- **Rescan** also registers any video dropped straight into the dataset's `videos/` folder, and reports videos whose files have gone missing. Videos are never renamed, even when two of them differ only by extension — their poster frames are given distinct names instead
-
-A dataset's videos appear in a **Videos** strip above the image grid, each card showing a poster frame taken from the middle of the clip and its length. Collapse the strip with the header arrow — it stays that way for that dataset. A dataset with no videos shows no strip at all. Videos are also counted on the dataset card and in the gallery header, separately from images.
-
-Tick the checkbox on a card to select it; shift-click a second card to select the run between them. With anything selected the strip header offers **Extract frames**, which runs the same settings across every selected video at once. **Clear** drops the selection, and it clears itself when you switch datasets.
-
-Click a card to open the video: it plays inline with a scrubber, and the panel beside it lists dimensions, length, frame rate, codec, file size and licence. A length that the file's header does not record honestly shows **—**, never `0:00`. **←** and **→** move between the dataset's videos, and the pencil beside the filename renames one — the extension is always kept, since it tells the browser how to play the file, and a name already in use gets a numeric suffix rather than overwriting anything.
-
-### Extracting frames
-
-**Extract frames** — on the video's own page, or on the strip's header for a selection — opens a two-step dialog. A batch shares one set of settings, so the first step previews the first video and says how many it covers.
-
-**Step 1 · Source** samples the clip and shows a filmstrip; click any sample to bring it into the large preview. Over that preview sits an adjustable crop — drag any of the four edges, or type the numbers underneath. **Use detected** applies the letterbox matte Crucible found, alongside how many of the samples agreed on it, so a weak guess does not read as a certainty; **Clear crop** takes the whole frame. Below are a deinterlacing toggle and a trim bar for cutting a head and a tail — a leader or an end card. Anything worth knowing about the file appears here too: whether it looks interlaced, whether it is telecined (detected, not corrected), and whether some samples failed to decode. A clip whose container will not seek shows the trim bar disabled and says why. Adjusting the trim re-samples the clip after a short pause.
-
-**Step 2 · Extract** decides what is cut and where it lands. Choose how many frames to take from each shot and whether to take the **sharpest** of several candidates or simply the **middle** one, the long edge to resize to, and how sensitive cut detection should be. **Detector tuning** hides the settings that trade accuracy for speed on a long file — the shortest shot worth keeping, how many frames to skip between checks, and a ceiling on the number of shots.
-
-Frames land in a subfolder, and there are three ways to place them:
-
-- **New subfolder** (the default) names one after the video, stepping to `clip_2` if that name is taken
-- **Add to …** puts them alongside the frames from this video's previous run
-- **Replace** deletes that previous run first — the button says how many frames that is. They are deleted properly, so a snapshot taken beforehand can still restore them
-
-You can also pick an existing subfolder or type a new name instead.
-
-Extraction runs in the background, one job per video, and frames appear in the gallery as they are written rather than all at once at the end. Closing the dialog is safe: the run continues, the video's page keeps showing its progress, and reopening the dialog — or reloading the page — picks the run back up. A video that is already extracting is named and skipped rather than started twice.
-
-Once a video has produced frames, its page lists them under **Extracted frames**: how many went into each subfolder, most recent first, each one a link that opens the gallery at that subfolder. Every extracted image records where it came from, and its detail page shows a line naming the video, the timestamp within it and the shot number — so a frame filed away somewhere else can still say where it began.
-
-Two things need optional packages that `manage.sh update` / `manage.ps1 update` installs. Without them the dialog says so rather than failing: deinterlacing is switched off and unavailable, and without cut detection frames are sampled at fixed intervals instead of at shot boundaries.
-
-**Delete video** removes the video and its poster. Frames already extracted from it are ordinary images and are deliberately left alone — the confirmation says how many there are; they keep their files and only lose the link back to the video.
+- **Videos** are held as *sources* rather than gallery images — stored in their own folder, counted separately from images, and turned into frames on demand → [details](video.md)
 
 A folder import copies every file into the dataset, so it checks first that the drive has room for them. If it does not, the import fails immediately — with the free and required sizes in the job's error — instead of stopping partway through with some images copied and some not.
 

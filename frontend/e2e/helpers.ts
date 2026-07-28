@@ -89,9 +89,10 @@ export async function uploadViaApi(
   request: APIRequestContext,
   datasetId: string,
   name = 'seed.png',
+  subfolder = '',
 ): Promise<string> {
   const r = await request.post('/api/v1/images/upload', {
-    params: { dataset_id: datasetId },
+    params: { dataset_id: datasetId, subfolder },
     multipart: {
       files: { name, mimeType: 'image/png', buffer: pngBuffer() },
     },

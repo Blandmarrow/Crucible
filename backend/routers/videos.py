@@ -1,8 +1,11 @@
 import asyncio
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -26,15 +29,19 @@ from backend.schemas.video import (
     VideoProbeRequest,
     VideoProbeResult,
     VideoProbeSample,
+    VideoReextractGroup,
+    VideoReextractRequest,
+    VideoReextractResult,
 )
 from backend.services import version_service, video_extract
 from backend.services.dataset_busy import busy, ensure_not_busy
 from backend.services.dataset_service import refresh_stats
-from backend.services.image_service import get_image_info
+from backend.services.image_service import generate_thumbnail, get_image_info
 from backend.services.video_frames import clamp_crop
 from backend.services.video_service import claimed_poster_stems, generate_poster, measure_duration_ms
 from backend.utils import (
     InsufficientDiskSpaceError,
+    chunked,
     normalize_subfolder,
     poster_path_for,
     require_free_space,
@@ -344,9 +351,21 @@ EXTRACT_MAX_CONSECUTIVE_FAILURES = 10
 EXTRACT_FAILURE_RATE_AFTER_SHOTS = 20
 EXTRACT_MAX_FAILURE_RATE = 0.5
 # Progress bands. One monotone percent across three phases, because a bar that
-# restarts at zero reads as a job that restarted.
-PHASE_BANDS = {"detecting": (0.0, 20.0), "replacing": (20.0, 25.0), "extracting": (25.0, 100.0)}
+# restarts at zero reads as a job that restarted. `rewriting` is pass 2's single
+# phase, so it spans the whole bar.
+PHASE_BANDS = {
+    "detecting": (0.0, 20.0), "replacing": (20.0, 25.0), "extracting": (25.0, 100.0),
+    "rewriting": (0.0, 100.0),
+}
 DETECT_EMIT_INTERVAL = 0.5
+
+# One copy of the text, quoted by the extract gate, the re-extract gate and
+# `video_extract.require_deinterlace`.
+DEINTERLACE_UNAVAILABLE = (
+    "Deinterlacing needs the imageio-ffmpeg package, which is not installed. "
+    "Run the update command (manage.sh update / manage.ps1 update), or extract "
+    "with deinterlacing switched off."
+)
 
 
 def _phase_percent(phase: str, fraction: float) -> float:
@@ -380,6 +399,24 @@ async def _last_subfolder_for(db: AsyncSession, video_id: str) -> str | None:
         .limit(1)
     )
     return row.scalar_one_or_none()
+
+
+async def _videos_with_running_extractions(db: AsyncSession) -> set[str]:
+    """Video ids covered by a pending or running extraction of *either* pass.
+
+    Both directions matter. Pass 1's `replace` mode deletes this video's previous
+    frames, which is exactly the set pass 2 rewrites in place; letting the two
+    overlap means one job unlinking files the other is mid-swap on.
+    """
+    inflight = (await db.execute(
+        select(BackgroundJob.config).where(
+            BackgroundJob.job_type.in_(("video_extract", "video_reextract")),
+            BackgroundJob.status.in_(("pending", "running")),
+        )
+    )).scalars().all()
+    return {
+        (cfg or {}).get("video_id") for cfg in inflight if isinstance(cfg, dict)
+    }
 
 
 def _step_subfolder(base: str, taken: set[str]) -> str:
@@ -417,15 +454,10 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
     # video already extracting must not have its stored crop, deinterlace or
     # trims mutated by a request that extracts nothing, and must not 400 the
     # whole batch over a rect that will never be applied.
-    inflight = (await db.execute(
-        select(BackgroundJob.config).where(
-            BackgroundJob.job_type == "video_extract",
-            BackgroundJob.status.in_(("pending", "running")),
-        )
-    )).scalars().all()
-    busy_video_ids = {
-        (cfg or {}).get("video_id") for cfg in inflight if isinstance(cfg, dict)
-    }
+    # Both job types, in both directions: a pass-1 `replace` deletes the very
+    # rows a running pass 2 is rewriting, and a pass 2 rewrites rows a running
+    # pass 1 may be about to delete.
+    busy_video_ids = await _videos_with_running_extractions(db)
 
     skipped: list[dict] = []
     to_run: list[Video] = []
@@ -444,12 +476,7 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
         effective = body.deinterlace if body.deinterlace is not None else (v.deinterlace or "")
         if effective and not caps["deinterlace"]:
             # Keep in sync with `video_extract.require_deinterlace`'s copy.
-            raise HTTPException(
-                503,
-                "Deinterlacing needs the imageio-ffmpeg package, which is not installed. "
-                "Run the update command (manage.sh update / manage.ps1 update), or extract "
-                "with deinterlacing switched off.",
-            )
+            raise HTTPException(503, DEINTERLACE_UNAVAILABLE)
 
     # The rect actually stored: `clamp_crop` snaps to even coordinates and
     # returns None for a full-frame rect, so comparing its output against the
@@ -614,8 +641,11 @@ def _make_extract_runner(cfg: dict, dataset_id: str):
     return _run_with_stats
 
 
-async def _emit(job_id: str, phase: str, fraction: float, *, video_id: str, **extra) -> None:
-    """Emit one progress event for an extraction job.
+async def _emit(
+    job_id: str, phase: str, fraction: float, *,
+    video_id: str, job_type: str = "video_extract", **extra,
+) -> None:
+    """Emit one progress event for an extraction job, either pass.
 
     `video_id` is keyword-only and required so no call site can forget it: a batch
     runs one job per video, and without the key a frontend holding every event in
@@ -625,7 +655,7 @@ async def _emit(job_id: str, phase: str, fraction: float, *, video_id: str, **ex
     terminal event, which does not carry it.
     """
     await broadcaster.emit(job_id, {
-        "type": "progress", "job_id": job_id, "job_type": "video_extract",
+        "type": "progress", "job_id": job_id, "job_type": job_type,
         "status": "running", "phase": phase, "video_id": video_id,
         "percent": _phase_percent(phase, fraction),
         **extra,
@@ -979,6 +1009,467 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
         job_queue.raise_if_cancelled(job_id)
 
     # 8.
+    await refresh_stats(session, dataset.id)
+
+
+# ---------------------------------------------------------------------------
+# Pass 2 — full-resolution re-extraction
+# ---------------------------------------------------------------------------
+
+# Bytes per re-extracted frame, per cropped pixel, for the disk preflight.
+# Deliberately generous: a temp file coexists with the original during each swap.
+REEXTRACT_BYTES_PER_PIXEL = {"jpeg": 0.5, "png": 2.0}
+# Carried on `result_data` so the completion toast can say it as well as the
+# form. Pass 2 leaves the scores alone (matching `batch_upscale`/`batch_lut`
+# replace mode), and silence about that would be the misleading choice.
+REEXTRACT_NOTE = (
+    "Quality scores were measured on the triage frames and have been kept as they are. "
+    "Re-run scoring if you want scores that reflect the full-resolution images."
+)
+
+
+def _edited_in_place(history) -> bool:
+    """True when something other than pass 2 has already rewritten these pixels.
+
+    This is the rule `backend/models/image.py` was written to state: the
+    **replace** mode of crop/upscale/LUT/detection-crop mutates a frame's row in
+    place, so it keeps its lineage while the pixels stop being the extracted
+    frame. Re-extracting one would silently discard the edit.
+
+    The `reextract` exclusion is load-bearing — without it pass 2 would refuse to
+    run a second time, because its own history entry would look like third-party
+    editing. Anything that is not a dict counts as an unknown edit and skips.
+    """
+    for entry in history or []:
+        if not isinstance(entry, dict) or entry.get("op") != "reextract":
+            return True
+    return False
+
+
+async def _reextract_rows(db: AsyncSession, body: VideoReextractRequest):
+    """The `Image` rows in scope plus the ids that no longer resolve.
+
+    A column select, not entities: the resolver is shared with the preview
+    endpoint, which writes nothing and should not pay for an ORM load.
+    """
+    cols = (
+        Image.id, Image.filename, Image.dataset_id, Image.file_path,
+        Image.source_video_id, Image.source_timestamp_ms, Image.processing_history,
+    )
+    if body.image_ids is not None:
+        found = {}
+        for chunk in chunked(body.image_ids):
+            for row in (await db.execute(select(*cols).where(Image.id.in_(chunk)))).all():
+                found[row.id] = row
+        # Request order, and every unresolved id named rather than dropped.
+        ordered = [found[i] for i in body.image_ids if i in found]
+        missing = [i for i in body.image_ids if i not in found]
+        return ordered, missing
+
+    q = select(*cols).where(Image.source_video_id == body.video_id)
+    if body.subfolder is not None:
+        q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
+    rows = (await db.execute(q.order_by(Image.source_timestamp_ms))).all()
+    return list(rows), []
+
+
+async def _resolve_reextract_targets(
+    db: AsyncSession, body: VideoReextractRequest
+) -> tuple[list[dict], list[dict], int]:
+    """Group the eligible frames by source video; name every skip and its reason.
+
+    Shared by `/reextract/preview` and `/reextract` so the modal's accounting and
+    the job's can never diverge — the one thing a preview endpoint exists to
+    guarantee.
+    """
+    rows, missing = await _reextract_rows(db, body)
+    skipped: list[dict] = [
+        {"image_id": image_id, "filename": "", "reason": "no longer exists"}
+        for image_id in missing
+    ]
+
+    video_ids = sorted({r.source_video_id for r in rows if r.source_video_id})
+    videos: dict[str, Video] = {}
+    for chunk in chunked(video_ids):
+        for v in (await db.execute(select(Video).where(Video.id.in_(chunk)))).scalars().all():
+            videos[v.id] = v
+    on_disk: dict[str, bool] = {}
+
+    groups: dict[str, dict] = {}
+    for r in rows:
+        video = videos.get(r.source_video_id) if r.source_video_id else None
+        if video is not None and r.source_video_id not in on_disk:
+            on_disk[r.source_video_id] = Path(video.file_path).exists()
+
+        # The ladder, in order. The last rung is `models/image.py`'s mandate.
+        reason = None
+        if not r.source_video_id:
+            reason = "not extracted from a video"
+        elif r.source_timestamp_ms is None:
+            # The timestamp is the artifact — without it there is nothing to seek.
+            reason = "no recorded timestamp"
+        elif video is None or video.dataset_id != r.dataset_id:
+            reason = "source video is gone"
+        elif not on_disk[r.source_video_id]:
+            reason = "source video file is missing"
+        elif _edited_in_place(r.processing_history):
+            reason = "already edited in place"
+        if reason is not None:
+            skipped.append({"image_id": r.id, "filename": r.filename, "reason": reason})
+            continue
+
+        group = groups.setdefault(video.id, {"video": video, "frames": []})
+        group["frames"].append(
+            {"image_id": r.id, "filename": r.filename, "timestamp_ms": r.source_timestamp_ms}
+        )
+
+    # In-flight dedupe lives in the resolver rather than the enqueue path so the
+    # preview is honest about it too.
+    busy_video_ids = await _videos_with_running_extractions(db)
+    for video_id in [v for v in groups if v in busy_video_ids]:
+        for frame in groups.pop(video_id)["frames"]:
+            skipped.append({
+                "image_id": frame["image_id"], "filename": frame["filename"],
+                "reason": "source video is already being extracted",
+            })
+
+    return list(groups.values()), skipped, len(rows) + len(missing)
+
+
+def _reextract_result(groups: list[dict], skipped: list[dict], total: int,
+                      job_ids: dict[str, str] | None = None) -> VideoReextractResult:
+    job_ids = job_ids or {}
+    return VideoReextractResult(
+        groups=[
+            VideoReextractGroup(
+                video_id=g["video"].id,
+                filename=g["video"].filename,
+                frames=len(g["frames"]),
+                job_id=job_ids.get(g["video"].id),
+            )
+            for g in groups
+        ],
+        skipped=skipped,
+        eligible=sum(len(g["frames"]) for g in groups),
+        total=total,
+    )
+
+
+@router.post("/reextract/preview", response_model=VideoReextractResult)
+async def preview_reextract(body: VideoReextractRequest, db: AsyncSession = Depends(get_db)):
+    """Resolve a re-extraction without writing anything. Drives the modal's accounting.
+
+    Both this and `POST /videos/reextract` are literal segments under `/videos/`
+    and are POSTs, so `GET /videos/{video_id}` cannot shadow them — but
+    `test_video_reextract_http.py` pins that rather than trusting it, the same way
+    `GET /videos/capabilities` is pinned.
+    """
+    groups, skipped, total = await _resolve_reextract_targets(db, body)
+    return _reextract_result(groups, skipped, total)
+
+
+@router.post("/reextract", response_model=VideoReextractResult)
+async def reextract_frames(body: VideoReextractRequest, db: AsyncSession = Depends(get_db)):
+    """Re-cut already-extracted frames from their source video at full resolution.
+
+    One job per video — the grouping is what lets each label name its video, and
+    what keeps a decode handle open on one file at a time.
+
+    The job does **not** hold `dataset_busy` (following `batch_upscale`); the
+    endpoint only refuses to start while something else does.
+    """
+    groups, skipped, total = await _resolve_reextract_targets(db, body)
+    if not groups:
+        return _reextract_result(groups, skipped, total)
+
+    for dataset_id in {g["video"].dataset_id for g in groups}:
+        ensure_not_busy(dataset_id)
+
+    # The gate tests the *stored* filter, which is what the job will replay —
+    # there is no request field to override it here. Without this the job dies
+    # inside every frame and reports a missing package as a decode fault.
+    caps = video_extract.capabilities()
+    for g in groups:
+        if (g["video"].deinterlace or "") and not caps["deinterlace"]:
+            raise HTTPException(503, DEINTERLACE_UNAVAILABLE)
+
+    needed: dict[str, int] = {}
+    for g in groups:
+        v = g["video"]
+        w = v.crop_w or v.width or 1920
+        h = v.crop_h or v.height or 1080
+        if body.max_long_edge and max(w, h) > body.max_long_edge:
+            scale = body.max_long_edge / max(w, h)
+            w, h = max(1, int(w * scale)), max(1, int(h * scale))
+        per_frame = int(w * h * REEXTRACT_BYTES_PER_PIXEL[body.format])
+        needed[v.dataset_id] = needed.get(v.dataset_id, 0) + per_frame * len(g["frames"])
+    for dataset_id, size in needed.items():
+        ds = await db.get(Dataset, dataset_id)
+        if ds:
+            try:
+                require_free_space(Path(ds.folder_path) / "images", size)
+            except InsufficientDiskSpaceError as exc:
+                raise HTTPException(507, str(exc)) from None
+
+    job_ids: dict[str, str] = {}
+    for g in groups:
+        v = g["video"]
+        n = len(g["frames"])
+        # `[:60]` is not cosmetic — `BackgroundJob.label` is a String(200).
+        auto_label = (
+            f"Re-extract: {Path(v.filename).stem[:60]} — "
+            f"{n} frame{'' if n == 1 else 's'} at full res"
+        )
+        config = {
+            "video_id": v.id,
+            "image_ids": [f["image_id"] for f in g["frames"]],
+            "format": body.format,
+            "max_long_edge": body.max_long_edge,
+            "label": body.label,
+        }
+        job = BackgroundJob(
+            job_type="video_reextract",
+            label=body.label or auto_label,
+            dataset_id=v.dataset_id,
+            total_items=n,
+            config=config,
+        )
+        db.add(job)
+        await db.commit()
+        await job_queue.enqueue(job, _make_reextract_runner(config, v.dataset_id))
+        job_ids[v.id] = job.id
+
+    return _reextract_result(groups, skipped, total, job_ids)
+
+
+def _make_reextract_runner(cfg: dict, dataset_id: str):
+    """Build the worker coroutine for one video's re-extraction job.
+
+    `_run_with_stats` is `_make_extract_runner`'s, verbatim and for the same
+    reasons: the circuit breaker, `raise_if_cancelled` and the disk recheck all
+    raise past the final `refresh_stats` having committed real rewrites.
+    """
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            await _run_reextraction(session, job_id, cfg)
+
+    async def _run_with_stats(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.services.dataset_service import refresh_stats
+
+        try:
+            await _run(job_id)
+        except BaseException:
+            try:
+                async with AsyncSessionLocal() as stats_session:
+                    await refresh_stats(stats_session, dataset_id)
+            except Exception:
+                logger.warning("video_reextract: final stats refresh failed", exc_info=True)
+            raise
+
+    return _run_with_stats
+
+
+async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> None:
+    """The `video_reextract` worker.
+
+    **The per-frame ordering is deliberately better than the upscale path's.**
+    Upscale and LUT overwrite the original and only then discover whether the
+    result re-opens; this writes a temp beside the image, verifies it, and only
+    swaps once it is known good. A frame that fails leaves its original intact.
+    """
+    loop = asyncio.get_running_loop()
+    video = await session.get(Video, cfg["video_id"])
+    if video is None:
+        raise RuntimeError("The video was deleted before re-extraction started")
+    dataset = await session.get(Dataset, video.dataset_id)
+    if dataset is None:
+        raise RuntimeError("The dataset was deleted before re-extraction started")
+
+    src = Path(video.file_path)
+    images_dir = Path(dataset.folder_path) / "images"
+    fmt = cfg["format"]
+    suffix = ".png" if fmt == "png" else ".jpg"
+    long_edge = cfg.get("max_long_edge") or 0
+    # Geometry replays verbatim: these are the *normalized* values the extract
+    # endpoint stored, so pass 2 applies them as-is. Trims never mattered to a
+    # direct seek.
+    crop = None
+    if video.crop_w and video.crop_h:
+        crop = (video.crop_x or 0, video.crop_y or 0, video.crop_w, video.crop_h)
+    deinterlace = video.deinterlace or ""
+
+    image_ids: list[str] = cfg["image_ids"]
+    rows: list[Image] = []
+    for chunk in chunked(image_ids):
+        rows.extend(
+            (await session.execute(select(Image).where(Image.id.in_(chunk)))).scalars().all()
+        )
+    # A row can be deleted between enqueue and run; a timestamp cannot come back.
+    rows = [r for r in rows if r.source_timestamp_ms is not None]
+    # Ascending, so the reader walks forward through the file.
+    rows.sort(key=lambda r: r.source_timestamp_ms)
+
+    counts = {
+        "rewritten": 0, "failed": 0, "skipped": len(image_ids) - len(rows),
+        "video_id": video.id, "format": fmt, "note": REEXTRACT_NOTE,
+    }
+    total = len(rows)
+    require_free_space(images_dir, 0)
+
+    # Image rows updated but not yet committed. Tracked here rather than derived
+    # from `rewritten % N` because `_rewrite` commits mid-frame (the mandatory COW
+    # flush), and `done` has to mean "frames a gallery refetch would actually see".
+    pending_rows = 0
+
+    async def _rewrite(img: Image) -> str | None:
+        """Rewrite one frame in place. Returns None on success, else a reason."""
+        nonlocal pending_rows
+
+        src_path = Path(img.file_path)
+        target = src_path.with_suffix(suffix)
+        tmp = src_path.with_name(f"{src_path.stem}.{uuid4().hex}.tmp{suffix}")
+        try:
+            result = await loop.run_in_executor(None, partial(
+                video_extract.render_at_timestamps,
+                src,
+                [float(img.source_timestamp_ms)],
+                dests=[(str(tmp), None)],
+                crop=crop,
+                deinterlace=deinterlace,
+                long_edge=long_edge,
+            ))
+        except Exception as exc:
+            logger.warning("video_reextract: %s could not be decoded: %s", img.filename, exc)
+            tmp.unlink(missing_ok=True)
+            return "decode failed"
+        if not result.written:
+            tmp.unlink(missing_ok=True)
+            return "no frame decoded at that timestamp"
+        tmp = Path(result.written[0].path)
+
+        # Verify *before* anything is destroyed. `get_image_info` swallows every
+        # exception, so `{}` means the file just written will not re-open — and
+        # unlike upscale/LUT, the original is still sitting there untouched.
+        info = await loop.run_in_executor(None, get_image_info, str(tmp))
+        if not info:
+            tmp.unlink(missing_ok=True)
+            return "the written frame would not re-open"
+
+        if target != src_path and target.exists():
+            # An unregistered file — hand-dropped into images/ and not yet
+            # rescanned, so no DB row guards it. The only real hazard in the
+            # extension swap; never clobber it.
+            tmp.unlink(missing_ok=True)
+            return f"{target.name} already exists on disk"
+
+        # Mandatory before an in-place overwrite, and so is the commit: the hook
+        # only *flushes* the hash backfill, so a crash during the swap would roll
+        # it back and leave a pre-existing snapshot claiming "content unchanged".
+        await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+        await session.commit()
+        pending_rows = 0
+
+        os.replace(tmp, target)
+        if target != src_path:
+            # A *pure* extension change: the stem never moves, so the thumbnail
+            # ({stem}.webp) and the caption sidecar ({stem}.txt) both stay exactly
+            # where they are — no rename_with_sidecar, no thumbnail move. The name
+            # is provably free because every image-name-picking site goes through
+            # `unique_filename_with_thumb`, which rejects a candidate whose *stem*
+            # is occupied in any extension; the only file that can be sitting there
+            # is an unregistered one, refused above.
+            src_path.unlink(missing_ok=True)
+            img.filename = target.name
+            img.file_path = str(target)
+
+        if img.thumbnail_path:
+            await loop.run_in_executor(
+                None, generate_thumbnail, str(target), img.thumbnail_path
+            )
+
+        now = datetime.now(timezone.utc)
+        img.width = info["width"]
+        img.height = info["height"]
+        img.file_size_bytes = info["file_size_bytes"]
+        img.format = info["format"]
+        # phash is re-derived even though the scores are not: dedup depends on it,
+        # and a full-res frame hashes differently from its 1024px triage version.
+        img.phash = info["phash"]
+        # What busts `imagesApi.thumbnailUrlVersioned` — without it an open detail
+        # pane keeps showing the triage thumbnail.
+        img.updated_at = now
+        img.processing_history = (img.processing_history or []) + [{
+            "op": "reextract",
+            "video_id": video.id,
+            "timestamp_ms": img.source_timestamp_ms,
+            "format": fmt,
+            "long_edge": long_edge,
+            "at": now.isoformat(),
+        }]
+        pending_rows += 1
+        return None
+
+    consecutive_failures = 0
+    written_since_disk_check = 0
+    cancelled = False
+
+    for i, img in enumerate(rows):
+        if job_queue.cancel_requested(job_id):
+            cancelled = True
+            break
+
+        reason = await _rewrite(img)
+        if reason is None:
+            counts["rewritten"] += 1
+            consecutive_failures = 0
+            written_since_disk_check += 1
+        else:
+            counts["failed"] += 1
+            consecutive_failures += 1
+            logger.info("video_reextract: skipped %s — %s", img.filename, reason)
+
+        if pending_rows >= EXTRACT_COMMIT_EVERY:
+            await session.commit()
+            pending_rows = 0
+        if written_since_disk_check >= EXTRACT_DISK_RECHECK_EVERY:
+            written_since_disk_check = 0
+            # Commit first: `require_free_space` raises out of the job, and a
+            # rewritten file with an uncommitted row is a row that still claims
+            # the triage dimensions.
+            await session.commit()
+            pending_rows = 0
+            require_free_space(images_dir, 0)
+
+        await _emit(
+            job_id, "rewriting", (i + 1) / max(total, 1),
+            video_id=video.id, job_type="video_reextract",
+            done=counts["rewritten"] - pending_rows, total=total,
+            image_id=img.id,
+            message=f"Frame {i + 1} of {total}",
+        )
+
+        if consecutive_failures >= EXTRACT_MAX_CONSECUTIVE_FAILURES:
+            # Frames already rewritten stay — they are real, and their COW backups
+            # exist. The job is `failed`, not `cancelled`: nobody asked for this.
+            await session.commit()
+            raise RuntimeError(
+                f"Re-extraction stopped after {consecutive_failures} consecutive failures "
+                f"({reason}). {counts['rewritten']} frame(s) already rewritten have been kept."
+            )
+
+    job_row = await session.get(BackgroundJob, job_id)
+    if job_row:
+        job_row.result_data = counts
+    await session.commit()
+    if cancelled:
+        # Everything already written stays: the files are real and their COW
+        # backups exist.
+        job_queue.raise_if_cancelled(job_id)
+
     await refresh_stats(session, dataset.id)
 
 

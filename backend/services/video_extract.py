@@ -40,6 +40,7 @@ import numpy as np
 
 from backend.services import video_frames as vf
 from backend.services.video_service import UnreadableVideoError, apply_orientation
+from backend.utils import image_save_kwargs, normalize_image_format
 
 logger = logging.getLogger(__name__)
 
@@ -722,6 +723,128 @@ def detect_shots(
 # ---------------------------------------------------------------------------
 
 
+def _write_frame(
+    frame_bgr: np.ndarray,
+    out_path: str,
+    thumb_path: str | None,
+    *,
+    crop: vf.CropRect | None = None,
+    long_edge: int = 0,
+) -> str:
+    """Crop → resize → save one decoded frame, plus its thumbnail. Blocking.
+
+    The shared write half of both passes: pass 1 (`render_shot`) hands it the
+    frame it picked out of a shot, pass 2 (`render_at_timestamps`) the frame it
+    re-seeked. Returns the path actually written, which can differ from
+    `out_path` when `normalize_image_format` falls back to PNG.
+
+    `long_edge=0` means "no downscale", which is what makes native-resolution
+    pass-2 output a default rather than a special case.
+
+    **No `ImageOps.exif_transpose`**, and that is not a violation of CLAUDE.md's
+    "always transpose first" invariant: the input is a decoded ndarray, not a
+    file with an EXIF block — the same reasoning as `video_service.generate_poster`.
+    Container rotation is handled by `CAP_PROP_ORIENTATION_AUTO` upstream.
+    """
+    import cv2
+    from PIL import Image as PILImage
+
+    # frame.shape is the authority for the crop, not the container header:
+    # headers lie, and container rotation swaps the axes.
+    fh, fw = frame_bgr.shape[:2]
+    safe = vf.clamp_crop(crop, fw, fh)
+    if safe is not None:
+        x, y, w, h = safe
+        frame_bgr = frame_bgr[y: y + h, x: x + w]
+
+    fh, fw = frame_bgr.shape[:2]
+    longest = max(fh, fw)
+    if long_edge and longest > long_edge:
+        scale = long_edge / longest
+        frame_bgr = cv2.resize(
+            frame_bgr,
+            (max(1, int(round(fw * scale))), max(1, int(round(fh * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    # Format from the suffix, through the one helper that owns the JPG→JPEG and
+    # unsupported→PNG rules. `image_save_kwargs("JPEG")` is `{quality: 95,
+    # subsampling: 0}`, so pass 1's output is unchanged bit for bit.
+    fmt, out_path = normalize_image_format(Path(out_path).suffix, out_path)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    img = PILImage.fromarray(frame_bgr[:, :, ::-1])
+    try:
+        img.save(out_path, fmt, **image_save_kwargs(fmt))
+        if thumb_path:
+            Path(thumb_path).parent.mkdir(parents=True, exist_ok=True)
+            thumb = img.copy()
+            try:
+                thumb.thumbnail((256, 256), PILImage.Resampling.LANCZOS)
+                thumb.save(thumb_path, "WEBP", quality=85)
+            finally:
+                thumb.close()
+    finally:
+        img.close()
+    return out_path
+
+
+def render_at_timestamps(
+    path: str | Path,
+    timestamps: list[float],
+    *,
+    dests: list[tuple[str, str | None]],
+    crop: vf.CropRect | None = None,
+    deinterlace: str = "",
+    long_edge: int = 0,
+) -> ShotRenderResult:
+    """Pass 2: re-seek recorded timestamps and write them full resolution. Blocking.
+
+    **The timestamp is the artifact.** `Image.source_timestamp_ms` is
+    authoritative, so this re-seeks it rather than upscaling the triage JPEG —
+    and it does *not* re-detect shots or re-pick a frame, because the pick
+    already happened in pass 1. `_shot_windows`, `_candidate_positions`,
+    `sharpness`, `pick_index` and `is_degenerate` are all unused here.
+
+    Geometry replays verbatim from the stored `Video.crop_*` / `Video.deinterlace`
+    the extract endpoint normalized; trims are irrelevant to a direct seek.
+
+    `dests` is `[(image_path, thumbnail_path | None), …]`, index-aligned with
+    `timestamps`, and the returned `WrittenFrame.pick` carries that index back so
+    the caller can match a written file to the row it belongs to
+    (`shot_index` is `-1`: pass 2 knows nothing about shots).
+
+    Targets are walked in ascending timestamp order so the underlying reads move
+    forward through the file. Each frame is released before the next seek — never
+    a `list[np.ndarray]`, per this module's RSS rule.
+    """
+    path = Path(path)
+    result = ShotRenderResult()
+    for i in sorted(range(len(timestamps)), key=lambda n: timestamps[n]):
+        target = float(timestamps[i])
+        out_path, thumb_path = dests[i]
+        frame = None
+        for _ts, candidate in read_positions(path, [target], deinterlace=deinterlace):
+            frame = candidate
+            break
+        if frame is None:
+            result.failed += 1
+            continue
+        try:
+            written = _write_frame(frame, out_path, thumb_path, crop=crop, long_edge=long_edge)
+        finally:
+            del frame
+        result.written.append(
+            WrittenFrame(
+                shot_index=-1,
+                pick=i,
+                timestamp_ms=int(round(target)),
+                path=written,
+                thumb_path=str(thumb_path) if thumb_path else None,
+            )
+        )
+    return result
+
+
 def render_shot(
     path: str | Path,
     shot: Shot,
@@ -747,10 +870,10 @@ def render_shot(
     luma-outlier rejection is defined against the median of the whole candidate
     set and so can change the winner retroactively. A second seek-and-decode is
     about 7.5 ms.
-    """
-    import cv2
-    from PIL import Image as PILImage
 
+    The crop → resize → save → thumbnail tail is `_write_frame`, shared with
+    pass 2 so the two passes cannot drift on format or quality.
+    """
     path = Path(path)
     result = ShotRenderResult()
     lo = float(shot.start_ms)
@@ -791,42 +914,9 @@ def render_shot(
             continue
 
         try:
-            # frame.shape is the authority for the crop, not the container
-            # header: headers lie, and container rotation swaps the axes.
-            fh, fw = frame.shape[:2]
-            safe = vf.clamp_crop(crop, fw, fh)
-            if safe is not None:
-                x, y, w, h = safe
-                frame = frame[y: y + h, x: x + w]
-
-            fh, fw = frame.shape[:2]
-            longest = max(fh, fw)
-            if long_edge and longest > long_edge:
-                scale = long_edge / longest
-                frame = cv2.resize(
-                    frame,
-                    (max(1, int(round(fw * scale))), max(1, int(round(fh * scale)))),
-                    interpolation=cv2.INTER_AREA,
-                )
-
-            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-            img = PILImage.fromarray(frame[:, :, ::-1])
-            try:
-                # No ImageOps.exif_transpose: the input is a decoded ndarray, not
-                # a file with an EXIF block — outside that invariant's scope, the
-                # same reasoning as video_service.generate_poster. Container
-                # rotation is handled by CAP_PROP_ORIENTATION_AUTO instead.
-                img.save(out_path, "JPEG", quality=95, subsampling=0)
-                if thumb_path:
-                    Path(thumb_path).parent.mkdir(parents=True, exist_ok=True)
-                    thumb = img.copy()
-                    try:
-                        thumb.thumbnail((256, 256), PILImage.Resampling.LANCZOS)
-                        thumb.save(thumb_path, "WEBP", quality=85)
-                    finally:
-                        thumb.close()
-            finally:
-                img.close()
+            out_path = _write_frame(
+                frame, out_path, thumb_path, crop=crop, long_edge=long_edge
+            )
         finally:
             del frame
 

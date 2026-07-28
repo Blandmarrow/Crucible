@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.schemas import UtcDatetime
 
@@ -117,6 +117,54 @@ class VideoExtractResult(BaseModel):
     # Videos already covered by a pending or running extraction. They are named
     # rather than silently folded into the batch, and the rest still enqueue.
     skipped: list[dict] = []
+
+
+class VideoReextractRequest(BaseModel):
+    """Pass 2: re-cut already-extracted frames from their source video, full res.
+
+    Exactly one scope, mirroring `UpscaleRunRequest`'s ids-or-subfolder shape:
+    `image_ids` for a gallery selection (which can span videos and datasets), or
+    `video_id` — optionally narrowed by `subfolder` — for a whole triage batch,
+    which is what the extraction-history rows have to hand.
+    """
+
+    image_ids: list[str] | None = Field(default=None, min_length=1, max_length=5000)
+    video_id: str | None = None
+    subfolder: str | None = None
+    # PNG is offered for a lossless capture. It changes the extension, which the
+    # job handles as a pure suffix swap — the stem never moves, so the thumbnail
+    # and the .txt sidecar stay exactly where they are.
+    format: Literal["jpeg", "png"] = "jpeg"
+    # None = native resolution, which is the point of pass 2. `render_at_timestamps`
+    # already reads 0 as "no downscale".
+    max_long_edge: int | None = Field(default=None, ge=64, le=16384)
+    label: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self):
+        if (self.image_ids is None) == (self.video_id is None):
+            raise ValueError("Provide exactly one of image_ids or video_id")
+        return self
+
+
+class VideoReextractGroup(BaseModel):
+    """One video's share of a re-extraction — one job each, so one label each."""
+
+    video_id: str
+    filename: str
+    frames: int
+    # Unset on the preview endpoint, which resolves without writing anything.
+    job_id: str | None = None
+
+
+class VideoReextractResult(BaseModel):
+    groups: list[VideoReextractGroup] = []
+    # {image_id, filename, reason} — every frame the run will not touch, with a
+    # reason a user can act on. Preview and enqueue share one resolver, so the
+    # modal's accounting and the job's cannot diverge.
+    skipped: list[dict] = []
+    eligible: int = 0
+    total: int = 0
 
 
 class VideoFramesGroup(BaseModel):

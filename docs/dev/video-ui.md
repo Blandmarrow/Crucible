@@ -167,11 +167,19 @@ still holds the old path, which is strictly worse than the bug.
 `jobsApi.cancel` (`DELETE /jobs/{id}` — there is no POST route). Three things about it:
 
 - **`rows` is a union keyed by `video_id`** — `result.jobs` first (it alone carries `filename`
-  and the resolved `subfolder`), then any `liveJobs` entry not already present *and* belonging
-  to this modal (the hook returns every live extraction in the app). "Result if present,
+  and the resolved `subfolder`), then any `liveJobs` entry belonging to this modal (the hook
+  returns every live extraction in the app, so the membership check is load-bearing; and a
+  live payload never overwrites a `result` row, which knows strictly more). "Result if present,
   otherwise liveJobs" breaks a mixed batch: submit A+B+C with A already busy and A's live bar
   vanishes the instant the response lands, leaving only an amber `skipped` line for the video
   working hardest. A `skipped` entry that produced a row is suppressed.
+- **A row persists once seen**, accumulated in a `useRef` Map. `useVideoExtractJobs` filters
+  terminal statuses, so a row derived from it has no other source and would disappear at the
+  exact moment the user is watching for an outcome — while a `result` row, whose array is
+  terminal-stable, settled into "Finished or no longer reporting" correctly. The asymmetry was
+  only visible by letting a real run finish with the modal open. This remembers *rows*, not a
+  view mode: the step content stays interactive throughout, so there is still nothing to be
+  trapped in.
 - The `→ subfolder` span renders only when the field is **present**. A row derived from a live
   job has none, and the old `{j.subfolder || "root"}` would print "→ root" and lie.
 - The bar is `live ? Math.max(0, live.percent ?? 0) : 100`. `?? 100` for a live job rendered a

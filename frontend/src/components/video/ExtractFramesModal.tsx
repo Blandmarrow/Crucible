@@ -182,17 +182,16 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   // the instant the response landed and leave an amber line for the video working
   // hardest. `result.jobs` goes first because it alone carries `filename` and the
   // resolved `subfolder`.
-  const rows = useMemo<ProgressRow[]>(() => {
+  const incomingRows = useMemo<ProgressRow[]>(() => {
     const out: ProgressRow[] = [];
-    const seen = new Set<string>();
+    // First, so `mergeRows` sees the richer row before the derived one.
     for (const j of result?.jobs ?? []) {
       out.push({ videoId: j.video_id, jobId: j.job_id, filename: j.filename, subfolder: j.subfolder });
-      seen.add(j.video_id);
     }
     for (const [videoId, p] of liveJobs) {
       // `useVideoExtractJobs` returns every live extraction in the app, not only
       // this modal's, so the membership check is load-bearing.
-      if (seen.has(videoId) || !videoIds.includes(videoId)) continue;
+      if (!videoIds.includes(videoId)) continue;
       out.push({
         videoId,
         jobId: p.job_id,
@@ -201,6 +200,20 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
     }
     return out;
   }, [result, liveJobs, videoIds, videos]);
+
+  // **A row persists once seen**, which is what lets a run that finishes while the
+  // modal is open settle into "Finished or no longer reporting" instead of
+  // disappearing. `useVideoExtractJobs` filters terminal statuses, so a row derived
+  // from it has no other source and would otherwise vanish at the exact moment the
+  // user is watching for an outcome — while a row from `result`, whose array is
+  // terminal-stable, settled correctly. This remembers *rows*, not a view mode: the
+  // step content stays interactive throughout, so there is nothing to be trapped in.
+  // Adjusted during render (`mergeRows` returns the same Map when nothing changed),
+  // the same idiom as `lastProbe` above — not a ref, which cannot be written here.
+  const [seenRows, setSeenRows] = useState<Map<string, ProgressRow>>(() => new Map());
+  const mergedRows = mergeRows(seenRows, incomingRows);
+  if (mergedRows !== seenRows) setSeenRows(mergedRows);
+  const rows = useMemo(() => [...mergedRows.values()], [mergedRows]);
 
   // A video that produced a row is being watched, so its amber "already
   // extracting" line would only contradict the bar directly above it.
@@ -607,6 +620,25 @@ interface ProgressRow {
    *  row derived from a live job does not, and must render nothing rather than
    *  fall back to "root" — which would be a guess printed as a fact. */
   subfolder?: string;
+}
+
+/** Fold freshly-observed rows into the remembered set.
+ *
+ *  Returns the **same** Map when nothing changed, so the render-time adjust in the
+ *  component is a no-op on the overwhelming majority of renders (this runs on every
+ *  SSE event app-wide). A row already carrying a `subfolder` came from the extract
+ *  response and knows strictly more than a live payload does, so it is never
+ *  overwritten by one.
+ */
+function mergeRows(prev: Map<string, ProgressRow>, incoming: ProgressRow[]) {
+  let next: Map<string, ProgressRow> | null = null;
+  for (const r of incoming) {
+    const old = prev.get(r.videoId);
+    if (old && (old.subfolder !== undefined || r.subfolder === undefined)) continue;
+    next ??= new Map(prev);
+    next.set(r.videoId, r);
+  }
+  return next ?? prev;
 }
 
 /** The live extractions, plus any video the server refused to double-start.

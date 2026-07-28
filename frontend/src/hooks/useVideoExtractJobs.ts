@@ -96,9 +96,23 @@ export function useVideoExtractJobs(
 
   // Persist the live job id so a hard reload — which empties jobStore — can still
   // find it. Cleared once the job goes terminal.
+  //
+  // Written **on transition only**, and never a `null` for an id this instance
+  // has not yet seen live. `jobs` is a fresh Map on every `activeJobs` change,
+  // i.e. on every SSE event app-wide, so the unguarded form wrote localStorage
+  // for every watched video on every event — and nearly all of those writes were
+  // `{jobId: null}` for videos with no job at all. That also raced the recovery
+  // effect above: `VideoDetailPage` and an open modal both run this hook for the
+  // same video, so instance #2's null-write could land inside instance #1's
+  // in-flight `jobsApi.get` and erase the id it was re-attaching to.
+  const persistedRef = useRef<Map<string, string | null>>(new Map());
   useEffect(() => {
     for (const id of idsKey ? idsKey.split(",") : []) {
-      savePersisted(videoExtractJobKey(id), { jobId: jobs.get(id)?.job_id ?? null });
+      const jobId = jobs.get(id)?.job_id ?? null;
+      if (!persistedRef.current.has(id) && jobId === null) continue;
+      if (persistedRef.current.get(id) === jobId) continue;
+      persistedRef.current.set(id, jobId);
+      savePersisted(videoExtractJobKey(id), { jobId });
     }
   }, [idsKey, jobs]);
 

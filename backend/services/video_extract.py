@@ -813,9 +813,20 @@ def render_at_timestamps(
     the caller can match a written file to the row it belongs to
     (`shot_index` is `-1`: pass 2 knows nothing about shots).
 
-    Targets are walked in ascending timestamp order so the underlying reads move
-    forward through the file. Each frame is released before the next seek — never
-    a `list[np.ndarray]`, per this module's RSS rule.
+    **Each target gets its own decoder open**: `read_positions` is called once per
+    timestamp, and every call opens and releases its own `cv2.VideoCapture` — or
+    spawns its own ffmpeg subprocess on the deinterlace path. There is no shared
+    walk through the file. Targets are still visited in ascending timestamp order,
+    but that buys page-cache locality on the container, not a single forward pass.
+
+    The `video_reextract` job compounds this deliberately, passing one timestamp
+    per call: the per-frame structure is what buys the cancel check, the
+    copy-on-write protect+commit, the "does it re-open" verification and the
+    progress event, and batching would mean N temp files coexisting against a disk
+    preflight that budgets for one.
+
+    Each frame is released before the next seek — never a `list[np.ndarray]`, per
+    this module's RSS rule.
     """
     path = Path(path)
     result = ShotRenderResult()

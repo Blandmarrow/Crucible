@@ -59,16 +59,18 @@ class Video(Base):
     license: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attribution: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Decode fixups confirmed in the extraction modal's probe step (Phase 2) and
-    # replayed verbatim by the full-res second pass (Phase 4), so pass-2 frames
-    # match pass-1 geometry exactly. Four plain columns rather than a JSON rect:
-    # a JSON column would need the copy-before-mutate dance for no gain.
-    # All four NULL means no crop.
+    # Decode fixups, written by POST /videos/extract — not by the probe, which
+    # re-runs on every trim-handle drag and must not commit, and not by the job,
+    # because these have to survive a cancelled or failed run and a write inside
+    # a job cannot 400. A later full-res pass replays them verbatim so its frames
+    # match the triage frames' geometry exactly. Four plain columns rather than a
+    # JSON rect: a JSON column would need the copy-before-mutate dance for no
+    # gain. All four NULL means no crop. See docs/dev/video-extract.md.
     crop_x: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crop_y: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crop_w: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crop_h: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # "" = off. Phase 2 ships "bwdif" only; telecine is detect-and-warn.
+    # "" = off. "bwdif" is the only filter shipped; telecine is detect-and-warn.
     deinterlace: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
     trim_start_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     trim_end_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

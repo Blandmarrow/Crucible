@@ -1432,6 +1432,12 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 thumbnail_path=str(new_thumb),
                 is_auto_named=True,
                 sort_order=assigned_order,
+                # A move is an UPDATE in place, so lineage survives unless it is
+                # explicitly cleared: the row would land in the target dataset
+                # still pointing at a video the target does not contain. The
+                # timestamp and shot index stay — they are facts about the frame,
+                # not about which dataset holds it.
+                source_video_id=None,
                 **materialized[img_id],
             )
         )
@@ -1467,6 +1473,11 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.generation_metadata, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
+        # Frame lineage. Deliberately no `Image.source_video_id`: the copy lands
+        # in another dataset, where that id would point at a video the target
+        # does not contain — the copies get NULL. The timestamp and shot index
+        # are facts about the frame and travel with it.
+        Image.source_timestamp_ms, Image.source_shot_index,
     )
 
     if body.image_ids:
@@ -1581,6 +1592,9 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
             sort_order=assigned_order,
+            source_video_id=None,
+            source_timestamp_ms=row.source_timestamp_ms,
+            source_shot_index=row.source_shot_index,
             **materialized[row.id],
         ))
 

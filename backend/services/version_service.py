@@ -403,6 +403,9 @@ async def create_snapshot(
             source_meta=img.source_meta,
             processing_history=img.processing_history,
             sort_order=img.sort_order,
+            source_video_id=img.source_video_id,
+            source_timestamp_ms=img.source_timestamp_ms,
+            source_shot_index=img.source_shot_index,
             is_present=True,
         ))
 
@@ -468,6 +471,12 @@ _DIFF_COLS = (
     VersionImageState.source_meta,
     VersionImageState.sort_order,
     VersionImageState.processing_history,
+    # Deliberately absent: source_video_id / source_timestamp_ms /
+    # source_shot_index. Frame lineage is immutable for the life of an image —
+    # extraction writes it once and nothing else ever changes it — so it can
+    # never differ between two snapshots of the same image, and diffing it would
+    # only add three columns to every state query for a guaranteed "unchanged".
+    # It is still snapshotted and restored; it is just not *compared*.
 )
 
 # Diffed but reported only as {"changed": true} — the values can be tens of KB
@@ -858,6 +867,9 @@ async def restore_snapshot(
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.sort_order = state.sort_order
+        img.source_video_id = state.source_video_id
+        img.source_timestamp_ms = state.source_timestamp_ms
+        img.source_shot_index = state.source_shot_index
         if state.width:
             img.width = state.width
         if state.height:

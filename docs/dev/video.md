@@ -2,9 +2,10 @@
 
 Covers the `Video` model, the `videos/` storage layout and its poster-stem rules, the three
 ingest paths that create a video, the `/videos` endpoints, and the frontend surfaces that
-show one. The cv2 decode surface itself — the metadata probe and poster generation, and
-frame extraction once it lands — is in `docs/dev/video-decode.md`. Frame extraction is not
-built yet; the arc's roadmap lives in `roadmap.md` at the repo root until it is complete.
+show one. The cv2 decode surface itself — the metadata probe, the duration search and
+poster generation — is in `docs/dev/video-decode.md`, and frame extraction is in
+`docs/dev/video-extract.md`. The arc's roadmap lives in `roadmap.md` at the repo root until
+it is complete.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
 It is deliberately not a row in `images`, which carries ~20 image-specific columns, FK
@@ -78,11 +79,11 @@ would import the `MissingGreenlet` trap for no benefit. There is no `subfolder` 
 either: videos are flat, and a video's extracted frames get the subfolder treatment instead.
 
 The extraction-settings columns — `crop_x/y/w/h`, `deinterlace`, `trim_start_ms`,
-`trim_end_ms` — are written when a user confirms the probe step of the extraction modal and
-replayed verbatim by the full-res second pass, so pass-2 frames match pass-1 geometry
-exactly. Four plain integer columns rather than a JSON rect: a JSON column would need the
-copy-before-mutate dance for no gain. All four NULL means no crop. Time on this row is
-uniformly milliseconds, matching the frame lineage columns that arrive with extraction.
+`trim_end_ms` — are written by `POST /videos/extract` (`docs/dev/video-extract.md` § The
+endpoints) and replayed verbatim by the full-res second pass, so pass-2 frames match pass-1
+geometry exactly. Four plain integer columns rather than a JSON rect: a JSON column would
+need the copy-before-mutate dance for no gain. All four NULL means no crop. Time on this row
+is uniformly milliseconds, matching the `Image` frame-lineage columns.
 
 ## Ingest
 
@@ -131,7 +132,8 @@ invariants).
 
 `backend/routers/videos.py`, prefix `/videos`: `GET /` (by `dataset_id`), `GET /{id}`,
 `GET /{id}/file`, `GET /{id}/poster` (the lazy backfill and its retry backoff are in
-`docs/dev/video-decode.md` § Poster frames), `PATCH /{id}/rename`, `DELETE /{id}`.
+`docs/dev/video-decode.md` § Poster frames), `POST /{id}/probe` and `POST /extract` (both
+in `docs/dev/video-extract.md` § The endpoints), `PATCH /{id}/rename`, `DELETE /{id}`.
 Both file responses go through `utils.safe_dataset_path`, promoted out of
 `routers/images.py` so the video routes are not importing a private helper from another
 router.
@@ -165,7 +167,12 @@ playback still appeared to work, so `test_video_serving_http.py` pins the 206 an
 
 `DELETE` removes the file, the poster and the row, then refreshes stats. It never touches
 `Image` rows: frames extracted from a video are curated data, and deleting a source must
-not destroy them.
+not destroy them. It does clear their `Image.source_video_id`, with an explicit `UPDATE`
+rather than by relying on the FK's `ON DELETE SET NULL` — the test harness builds its
+schema with `create_all` and never gets the `PRAGMA foreign_keys=ON` that
+`backend/database.py` installs, so the FK's behaviour is untestable here; it stays as
+belt-and-braces. `source_timestamp_ms` and `source_shot_index` survive, so a frame keeps
+knowing where in a video it came from once the video is gone.
 
 It unlinks **before** committing the row delete — the reverse of `delete_image`, and
 deliberate. If the commit fails, the row survives pointing at nothing, which
@@ -239,7 +246,11 @@ and skips the image-only `["fs-image-meta", path]` query for it.
   sync is not complete, and the gap predates videos: a cross-dataset `/move` sets
   `dataset_id` without `materialize_provenance` and without `refresh_stats`, so the moved
   row silently re-inherits the destination's defaults and both datasets' counts stay stale
-  until the next refresh. Already true for `Image`; now true for `Video` too.
+  until the next refresh. Already true for `Image`; now true for `Video` too — and now also
+  true of frame lineage, since that endpoint does not NULL `Image.source_video_id` the way
+  `batch_move_dataset` does, so a frame moved through the browser keeps pointing at a video
+  the destination dataset does not contain. Recorded here rather than fixed silently,
+  because the three omissions belong to one gap and should be closed together.
 
 ## Tests
 
@@ -254,6 +265,28 @@ downscale, the atomic write) and `test_video_rename_http.py` (slugify, both coll
 classes, the poster move, the busy 409). `test_http_smoke_crud.py` covers
 `/filesystem/preview` for both media kinds, and `test_http_smoke_jobs.py` pins the image
 side of the same stem-collision rule.
+
+Extraction (`docs/dev/video-extract.md`) adds four more.
+`test_video_frames.py` is pure numpy and needs no fixture at all — cropdetect, combing,
+telecine, sharpness, candidate rejection, all documented in `docs/dev/video-heuristics.md`. `test_video_extract.py` is service level, with
+`scenedetect` skipped rather than required, and covers `measure_duration_ms` (including a
+non-seekable stub), probe sampling and its caps, shot boundaries, the empty-list trap, both
+uniform fallbacks, cancellation and `render_shot` geometry. `test_video_extract_http.py`
+drives both endpoints end to end. `test_video_lineage_mirrors.py` holds the structural
+mirror guard described in CLAUDE.md § Key invariants plus behavioural round-trips through
+snapshot/restore, both `duplicate_dataset` branches, cross-dataset copy and move, and video
+delete.
+
+Two fixtures join `mp4_bytes` in `conftest.py`. `mp4_shots_bytes` writes hard cuts between
+distinctly-coloured shots and must stay at **320×240 with ≥24 frames per shot**:
+`AdaptiveDetector` auto-sizes its edge kernel from the frame size and finds nothing at all
+at 64×48, and `min_scene_len` merges anything shorter into its neighbour. `frame_colour()`
+reads a written frame back to say which shot it came from, the video equivalent of
+`test_video_poster.py::_grey`. `mp4_corrupt_bytes` is named for what it is rather than what
+it was meant to be: truncating an `mp4v` file removes the `moov` atom, which
+`cv2.VideoWriter` puts at the **end**, so `isOpened()` returns False and it is a
+will-not-open fixture, not the mid-extraction one it was intended as. The circuit breaker is
+tested by injecting failures instead, which is deterministic.
 
 The rescan-collision rule is pinned in three separable parts, since each can break alone:
 same-stem containers rescanned together get distinct posters; an ordinary rescan renames

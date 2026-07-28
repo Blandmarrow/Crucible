@@ -1,15 +1,19 @@
-"""Video metadata extraction.
+"""Video metadata and poster frames.
 
-Division of labour for the video arc: **OpenCV** reads headers and samples
-frames; the ffmpeg binary (a later phase) runs the extraction filter chain
-(`bwdif` deinterlace, crop) that OpenCV cannot express. This module is the
-OpenCV half's ingest entry point — header-only, no decode pass.
+Division of labour for the video arc: **OpenCV** reads headers, measures
+durations and samples frames; the ffmpeg binary runs `bwdif` deinterlacing,
+which OpenCV cannot express, and nothing else. Cropping is a numpy slice on an
+already-decoded frame, so the progressive path never spawns a subprocess. See
+`backend/services/video_extract.py` and `docs/dev/video-extract.md`.
+
+This module is the ingest entry point (`probe_video`, header-only, no decode
+pass), the duration search (`measure_duration_ms`, seeks rather than decodes)
+and the poster cutter (`generate_poster`).
 
 `imageio_ffmpeg.count_frames_and_secs()` is deliberately not used as a fallback
 for a missing duration: its implementation is a full decode pass
 (`-i … -vf null -f null -`) and its own docstring warns it is slow and not
-certainly exact. The probe step of frame extraction backfills a true duration
-later, since it is already decoding.
+certainly exact. `measure_duration_ms` brackets the end with ~30 seeks instead.
 """
 
 import logging
@@ -25,6 +29,27 @@ logger = logging.getLogger(__name__)
 
 class UnreadableVideoError(Exception):
     """cv2 could not open the file — truncated, zero-byte, or not a video."""
+
+
+def apply_orientation(cap) -> None:
+    """Make a `cv2.VideoCapture` honour the container's rotation metadata.
+
+    Must be called on **every** capture this codebase opens — probe, poster and
+    extraction alike. cv2 and ffmpeg disagree by default: ffmpeg autorotates, cv2
+    does not, so the two decode paths (the cv2 one and the `bwdif` one) would
+    hand the same crop rect frames in different orientations, and a poster would
+    disagree with the frames extracted from the same file. Turning cv2's
+    autorotate on is the cheaper half of making them agree; ffmpeg keeps its
+    default. Verified present in cv2 5.0.0; guarded anyway, because the property
+    is a no-op on backends that do not implement it and this must never be the
+    reason a video fails to open.
+    """
+    import cv2
+
+    try:
+        cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    except Exception:  # noqa: BLE001 — an unsupported property is not an error
+        logger.debug("CAP_PROP_ORIENTATION_AUTO not supported by this backend")
 
 
 def probe_video(path: str | Path) -> dict:
@@ -44,6 +69,7 @@ def probe_video(path: str | Path) -> dict:
     try:
         if not cap.isOpened():
             raise UnreadableVideoError(f"Could not decode video: {p.name}")
+        apply_orientation(cap)
 
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or None
@@ -81,6 +107,135 @@ def probe_video(path: str | Path) -> dict:
     }
 
 
+# A duration search never runs past this. 24 h is far beyond anything a user
+# would curate frames from, and a stream whose header lies without bound must
+# terminate the search rather than double forever.
+MEASURE_MAX_MS = 24 * 60 * 60 * 1000
+# Bisection stops one frame period from the answer, or at this floor for a file
+# that reports no usable frame rate. The result feeds progress percentages,
+# sample positions and the tail trim — not an edit decision list.
+MEASURE_TOLERANCE_FLOOR_MS = 40.0
+MEASURE_MAX_PROBES = 40
+# Sequential grabs (no seek) used to walk the last bracket down to the real
+# final frame. Bounded so a container that never reports EOF cannot spin.
+MEASURE_TAIL_GRABS = 64
+# The seekability verdict is only trusted once the probe has grown past this.
+# See the comment at the check itself for why a floor is required at all.
+NON_SEEKABLE_PROBE_FLOOR_MS = 2000.0
+
+
+def measure_duration_ms(
+    path: str | Path,
+    *,
+    hint_ms: int | None = None,
+    max_ms: int = MEASURE_MAX_MS,
+) -> int | None:
+    """Find a video's real duration by seeking, not by decoding it. Blocking.
+
+    `probe_video` leaves `duration_ms` NULL for any container whose frame count
+    is missing or poisoned — matroska written to a non-seekable pipe being the
+    common case. NULL is honest but it breaks everything downstream of it: no
+    percentage, no tail trim, no sample positions. So extraction measures.
+
+    Exponential probing to bracket the end, then bisection, on
+    `CAP_PROP_POS_MSEC` + `cap.grab()`. About thirty grabs and no full decode
+    pass — `imageio_ffmpeg.count_frames_and_secs()` is the alternative and is a
+    complete `-f null -` decode, which its own docstring warns is slow.
+
+    Returns None for a file that will not open **or one that will not seek**:
+    a non-seekable stream ignores the `set()` and answers every probe with the
+    next sequential frame, which would otherwise read as "reachable" forever.
+    The caller must then fall back to head-only samples and indeterminate
+    progress rather than trusting a fabricated number.
+    """
+    import cv2
+
+    def reach(cap, ms: float) -> float | None:
+        """Seek to `ms` and grab. Returns the reached position, or None."""
+        cap.set(cv2.CAP_PROP_POS_MSEC, float(ms))
+        before = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+        if not cap.grab():
+            return None
+        return before
+
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return None
+        apply_orientation(cap)
+
+        # `reach` reports the *start* timestamp of the frame it grabbed, so the
+        # duration is one frame period past the last reachable one. Without this
+        # the answer is consistently short by 1/fps, which is invisible on a
+        # feature but wrong on a 25-frame clip.
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        period = 1000.0 / fps if fps > 0 else 0.0
+        tolerance = max(period, MEASURE_TOLERANCE_FLOOR_MS)
+
+        best = reach(cap, 0.0)
+        if best is None:
+            return None  # nothing decodes at all
+
+        probes = 1
+        lo = 0.0
+        hi: float | None = None
+        probe = float(hint_ms) if hint_ms and hint_ms > 0 else 1000.0
+
+        while probes < MEASURE_MAX_PROBES and probe <= max_ms:
+            probes += 1
+            pos = reach(cap, probe)
+            if pos is None:
+                hi = probe
+                break
+            if probe >= NON_SEEKABLE_PROBE_FLOOR_MS and pos < probe * 0.5:
+                # The seek did not land anywhere near where it was asked to.
+                # That is a non-seekable stream answering with the next
+                # sequential frame, not a short video.
+                #
+                # The floor is what makes this safe. A non-seekable stream
+                # advances one frame per grab while `probe` doubles, so the gap
+                # becomes unmistakable within a few rounds — but early on, when
+                # `probe` is still tens of milliseconds, a *correct* seek to
+                # frame 0 also sits below half of it, and without the floor a
+                # small `hint_ms` makes every seekable file measure as None.
+                return None
+            best = max(best, pos)
+            lo = probe
+            probe *= 2
+        if hi is None:
+            return None  # ran out of probes, or the file outlasts max_ms
+
+        while hi - lo > tolerance and probes < MEASURE_MAX_PROBES:
+            probes += 1
+            mid = (lo + hi) / 2.0
+            pos = reach(cap, mid)
+            if pos is None:
+                hi = mid
+            else:
+                best = max(best, pos)
+                lo = mid
+
+        # Bisection leaves the answer up to `tolerance` short, because it stops
+        # as soon as the bracket is tight rather than landing on the last frame.
+        # Close it by walking sequentially from the last known-good position:
+        # these are grabs with no seek, so a handful of them costs nothing, and
+        # they make the result exact rather than within-a-frame-or-two.
+        if reach(cap, lo) is not None:
+            for _ in range(MEASURE_TAIL_GRABS):
+                ts = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
+                if not cap.grab():
+                    break
+                best = max(best, ts)
+    finally:
+        cap.release()
+
+    # `hi` is deliberately *not* used as a ceiling here. It is the first position
+    # at which no frame *starts*, i.e. one epsilon past the last frame's own
+    # timestamp — not the end of the stream, which is a whole frame period later.
+    # Clamping to it returns a duration exactly 1/fps short on every file.
+    return int(round(best + period))
+
+
 def generate_poster(
     video_path: str | Path,
     poster_path: str | Path,
@@ -98,8 +253,8 @@ def generate_poster(
     leaves `poster_path` NULL for the caller. The UI draws a film glyph instead.
 
     OpenCV rather than ffmpeg because it is already a dependency and this is one
-    seek plus one read — no filter chain. Frame extraction (a later phase) needs
-    `bwdif`/crop and goes to the ffmpeg binary instead.
+    seek plus one read — no filter chain. Only the `bwdif` deinterlace path in
+    `video_extract.py` goes to the ffmpeg binary.
 
     The seek target is the midpoint of the *trimmed* span, so a video whose trim
     points are set later re-posters onto a frame that is actually in the kept
@@ -122,6 +277,7 @@ def generate_poster(
         if not cap.isOpened():
             logger.info("poster: could not open %s", src)
             return False
+        apply_orientation(cap)
 
         frame = None
         if seek_ms > 0:

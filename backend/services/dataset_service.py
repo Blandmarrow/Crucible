@@ -1464,6 +1464,7 @@ async def duplicate_dataset(
             Image.generation_metadata, Image.processing_history, Image.sort_order,
             Image.source_name, Image.source_url, Image.license, Image.attribution,
             Image.source_meta,
+            Image.source_timestamp_ms, Image.source_shot_index,
         )
         result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
         rows = result.all()
@@ -1518,6 +1519,16 @@ async def duplicate_dataset(
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
                     sort_order=row.sort_order,
+                    # Frame lineage: the timestamp and shot index travel, but
+                    # source_video_id does not — duplicate_dataset copies only
+                    # Image rows, so the new dataset has no videos and the id
+                    # would point across a dataset boundary at a source the
+                    # duplicate does not contain. Same rule as a cross-dataset
+                    # copy. Not part of copy_provenance, which is exactly the
+                    # five provenance keys.
+                    source_video_id=None,
+                    source_timestamp_ms=row.source_timestamp_ms,
+                    source_shot_index=row.source_shot_index,
                     # Raw, not resolved: the new dataset carries the same
                     # provenance defaults, so inheritance stays equivalent.
                     **copy_provenance(row),
@@ -1606,6 +1617,11 @@ async def duplicate_dataset(
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,
                     sort_order=state.sort_order,
+                    # Same rule as the on-disk branch above: lineage timestamps
+                    # travel, the video id does not.
+                    source_video_id=None,
+                    source_timestamp_ms=state.source_timestamp_ms,
+                    source_shot_index=state.source_shot_index,
                     **copy_provenance(state),
                 ))
             except Exception as exc:

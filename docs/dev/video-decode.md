@@ -1,12 +1,23 @@
 # Video decode: probe and poster
 
-The cv2 decode surface for video. Two things live here today — `probe_video`, which reads a
-container header for dimensions, fps, codec and duration, and `generate_poster`, which cuts
-the single WebP frame every video card and detail view shows — and frame extraction will
-join them when it lands, since it is the same dependency and the same executor discipline.
-The `Video` model, the `videos/` storage layout, the poster-stem collision rules, ingest,
-the `/videos` endpoints and the frontend surfaces stay in `docs/dev/video.md`; tests for
-both files are indexed there under § Tests.
+The `services/video_service.py` decode surface. Three things live here: `probe_video`,
+which reads a container header for dimensions, fps, codec and duration;
+`measure_duration_ms`, which finds a real duration by seeking when the header has none; and
+`generate_poster`, which cuts the single WebP frame every video card and detail view shows.
+Frame extraction is a separate pair of modules — see `docs/dev/video-extract.md` for the
+pipeline and `docs/dev/video-heuristics.md` for the numpy judgement calls it uses. The
+`Video` model, the `videos/` storage layout, the poster-stem collision rules, ingest, the
+`/videos` endpoints and the frontend surfaces stay in `docs/dev/video.md`; tests for all of
+it are indexed there under § Tests.
+
+## Container rotation
+
+cv2 and ffmpeg disagree by default: ffmpeg autorotates, cv2 does not. Left alone, the two
+decode paths would apply the same crop rect to differently-oriented frames, and a poster
+would disagree with the frames extracted from the same file. Every capture this codebase
+opens therefore goes through `video_service.apply_orientation(cap)`, which sets
+`CAP_PROP_ORIENTATION_AUTO` (present in cv2 5.0.0, guarded anyway because an unsupported
+property must never be why a video fails to open); ffmpeg keeps its default.
 
 ## Metadata: the ladder and its guard
 
@@ -32,8 +43,41 @@ the function, matching the convention in `backend/ml/technical_scorer.py`.
   stream-ripped and partially-copied files look like — reports
   `CAP_PROP_FRAME_COUNT = -230584300921369408` while every other field stays correct, and a
   naive divide stores a duration of −9.2e15 seconds. Parsing the `ffmpeg -i` banner is no
-  rescue; it prints `Duration: N/A` for exactly that file. The probe step of frame
-  extraction will backfill a true duration, since it is already decoding.
+  rescue; it prints `Duration: N/A` for exactly that file. `measure_duration_ms` backfills
+  a true one; see the next section.
+
+## Measuring a duration the header does not have
+
+NULL is the honest answer from `probe_video`, but it breaks everything downstream: no
+progress percentage, no tail trim, no sample positions. So
+`measure_duration_ms(path, *, hint_ms=None, max_ms=24h)` finds the real one by *seeking*,
+not decoding — exponential probing on `CAP_PROP_POS_MSEC` + `cap.grab()` to bracket the
+end, then bisection, then a short sequential grab walk to land exactly on the last frame.
+About thirty grabs. (`imageio_ffmpeg.count_frames_and_secs()` is the alternative and is a
+full `-f null -` decode pass, which its own docstring warns is slow.)
+
+**The rule is that nothing downstream of the probe ever sees a NULL duration**: the probe
+endpoint measures and persists it, and the extraction job measures and persists it if no
+probe ran.
+
+Three details are load-bearing:
+
+- **It returns None for a stream that will not *seek*,** not only for one that will not
+  open. A non-seekable stream ignores the `set()` and answers every probe with the next
+  sequential frame, which reads as "reachable" forever. The check is that the reached
+  position lags far behind the requested one — but only once the probe has grown past
+  `NON_SEEKABLE_PROBE_FLOOR_MS` (2 s), because early on, when the probe is still tens of
+  milliseconds, a *correct* seek to frame 0 also sits below half of it. Without that floor
+  a small `hint_ms` makes every seekable file measure as None.
+- **The reached position is the last frame's own timestamp**, so the duration is one frame
+  period later. `hi` — the first position at which no frame starts — is deliberately *not*
+  used as a ceiling; clamping to it returns a duration exactly 1/fps short on every file.
+- **The answer is the decodable extent, not the header's claim.** The two differ by one
+  frame on the test fixtures, because cv2 decodes one frame fewer than `VideoWriter`
+  emitted. That is the more useful number: it is what a seek can actually reach.
+
+An unmeasurable file is not a failure. It degrades to head-only samples, `end_time=None`,
+indeterminate progress and an explicit warning.
 
 **`isOpened()` is the ingest gate.** It returns False for zero-byte, truncated and
 non-video payloads and True only for something decodable, so a `.mp4` extension proving

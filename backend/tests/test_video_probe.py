@@ -14,9 +14,10 @@ partially-copied files look like — reports `CAP_PROP_FRAME_COUNT` as
 in the UI and gets stored on the row. NULL is the only honest answer.
 """
 
+from pathlib import Path
+
 import pytest
 
-from backend.services import video_service
 from backend.services.video_service import UnreadableVideoError, probe_video
 from backend.tests.conftest import mp4_bytes
 
@@ -136,9 +137,30 @@ def test_undecodable_files_are_rejected(tmp_path):
             probe_video(p)
 
 
-def test_cv2_is_imported_lazily():
-    """cv2 costs ~1s to import, so the module must not pull it in at import
-    time — the same convention as backend/ml/technical_scorer.py."""
-    source = open(video_service.__file__).read()
-    module_level = source.split("def probe_video")[0]
-    assert "import cv2" not in module_level
+@pytest.mark.parametrize(
+    "module", ["backend.services.video_service", "backend.services.video_extract"]
+)
+def test_heavy_decoders_are_imported_lazily(module):
+    """cv2 costs ~1s to import, and scenedetect/imageio-ffmpeg are optional, so
+    none of them may be pulled in at module scope — the same convention as
+    backend/ml/technical_scorer.py.
+
+    Checked by parsing rather than by splitting the source at the first function
+    (which the original form of this test did): every import here lives inside
+    some function body, and a text split cannot tell an indented lazy import
+    above the split point from a module-level one below it.
+    """
+    import ast
+    import importlib
+
+    source = Path(importlib.import_module(module).__file__).read_text()
+    top_level = {
+        alias.name.split(".")[0]
+        for node in ast.parse(source).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in getattr(node, "names", [])
+    }
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ImportFrom) and node.module:
+            top_level.add(node.module.split(".")[0])
+    assert not top_level & {"cv2", "scenedetect", "imageio_ffmpeg", "PIL"}

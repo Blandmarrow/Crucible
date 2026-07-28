@@ -171,6 +171,85 @@ def mp4_bytes(frames: int = 25, size=(64, 48), fps: float = 25.0) -> bytes:
         return path.read_bytes()
 
 
+def mp4_shots_bytes(
+    shots: int = 3,
+    frames_per_shot: int = 30,
+    size=(320, 240),
+    fps: float = 25.0,
+) -> bytes:
+    """A real .mp4 with hard cuts between distinctly-coloured shots.
+
+    Two departures from `mp4_bytes`, both forced:
+
+    - **320x240, not 64x48.** `AdaptiveDetector` auto-sizes its edge kernel from
+      the frame size, and at 64x48 that degenerates — it finds nothing at all on
+      a file whose cuts are obvious to the eye.
+    - **>= 24 frames per shot.** `min_scene_len` defaults to 15 frames and the
+      extraction job raises it further; a shorter shot is merged into its
+      neighbour and the fixture silently tests a different thing.
+
+    Each shot is a flat saturated colour with a little texture, so
+    `frame_colour()` can read a written frame back and say which shot it came
+    from — the video equivalent of `test_video_poster.py::_grey`.
+    """
+    import tempfile
+
+    import cv2
+    import numpy as np
+
+    palette = [
+        (40, 40, 220), (40, 220, 40), (220, 40, 40),
+        (220, 220, 40), (220, 40, 220), (40, 220, 220),
+    ]
+    w, h = size
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "shots.mp4"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+        assert writer.isOpened(), "cv2 could not open an mp4v VideoWriter"
+        for s in range(shots):
+            base = np.full((h, w, 3), palette[s % len(palette)], np.uint8)
+            # A moving bright block: without any change inside a shot the encoder
+            # emits near-identical frames and every sharpness score ties.
+            for i in range(frames_per_shot):
+                frame = base.copy()
+                x = (i * 7) % max(w - 40, 1)
+                frame[h // 3: h // 3 + 40, x: x + 40] = 255
+                writer.write(frame)
+        writer.release()
+        return path.read_bytes()
+
+
+def mp4_corrupt_bytes(keep_frac: float = 0.6, **kwargs) -> bytes:
+    """A real mp4 with its tail cut off — a file cv2 cannot open at all.
+
+    Named for what it *is*, not for what it was meant to be. The intent was a
+    "posters fine, dies partway through extraction" fixture, and truncation does
+    not produce one: `cv2.VideoWriter` puts the `moov` atom at the **end** of
+    the file, so cutting the tail removes the index and `isOpened()` returns
+    False. Verified — 0 frames grabbed.
+
+    That makes it the right fixture for the *ingest gate* and for
+    `detect_shots` refusing to fall back on a file that will not open, and the
+    wrong one for the consecutive-failure circuit breaker. Test that by
+    injecting failures into `render_shot`, which is deterministic; a fixture
+    that happens to die at the right moment is not.
+    """
+    full = mp4_shots_bytes(**kwargs)
+    return full[: int(len(full) * keep_frac)]
+
+
+def frame_colour(path) -> tuple[int, int, int]:
+    """Dominant RGB of an extracted frame, for asserting *which shot* it came
+    from. Reads the median rather than the mean so the moving white block in
+    `mp4_shots_bytes` does not shift the answer."""
+    import numpy as np
+    from PIL import Image as PilImage
+
+    with PilImage.open(path) as img:
+        arr = np.asarray(img.convert("RGB")).reshape(-1, 3)
+    return tuple(int(v) for v in np.median(arr, axis=0))
+
+
 async def upload_video(env, dataset_id: str, name: str = "a.mp4", data: bytes | None = None) -> dict:
     """Upload one video through the gallery upload endpoint and return its row."""
     r = await env.client.post(

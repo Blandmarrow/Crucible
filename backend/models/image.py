@@ -67,6 +67,26 @@ class Image(Base):
     # `undefer` it: a lazy load on an async session raises MissingGreenlet.
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
 
+    # Frame lineage: set only on images produced by video frame extraction.
+    # Plain indexed columns rather than keys inside `source_meta`, which is
+    # deferred=True (the MissingGreenlet trap) and unindexable — the
+    # "frames from video X" filter and group-by-video both need real queries.
+    # FK is SET NULL: deleting a source video must never destroy curated frames,
+    # so a frame outlives its video with the timestamp and shot index intact.
+    #
+    # Derivatives do NOT inherit lineage: crop/upscale/LUT/detection-crop copy
+    # only the five provenance keys via `licenses.copy_provenance`, so a *new*
+    # derived image has all three NULL. The hazard is the **replace** mode of
+    # those same operations, which mutates the row in place and therefore keeps
+    # its lineage while the pixels are no longer the extracted frame. Any
+    # re-extraction pass must skip or warn on a frame with a non-empty
+    # `processing_history`.
+    source_video_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("videos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_timestamp_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_shot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Log of destructive replace operations: [{op, params..., at}]
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 

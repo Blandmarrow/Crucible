@@ -266,9 +266,40 @@ Deviations from the plan as written:
 - `DatasetsPage` cards get a video-count badge, hidden at zero, fed by the
   `video_count` column from Phase 0.
 
-## Phase 2 — Extraction v1
+## Phase 2 — Extraction v1 — **backend built (Stage A)**
 
-The core deliverable: shot-segmented triage extraction as a background job.
+The core deliverable: shot-segmented triage extraction as a background job. Backend detail
+now lives in `docs/dev/video-extract.md`; the notes below are kept as the record of what was
+decided. The frontend (`ExtractFramesModal`, `VideoStrip` multi-select, extraction history)
+is Stage B and is not built.
+
+**Deviations from the plan as written, all deliberate:**
+
+- **Decode is OpenCV + numpy; ffmpeg runs `bwdif` and nothing else.** "The ffmpeg binary
+  does the extraction filter chain (bwdif deinterlace, crop)" over-assigns: a crop is a
+  numpy slice on a frame cv2 has already decoded for shot detection, so the progressive path
+  never spawns a subprocess. `imageio-ffmpeg` is still a dependency, for the interlaced path
+  and for Phase 4.
+- **The lineage mirrors were undercounted.** "Three sites, one migration" misses
+  `batch_copy_dataset` and `batch_move_dataset`, which makes five, and the two model
+  definitions make it eight paths in total. A structural test now enforces the set instead
+  of a list in prose — see CLAUDE.md § Key invariants.
+- **`dataset_busy` is taken for the `replace` delete only.** "Extraction does not take the
+  flag" holds for `add` and `new_subfolder`, but a replace deletes N rows, N files and N
+  thumbnails, which is exactly the class the flag fences — and takes seconds, not minutes.
+- **Extraction is split across three modules, not folded into `video_service.py`.**
+  `video_frames.py` (pure numpy heuristics, no decoder), `video_extract.py` (cv2 /
+  scenedetect / ffmpeg), `video_service.py` (unchanged). The heuristics are the part most
+  likely to need tuning and only get tested at all if testing them is free.
+- **`measure_duration_ms` landed in `video_service.py`**, where the metadata ladder already
+  lives, rather than in the probe: the extraction job needs it too, when no probe ran.
+- **The plan's step 7/8 job ordering was wrong, and the runner is wrapped instead.** With
+  `refresh_stats` last, every aborting path — cancel, the circuit breaker, all three disk
+  preflights — steps over it and leaves the dataset counters undercounting frames that were
+  committed. The ordering stays; `_make_extract_runner` now wraps the run and refreshes on
+  the way out of any raise, following `comfy_generate`'s `_run_with_stats`. The plan's own
+  test list asked for "stats refreshed" and "cancel keeps written frames" as separate cases
+  and never crossed them, which is why it slipped.
 
 - **Probe endpoint is a plain request, not a job.** Measured: 8 seek+decode
   operations cost 0.060 s total, 7.5 ms each. Run it through `run_in_executor`

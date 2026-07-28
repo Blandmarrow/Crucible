@@ -153,6 +153,13 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     if new_path.exists():
         raise HTTPException(409, "A file or folder with that name already exists at the destination")
 
+    # Classify *before* the move. `src` no longer exists afterwards, so asking it
+    # `is_file()` / `is_dir()` down there answers False for both and the entire
+    # sync below becomes dead code — every moved file silently leaves a row
+    # pointing at nothing.
+    src_is_file = src.is_file()
+    src_is_dir = src.is_dir()
+
     try:
         shutil.move(str(src), str(new_path))
     except PermissionError:
@@ -161,7 +168,7 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     # Sync DB records for any media within the moved path. Videos get the same
     # treatment as images: a moved file whose row still points at the old path is
     # a dangling record either way.
-    kind = media_kind_for(src.suffix) if src.is_file() else None
+    kind = media_kind_for(src.suffix) if src_is_file else None
     if kind is not None:
         model = Image if kind == "image" else Video
         result = await db.execute(select(model).where(model.file_path == str(src)))
@@ -174,7 +181,7 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
             if new_ds and new_ds.id != row.dataset_id:
                 row.dataset_id = new_ds.id
             await db.commit()
-    elif src.is_dir():
+    elif src_is_dir:
         # Update every media row whose file_path started with the old dir path
         old_prefix = str(src) + os.sep
         touched = False

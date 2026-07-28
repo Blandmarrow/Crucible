@@ -18,8 +18,20 @@ only the 409 would pass equally well for a guard that fires unconditionally, and
 the discriminator can be checked without enqueueing anything real: both
 endpoints have a cheap 400 immediately after the guard.
 """
-from backend.models import BackgroundJob
-from backend.tests.conftest import API, api_env, run
+import importlib.util
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+
+from backend.models import BackgroundJob, Video
+from backend.tests.conftest import API, api_env, run, upload_video
+
+# Only the video-move test below encodes a container; the rest of the module is
+# media-free, so the guard is per-test rather than a module-level importorskip.
+needs_cv2 = pytest.mark.skipif(
+    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+)
 
 FS = f"{API}/filesystem"
 PROMPT_ALIAS = "prompt"
@@ -99,6 +111,91 @@ def test_mkdir_over_an_existing_entry_is_a_409(tmp_path):
     run(scenario())
     assert (existing_dir / "keep.txt").read_text() == "keep"
     assert (tmp_path / "fresh").is_dir()
+
+
+@needs_cv2
+def test_moving_a_video_between_datasets_rewrites_its_row(tmp_path):
+    """The file browser is the one place a video's file can move without going
+    through `/videos`, and its DB sync treats `Video` exactly like `Image` — a
+    moved file whose row still points at the old path is a dangling record
+    either way.
+
+    **Recorded, not fixed:** the sync rewrites `file_path`, `filename` and
+    `dataset_id`, and *not* `poster_path`, so after a cross-dataset move the row
+    still points into the source dataset's `videos/thumbnails/`. Pinned here as
+    current behaviour, the way `test_video_rename_http.py` records its own known
+    divergence; changing it is a code change and belongs in its own commit.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            a = await env.create_dataset("a")
+            b = await env.create_dataset("b")
+            video = await upload_video(env, a["id"], "clip.mp4")
+            # B needs a video of its own: `videos/` is created lazily on first
+            # ingest, and `/filesystem/move` refuses a destination that is not a
+            # directory rather than creating one.
+            await upload_video(env, b["id"], "other.mp4")
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                src, poster_before = row.file_path, row.poster_path
+            dst_dir = Path(b["folder_path"]) / "videos"
+            assert dst_dir.is_dir()
+
+            r = await env.client.post(
+                f"{FS}/move", json={"src": src, "dst_dir": str(dst_dir)}
+            )
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                row = (await db.execute(
+                    select(Video).where(Video.id == video["id"])
+                )).scalar_one()
+
+            assert row.file_path == str(dst_dir / "clip.mp4")
+            assert row.filename == "clip.mp4"
+            assert row.dataset_id == b["id"]
+            assert Path(row.file_path).exists()
+            # The gap: the poster stayed behind, in dataset A.
+            assert row.poster_path == poster_before
+            assert str(Path(a["folder_path"])) in row.poster_path
+
+    run(scenario())
+
+
+@needs_cv2
+def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
+    """The directory half of the same sync, which iterates `(Image, Video)` and
+    rewrites `file_path` by prefix. It shares the file half's one hazard: both
+    branches are chosen from `src`, which no longer exists once `shutil.move` has
+    run, so a classification made too late turns the whole block into dead code
+    and leaves every row pointing at nothing."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("a")
+            video = await upload_video(env, ds["id"], "clip.mp4")
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                videos_dir = Path(row.file_path).parent
+
+            archive = tmp_path / "archive"
+            archive.mkdir()
+            r = await env.client.post(
+                f"{FS}/move", json={"src": str(videos_dir), "dst_dir": str(archive)}
+            )
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+
+            assert row.file_path == str(archive / "videos" / "clip.mp4")
+            assert Path(row.file_path).exists()
+            # Unlike the file branch, this one rewrites paths only — the folder
+            # is not necessarily a dataset's, so there is no dataset to re-home to.
+            assert row.dataset_id == ds["id"]
+
+    run(scenario())
 
 
 # ── One comfy job per plan ────────────────────────────────────────────────────

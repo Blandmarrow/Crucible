@@ -1310,7 +1310,8 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         )
     # A row can be deleted between enqueue and run; a timestamp cannot come back.
     rows = [r for r in rows if r.source_timestamp_ms is not None]
-    # Ascending, so the reader walks forward through the file.
+    # Ascending: each frame opens its own decoder, so this buys page-cache
+    # locality on the container rather than a single forward pass.
     rows.sort(key=lambda r: r.source_timestamp_ms)
 
     counts = {
@@ -1320,98 +1321,102 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
     total = len(rows)
     require_free_space(images_dir, 0)
 
-    # Image rows updated but not yet committed. Tracked here rather than derived
-    # from `rewritten % N` because `_rewrite` commits mid-frame (the mandatory COW
-    # flush), and `done` has to mean "frames a gallery refetch would actually see".
-    pending_rows = 0
+    async def _rewrite(img: Image) -> tuple[str, bool] | None:
+        """Rewrite one frame in place.
 
-    async def _rewrite(img: Image) -> str | None:
-        """Rewrite one frame in place. Returns None on success, else a reason."""
-        nonlocal pending_rows
-
+        Returns None on success, else `(reason, is_fault)`. `is_fault` is False
+        for a refusal that says nothing about the video's readability — a name
+        collision — so a run cannot trip the consecutive-failure breaker over
+        one. Either way the frame counts as `failed`: it was asked for and not
+        delivered.
+        """
         src_path = Path(img.file_path)
         target = src_path.with_suffix(suffix)
         tmp = src_path.with_name(f"{src_path.stem}.{uuid4().hex}.tmp{suffix}")
         try:
-            result = await loop.run_in_executor(None, partial(
-                video_extract.render_at_timestamps,
-                src,
-                [float(img.source_timestamp_ms)],
-                dests=[(str(tmp), None)],
-                crop=crop,
-                deinterlace=deinterlace,
-                long_edge=long_edge,
-            ))
-        except Exception as exc:
-            logger.warning("video_reextract: %s could not be decoded: %s", img.filename, exc)
+            try:
+                result = await loop.run_in_executor(None, partial(
+                    video_extract.render_at_timestamps,
+                    src,
+                    [float(img.source_timestamp_ms)],
+                    dests=[(str(tmp), None)],
+                    crop=crop,
+                    deinterlace=deinterlace,
+                    long_edge=long_edge,
+                ))
+            except Exception as exc:
+                logger.warning("video_reextract: %s could not be decoded: %s", img.filename, exc)
+                return "decode failed", True
+            if not result.written:
+                return "no frame decoded at that timestamp", True
+            tmp = Path(result.written[0].path)
+
+            # Verify *before* anything is destroyed. `get_image_info` swallows every
+            # exception, so `{}` means the file just written will not re-open — and
+            # unlike upscale/LUT, the original is still sitting there untouched.
+            info = await loop.run_in_executor(None, get_image_info, str(tmp))
+            if not info:
+                return "the written frame would not re-open", True
+
+            if target != src_path and target.exists():
+                # An unregistered file — hand-dropped into images/ and not yet
+                # rescanned, so no DB row guards it. The only real hazard in the
+                # extension swap; never clobber it. Not a fault: the video decodes
+                # fine, so the rest of the run must still get its chance.
+                return f"{target.name} already exists on disk", False
+
+            # Mandatory before an in-place overwrite, and so is the commit: the hook
+            # only *flushes* the hash backfill, so a crash during the swap would roll
+            # it back and leave a pre-existing snapshot claiming "content unchanged".
+            await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+            await session.commit()
+
+            os.replace(tmp, target)
+            if target != src_path:
+                # A *pure* extension change: the stem never moves, so the thumbnail
+                # ({stem}.webp) and the caption sidecar ({stem}.txt) both stay exactly
+                # where they are — no rename_with_sidecar, no thumbnail move. The name
+                # is provably free because every image-name-picking site goes through
+                # `unique_filename_with_thumb`, which rejects a candidate whose *stem*
+                # is occupied in any extension; the only file that can be sitting there
+                # is an unregistered one, refused above.
+                src_path.unlink(missing_ok=True)
+                img.filename = target.name
+                img.file_path = str(target)
+
+            if img.thumbnail_path:
+                await loop.run_in_executor(
+                    None, generate_thumbnail, str(target), img.thumbnail_path
+                )
+
+            now = datetime.now(timezone.utc)
+            img.width = info["width"]
+            img.height = info["height"]
+            img.file_size_bytes = info["file_size_bytes"]
+            img.format = info["format"]
+            # phash is re-derived even though the scores are not: dedup depends on it,
+            # and a full-res frame hashes differently from its 1024px triage version.
+            img.phash = info["phash"]
+            # What busts `imagesApi.thumbnailUrlVersioned` — without it an open detail
+            # pane keeps showing the triage thumbnail.
+            img.updated_at = now
+            img.processing_history = (img.processing_history or []) + [{
+                "op": "reextract",
+                "video_id": video.id,
+                "timestamp_ms": img.source_timestamp_ms,
+                "format": fmt,
+                "long_edge": long_edge,
+                "at": now.isoformat(),
+            }]
+            return None
+        finally:
+            # The temp carries a real image extension and sits in `images/`, where
+            # `rescan_dataset` would adopt it as a new image. Every handled return
+            # is covered here, and so is a raise between the render and the swap.
+            # `tmp` is rebound to the written path after the render, so this must
+            # read the live binding; after a successful `os.replace` it is gone and
+            # `missing_ok` makes the unlink a no-op.
             tmp.unlink(missing_ok=True)
-            return "decode failed"
-        if not result.written:
-            tmp.unlink(missing_ok=True)
-            return "no frame decoded at that timestamp"
-        tmp = Path(result.written[0].path)
-
-        # Verify *before* anything is destroyed. `get_image_info` swallows every
-        # exception, so `{}` means the file just written will not re-open — and
-        # unlike upscale/LUT, the original is still sitting there untouched.
-        info = await loop.run_in_executor(None, get_image_info, str(tmp))
-        if not info:
-            tmp.unlink(missing_ok=True)
-            return "the written frame would not re-open"
-
-        if target != src_path and target.exists():
-            # An unregistered file — hand-dropped into images/ and not yet
-            # rescanned, so no DB row guards it. The only real hazard in the
-            # extension swap; never clobber it.
-            tmp.unlink(missing_ok=True)
-            return f"{target.name} already exists on disk"
-
-        # Mandatory before an in-place overwrite, and so is the commit: the hook
-        # only *flushes* the hash backfill, so a crash during the swap would roll
-        # it back and leave a pre-existing snapshot claiming "content unchanged".
-        await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-        await session.commit()
-        pending_rows = 0
-
-        os.replace(tmp, target)
-        if target != src_path:
-            # A *pure* extension change: the stem never moves, so the thumbnail
-            # ({stem}.webp) and the caption sidecar ({stem}.txt) both stay exactly
-            # where they are — no rename_with_sidecar, no thumbnail move. The name
-            # is provably free because every image-name-picking site goes through
-            # `unique_filename_with_thumb`, which rejects a candidate whose *stem*
-            # is occupied in any extension; the only file that can be sitting there
-            # is an unregistered one, refused above.
-            src_path.unlink(missing_ok=True)
-            img.filename = target.name
-            img.file_path = str(target)
-
-        if img.thumbnail_path:
-            await loop.run_in_executor(
-                None, generate_thumbnail, str(target), img.thumbnail_path
-            )
-
-        now = datetime.now(timezone.utc)
-        img.width = info["width"]
-        img.height = info["height"]
-        img.file_size_bytes = info["file_size_bytes"]
-        img.format = info["format"]
-        # phash is re-derived even though the scores are not: dedup depends on it,
-        # and a full-res frame hashes differently from its 1024px triage version.
-        img.phash = info["phash"]
-        # What busts `imagesApi.thumbnailUrlVersioned` — without it an open detail
-        # pane keeps showing the triage thumbnail.
-        img.updated_at = now
-        img.processing_history = (img.processing_history or []) + [{
-            "op": "reextract",
-            "video_id": video.id,
-            "timestamp_ms": img.source_timestamp_ms,
-            "format": fmt,
-            "long_edge": long_edge,
-            "at": now.isoformat(),
-        }]
-        pending_rows += 1
-        return None
 
     consecutive_failures = 0
     written_since_disk_check = 0
@@ -1422,32 +1427,30 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             cancelled = True
             break
 
-        reason = await _rewrite(img)
-        if reason is None:
+        reason = ""
+        outcome = await _rewrite(img)
+        if outcome is None:
             counts["rewritten"] += 1
             consecutive_failures = 0
             written_since_disk_check += 1
         else:
+            reason, is_fault = outcome
             counts["failed"] += 1
-            consecutive_failures += 1
+            # A refusal that says nothing about the video's readability must not
+            # feed the breaker, or one squatting file per frame aborts the run.
+            if is_fault:
+                consecutive_failures += 1
             logger.info("video_reextract: skipped %s — %s", img.filename, reason)
 
-        if pending_rows >= EXTRACT_COMMIT_EVERY:
-            await session.commit()
-            pending_rows = 0
-        if written_since_disk_check >= EXTRACT_DISK_RECHECK_EVERY:
-            written_since_disk_check = 0
-            # Commit first: `require_free_space` raises out of the job, and a
-            # rewritten file with an uncommitted row is a row that still claims
-            # the triage dimensions.
-            await session.commit()
-            pending_rows = 0
-            require_free_space(images_dir, 0)
-
+        # Once per frame, before the emit: `_rewrite` already has to commit
+        # mid-frame for the COW hook, so a batching threshold would never be
+        # reached and `done` would lag one frame behind forever. This makes `done`
+        # literally "frames a gallery refetch would see" — the PM-008 invariant.
+        await session.commit()
         await _emit(
             job_id, "rewriting", (i + 1) / max(total, 1),
             video_id=video.id, job_type="video_reextract",
-            done=counts["rewritten"] - pending_rows, total=total,
+            done=counts["rewritten"], total=total,
             image_id=img.id,
             message=f"Frame {i + 1} of {total}",
         )
@@ -1455,11 +1458,17 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         if consecutive_failures >= EXTRACT_MAX_CONSECUTIVE_FAILURES:
             # Frames already rewritten stay — they are real, and their COW backups
             # exist. The job is `failed`, not `cancelled`: nobody asked for this.
-            await session.commit()
             raise RuntimeError(
                 f"Re-extraction stopped after {consecutive_failures} consecutive failures "
                 f"({reason}). {counts['rewritten']} frame(s) already rewritten have been kept."
             )
+
+        if written_since_disk_check >= EXTRACT_DISK_RECHECK_EVERY:
+            # After the commit and the emit: `require_free_space` raises out of the
+            # job, and a rewritten file with an uncommitted row is a row that still
+            # claims the triage dimensions.
+            written_since_disk_check = 0
+            require_free_space(images_dir, 0)
 
     job_row = await session.get(BackgroundJob, job_id)
     if job_row:

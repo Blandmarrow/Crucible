@@ -483,6 +483,44 @@ def test_an_unregistered_file_at_the_target_png_path_is_never_clobbered(tmp_path
     run(scenario())
 
 
+def test_a_run_whose_every_frame_is_refused_still_completes(tmp_path, monkeypatch):
+    """A name collision is not a decode fault. It counts as `failed` — the user
+    asked for that frame and did not get it — but it must not feed the
+    consecutive-failure breaker, or a directory full of squatters aborts the run
+    instead of reporting each frame."""
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            monkeypatch.setattr(videos_router, "EXTRACT_MAX_CONSECUTIVE_FAILURES", 1)
+
+            squatters = {}
+            for f in frames:
+                path = Path(f.file_path).with_suffix(".png")
+                path.write_bytes(png_bytes(size=(7, 7)))
+                squatters[f.id] = path
+
+            _payload, jobs = await _reextract_and_wait(
+                env, video_id=video["id"], format="png"
+            )
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["rewritten"] == 0
+            assert jobs[0]["result_data"]["failed"] == len(frames)
+
+            for path in squatters.values():
+                assert path.read_bytes() == png_bytes(size=(7, 7))
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            for img in rows:
+                assert img.width == 160, "an original row was modified anyway"
+            images_dir = Path(rows[0].file_path).parent
+            assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
+
+    run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Failure handling
 # ---------------------------------------------------------------------------
@@ -516,6 +554,37 @@ def test_a_temp_file_that_will_not_reopen_leaves_the_original_intact(tmp_path):
             for img in rows:
                 assert Path(img.file_path).read_bytes() == before[img.id]
                 assert img.width == 160
+            images_dir = Path(rows[0].file_path).parent
+            assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
+
+    run(scenario())
+
+
+def test_a_raise_between_the_render_and_the_swap_leaves_no_temp_behind(tmp_path, monkeypatch):
+    """The temp carries a real image extension and sits in `images/`, where
+    `rescan_dataset` would adopt it as a new image. Handled returns unlink it; so
+    must an exception on the way to `os.replace`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            before = {f.id: Path(f.file_path).read_bytes() for f in frames}
+
+            async def boom(*_args, **_kwargs):
+                raise RuntimeError("the object store fell over")
+
+            from backend.services import version_service
+
+            monkeypatch.setattr(
+                version_service, "protect_file_before_overwrite", boom
+            )
+            _payload, jobs = await _reextract_and_wait(env, video_id=video["id"])
+            assert jobs[0]["status"] == "failed", jobs
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            for img in rows:
+                assert Path(img.file_path).read_bytes() == before[img.id]
             images_dir = Path(rows[0].file_path).parent
             assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
 
@@ -763,5 +832,9 @@ def test_progress_payloads_name_their_video_and_their_frame(tmp_path, monkeypatc
             assert counts == sorted(counts), progress
             assert all(p["done"] <= p["total"] == len(frames) for p in progress), progress
             assert progress[-1]["percent"] == 100.0
+            # The last frame is announced too. `_rewrite` has to commit mid-frame
+            # for the COW hook, so a batching threshold would never be reached and
+            # the bar used to top out at N-1 / N until the terminal event.
+            assert progress[-1]["done"] == len(frames), progress
 
     run(scenario())

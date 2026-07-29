@@ -19,6 +19,7 @@ the discriminator can be checked without enqueueing anything real: both
 endpoints have a cheap 400 immediately after the guard.
 """
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -229,7 +230,11 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
     rewrites `file_path` by prefix. It shares the file half's one hazard: both
     branches are chosen from `src`, which no longer exists once `shutil.move` has
     run, so a classification made too late turns the whole block into dead code
-    and leaves every row pointing at nothing."""
+    and leaves every row pointing at nothing.
+
+    A video's poster lives *under* `videos/`, so it travels with the move and its
+    stored path has to be rewritten too — otherwise `GET /poster` 403s on a path
+    outside the datasets tree."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("a")
@@ -238,6 +243,7 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
             async with env.Session() as db:
                 row = await db.get(Video, video["id"])
                 videos_dir = Path(row.file_path).parent
+                poster_rel = Path(row.poster_path).relative_to(videos_dir)
 
             archive = tmp_path / "archive"
             archive.mkdir()
@@ -254,6 +260,42 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
             # Unlike the file branch, this one rewrites paths only — the folder
             # is not necessarily a dataset's, so there is no dataset to re-home to.
             assert row.dataset_id == ds["id"]
+            # The poster moved with the folder, and the row followed it.
+            assert row.poster_path == str(archive / "videos" / poster_rel)
+            assert Path(row.poster_path).exists()
+
+    run(scenario())
+
+
+def test_moving_an_images_folder_leaves_thumbnails_outside_it_alone(tmp_path):
+    """The other half of the prefix test. An image's thumbnails live in
+    `{ds}/thumbnails/`, *beside* `images/` and not under it, so moving `images/`
+    does not move them — and rewriting `thumbnail_path` unconditionally would
+    point every row at a file that was never there."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("a")
+            image = await upload_image(env, ds["id"], "pic.png")
+
+            async with env.Session() as db:
+                row = await db.get(Image, image["id"])
+                images_dir = Path(row.file_path).parent
+                thumb_before = row.thumbnail_path
+            assert not thumb_before.startswith(str(images_dir) + os.sep)
+
+            archive = tmp_path / "archive"
+            archive.mkdir()
+            r = await env.client.post(
+                f"{FS}/move", json={"src": str(images_dir), "dst_dir": str(archive)}
+            )
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                row = await db.get(Image, image["id"])
+
+            assert row.file_path == str(archive / "images" / "pic.png")
+            assert row.thumbnail_path == thumb_before
+            assert Path(row.thumbnail_path).exists()
 
     run(scenario())
 

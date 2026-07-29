@@ -201,15 +201,23 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
         row.filename = new_path.name
         await db.commit()
     elif src_is_dir:
-        # Update every media row whose file_path started with the old dir path
+        # Update every media row whose file_path started with the old dir path,
+        # plus the derived artifact each model keys off a path of its own. A
+        # poster or thumbnail *inside* the moved tree travelled with it and its
+        # stored path is now wrong; one outside did not move and its path is
+        # still right — an image's thumbnails sit in `{ds}/thumbnails/`, beside
+        # `images/` rather than under it, so moving `images/` alone must leave
+        # them alone. Hence the per-column prefix test, not a blanket rewrite.
         old_prefix = str(src) + os.sep
         touched = False
-        for model in (Image, Video):
+        for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
             result = await db.execute(select(model).where(model.file_path.startswith(old_prefix)))
             rows = result.scalars().all()
             for row in rows:
-                rel = Path(row.file_path).relative_to(src)
-                row.file_path = str(new_path / rel)
+                row.file_path = str(new_path / Path(row.file_path).relative_to(src))
+                old_derived = getattr(row, derived)
+                if old_derived and str(old_derived).startswith(old_prefix):
+                    setattr(row, derived, str(new_path / Path(old_derived).relative_to(src)))
             touched = touched or bool(rows)
         if touched:
             await db.commit()

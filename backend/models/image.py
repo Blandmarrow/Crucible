@@ -130,7 +130,8 @@ def _sync_token_count(target, value, oldvalue, initiator):
 
     Covers all 12+ write sites (manual edits, captioning jobs, bulk edit, find/replace,
     import/rescan, tag consolidation, version restore) and the Image(caption_text=...)
-    constructor. Raw SQL / update(Image) writes to caption_text bypass this — captions
-    must always be written via ORM attribute assignment (true everywhere today).
+    constructor. Raw SQL / update(Image) writes to caption_text bypass this and leave
+    caption_token_count stale, silently — so captions must always be written via ORM
+    attribute assignment. No such bulk-update write exists today; keep it that way.
     """
     target.caption_token_count = count_caption_tokens(value)

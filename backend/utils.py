@@ -18,7 +18,8 @@ def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
 
     The single source of truth for chunking id lists before an SQL ``IN (...)``
     so the number of bind parameters stays under SQLite's 999-variable limit.
-    ``size`` defaults to 10k. Empty ``seq`` yields nothing.
+    ``size`` defaults to 10k. Empty ``seq`` yields nothing. Use this in every
+    batched ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
     """
     if size <= 0:
         raise ValueError("size must be positive")
@@ -60,7 +61,11 @@ def regex_sub_deadline(compiled, repl: str, text: str, deadline: float) -> str:
 
 @lru_cache(maxsize=None)
 def _get_enc():
-    """Cached GPT-2 BPE encoder (tiktoken imported lazily to keep import cheap)."""
+    """Cached GPT-2 BPE encoder (tiktoken imported lazily to keep import cheap).
+
+    The single tokenizer entry point: never call tiktoken.get_encoding("gpt2")
+    inline anywhere else.
+    """
     import tiktoken
     return tiktoken.get_encoding("gpt2")
 
@@ -72,6 +77,8 @@ def count_caption_tokens(text: str | None) -> int:
         return 0
     return len(_get_enc().encode_ordinary(trimmed))
 
+# The canonical set of valid quality flag names. Import this wherever flag names
+# must be validated or used in a SQL filter; never redefine the set locally.
 ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
 
 
@@ -121,7 +128,11 @@ def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
 
 
 def normalize_subfolder(s: str) -> str:
-    """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments."""
+    """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments.
+
+    Rejects '..' with HTTP 400. Import this; never copy the logic inline and never
+    re-import it from a router.
+    """
     parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
@@ -259,6 +270,13 @@ def unique_filename_with_thumb(
 
     Mutates db_names (adds the chosen filename) and planned_thumb_stems (adds
     the chosen stem) so subsequent calls within the same batch stay consistent.
+
+    Call this instead of unique_filename in every code path that creates or
+    renames an image file and associates a thumbnail with it. Build
+    occupied_thumb_stems from thumb_dir.glob("*.webp") once before the loop; do
+    NOT exclude the stems of images being renamed/moved from that set — doing so
+    re-introduces the within-batch clobber bug where one image's new thumbnail
+    path matches another image's current one.
     """
     candidate = unique_filename(images_dir, stem, suffix, db_names, disk_exclude)
     while True:
@@ -307,6 +325,9 @@ def require_free_space(
     request-path form. `target_dir` need not exist yet: the check walks up to the
     nearest existing ancestor, which is on the same volume. An unreadable path is
     never fatal on its own — the operation is allowed to proceed and fail for real.
+
+    Every run that writes many files (export, folder import) preflights through
+    here; never inline `shutil.disk_usage`. Routers map the error to HTTP 507.
     """
     probe = Path(target_dir).resolve()
     while not probe.exists() and probe.parent != probe:
@@ -326,7 +347,10 @@ def require_free_space(
 
 
 def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Rename a file and its .txt sidecar (if it exists) atomically."""
+    """Rename a file and its .txt sidecar (if it exists) atomically.
+
+    Use this everywhere a file is renamed; never copy the two-step pattern inline.
+    """
     old_path.rename(new_path)
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
@@ -334,7 +358,11 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
 
 
 def copy_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Copy a file and its .txt sidecar (if it exists) to new_path."""
+    """Copy a file and its .txt sidecar (if it exists) to new_path.
+
+    Uses shutil.copy2 and leaves the source intact. Use this everywhere a file is
+    copied; never copy the two-step pattern inline.
+    """
     shutil.copy2(old_path, new_path)
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
@@ -380,7 +408,12 @@ def image_save_kwargs(fmt: str) -> dict:
 
 
 def thumbnail_path_for(image_path: Path | str) -> str:
-    """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder."""
+    """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder.
+
+    `parent.parent/thumbnails/{stem}.webp`. Use this in any router that creates or
+    regenerates thumbnails; never reconstruct the path manually. (Its video sibling
+    `poster_path_for` is only a proposal — see there for why they differ.)
+    """
     p = Path(image_path)
     return str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
 

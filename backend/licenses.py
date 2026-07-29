@@ -9,6 +9,17 @@ Deliberately not a plain free-text field: `license` is filtered and grouped on
 (gallery filter, export filters, stats breakdown), so it needs a closed
 vocabulary. The `other:<free text>` escape hatch covers everything else without
 polluting the aggregate buckets.
+
+Import the vocabulary and the provenance helpers from here: never hardcode a
+license id list, and never re-inline the inheritance coalesce that
+`resolve_provenance` performs. `resolve_provenance` is duck-typed and must not
+import models, or it re-creates an import cycle.
+
+Ingest truncates; the API rejects. An import must never fail on a bad sidecar
+(`merge_provenance`/`clamp_provenance` clamp to `FIELD_MAX_LEN`), while an API
+client must never silently lose data (`normalize_license_input`, the Pydantic
+validator, normalizes *then* length-checks and raises). See
+`docs/dev/provenance.md` for the full write-side rules.
 """
 
 import copy

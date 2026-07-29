@@ -29,13 +29,15 @@ helper signatures only, not to the schema, which splits into two tables on purpo
 **Storage layout.** Video files live flat in `{dataset.folder_path}/videos/`, created
 lazily on first ingest so image-only datasets never grow an empty directory. Poster
 thumbnails go in `{dataset}/videos/thumbnails/` — a **separate** directory, not the images
-thumbnail folder with a distinguishing suffix. Eight **modules** build
+thumbnail folder with a distinguishing suffix. Nine **modules** build
 `occupied_thumb_stems` from `thumb_dir.glob("*.webp")` — `routers/images.py`,
-`captioning.py`, `comfy.py`, `lut.py`, `upscaling.py`, `detection.py`,
+`captioning.py`, `comfy.py`, `lut.py`, `upscaling.py`, `detection.py`, `videos.py`,
 `services/version_service.py` and `dataset_service.py` (the count is modules, not call
-sites; `routers/images.py` alone holds seven). A suffix convention would require all eight
-to learn a filter, and any one that forgot would be a silent thumbnail clobber. A separate
-directory means none of them change.
+sites; `routers/images.py` alone holds seven). `routers/videos.py` is in that list because
+frame extraction writes `Image` rows: it points `thumb_dir` at the dataset's *images*
+thumbnail folder, so it shares the collision domain despite living in the video router.
+A suffix convention would require all nine to learn a filter, and any one that forgot would
+be a silent thumbnail clobber. A separate directory means none of them change.
 
 ## Poster stems and collisions
 

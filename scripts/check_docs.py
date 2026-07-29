@@ -13,6 +13,7 @@ Checks (FAIL sets a non-zero exit code; WARN does not):
   4. WARN  any doc over its word budget (see word_limit())
   5. WARN  any single paragraph/bullet over MAX_BLOCK_WORDS
   6. WARN  a docs/dev/*.md file has no Documentation Map row, or vice versa
+  7. WARN  a Documentation Map row's hand-written word count has drifted from the file
 
 Why the heuristics are conservative: the docs reference many paths relative to
 `backend/` (e.g. `routers/captioning.py`) and plenty of non-paths that superficially
@@ -72,6 +73,13 @@ README_MAX_WORDS = 2500   # the landing page
 # A single paragraph or bullet longer than this should be a list.
 MAX_BLOCK_WORDS = 250
 
+# How far the Documentation Map's hand-written `Words` column may drift from the
+# file it describes. Proportional, so a 3k-word file is not flagged for a 60-word
+# edit; floored, so the smallest file is not flagged for sentence-level churn.
+# The tolerance is taken against the *claimed* value — that is the number under audit.
+MAP_WORDS_TOLERANCE = 0.05
+MAP_WORDS_FLOOR = 50
+
 # Bases a path token may be relative to. The docs reference source files relative to
 # `backend/` (e.g. `routers/captioning.py`) and `frontend/src/` (e.g. `api/foo.ts`).
 RESOLVE_BASES = [
@@ -97,6 +105,10 @@ _DISALLOWED = set("()=<>{}\"'|:@ ")
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 _MAP_ROW = re.compile(r"^\s*\|.*?docs/dev/([\w-]+\.md)")
+# A sibling of _MAP_ROW, not an extra group on it: _MAP_ROW is deliberately lenient
+# and check_map_sync depends on that. This one anchors the count to the row's LAST
+# cell rather than a column index, so it survives the Map gaining or losing a column.
+_MAP_WORDS_ROW = re.compile(r"^\s*\|\s*`docs/dev/([\w-]+\.md)`\s*\|.*\|\s*~?([\d,]+)\s*\|\s*$")
 _FOOTGUN = re.compile(r"@docs/|@CLAUDE")
 _LIST_ITEM = re.compile(r"^([-*+]|\d+\.)\s")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -342,6 +354,41 @@ def check_map_sync() -> list[str]:
     return warnings
 
 
+def check_map_words() -> list[str]:
+    """The Documentation Map's `Words` column is hand-written, so it rots silently —
+    it had drifted by up to 455 words before this check existed. Counting is identical
+    to check_sizes (whitespace split) so the two can never disagree.
+
+    Rows whose file is missing are check_map_sync's problem, not this one. A row that
+    matches the lenient _MAP_ROW but not _MAP_WORDS_ROW is reported too: dropping the
+    cell would otherwise defeat the check, which is the exact drift being closed.
+    """
+    claude = REPO_ROOT / "CLAUDE.md"
+    dev_dir = REPO_ROOT / "docs" / "dev"
+    warnings: list[str] = []
+    if not claude.exists() or not dev_dir.exists():
+        return warnings
+    for line in claude.read_text(encoding="utf-8").splitlines():
+        loose = _MAP_ROW.match(line)
+        if not loose:
+            continue
+        name = loose.group(1)
+        if not (dev_dir / name).exists():
+            continue  # check_map_sync reports this; don't double-report
+        m = _MAP_WORDS_ROW.match(line)
+        if not m:
+            warnings.append(f"docs/dev/{name}: Map row has no trailing word-count cell")
+            continue
+        claimed = int(m.group(2).replace(",", ""))
+        actual = len((dev_dir / name).read_text(encoding="utf-8").split())
+        if abs(actual - claimed) > max(MAP_WORDS_FLOOR, claimed * MAP_WORDS_TOLERANCE):
+            warnings.append(
+                f"docs/dev/{name}: Map claims ~{claimed} words, file has {actual} "
+                f"(use ~{round(actual / 5) * 5})"
+            )
+    return warnings
+
+
 # --- Main ------------------------------------------------------------------
 
 def _report(title: str, items: list[str], is_error: bool) -> None:
@@ -365,6 +412,7 @@ def main() -> int:
     sizes = check_sizes(every)        # dev + user; see word_limit() for per-file budgets
     long_blocks = check_blocks(every)
     map_sync = check_map_sync()       # docs/*.md has no Documentation Map
+    map_words = check_map_words()     # the Map's hand-written word counts
 
     print("Documentation drift check\n" + "=" * 26)
     print(f"       {len(dev)} dev file(s), {len(user)} user file(s)\n")
@@ -374,9 +422,10 @@ def main() -> int:
     _report("word budgets", sizes, is_error=False)
     _report("paragraph length", long_blocks, is_error=False)
     _report("Documentation Map <-> files sync", map_sync, is_error=False)
+    _report("Documentation Map word counts", map_words, is_error=False)
 
     errors = broken + links + footgun
-    warns = len(sizes) + len(long_blocks) + len(map_sync)
+    warns = len(sizes) + len(long_blocks) + len(map_sync) + len(map_words)
     print()
     print("RESULT:", "FAIL" if errors else "ok",
           f"({len(errors)} error(s), {warns} warning(s))")

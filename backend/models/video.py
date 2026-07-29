@@ -31,7 +31,11 @@ class Video(Base):
     # subfolder-per-video treatment instead (Phase 2).
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(512), default="")
-    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Indexed for the equality lookup the file browser does per file: every
+    # move, rename and delete under `routers/filesystem.py` asks "is there a row
+    # at this exact path?" once per affected file, and without an index each of
+    # those is a full scan of `videos`. The images twin is `ix_images_file_path`.
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     poster_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

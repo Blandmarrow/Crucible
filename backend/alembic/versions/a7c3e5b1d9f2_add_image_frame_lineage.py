@@ -24,6 +24,22 @@ pair for a schema that is in fact correct. The choice is a rebuild or a
 `ACCEPTED_DRIFT` entry that would mask the next real FK change; the rebuild wins.
 All three columns go in one batch so the table is copied once.
 
+**That rebuild is safe only because alembic's connection has no FK pragma**, and
+this is worth stating because nothing in the file makes it visible. Batch mode
+renames `images` aside, creates the new table and drops the old one — and with
+`PRAGMA foreign_keys=ON`, `DROP TABLE images` would cascade through
+`detections.image_id`'s `ON DELETE CASCADE` and empty that table. It does not,
+because the pragma is installed by an event listener bound to
+`backend/database.py`'s `engine.sync_engine`, while `env.py` builds its own
+engine via `engine_from_config`; that connection never gets the listener and
+runs at SQLite's default, off.
+
+The obvious hardening — bracketing the batch in `PRAGMA foreign_keys=OFF` /
+`ON` — **is not available**: SQLite silently ignores that pragma inside a
+transaction, and alembic runs each migration in one. Any future migration that
+rebuilds a table referenced by an `ON DELETE CASCADE` has to reason about this
+the same way, so check what points at the table before reaching for batch mode.
+
 Revision ID: a7c3e5b1d9f2
 Revises: c1d4f7a2b9e3
 Create Date: 2026-07-27

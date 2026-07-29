@@ -1316,6 +1316,10 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
 
     counts = {
         "rewritten": 0, "failed": 0, "skipped": len(image_ids) - len(rows),
+        # A frame whose thumbnail could not be regenerated is still `rewritten`:
+        # the file and the row agree and are committed. This counts the stale
+        # thumbnails so the outcome is visible in `result_data` rather than lost.
+        "thumbnails_stale": 0,
         "video_id": video.id, "format": fmt, "note": REEXTRACT_NOTE,
     }
     total = len(rows)
@@ -1329,10 +1333,14 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         collision — so a run cannot trip the consecutive-failure breaker over
         one. Either way the frame counts as `failed`: it was asked for and not
         delivered.
+
+        On success the row has already been committed: nothing fallible runs
+        between the swap and that commit, so disk and DB can never disagree.
         """
         src_path = Path(img.file_path)
         target = src_path.with_suffix(suffix)
         tmp = src_path.with_name(f"{src_path.stem}.{uuid4().hex}.tmp{suffix}")
+        superseded: Path | None = None
         try:
             try:
                 result = await loop.run_in_executor(None, partial(
@@ -1380,14 +1388,13 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 # `unique_filename_with_thumb`, which rejects a candidate whose *stem*
                 # is occupied in any extension; the only file that can be sitting there
                 # is an unregistered one, refused above.
-                src_path.unlink(missing_ok=True)
+                #
+                # The superseded original is unlinked in the epilogue, after the
+                # commit: `unlink` is itself fallible, and a failure here would
+                # leave the swap done and the row uncommitted.
+                superseded = src_path
                 img.filename = target.name
                 img.file_path = str(target)
-
-            if img.thumbnail_path:
-                await loop.run_in_executor(
-                    None, generate_thumbnail, str(target), img.thumbnail_path
-                )
 
             now = datetime.now(timezone.utc)
             img.width = info["width"]
@@ -1408,11 +1415,44 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 "long_edge": long_edge,
                 "at": now.isoformat(),
             }]
+            # Nothing fallible may sit between the `os.replace` above and this
+            # commit: the swap is irreversible, so a raise before here would roll
+            # the row back onto a file that no longer exists (the 404 of PM-013).
+            # The epilogue below is the place for anything that can fail.
+            await session.commit()
+
+            # --- epilogue: best-effort, cannot change this frame's outcome ---
+            # `AsyncSessionLocal` is built with `expire_on_commit=False`
+            # (backend/database.py), so `img`'s attributes stay readable after the
+            # commit without a refresh. Flipping that setting would break this.
+            if superseded is not None:
+                try:
+                    superseded.unlink(missing_ok=True)
+                except OSError as exc:
+                    # The row already names the new file, which exists. The old one
+                    # is orphan residue a rescan can adopt — not a failed frame.
+                    logger.warning(
+                        "video_reextract: could not remove superseded %s: %s",
+                        superseded.name, exc,
+                    )
+            if img.thumbnail_path:
+                try:
+                    await loop.run_in_executor(
+                        None, generate_thumbnail, str(target), img.thumbnail_path
+                    )
+                except Exception as exc:
+                    # A stale thumbnail is cosmetic and self-healing; counting the
+                    # frame failed would both lie and feed the failure breaker.
+                    counts["thumbnails_stale"] += 1
+                    logger.warning(
+                        "video_reextract: thumbnail for %s could not be regenerated: %s",
+                        target.name, exc,
+                    )
             return None
         finally:
             # The temp carries a real image extension and sits in `images/`, where
             # `rescan_dataset` would adopt it as a new image. Every handled return
-            # is covered here, and so is a raise between the render and the swap.
+            # is covered here, and so is any raise inside the `try`.
             # `tmp` is rebound to the written path after the render, so this must
             # read the live binding; after a successful `os.replace` it is gone and
             # `missing_ok` makes the unlink a no-op.
@@ -1442,10 +1482,12 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 consecutive_failures += 1
             logger.info("video_reextract: skipped %s — %s", img.filename, reason)
 
-        # Once per frame, before the emit: `_rewrite` already has to commit
-        # mid-frame for the COW hook, so a batching threshold would never be
-        # reached and `done` would lag one frame behind forever. This makes `done`
-        # literally "frames a gallery refetch would see" — the PM-008 invariant.
+        # A no-op on every path — `_rewrite` commits the frame itself, and its
+        # refusals mutate nothing — but kept, and kept here: `_rewrite` already
+        # has to commit mid-frame for the COW hook, so a batching threshold would
+        # never be reached and `done` would lag one frame behind forever. Three
+        # lines above the emit is where "`done` is the committed count" — the
+        # PM-008 invariant — is provable at a glance.
         await session.commit()
         await _emit(
             job_id, "rewriting", (i + 1) / max(total, 1),
@@ -1464,9 +1506,10 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             )
 
         if written_since_disk_check >= EXTRACT_DISK_RECHECK_EVERY:
-            # After the commit and the emit: `require_free_space` raises out of the
-            # job, and a rewritten file with an uncommitted row is a row that still
-            # claims the triage dimensions.
+            # After the emit: `require_free_space` raises out of the job, and the
+            # frame that filled the disk should still have published its progress
+            # event first. Row/disk agreement no longer depends on this placement
+            # — `_rewrite` commits each frame itself.
             written_since_disk_check = 0
             require_free_space(images_dir, 0)
 

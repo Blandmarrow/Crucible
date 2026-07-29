@@ -187,6 +187,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
 
                 if replace:
                     now = datetime.now(timezone.utc)
+                    superseded: Path | None = None
                     img.width = info["width"]
                     img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
@@ -199,7 +200,11 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         # A pure extension change moves nothing derived: the stem
                         # is unchanged, so the thumbnail ({stem}.webp) and the
                         # caption sidecar ({stem}.txt) stay where they are.
-                        src_path.unlink(missing_ok=True)
+                        #
+                        # The original is unlinked in the epilogue below, after
+                        # the commit: `unlink` is fallible, and a failure here
+                        # would leave the write done and the row uncommitted.
+                        superseded = src_path
                         img.filename = Path(actual_out_path).name
                         img.file_path = actual_out_path
                         img.format = info["format"]
@@ -208,10 +213,34 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         "model": model_filename,
                         "at": now.isoformat(),
                     }]
+                    # Nothing fallible between the (already-done) overwrite and
+                    # this commit — a raise before here would roll the row back
+                    # onto a file that no longer exists (PM-013).
+                    await session.commit()
+
+                    # --- epilogue: best-effort, cannot undo the upscale ---
+                    # `expire_on_commit=False` (backend/database.py) keeps `img`
+                    # readable after the commit without a refresh.
+                    if superseded is not None:
+                        try:
+                            superseded.unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning(
+                                "Upscale: could not remove superseded %s: %s",
+                                superseded.name, exc,
+                            )
                     if img.thumbnail_path:
-                        await loop.run_in_executor(
-                            None, generate_thumbnail, actual_out_path, img.thumbnail_path
-                        )
+                        try:
+                            await loop.run_in_executor(
+                                None, generate_thumbnail, actual_out_path, img.thumbnail_path
+                            )
+                        except Exception as exc:
+                            # A stale thumbnail is cosmetic; the upscaled image is
+                            # committed and serves.
+                            logger.warning(
+                                "Upscale: thumbnail for %s could not be regenerated: %s",
+                                img.filename, exc,
+                            )
                     last_image_id = img.id
                 else:
                     dest_path = Path(actual_out_path)

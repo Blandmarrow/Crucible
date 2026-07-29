@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,8 @@ from backend.services.image_service import (
 )
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.workers.job_queue import job_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/images", tags=["images"])
 
@@ -1025,8 +1028,11 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
             # The PNG fallback may have written a different path than the one
             # asked for; the thumbnail has to be cut from the file that exists.
+            # It is cut in the epilogue, after the row is committed: the crop has
+            # already overwritten the original, so a raise here would leave the
+            # row describing a file that is gone (PM-013).
             actual_out_path = info.get("out_path", replace_cfg["dest_path"])
-            await loop2.run_in_executor(None, generate_thumbnail, actual_out_path, replace_cfg["thumb_path"])
+            superseded: Path | None = None
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
@@ -1040,8 +1046,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         # ends up with two files and one row (PM-009). The COW
                         # copy already exists — `protect_file_before_overwrite`
                         # ran before the crop — so the unlink is safe. The stem is
-                        # unchanged, so the thumbnail and sidecar stay put.
-                        Path(replace_cfg["dest_path"]).unlink(missing_ok=True)
+                        # unchanged, so the thumbnail and sidecar stay put. It
+                        # happens after the commit, since `unlink` is fallible.
+                        superseded = Path(replace_cfg["dest_path"])
                         updated.filename = Path(actual_out_path).name
                         updated.file_path = actual_out_path
                         updated.format = info["format"]
@@ -1060,7 +1067,32 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         (rect[0], rect[1], rect[2], rect[3]),
                         (old_dims[0], old_dims[1]),
                     )
+                    # DB-only work above may still roll back safely; below this
+                    # line the row and the file on disk agree, durably.
                     await session.commit()
+
+                    # --- epilogue: best-effort, cannot undo the crop+upscale ---
+                    # `expire_on_commit=False` (backend/database.py) keeps
+                    # `updated` readable after the commit without a refresh.
+                    if superseded is not None:
+                        try:
+                            superseded.unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning(
+                                "Crop+upscale: could not remove superseded %s: %s",
+                                superseded.name, exc,
+                            )
+                    try:
+                        await loop2.run_in_executor(
+                            None, generate_thumbnail, actual_out_path, replace_cfg["thumb_path"]
+                        )
+                    except Exception as exc:
+                        # A stale thumbnail is cosmetic; the image is committed
+                        # and serves.
+                        logger.warning(
+                            "Crop+upscale: thumbnail for %s could not be regenerated: %s",
+                            Path(actual_out_path).name, exc,
+                        )
 
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "crop_upscale",

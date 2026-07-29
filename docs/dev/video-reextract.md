@@ -122,27 +122,47 @@ wrapper verbatim, including its three load-bearing details — see
 4. `version_service.protect_file_before_overwrite` then an immediate `commit()` — mandatory
    per that function's docstring, and the 8th call site (`docs/dev/versioning.md`).
 5. `os.replace` into place (below).
-6. Regenerate the thumbnail from the new file into `img.thumbnail_path`.
-7. Row update: `width`, `height`, `file_size_bytes`, `format`, `phash`, `updated_at` (what
-   busts `imagesApi.thumbnailUrlVersioned`) and a `reextract` entry appended to
+6. Row update: `filename`/`file_path` if the suffix changed, plus `width`, `height`,
+   `file_size_bytes`, `format`, `phash`, `updated_at` (what busts
+   `imagesApi.thumbnailUrlVersioned`) and a `reextract` entry appended to
    `processing_history` by list-concat reassignment, never `.append()`.
+7. `commit()`. From here the row and the file on disk agree, durably.
+8. **Best-effort epilogue**: unlink the superseded original (extension change only), then
+   regenerate the thumbnail from the new file into `img.thumbnail_path`. Both are wrapped;
+   a failure is logged and cannot change the frame's outcome, and a failed thumbnail
+   increments `counts["thumbnails_stale"]` so `result_data` still records it.
 
-Steps 2–7 sit inside a `try`/`finally` that unlinks the temp. The name carries a real image
+Steps 6 and 7 used to be the other way round, with the thumbnail between them. That is
+PM-013: `generate_thumbnail` catches nothing, so an unwritable `thumbnails/` raised out of
+the job, the row rolled back, and the frame was left named `.jpg` on a `.png` that had
+already been written — `GET /images/{id}/file` 404s and a later rescan adopts the orphan.
+**Nothing fallible may sit between the `os.replace` and the commit that describes it** —
+CLAUDE.md § Key invariants, with the incident and the other three sites it was fixed at in
+`docs/dev/postmortems/PM-013-fs-mutation-before-the-commit.md`. The
+epilogue is safe to read `img` after the commit only because `AsyncSessionLocal` sets
+`expire_on_commit=False`.
+
+Steps 2–8 sit inside a `try`/`finally` that unlinks the temp. The name carries a real image
 extension and sits in `images/`, so a survivor is a file `rescan_dataset` would adopt as a
 new image. The `finally` reads the **live** `tmp` binding — it is rebound to the written
 path after the render, because `_write_frame` may have fallen back to PNG — and
 `missing_ok=True` makes it a no-op once `os.replace` has consumed it. A `SIGKILL` is still
-outside what a `finally` covers; that residue is accepted, not claimed fixed.
+outside what a `finally` covers, and so is a failing step 7 — the one window that cannot be
+ordered away. Both leave the same residue and only that: an orphan file at the new suffix,
+with the row and the original still intact (see § The extension change). Accepted, not
+claimed fixed.
 
 **`done` is the committed count** — frames a gallery refetch would actually see, the PM-008
-invariant — and it must be non-decreasing. **The job commits once per frame**, immediately
-before the progress event, and `done` is `counts["rewritten"]` with no pending-row
-correction. That is not a batching choice: step 4 *has* to commit mid-frame for the COW
-hook, so any `EXTRACT_COMMIT_EVERY`-style threshold would never be reached and `done` would
-lag one frame behind for the whole run, topping the bar out at `N-1 / N` until the terminal
-event. `EXTRACT_COMMIT_EVERY` plays no part here — it belongs to pass 1. Disk is re-checked
-every `EXTRACT_DISK_RECHECK_EVERY` (100) written, after the commit and the emit, because
-`require_free_space` raises straight out of the job.
+invariant — and it must be non-decreasing. `_rewrite` commits each frame itself at step 7,
+so `done` is `counts["rewritten"]` with no pending-row correction. The loop keeps its own
+`commit()` immediately before the progress event even though it is now a no-op on every
+path: it is where the invariant is provable, three lines above the emit. Batching it was
+never an option anyway — step 4 *has* to commit mid-frame for the COW hook, so any
+`EXTRACT_COMMIT_EVERY`-style threshold would never be reached and `done` would lag one frame
+behind for the whole run, topping the bar out at `N-1 / N` until the terminal event.
+`EXTRACT_COMMIT_EVERY` plays no part here — it belongs to pass 1. Disk is re-checked every
+`EXTRACT_DISK_RECHECK_EVERY` (100) written, after the emit, so the frame that filled the
+disk still publishes its progress event before `require_free_space` raises out of the job.
 
 A circuit breaker mirroring `EXTRACT_MAX_CONSECUTIVE_FAILURES` aborts a run whose video has
 gone unreadable mid-job; frames already rewritten stay, and the job ends `failed`, not
@@ -171,6 +191,20 @@ occupied — including the two rescan paths that adopt names off disk rather tha
 (CLAUDE.md § Key invariants). So if this frame owns `clip_s0001_00.jpg`, no other row can
 own `clip_s0001_00.png`. No `unique_filename_with_thumb` call is needed here, no
 `disk_exclude`, and no exception to the `occupied_thumb_stems` rule.
+
+**The superseded original is unlinked in step 8, after the commit**, not alongside the
+rename. `Path.unlink` is fallible in its own right (`EACCES`/`EROFS`, and `PermissionError`
+on Windows if any process holds the file open — `GET /images/{id}/file` streams that exact
+path while the job runs, and the job holds no `busy` lock), so unlinking before the commit
+would put a fallible call inside the forbidden window. Ordering it after also makes a
+failing commit survivable: the row still names the `.jpg`, the `.jpg` still exists, `/file`
+still 200s, and the residue is an orphan `.png`. The two files coexist briefly, which the
+endpoint's disk preflight already budgets for — it estimates `× 2.0` for PNG precisely
+because a second copy of each frame is live during the swap.
+
+Rejected alternative: nulling `thumbnail_path` when regeneration fails, to force it on
+demand. A deterministic failure (a full disk, a read-only `thumbnails/`) would then 500 the
+thumbnail request path on every gallery scroll instead of showing one stale tile.
 
 The one real hazard is a file with **no DB row to guard it** — hand-dropped into `images/`
 and not yet rescanned. That is refused: the temp is unlinked, the frame counted failed, and

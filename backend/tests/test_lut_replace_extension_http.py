@@ -104,6 +104,52 @@ def test_lut_replace_never_clobbers_an_unregistered_file_at_the_fallback_path(tm
     run(scenario())
 
 
+def test_lut_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_path, monkeypatch):
+    """PM-013 at the LUT call site. `generate_thumbnail` catches nothing, and it
+    used to run between the rename and the loop's single commit — so an
+    unwritable `thumbnails/` rolled the row back onto the `.bmp` the grade had
+    already replaced, and `GET /images/{id}/file` 404'd.
+
+    Patched on the *router module attribute*: `lut.py` imports the name at module
+    import. A plain sync `def`, because the call goes through `run_in_executor`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+            lut = _identity_cube(tmp_path / "identity.cube")
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+
+            from backend.routers import lut as lut_router
+
+            def boom(_src, _dest):
+                raise OSError("no space left on device")
+
+            monkeypatch.setattr(lut_router, "generate_thumbnail", boom)
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "lut_path": str(lut), "intensity": 1.0, "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            png_path = bmp_path.with_suffix(".png")
+            assert row.file_path == str(png_path)
+            assert png_path.exists()
+            assert not bmp_path.exists(), "the superseded .bmp was left behind"
+
+            r = await env.client.get(f"{API}/images/{img['id']}/file")
+            assert r.status_code == 200, r.text
+
+    run(scenario())
+
+
 def test_lut_replace_on_a_png_is_unaffected(tmp_path):
     """The common case stays a plain in-place overwrite — no rename, nothing
     derived moves, and the row keeps every field but its size and history."""

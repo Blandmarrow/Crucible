@@ -5,7 +5,7 @@ timestamp pass 1 recorded. These tests pin it from the outside: what the preview
 promises, what the job actually rewrites, and what is on disk and in the object
 store afterwards.
 
-Three tests are worth more than the rest.
+Four tests are worth more than the rest.
 
 `test_a_pre_existing_snapshot_still_restores_the_triage_pixels` proves the
 overwrite went through `protect_file_before_overwrite` *and* committed — the hook
@@ -18,6 +18,11 @@ ordering pass 2 does differently from upscale and LUT: write a temp, verify it,
 
 `test_an_unregistered_file_at_the_target_png_path_is_never_clobbered` is the only
 real hazard in the extension change — a file with no DB row to guard it.
+
+`test_a_thumbnail_failure_during_the_png_rename_still_serves_the_frame` carries
+the symptom PM-013 was filed for: a fallible step between the swap and the commit
+rolled the row back onto a file that no longer existed, so `GET
+/images/{id}/file` returned **404** and the gallery card broke.
 """
 
 import asyncio
@@ -591,6 +596,167 @@ def test_a_raise_between_the_render_and_the_swap_leaves_no_temp_behind(tmp_path,
                 assert Path(img.file_path).read_bytes() == before[img.id]
             images_dir = Path(rows[0].file_path).parent
             assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
+
+    run(scenario())
+
+
+def _break_thumbnails(monkeypatch):
+    """Make `generate_thumbnail` deterministically fail.
+
+    Patched on the *router module attribute*: `videos.py` imports the name at
+    module import, so patching `image_service` would not be seen. A plain sync
+    `def`, because the call goes through `run_in_executor`.
+    """
+    from backend.routers import videos as videos_router
+
+    def boom(_src, _dest):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(videos_router, "generate_thumbnail", boom)
+
+
+def test_a_thumbnail_that_will_not_regenerate_still_commits_the_rewrite(tmp_path, monkeypatch):
+    """The thumbnail is an epilogue, not a step. `generate_thumbnail` catches
+    nothing, so before PM-013 a full disk raised straight out of the job — the
+    session closed without committing and the row kept the triage geometry while
+    the file on disk was already the full-res one.
+
+    The frame counts as `rewritten`: it was written and committed. Counting it
+    failed would both lie and feed the consecutive-failure breaker."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            thumbs = {f.id: Path(f.thumbnail_path) for f in frames}
+            stale = {i: p.read_bytes() for i, p in thumbs.items()}
+            async with env.Session() as db:
+                for f in frames:
+                    (await db.get(Image, f.id)).phash = "0" * 16
+                await db.commit()
+
+            _break_thumbnails(monkeypatch)
+            _payload, jobs = await _reextract_and_wait(env, video_id=video["id"])
+
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["rewritten"] == len(frames)
+            assert jobs[0]["result_data"]["failed"] == 0
+            assert jobs[0]["result_data"]["thumbnails_stale"] == len(frames)
+
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Image).where(Image.source_video_id == video["id"])
+                )).scalars().all()
+            assert len(rows) == len(frames)
+            for img in rows:
+                assert (img.width, img.height) == (320, 240), "the row was rolled back"
+                assert img.phash != "0" * 16, "phash must be re-derived"
+                assert [e["op"] for e in img.processing_history] == ["reextract"], \
+                    "the skip guard for the next run was lost with the row"
+                assert Path(img.file_path).exists()
+                # The old thumbnail is left exactly as it was — stale, but never
+                # deleted, so the gallery card keeps rendering something.
+                assert thumbs[img.id].exists()
+                assert thumbs[img.id].read_bytes() == stale[img.id]
+            images_dir = Path(rows[0].file_path).parent
+            assert not list(images_dir.glob("*.tmp*")), "a temp file was left behind"
+
+    run(scenario())
+
+
+def test_a_thumbnail_failure_during_the_png_rename_still_serves_the_frame(tmp_path, monkeypatch):
+    """The 404 that opened PM-013. With the extension change the swap renames the
+    file, so a raise before the commit left the row naming a `.jpg` that no longer
+    existed: `GET /images/{id}/file` 404s, the gallery card breaks, and a later
+    `rescan_dataset` adopts the orphaned `.png` as a second unrelated image."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            target = frames[0]
+            jpg_path = Path(target.file_path)
+
+            _break_thumbnails(monkeypatch)
+            _payload, jobs = await _reextract_and_wait(
+                env, image_ids=[target.id], format="png"
+            )
+
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["rewritten"] == 1
+            assert jobs[0]["result_data"]["thumbnails_stale"] == 1
+
+            async with env.Session() as db:
+                row = await db.get(Image, target.id)
+            png_path = jpg_path.with_suffix(".png")
+            assert row.filename == png_path.name
+            assert row.file_path == str(png_path)
+            assert png_path.exists()
+            assert not jpg_path.exists(), "the superseded .jpg was left behind"
+
+            r = await env.client.get(f"{API}/images/{target.id}/file")
+            assert r.status_code == 200, r.text
+
+            # Exactly one file per stem: nothing for a later rescan to adopt.
+            images_dir = jpg_path.parent
+            for stem in {p.stem for p in images_dir.glob("*") if p.is_file()}:
+                assert len(list(images_dir.glob(f"{stem}.*"))) == 1, stem
+
+    run(scenario())
+
+
+def test_a_commit_that_fails_after_the_swap_leaves_the_original_in_place(tmp_path, monkeypatch):
+    """The one irreducible window, and why the superseded original is unlinked
+    *after* the commit rather than merely before the thumbnail.
+
+    A failing `commit()` cannot be ordered away. Unlinking after it makes that
+    window survivable: the row still names the `.jpg`, the `.jpg` still exists,
+    and `/file` still 200s. The residue is an orphan `.png` — the same
+    rescan-adoptable leftover a `SIGKILL` already leaves, not a broken row."""
+    async def scenario():
+        import os
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _video, frames = await _triage(env, ds["id"], long_edge=160)
+            target = frames[0]
+            jpg_path = Path(target.file_path)
+
+            state = {"swapped": False, "raised": False}
+            real_replace = os.replace
+            real_commit = AsyncSession.commit
+
+            def spy_replace(src, dst, **kwargs):
+                out = real_replace(src, dst, **kwargs)
+                if Path(dst) == jpg_path.with_suffix(".png"):
+                    state["swapped"] = True
+                return out
+
+            async def flaky_commit(self):
+                if state["swapped"] and not state["raised"]:
+                    state["raised"] = True
+                    raise RuntimeError("the transaction log went away")
+                return await real_commit(self)
+
+            monkeypatch.setattr(os, "replace", spy_replace)
+            monkeypatch.setattr(AsyncSession, "commit", flaky_commit)
+            _payload, jobs = await _reextract_and_wait(
+                env, image_ids=[target.id], format="png"
+            )
+            monkeypatch.undo()
+
+            assert state["raised"], "the commit under test never ran"
+            assert jobs[0]["status"] == "failed", jobs
+
+            async with env.Session() as db:
+                row = await db.get(Image, target.id)
+            assert row.file_path == str(jpg_path), "the row followed a rolled-back swap"
+            assert jpg_path.exists(), "the original was unlinked before the commit"
+
+            r = await env.client.get(f"{API}/images/{target.id}/file")
+            assert r.status_code == 200, r.text
+            # The orphan .png is deliberately *not* asserted away: it is the
+            # accepted residue, adoptable by a rescan.
 
     run(scenario())
 

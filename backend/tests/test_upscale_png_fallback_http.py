@@ -160,6 +160,52 @@ def test_upscale_replace_never_clobbers_an_unregistered_file_at_the_fallback_pat
     run(scenario())
 
 
+def _break_thumbnails(monkeypatch, module):
+    """A deterministically failing `generate_thumbnail`, patched on the *router
+    module attribute* — both routers import the name at module import. A plain
+    sync `def`, because the call goes through `run_in_executor`. Install it after
+    the fixture upload, which cuts a thumbnail through `routers/images.py` too."""
+    def boom(_src, _dest):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(module, "generate_thumbnail", boom)
+
+
+def test_upscale_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_path, monkeypatch):
+    """PM-013 at the upscale call site — acquired three commits ago, in the fix
+    for PM-009 itself. `generate_thumbnail` ran between the rename and the loop's
+    single commit, so an unwritable `thumbnails/` rolled the row back onto the
+    `.bmp` the upscale had already replaced, and `GET /images/{id}/file` 404'd."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+
+            import backend.routers.upscaling as upscale_router
+
+            _break_thumbnails(monkeypatch, upscale_router)
+            job = await _run_upscale(env, ds["id"], img["id"], replace=True)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            png_path = bmp_path.with_suffix(".png")
+            assert row.file_path == str(png_path)
+            assert row.width == 64 and row.height == 48, "the row was rolled back"
+            assert png_path.exists()
+            assert not bmp_path.exists(), "the superseded .bmp was left behind"
+
+            r = await env.client.get(f"{API}/images/{img['id']}/file")
+            assert r.status_code == 200, r.text
+
+    run(scenario())
+
+
 def test_upscale_replace_on_a_png_is_unaffected(tmp_path, monkeypatch):
     """The common case stays a plain in-place overwrite: one row, same name, no
     unlink."""
@@ -262,6 +308,44 @@ def test_crop_replace_upscale_follows_the_png_fallback(tmp_path, monkeypatch):
             assert _is_upscaled(thumb), frame_colour(thumb)
             # The crop temp file is cleaned up either way.
             assert not list(bmp_path.parent.glob("*_croptmp*"))
+
+    run(scenario())
+
+
+def test_crop_replace_upscale_still_serves_the_image_when_the_thumbnail_fails(tmp_path, monkeypatch):
+    """PM-013's worst ordering: `generate_thumbnail` ran *before the session was
+    even opened*, so a raise there meant the row was never updated at all — the
+    crop had overwritten the original and nothing recorded it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+
+            import backend.routers.images as images_router
+
+            _break_thumbnails(monkeypatch, images_router)
+            r = await _crop(env, img["id"], replace=True)
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            png_path = bmp_path.with_suffix(".png")
+            assert row.file_path == str(png_path)
+            assert row.filename == png_path.name
+            assert [e["op"] for e in row.processing_history] == ["crop_upscale"], \
+                "the row was rolled back"
+            assert png_path.exists()
+            assert not bmp_path.exists(), "the superseded .bmp was left behind"
+
+            r = await env.client.get(f"{API}/images/{img['id']}/file")
+            assert r.status_code == 200, r.text
 
     run(scenario())
 

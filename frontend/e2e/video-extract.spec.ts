@@ -161,6 +161,37 @@ test('the modal reports what was typed and what was clicked', async ({ page, req
   expect(body).not.toHaveProperty('trim_end_ms')
 })
 
+// The same guard from the other side, and the one with real data consequences.
+// `cropTouched` decides whether `crop` is sent at all; the modal shows the *full
+// frame* when no crop is set, and the endpoint maps a full-frame rect to `None`
+// and writes `crop_* = NULL` to **every** video in the batch. So merely tabbing
+// through the crop fields — the documented keyboard path — used to wipe every
+// other video's stored rect. Key presence in the body is the whole assertion.
+test('tabbing through the crop fields sends no crop', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-tab-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  await dialog.getByRole('spinbutton', { name: 'Crop x' }).focus()
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Tab')
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  expect(body).not.toHaveProperty('crop')
+  expect(body).not.toHaveProperty('clear_crop')
+})
+
 // The two modes resolve a subfolder differently — `new_subfolder` steps whatever
 // name it is given through `_step_subfolder`, so offering an existing folder
 // there would silently produce `{name}_2`. The control has to differ, and this is

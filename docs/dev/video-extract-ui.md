@@ -229,12 +229,15 @@ that is not a lie. Four details are load-bearing:
   anything it does not consider a valid float (`-`, `1e`, `1.2.3`), which lands in that same
   branch.
 
-`frontend/e2e/video-extract.spec.ts` covers the draft contract and the pointerdown fix
-together. Two things there are deliberate: values are typed with `pressSequentially`, since
-`fill()` dispatches one input event carrying the whole string and passes against the broken
-code; and the trim-handle click passes an off-centre `position`, because the handle
-straddles the track's left edge at 0 ms and a centred click lands at exactly 0 ms, which the
-no-op guard absorbs.
+`frontend/e2e/video-extract.spec.ts` covers the draft contract, the pointerdown fix and the
+`NULL` wipe, all through the submitted request body. Three things there are deliberate:
+values are typed with `pressSequentially`, since `fill()` dispatches one input event
+carrying the whole string and passes against the broken code; the trim-handle click passes
+an off-centre `position`, because the handle straddles the track's left edge at 0 ms and a
+centred click lands at exactly 0 ms, which the no-op guard absorbs; and the assertions are
+on key *presence* (`not.toHaveProperty('crop')`), since an untouched control is sent as
+`undefined` and dropped in serialization. Each was checked against the unfixed code — a bare
+tab through the crop fields submitted `{x: 0, y: 0, w: 128, h: 96}`, the full frame.
 
 ## Re-attaching to the job
 

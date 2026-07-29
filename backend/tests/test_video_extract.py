@@ -62,6 +62,14 @@ def test_duration_measurement_ignores_a_wildly_wrong_hint(shots_mp4):
     assert measure_duration_ms(shots_mp4, hint_ms=10) == pytest.approx(3600, abs=45)
 
 
+def test_a_hint_beyond_the_ceiling_still_measures(shots_mp4):
+    """`probe <= max_ms` is evaluated before the first probe, so an over-ceiling
+    hint used to skip the exponential phase entirely and return None without a
+    single seek — and an over-ceiling hint is exactly what a poisoned header
+    supplies. Clamping the first probe to the ceiling brackets immediately."""
+    assert measure_duration_ms(shots_mp4, hint_ms=1_000_000_000) == pytest.approx(3600, abs=45)
+
+
 def test_duration_is_none_for_a_file_that_will_not_open(tmp_path):
     p = tmp_path / "broken.mp4"
     p.write_bytes(mp4_corrupt_bytes())

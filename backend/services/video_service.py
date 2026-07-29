@@ -52,6 +52,24 @@ def apply_orientation(cap) -> None:
         logger.debug("CAP_PROP_ORIENTATION_AUTO not supported by this backend")
 
 
+# A duration search never runs past this, and it doubles as the plausibility
+# ceiling on the header quotient below — shared by both duration paths. 24 h is
+# far beyond anything a user would curate frames from, and a stream whose header
+# lies without bound must terminate the search rather than double forever.
+MEASURE_MAX_MS = 24 * 60 * 60 * 1000
+# Bisection stops one frame period from the answer, or at this floor for a file
+# that reports no usable frame rate. The result feeds progress percentages,
+# sample positions and the tail trim — not an edit decision list.
+MEASURE_TOLERANCE_FLOOR_MS = 40.0
+MEASURE_MAX_PROBES = 40
+# Sequential grabs (no seek) used to walk the last bracket down to the real
+# final frame. Bounded so a container that never reports EOF cannot spin.
+MEASURE_TAIL_GRABS = 64
+# The seekability verdict is only trusted once the probe has grown past this.
+# See the comment at the check itself for why a floor is required at all.
+NON_SEEKABLE_PROBE_FLOOR_MS = 2000.0
+
+
 def probe_video(path: str | Path) -> dict:
     """Header-only metadata for one video. Blocking — call in an executor.
 
@@ -92,6 +110,17 @@ def probe_video(path: str | Path) -> dict:
     # prints "Duration: N/A" for exactly that case. NULL renders as "unknown".
     duration_ms = int(frames / fps * 1000) if (fps > 0 and 0 < frames < 1e9) else None
 
+    # The count guard above bounds the *frames*, not the quotient. fps=0.01 with
+    # frames=500_000 passes it and yields ~578 days, which then drives the trim
+    # bar and every sample position. Same ceiling the seek search uses, for the
+    # same reason. Cost: a genuine >24 h video reads as "unknown".
+    if duration_ms is not None and duration_ms > MEASURE_MAX_MS:
+        logger.info(
+            "probe: implausible duration %d ms for %s (fps=%.4f, frames=%.0f) — storing NULL",
+            duration_ms, p.name, fps, frames,
+        )
+        duration_ms = None
+
     try:
         file_size_bytes = p.stat().st_size
     except OSError:
@@ -105,23 +134,6 @@ def probe_video(path: str | Path) -> dict:
         "duration_ms": duration_ms,
         "file_size_bytes": file_size_bytes,
     }
-
-
-# A duration search never runs past this. 24 h is far beyond anything a user
-# would curate frames from, and a stream whose header lies without bound must
-# terminate the search rather than double forever.
-MEASURE_MAX_MS = 24 * 60 * 60 * 1000
-# Bisection stops one frame period from the answer, or at this floor for a file
-# that reports no usable frame rate. The result feeds progress percentages,
-# sample positions and the tail trim — not an edit decision list.
-MEASURE_TOLERANCE_FLOOR_MS = 40.0
-MEASURE_MAX_PROBES = 40
-# Sequential grabs (no seek) used to walk the last bracket down to the real
-# final frame. Bounded so a container that never reports EOF cannot spin.
-MEASURE_TAIL_GRABS = 64
-# The seekability verdict is only trusted once the probe has grown past this.
-# See the comment at the check itself for why a floor is required at all.
-NON_SEEKABLE_PROBE_FLOOR_MS = 2000.0
 
 
 def measure_duration_ms(
@@ -179,7 +191,13 @@ def measure_duration_ms(
         probes = 1
         lo = 0.0
         hi: float | None = None
-        probe = float(hint_ms) if hint_ms and hint_ms > 0 else 1000.0
+        # Clamped, because the loop condition `probe <= max_ms` is evaluated
+        # *before* the first probe: an over-ceiling hint — exactly what a
+        # poisoned header supplies — skipped the exponential phase entirely and
+        # returned None without a single seek. A clamped first probe at the
+        # ceiling is unreachable on any real file, so `hi` is set immediately and
+        # bisection converges in ~21 probes, inside MEASURE_MAX_PROBES.
+        probe = min(float(hint_ms), float(max_ms)) if hint_ms and hint_ms > 0 else 1000.0
 
         while probes < MEASURE_MAX_PROBES and probe <= max_ms:
             probes += 1

@@ -99,6 +99,35 @@ def test_untrustworthy_frame_counts_yield_no_duration(tmp_path, monkeypatch, fra
     assert info["codec"] is None
 
 
+def test_an_implausible_duration_is_not_stored(tmp_path, monkeypatch):
+    """The count guard bounds the *frames*, not the quotient.
+
+    fps=0.01 with frames=500_000 clears `0 < frames < 1e9` and yields ~578 days,
+    which would then drive the trim bar and every sample position. The ceiling is
+    `MEASURE_MAX_MS` — the same one the seek search uses.
+    """
+    import cv2
+
+    class _GlacialFps(_PoisonedCapture):
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FPS:
+                return 0.01
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 500_000.0
+            return super().get(prop)
+
+    p = tmp_path / "glacial.mkv"
+    p.write_bytes(b"\x00" * 128)
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _path: _GlacialFps(500_000))
+
+    info = probe_video(p)
+
+    assert info["duration_ms"] is None
+    assert info["width"] == 1920
+    assert info["height"] == 1080
+    assert info["fps"] == pytest.approx(0.01)
+
+
 def test_zero_fps_yields_no_duration(tmp_path, monkeypatch):
     """A plausible frame count divided by a zero fps would raise, not mislead —
     but the guard has to cover it or ingest crashes on such a file."""

@@ -183,7 +183,7 @@ The **file browser preview** widened with this phase: `GET /filesystem/preview` 
 anything in `MEDIA_EXTENSIONS` and serves the video branch with `video_mime`, so one route
 covers both kinds and `FileResponse` supplies the Range/206 a `<video>` needs to seek. It
 serves an arbitrary absolute path, which is what that deliberately unsandboxed
-local-desktop router already did for images (`docs/dev/workspace.md` § Path safety) — the
+local-desktop router already did for images (`docs/dev/file-browser.md` § Path safety) — the
 wider allowlist adds no new exposure class. `GET /image-meta` stays image-only: a container
 carries no EXIF or generation parameters.
 
@@ -241,7 +241,7 @@ landed; the three are read together but sized apart.
   leaves the video and its saved decode parameters intact, so re-running extraction
   reproduces them exactly.
 - `duplicate_dataset` copies only `Image` rows, so a duplicate has no videos.
-- The file browser (`docs/dev/workspace.md`) reports `media_kind` per entry instead of the
+- The file browser (`docs/dev/file-browser.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That
   sync rewrites paths and nothing else, so `/filesystem/move` **refuses with a 409** to move

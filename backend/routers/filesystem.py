@@ -114,7 +114,7 @@ async def preview_media(path: str = Query(...)):
     endpoint: FileResponse supplies `accept-ranges` and 206 on its own, which is
     all a <video> needs to seek. The path is client-supplied and only
     `sanitize_abs_path`-checked — the same deliberate local-desktop posture this
-    endpoint has always had for images (see docs/dev/workspace.md § Path
+    endpoint has always had for images (see docs/dev/file-browser.md § Path
     safety); widening the extension allowlist adds no new exposure class.
     """
     p = sanitize_abs_path(path)

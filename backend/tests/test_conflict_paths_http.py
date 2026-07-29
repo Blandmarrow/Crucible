@@ -466,7 +466,7 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
     refuses exactly that (a registered file must stay directly in its dataset's
     images/ or videos/ folder), but extending the predicate to this branch would
     make the whole rewrite under test unreachable, so the directory branch keeps
-    the residual — recorded in `docs/dev/workspace.md` § Still open. It is *not*
+    the residual — recorded in `docs/dev/file-browser.md` § Still open. It is *not*
     something to "fix" by moving the destination back outside the dataset, which
     is exactly what the guard refuses."""
     async def scenario():

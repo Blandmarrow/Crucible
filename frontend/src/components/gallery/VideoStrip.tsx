@@ -54,10 +54,18 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
   // effect, so the stale selection is never painted. The range anchors are left
   // alone deliberately — an id from the previous dataset is simply not in the new
   // `videos` order, so `indexOf` misses and the next click re-anchors.
+  //
+  // The collapse flag rides along for the same reason: `storageKey` is recomputed
+  // per render and is already the *new* dataset's key here, but `collapsed` came
+  // from a lazy initializer that ran only on mount — and GalleryPage is not
+  // remounted on a dataset change. Worse than merely wrong, it is sticky: `toggle`
+  // writes back the key it read, so one click stamps the previous dataset's state
+  // onto this one.
   const [selectionFor, setSelectionFor] = useState(datasetId);
   if (selectionFor !== datasetId) {
     setSelectionFor(datasetId);
     setSelected(new Set());
+    setCollapsed(localStorage.getItem(storageKey) === "true");
   }
 
   // An image-only dataset looks exactly as it did before this component existed.
@@ -175,8 +183,15 @@ function VideoCard({
   // `has_poster` is false only for a row whose poster has never been cut. The
   // endpoint backfills one on demand, so the <img> is still worth trying — the
   // glyph below is what shows if it comes back 404 (an undecodable video).
-  const [posterFailed, setPosterFailed] = useState(false);
-  const showPoster = !posterFailed;
+  //
+  // The failure is scoped to the *URL*, not the mount: `posterUrlVersioned`
+  // carries `updated_at`, which bumps when an extraction backfills a poster, so a
+  // new URL is retried while the one that 404'd stays on the glyph. A boolean
+  // would keep showing the glyph for the rest of the mount. The comparison is the
+  // reset — no render-adjust needed.
+  const posterUrl = videosApi.posterUrlVersioned(video.id, video.updated_at);
+  const [failedPosterUrl, setFailedPosterUrl] = useState<string | null>(null);
+  const showPoster = failedPosterUrl !== posterUrl;
   const cbSize = useUiPrefsStore((s) => s.galleryCheckboxSize);
 
   // A <div role="button">, not a <button>: the checkbox is an interactive
@@ -209,9 +224,9 @@ function VideoCard({
       <div style={{ aspectRatio: "16/9", background: "var(--surface-3)", position: "relative" }}>
         {showPoster ? (
           <img
-            src={videosApi.posterUrlVersioned(video.id, video.updated_at)}
+            src={posterUrl}
             alt={video.filename}
-            onError={() => setPosterFailed(true)}
+            onError={() => setFailedPosterUrl(posterUrl)}
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             loading="lazy"
           />

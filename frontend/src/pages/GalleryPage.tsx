@@ -114,6 +114,21 @@ export default function GalleryPage() {
   const pageSize = useMemo(getGalleryPageSize, []);
 
   const saved = useMemo(() => (datasetId ? loadSavedState(datasetId) : null), [datasetId]);
+  // Declared up here, above the deep-link render-adjust blocks that call
+  // `dropScrollRestore`. Refs have no ordering dependencies.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hasRestoredScroll = useRef(false);
+  // A filter change or a deep link lands at the top of the *new* list. The saved
+  // offset in `gallery-state-*` belongs to the list the user left, so applying it
+  // here drops them into the middle of a different result set — or nowhere, if the
+  // new list is shorter. `pendingScrollTop` is consumed by the scroll effect once
+  // the new page has actually rendered; setting scrollTop here would be a DOM write
+  // during render, and would fire before the rows exist.
+  const pendingScrollTop = useRef(false);
+  const dropScrollRestore = () => {
+    hasRestoredScroll.current = true;
+    pendingScrollTop.current = true;
+  };
   const [page, setPage] = useState(saved?.page ?? 1);
   const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? getGalleryDefaultSort());
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
@@ -170,6 +185,10 @@ export default function GalleryPage() {
   const linkedSubfolder = usePaneGallerySubfolder();
   const [appliedSubfolder, setAppliedSubfolder] = useState<string | undefined>(undefined);
   const [uploadSubfolder, setUploadSubfolder] = useState("");
+  // The lineage filter: every frame a video produced, wherever curation has since
+  // filed it. Declared above both render-adjust blocks because each clears the
+  // other's filter — see the comments in them.
+  const [frameVideoId, setFrameVideoId] = useState<string | undefined>(saved?.frameVideoId || undefined);
   // Apply the deep link on arrival, and again whenever the incoming value
   // *changes* — but never twice for the same value, or it would fight a user who
   // arrived here and then clicked a different folder in the sidebar. `undefined`
@@ -180,12 +199,15 @@ export default function GalleryPage() {
   if (linkedSubfolder !== undefined && appliedSubfolder !== linkedSubfolder) {
     setAppliedSubfolder(linkedSubfolder);
     setActiveSubfolder(linkedSubfolder);
+    // The mirror of the lineage branch below: a `frameVideoId` restored from
+    // `gallery-state-${datasetId}` would intersect the linked subfolder and show an
+    // empty grid, right after the history panel named a frame count for it.
+    setFrameVideoId(undefined);
     setPage(1);
+    dropScrollRestore();
   }
-  // The lineage filter: every frame a video produced, wherever curation has since
-  // filed it. Same deep-link discipline as `appliedSubfolder` above — applied once
-  // per incoming *change*, so the "Frames from" select stays the user's afterwards.
-  const [frameVideoId, setFrameVideoId] = useState<string | undefined>(saved?.frameVideoId || undefined);
+  // Same deep-link discipline as `appliedSubfolder` above — applied once per
+  // incoming *change*, so the "Frames from" select stays the user's afterwards.
   const linkedVideo = usePaneGallerySourceVideo();
   const [appliedVideo, setAppliedVideo] = useState<string | undefined>(undefined);
   if (linkedVideo !== undefined && appliedVideo !== linkedVideo) {
@@ -197,6 +219,7 @@ export default function GalleryPage() {
     // subfolders — that is the whole point of it.
     setActiveSubfolder(undefined);
     setPage(1);
+    dropScrollRestore();
   }
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
@@ -209,8 +232,6 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const hasRestoredScroll = useRef(false);
   const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId });
   liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
@@ -260,7 +281,7 @@ export default function GalleryPage() {
     const t = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
-      hasRestoredScroll.current = false;
+      dropScrollRestore();
     }, 350);
     return () => clearTimeout(t);
   }, [searchInput, search]);
@@ -270,7 +291,7 @@ export default function GalleryPage() {
     const t = setTimeout(() => {
       setDetectionLabel(detectionLabelInput);
       setPage(1);
-      hasRestoredScroll.current = false;
+      dropScrollRestore();
     }, 350);
     return () => clearTimeout(t);
   }, [detectionLabelInput, detectionLabel]);
@@ -497,12 +518,23 @@ export default function GalleryPage() {
     }
   }, [images, datasetId, toggle, replaceRange]);
 
+  // Keyed on the `images` array *identity*, not its length: with `keepPreviousData`
+  // `isLoading` stays false across a filter change, so a new result set that happens
+  // to be the same length would not re-run this and a pending scroll-to-top would sit
+  // armed until some unrelated later load consumed it.
   useEffect(() => {
-    if (!isLoading && images.length > 0 && !hasRestoredScroll.current && scrollRef.current && saved?.scrollTop) {
-      hasRestoredScroll.current = true;
-      scrollRef.current.scrollTop = saved.scrollTop;
+    const el = scrollRef.current;
+    if (isLoading || !el) return;
+    if (pendingScrollTop.current) {
+      pendingScrollTop.current = false;
+      el.scrollTop = 0;
+      return;
     }
-  }, [isLoading, images.length, saved]);
+    if (images.length > 0 && !hasRestoredScroll.current && saved?.scrollTop) {
+      hasRestoredScroll.current = true;
+      el.scrollTop = saved.scrollTop;
+    }
+  }, [images, isLoading, saved]);
 
   useEffect(() => {
     if (images.length > 0 && datasetId) {
@@ -636,7 +668,7 @@ export default function GalleryPage() {
     if (!datasetId) return;
     const fileArray = Array.from(files);
     const subfolder = sf ?? uploadSubfolder;
-    setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0 });
+    setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0, skipped: 0 });
     let errors = 0;
     // A file the server declined comes back 201 with a `skipped` entry, not an
     // exception, so the responses are collected and tallied rather than assuming
@@ -655,7 +687,8 @@ export default function GalleryPage() {
       } catch {
         errors++;
       }
-      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors: errors + skippedSoFar });
+      // Reported separately, never summed: a declined file is not a failure.
+      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors, skipped: skippedSoFar });
     }
     // Final refresh to ensure the gallery is fully up-to-date
     await refetch();
@@ -797,7 +830,7 @@ export default function GalleryPage() {
 
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
 
-  const resetPage = () => { setPage(1); hasRestoredScroll.current = false; };
+  const resetPage = () => { setPage(1); dropScrollRestore(); };
 
   const handleResetFilters = () => {
     if (datasetId) localStorage.removeItem(`gallery-state-${datasetId}`);
@@ -808,7 +841,9 @@ export default function GalleryPage() {
     setLicenseFilter("");
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
-    hasRestoredScroll.current = true;
+    dropScrollRestore();
+    // Immediate, unlike the deep-link paths: this is a direct gesture and wants
+    // feedback now, not once the new page renders.
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     toast.success("Gallery filters reset");
   };
@@ -1293,8 +1328,14 @@ export default function GalleryPage() {
               fontSize: 12, color: "var(--fg-mute)",
               whiteSpace: "nowrap", minWidth: 90, textAlign: "right",
             }}>
-              {uploadProgress.done} / {uploadProgress.total} images
+              {/* "files", not "images": videos upload through this bar too, and the
+                  split between them is not known until the responses land — which is
+                  what the summary toast reports. Same vocabulary as that toast. */}
+              {uploadProgress.done} / {uploadProgress.total} files
               {uploadProgress.errors > 0 && ` · ${uploadProgress.errors} failed`}
+              {uploadProgress.skipped > 0 && (
+                <span style={{ color: "var(--fg-mute)" }}> · {uploadProgress.skipped} skipped</span>
+              )}
             </span>
           </div>
         </div>

@@ -194,6 +194,16 @@ deliberate. If the commit fails, the row survives pointing at nothing, which
 and then failing the unlink would leave an orphan in `videos/` that the next rescan
 silently re-registers, undoing the delete.
 
+`file_path` and `poster_path` are separate columns and each is gated separately by
+`utils.within_datasets_dir` before it is unlinked, on the *resolved* path the guard hands
+back. A path resolving outside `settings.datasets_dir` is skipped and logged rather than
+refused — the row still goes, because an undeletable row the user can see is the worse
+failure. `PATCH /{id}/rename` is the deliberate exception: it **403s** on such a
+`file_path`, since renaming a row whose file the app may not touch is meaningless and the
+rename would be a move of an arbitrary file; an out-of-tree `poster_path` there is dropped
+from the row instead of moved (a poster is never a gate, and `GET /{id}/poster` cuts a
+fresh one on the next view). `test_path_containment_http.py` pins both directions.
+
 ## Frontend
 
 Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the two-step
@@ -219,7 +229,11 @@ file when the extraction frontend landed; the two are read together but sized ap
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That
   sync rewrites paths and nothing else, so `/filesystem/move` **refuses with a 409** to move
-  a registered file — or a folder holding one — outside its own dataset. `materialize_provenance`, `refresh_stats` and
+  a registered file — or a folder holding one — outside its own dataset, and refuses to let
+  a registered video leave `{ds}/videos/` even within it (anywhere else is outside the flat
+  glob `_rescan_videos` walks, so the row reads as missing forever). `/filesystem/delete`
+  now removes the poster with the video and refreshes `video_count`/`video_size_bytes`.
+  `materialize_provenance`, `refresh_stats` and
   NULLing `Image.source_video_id` are the things a cross-dataset move owes and that endpoint
   does none of; closing the gap by refusal leaves `batch_move_dataset` as the only path that
   re-homes an image. It was also the only code path that could ever change a

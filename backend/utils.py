@@ -90,6 +90,21 @@ def sanitize_abs_path(path: str) -> Path:
     return p
 
 
+def within_datasets_dir(path_str: str, base_dir: Path) -> Path | None:
+    """Resolve a stored file path, returning it only if it is inside `base_dir`.
+
+    The non-raising half of `safe_dataset_path`. A serve route wants the 403 and
+    uses the wrapper; a *destructive* route wants to still drop the row for a
+    path it refuses to touch, so it takes the `None` and skips the filesystem op
+    — an undeletable row the user can see is the worse failure.
+
+    `is_relative_to`, not a string prefix: `/data/datasets_backup/x.mp4`
+    startswith `/data/datasets` and is not inside it.
+    """
+    resolved = Path(path_str).resolve()
+    return resolved if resolved.is_relative_to(base_dir.resolve()) else None
+
+
 def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
     """Resolve a stored file path and refuse anything outside `base_dir` (HTTP 403).
 
@@ -99,8 +114,8 @@ def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
     here. Used by the image file/thumbnail routes and the video file/poster
     routes; never re-inline the prefix check.
     """
-    resolved = Path(path_str).resolve()
-    if not str(resolved).startswith(str(base_dir.resolve())):
+    resolved = within_datasets_dir(path_str, base_dir)
+    if resolved is None:
         raise HTTPException(403, "Access denied")
     return resolved
 

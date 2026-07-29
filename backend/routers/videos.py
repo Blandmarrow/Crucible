@@ -49,6 +49,7 @@ from backend.utils import (
     slugify_filename,
     unique_filename_with_thumb,
     unique_poster_path,
+    within_datasets_dir,
 )
 from backend.workers.job_queue import job_queue
 from backend.workers.progress import broadcaster
@@ -1539,6 +1540,17 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
     if not slug:
         raise HTTPException(400, "Stem produces empty slug")
 
+    # Renaming a row whose stored path is outside the datasets tree is meaningless,
+    # so this one 403s where the deletes skip-and-warn: there is no row to salvage
+    # by proceeding, and the rename would be a move of an arbitrary file.
+    #
+    # The predicate only — `old_path` stays the *stored* string, unresolved.
+    # `safe_dataset_path` hands back a `.resolve()`d path, and writing one of those
+    # into a column would change the stored-path form mid-table, while
+    # `claimed_poster_stems` / `unique_filename_with_thumb` compare against sibling
+    # rows' stored strings (visible on a symlinked temp dir such as macOS
+    # /private/var).
+    safe_dataset_path(video.file_path, settings.datasets_dir)
     old_path = Path(video.file_path)
     existing = await db.execute(
         select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == video.dataset_id)
@@ -1570,6 +1582,16 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
     new_path = old_path.parent / new_filename
     new_poster = Path(poster_path_for(new_path))
     old_poster = Path(video.poster_path) if video.poster_path else None
+    if old_poster is not None and within_datasets_dir(video.poster_path, settings.datasets_dir) is None:
+        # `poster_path` is a column of its own, so guarding `file_path` alone still
+        # leaves a hand-edited poster pointer able to move an arbitrary file *into*
+        # the tree. A poster is never a gate: drop the pointer and let
+        # GET /videos/{id}/poster cut a fresh frame the next time anything looks.
+        logger.warning(
+            "rename_video %s: dropping out-of-tree poster_path %s", video_id, video.poster_path
+        )
+        old_poster = None
+        video.poster_path = None
 
     video.filename = new_filename
     video.file_path = str(new_path)
@@ -1610,9 +1632,21 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     # _rescan_videos reports under `videos_missing` and the user can retry.
     # Committing first and then failing the unlink would leave an orphan in
     # videos/ that the next rescan silently re-registers, undoing the delete.
+    #
+    # Each column is gated independently, and a path resolving outside the
+    # datasets tree is skipped rather than refused: the row still goes, because
+    # an undeletable row the user can see is the worse failure. The unlink is of
+    # the *resolved* path the guard returns, never the raw string.
     for candidate in (video.file_path, video.poster_path):
-        if candidate:
-            Path(candidate).unlink(missing_ok=True)
+        if not candidate:
+            continue
+        safe = within_datasets_dir(candidate, settings.datasets_dir)
+        if safe is None:
+            logger.warning(
+                "delete_video %s: refusing to unlink out-of-tree path %s", video_id, candidate
+            )
+            continue
+        safe.unlink(missing_ok=True)
 
     await db.delete(video)
     await db.commit()

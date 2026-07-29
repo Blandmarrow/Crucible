@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import mimetypes
 import os
 import shutil
@@ -9,15 +10,20 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, literal, select
+from sqlalchemy import delete, func, literal, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
 from backend.media_types import IMAGE_EXTENSIONS, media_kind_for, video_mime
 from backend.models import Dataset, Image, Video
+from backend.services import version_service
+from backend.services.dataset_busy import ensure_not_busy
+from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import extract_generation_metadata, get_image_info
-from backend.utils import sanitize_abs_path
+from backend.utils import chunked, sanitize_abs_path, within_datasets_dir
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/filesystem", tags=["filesystem"])
 
@@ -194,6 +200,28 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
                     "'Move to dataset' action to move it.",
                 )
 
+            # Same dataset is not enough: a registered file has to stay directly
+            # in its dataset's canonical media folder. Two failure modes, both
+            # silent:
+            #
+            # - `_rescan_videos` globs `videos_dir.glob("*")` non-recursively, so
+            #   a video parked in `{ds}/images/` or `{ds}/videos/sub/` is reported
+            #   under `videos_missing` forever while the file is perfectly fine.
+            # - images are stored *flat* — `Image.subfolder` is a purely logical
+            #   column — so `images/sub/a.jpg` makes `thumbnail_path_for`'s
+            #   `parent.parent` resolve to `images/thumbnails/`, at all eleven
+            #   sites that re-derive a thumbnail path from a filename.
+            #
+            # This sits under `row is not None` on purpose: unregistered files
+            # still move anywhere, which is the file browser's actual job.
+            canonical = "images" if kind == "image" else "videos"
+            if new_path.parent.relative_to(new_ds.folder_path) != Path(canonical):
+                raise HTTPException(
+                    409,
+                    f"A registered {kind} must stay directly in its dataset's "
+                    f"{canonical}/ folder.",
+                )
+
     # The directory branch's rows are loaded before the move as well — not for
     # convenience but because the guard below has to be able to refuse with the
     # filesystem untouched, which is the convention every guard in this file
@@ -202,7 +230,16 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     dir_rows: list[tuple[Image | Video, str]] = []
     if src_is_dir:
         for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
-            result = await db.execute(select(model).where(model.file_path.startswith(old_prefix)))
+            # autoescape=True: `startswith` compiles to a SQL LIKE, where `_` is a
+            # single-character wildcard — and `_` is the *normal* case in a dataset
+            # folder path, since `_name_to_slug` collapses whitespace to it and the
+            # collision fallback appends `_{ds_id[:8]}`. Unescaped, `{ds}/my_dataset`
+            # matches `{ds}/myXdataset`, and the over-matched row then makes
+            # `Path(media.file_path).relative_to(src)` raise *after* `shutil.move`
+            # has run — files moved, no commit, 500 (a PM-013 shape).
+            result = await db.execute(
+                select(model).where(model.file_path.startswith(old_prefix, autoescape=True))
+            )
             dir_rows.extend((media, derived) for media in result.scalars().all())
         if dir_rows:
             # The directory twin of the file guard above, and refused for the
@@ -221,6 +258,36 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
                     409,
                     "This folder holds files that belong to a dataset. Use the "
                     "gallery's 'Move to dataset' action to move them.",
+                )
+
+        # A folder of *derived* artifacts — `{ds}/thumbnails` or
+        # `{ds}/videos/thumbnails` — holds no `file_path` at all, so the guard
+        # above sees nothing and the rewrite below has nothing to rewrite: every
+        # stored `thumbnail_path`/`poster_path` in it is stranded and the move
+        # returns 200. The predicate is "derived under the prefix while
+        # `file_path` is NOT", which is what distinguishes it from an ordinary
+        # media folder whose derived files travel along:
+        #
+        #   {ds}/videos            → poster under the prefix, but so is file_path
+        #                            → second conjunct False, permitted.
+        #   {ds}/images            → thumbnails are in the *sibling*
+        #                            {ds}/thumbnails/ → first conjunct False.
+        #   {ds}/thumbnails        → both True → refused, here.
+        #   {ds}                   → both under the prefix → falls through to the
+        #                            dir_rows guard above, which already refuses it.
+        for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
+            col = getattr(model, derived)
+            stranded = (await db.execute(
+                select(model.id).where(
+                    col.startswith(old_prefix, autoescape=True),
+                    ~model.file_path.startswith(old_prefix, autoescape=True),
+                ).limit(1)
+            )).first()
+            if stranded is not None:
+                raise HTTPException(
+                    409,
+                    "This folder holds thumbnails or posters belonging to a "
+                    "dataset whose files are elsewhere. Moving it would strand them.",
                 )
 
     try:
@@ -301,6 +368,18 @@ class DeleteRequest(BaseModel):
 
 @router.post("/delete")
 async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
+    """Delete a file or folder, with the same care the router deletes take.
+
+    Order: **gather → guard → hook → stage + flush → filesystem → commit →
+    epilogue.** That reconciles two rules which look opposed. The original
+    comment here ("delete from the filesystem first — a failed FS deletion leaves
+    DB records intact") is about *commit* ordering and survives: if `rmtree`
+    raises we return before `commit()` and `get_db`'s session discards
+    everything staged. CLAUDE.md's PM-013 invariant is about *what may fail
+    between the mutation and the commit* — satisfied by issuing every fallible
+    statement before the irreversible step and closing them with an explicit
+    `flush()`, leaving only the `commit()` after it.
+    """
     p = sanitize_abs_path(req.path)
     if not p.exists():
         raise HTTPException(404, "Path not found")
@@ -310,7 +389,77 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     is_dir = p.is_dir()
     old_prefix = str(p) + os.sep if is_dir else None
 
-    # Delete from filesystem first — if this fails, DB records are left intact.
+    def _scope(model):
+        # autoescape=True for the same reason as in `/move`: `_` is a LIKE
+        # wildcard and the normal case in a dataset folder name, so an unescaped
+        # prefix let this DELETE reach a *different* dataset's rows.
+        if is_dir:
+            return model.file_path.startswith(old_prefix, autoescape=True)
+        return model.file_path == str(p)
+
+    # ORM entities, loaded before anything is touched: the guards below have to be
+    # able to refuse with the filesystem intact, and the versioning hook needs the
+    # rows to still exist.
+    img_rows = (await db.execute(select(Image).where(_scope(Image)))).scalars().all()
+    vid_rows = (await db.execute(select(Video).where(_scope(Video)))).scalars().all()
+    dataset_ids = {r.dataset_id for r in img_rows} | {r.dataset_id for r in vid_rows}
+
+    for ds_id in dataset_ids:
+        ensure_not_busy(ds_id)
+
+    # Derived artifacts that will *not* be taken by the delete about to run, and
+    # would therefore be left behind pointing at nothing.
+    #
+    # - Directory branch: an orphan is anything that does not start with
+    #   `old_prefix`. An image's thumbnail is in `{ds}/thumbnails/`, beside
+    #   `images/`, so an rmtree of `images/` never reaches it; a video's poster is
+    #   in `videos/thumbnails/` and travels with `videos/`, so it is not an orphan.
+    # - File branch: everything except `p` itself — the thumbnail or poster, and
+    #   the `.txt` sidecar, which `p.unlink()` really does strand. All three
+    #   router deletes unlink theirs; this reaches parity.
+    orphans: list[Path] = []
+
+    def _add_orphan(path_str: str | None) -> None:
+        if not path_str or (is_dir and path_str.startswith(old_prefix)):
+            return
+        # A stored path is not a client-supplied one: every dataset folder lives
+        # under `settings.datasets_dir`, so a derived path outside it was never
+        # written by this app and this endpoint will not unlink it on the strength
+        # of a request that named a different directory.
+        safe = within_datasets_dir(path_str, settings.datasets_dir)
+        if safe is None:
+            logger.warning("delete_path: refusing to unlink out-of-tree artifact %s", path_str)
+            return
+        orphans.append(safe)
+
+    for img in img_rows:
+        _add_orphan(img.thumbnail_path)
+        if not is_dir:
+            _add_orphan(str(Path(img.file_path).with_suffix(".txt")))
+    for vid in vid_rows:
+        _add_orphan(vid.poster_path)
+
+    # PM-003's hook, and PM-014's recurrence of it: this is a delete endpoint like
+    # any other, so the bytes go to the object store before they go anywhere. It
+    # must run *before* the row deletes — it does `db.get(Image, image_id)`
+    # internally, which after a staged delete autoflushes and returns None, and the
+    # hook then no-ops via its `dataset is None` early return — and before the
+    # unlink, since `_backup_and_record_hash` early-returns on a file that is gone.
+    for img in img_rows:
+        await version_service.mark_image_deleted_in_versions(img.id, img.file_path, db)
+
+    # Frames extracted from a deleted video are ordinary Image rows and survive
+    # with their lineage cut, exactly as `DELETE /videos/{id}` leaves them.
+    for batch in chunked([v.id for v in vid_rows]):
+        await db.execute(
+            sa_update(Image).where(Image.source_video_id.in_(batch)).values(source_video_id=None)
+        )
+    for batch in chunked([i.id for i in img_rows]):
+        await db.execute(delete(Image).where(Image.id.in_(batch)))
+    for batch in chunked([v.id for v in vid_rows]):
+        await db.execute(delete(Video).where(Video.id.in_(batch)))
+    await db.flush()
+
     try:
         if is_dir:
             shutil.rmtree(str(p))
@@ -319,18 +468,16 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     except PermissionError:
         raise HTTPException(403, "Access denied")
 
-    # Filesystem deletion succeeded; now remove DB records.
-    if not is_dir:
-        for model in (Image, Video):
-            result = await db.execute(select(model).where(model.file_path == str(p)))
-            row = result.scalar_one_or_none()
-            if row:
-                await db.delete(row)
-                break
-    else:
-        for model in (Image, Video):
-            await db.execute(delete(model).where(model.file_path.startswith(old_prefix)))
     await db.commit()
+
+    # Epilogue — fallible, and unable to change the outcome of anything above.
+    for f in orphans:
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("delete_path: could not remove orphaned artifact %s", f, exc_info=True)
+    for ds_id in dataset_ids:
+        await refresh_stats(db, ds_id)
 
     return {"ok": True}
 

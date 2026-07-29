@@ -90,6 +90,12 @@ thumbnail. Two follow-up commits closed that:
 The record-current-behaviour test became a refusal test, and its `Image` twin plus a
 loose-file negative control were added beside it.
 
+The same endpoint later needed two further containment predicates that the same review
+class surfaced (V-21, V-76): a registered file must stay directly in its dataset's
+canonical `images/`/`videos/` folder, and a folder of derived artifacts whose `file_path`s
+live elsewhere — `{ds}/thumbnails`, `{ds}/videos/thumbnails` — is refused rather than
+moved to strand every `thumbnail_path`/`poster_path` in it.
+
 ### Status & date
 
 MITIGATED. Last reviewed for staleness: 2026-07-29.

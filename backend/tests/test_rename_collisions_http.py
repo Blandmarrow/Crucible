@@ -74,6 +74,76 @@ def test_single_rename_onto_occupied_thumb_stem_uniquifies(tmp_path):
     run(scenario())
 
 
+def test_rename_404s_when_the_row_outlives_the_file(tmp_path):
+    """The `rename_video` twin (V-81). Renaming a row whose file has been deleted
+    underneath it used to surface FileNotFoundError as a 500, with the row
+    already carrying the new name."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            images_dir, _ = _dirs(ds)
+            img = await upload_image(env, ds["id"], "a.png")
+            (images_dir / "a.png").unlink()
+
+            r = await env.client.patch(f"{API}/images/{img['id']}/rename", json={"new_stem": "b"})
+            assert r.status_code == 404, r.text
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            assert row.filename == "a.png"
+            assert not (images_dir / "b.png").exists()
+
+    run(scenario())
+
+
+def test_a_failed_thumbnail_move_does_not_lose_the_rename(tmp_path):
+    """The thumbnail move is a post-commit epilogue and cannot undo the rename.
+
+    It used to sit between `rename_with_sidecar` and the commit, so an OSError
+    there discarded a rename that had already happened on disk. `serve_thumbnail`
+    regenerates a missing thumbnail, so the row states intent and the next view
+    heals it.
+    """
+    async def scenario():
+        import pathlib
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            images_dir, thumb_dir = _dirs(ds)
+            img = await upload_image(env, ds["id"], "a.png")
+
+            original_replace = pathlib.Path.replace
+
+            def failing_replace(self, target):
+                if str(target).endswith(".webp"):
+                    raise OSError("thumbnail move refused")
+                return original_replace(self, target)
+
+            pathlib.Path.replace = failing_replace
+            try:
+                r = await env.client.patch(
+                    f"{API}/images/{img['id']}/rename", json={"new_stem": "b"}
+                )
+            finally:
+                pathlib.Path.replace = original_replace
+
+            assert r.status_code == 200, r.text
+            assert r.json()["filename"] == "b.png"
+            assert (images_dir / "b.png").exists(), "the rename was lost"
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            assert row.filename == "b.png"
+            assert Path(row.thumbnail_path).name == "b.webp", "the row must state intent"
+            assert not (thumb_dir / "b.webp").exists()
+
+            # The self-heal: serve_thumbnail regenerates it.
+            assert (await env.client.get(f"{API}/images/{img['id']}/thumbnail")).status_code == 200
+            assert (thumb_dir / "b.webp").exists()
+
+    run(scenario())
+
+
 def test_rename_moves_caption_sidecar(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

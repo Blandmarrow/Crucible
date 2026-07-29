@@ -1359,6 +1359,11 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
         raise HTTPException(400, "Stem produces empty slug")
 
     old_path = Path(img.file_path)
+    # A row whose file was deleted underneath it used to run all the way to
+    # `rename_with_sidecar`, which surfaced FileNotFoundError as a 500 with the
+    # row already carrying the new name. Same answer `rename_video` gives.
+    if not old_path.exists():
+        raise HTTPException(404, "File not found on disk")
     existing = await db.execute(
         select(Image.filename).where(Image.dataset_id == img.dataset_id, Image.id != image_id)
     )
@@ -1383,10 +1388,28 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
     img.file_path = str(new_path)
     img.thumbnail_path = str(new_thumb)
     img.is_auto_named = False
-    rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
-    if old_thumb.exists() and old_thumb != new_thumb:
-        old_thumb.replace(new_thumb)
+    try:
+        rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
+    except FileNotFoundError:
+        # Lost the TOCTOU race against the check above. Same answer either way.
+        raise HTTPException(404, "File not found on disk") from None
     await db.commit()
+
+    # Post-commit epilogue, per CLAUDE.md § *Nothing fallible between an
+    # irreversible filesystem mutation and the `commit()`*. The thumbnail move
+    # used to sit between the rename and the commit, so an OSError there threw
+    # away a rename that had already happened on disk. `img.thumbnail_path` still
+    # names `new_thumb` even when this fails — `serve_thumbnail` regenerates a
+    # missing one, so the row states intent and the next view heals it.
+    if old_thumb != new_thumb:
+        try:
+            if old_thumb.exists():  # inside the try — an lstat can raise too
+                old_thumb.replace(new_thumb)
+        except OSError:
+            logger.warning(
+                "rename_image %s: thumbnail move failed; it will be regenerated", image_id,
+                exc_info=True,
+            )
     return {"filename": new_filename}
 
 

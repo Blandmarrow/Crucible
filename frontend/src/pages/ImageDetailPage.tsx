@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
-import { apiErrorDetail } from "../utils/apiError";
+import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { imagesApi } from "../api/images";
 import { videosApi } from "../api/videos";
 import { captionsApi } from "../api/captions";
@@ -405,8 +405,7 @@ export default function ImageDetailPage() {
     // A 404 (deleted/moved image) is terminal — don't burn retries on it. Anything
     // else keeps the app-wide budget from App.tsx (retry: 1); this override exists
     // only to add the 404 short-circuit, not to retry more.
-    retry: (failureCount, err) =>
-      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 1,
+    retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
 
   const { data: captionData } = useQuery({

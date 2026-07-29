@@ -10,6 +10,7 @@ import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../store/paneStore";
+import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { Columns2, RefreshCw } from "lucide-react";
 
@@ -26,7 +27,6 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -218,11 +218,16 @@ export default function TopBar() {
         // file itself. The singular ["image"] key is otherwise only invalidated
         // for detection, so an open detail pane would keep showing the triage
         // dimensions and thumbnail. No subfolder/video invalidation: it creates
-        // no subfolder and touches no Video row.
+        // no subfolder and touches no Video row — but the frames that row *lists*
+        // are exactly what changed, and the re-extract dialog can be closed
+        // mid-run, so nothing else would refresh the extraction-history panel.
         if (progress.job_type === "video_reextract") {
           qc.invalidateQueries({ queryKey: ["image"] });
           if (progress.dataset_id) {
             qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
+          }
+          if (progress.video_id) {
+            qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
           }
         }
       }

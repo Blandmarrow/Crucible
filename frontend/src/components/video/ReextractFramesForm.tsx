@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { videosApi } from "../../api/videos";
 import { jobsApi } from "../../api/jobs";
 import { apiErrorDetail } from "../../utils/apiError";
+import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { useJobStore } from "../../store/jobStore";
 import type { VideoReextractRequest } from "../../types";
 
@@ -53,6 +54,13 @@ function resultToast(result: Record<string, unknown>) {
  * `CropToDetectionForm`. The preview endpoint does all the accounting: the
  * selection store holds ids only and a selection can span videos and datasets,
  * so no client-side lineage gate could be honest about what will actually run.
+ *
+ * Closing mid-run is safe: the jobs are server-side and the adoption effect below
+ * re-attaches to them on reopen, folding any live `video_reextract` job for one of
+ * the preview's videos back into `jobIds`. That is why there is no persisted key
+ * here and pass 1 needs one — pass 2 emits per frame, so a reconnected stream
+ * repopulates `jobStore` within a frame, while pass 1's `detecting`/`replacing`
+ * phases are long and silent.
  */
 export default function ReextractFramesForm({
   datasetId, imageIds, videoId, subfolder, onSuccess, onCancel,
@@ -71,11 +79,44 @@ export default function ReextractFramesForm({
     [imageIds, videoId, subfolder],
   );
 
-  const { data: preview, isLoading: previewLoading, error: previewError } = useQuery({
+  const { data: preview, error: previewError } = useQuery({
     queryKey: ["reextract-preview", imageIds ?? [], videoId ?? "", subfolder ?? ""],
     queryFn: () => videosApi.reextractPreview(scope),
     staleTime: 0,
   });
+
+  // The videos this dialog's scope resolves to — known from the *preview*, which
+  // writes nothing, so a reopened dialog knows what to re-attach to without
+  // starting anything.
+  const groupVideoIds = useMemo(
+    () => new Set((preview?.groups ?? []).map((g) => g.video_id)),
+    [preview],
+  );
+
+  // Re-attach: fold any live `video_reextract` job for one of those videos into
+  // the tracked ids, so closing this dialog mid-run and reopening restores the
+  // progress pill, the completion toast and the invalidations below.
+  //
+  // Adopted **into state** rather than derived into a `trackedIds` list on
+  // purpose: the completion effect needs the id to stay tracked once the job goes
+  // terminal, and a list filtered on non-terminal would drop it at exactly the
+  // moment the toast and the invalidations are owed — `ExtractProgressList`'s
+  // vanish-on-complete failure. No loop, either: that effect only removes
+  // terminal ids and this one only adds non-terminal ones.
+  useEffect(() => {
+    const adopt: string[] = [];
+    for (const p of activeJobs.values()) {
+      if (p.job_type !== "video_reextract" || !p.video_id) continue;
+      if (!groupVideoIds.has(p.video_id)) continue;
+      if (TERMINAL_JOB_STATUSES.has(p.status)) continue;
+      adopt.push(p.job_id);
+    }
+    if (adopt.length === 0) return;
+    setJobIds((prev) => {
+      const missing = adopt.filter((id) => !prev.includes(id));
+      return missing.length ? [...prev, ...missing] : prev;  // same identity ⇒ no render loop
+    });
+  }, [activeJobs, groupVideoIds]);
 
   // One job per video, so an array — `SelectionToolbar`'s `detectJobIds` shape.
   // Iterate the tracked ids whenever activeJobs changes and drop the terminal ones.
@@ -150,20 +191,26 @@ export default function ReextractFramesForm({
     <div className="space-y-4">
       {/* Accounting, straight from the endpoint that will do the work */}
       <div className="text-sm" style={{ color: "var(--fg-mute)" }}>
-        {previewLoading ? (
-          <p>Checking which frames can be re-extracted…</p>
-        ) : previewError ? (
+        {/* error → no-data → content, never `isLoading` → content: TanStack v5's
+            default `networkMode: "online"` leaves an offline tab `pending` *and*
+            `paused`, i.e. `isLoading` false with `data` undefined, which sent the
+            old chain into the content branch and took out the pane's
+            ErrorBoundary on `preview!.groups`. `!preview` subsumes the loading
+            state anyway — loading implies no data. */}
+        {previewError ? (
           <p style={{ color: "var(--bad)" }}>
             {apiErrorDetail(previewError, "Could not check these frames")}
           </p>
+        ) : !preview ? (
+          <p>Checking which frames can be re-extracted…</p>
         ) : (
           <>
             <p style={{ color: eligible > 0 ? "var(--fg)" : "var(--fg-mute)" }}>
               {eligible} frame{eligible !== 1 ? "s" : ""} from{" "}
-              {preview!.groups.length} video{preview!.groups.length !== 1 ? "s" : ""} will be
+              {preview.groups.length} video{preview.groups.length !== 1 ? "s" : ""} will be
               re-extracted
             </p>
-            {skipSummary(preview!.skipped).map((line) => (
+            {skipSummary(preview.skipped).map((line) => (
               <p key={line} style={{ fontSize: 12 }}>· {line}</p>
             ))}
           </>
@@ -228,14 +275,19 @@ export default function ReextractFramesForm({
 
       {/* Progress */}
       {running && jobProgress && (
-        <div className="progress-pill">
-          <span className="pp-dot" />
-          <span className="pp-label">{jobProgress.message ?? "Re-extracting…"}</span>
-          <div className="pp-bar">
-            <div className="pp-fill" style={{ width: `${jobProgress.percent ?? 0}%` }} />
+        <>
+          <div className="progress-pill">
+            <span className="pp-dot" />
+            <span className="pp-label">{jobProgress.message ?? "Re-extracting…"}</span>
+            <div className="pp-bar">
+              <div className="pp-fill" style={{ width: `${jobProgress.percent ?? 0}%` }} />
+            </div>
+            <span className="pp-num">{jobProgress.done}/{jobProgress.total}</span>
           </div>
-          <span className="pp-num">{jobProgress.done}/{jobProgress.total}</span>
-        </div>
+          <p style={{ fontSize: 11.5, color: "var(--fg-dim)", margin: 0 }}>
+            Closing this window is safe — the jobs keep running, and reopening reattaches to them.
+          </p>
+        </>
       )}
 
       {/* Actions */}
@@ -249,9 +301,11 @@ export default function ReextractFramesForm({
           style={{ flex: 1, fontSize: 12 }}
           title="Optional name shown in the job queue"
         />
+        {/* Never disabled while running: the jobs are server-side and the
+            adoption effect re-attaches on reopen, so leaving is reversible. */}
         {onCancel && (
-          <button className="btn-ghost" onClick={onCancel} disabled={running}>
-            Cancel
+          <button className="btn-ghost" onClick={onCancel}>
+            {running ? "Close" : "Cancel"}
           </button>
         )}
         <button

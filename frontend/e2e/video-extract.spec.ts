@@ -437,7 +437,8 @@ test('a running extraction is re-attached after a reload', async ({ page, reques
     .toHaveAttribute('title', 'Show the running extraction')
 
   // The twin: a persisted id whose job has since gone terminal shows no bar, and
-  // the key is cleared so the lookup is not repeated on every future mount.
+  // the key is *removed* — not rewritten as `{jobId: null}`, which reads the same
+  // to every consumer but leaves one dead entry per video ever extracted.
   await page.unroute(`**/api/v1/jobs/${jobId}`)
   await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobRow('completed')) }),
@@ -449,7 +450,96 @@ test('a running extraction is re-attached after a reload', async ({ page, reques
   await expect(page.getByText('Starting…')).toHaveCount(0)
   await expect
     .poll(() => page.evaluate((key) => localStorage.getItem(key), `video-extract-job-${video.id}`))
-    .toBe(JSON.stringify({ jobId: null }))
+    .toBeNull()
+})
+
+// The state that used to crash: TanStack v5's default `networkMode: "online"`
+// leaves a query started offline `pending` *and* `paused` — `isLoading` false,
+// `error` null, `data` undefined — so an `isLoading ? … : content` chain fell
+// into the content branch and dereferenced `preview!`, taking out the pane's
+// ErrorBoundary. `setOffline` flips `navigator.onLine`, which is exactly the
+// signal that mode reads, so this is the real state and not an approximation.
+test('the re-extract dialog waits rather than crashing on an offline tab', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-offline-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  // Offline only now: the preview must be the *first* fetch of this key, or the
+  // cache would answer it and the paused branch would never be reached.
+  await page.context().setOffline(true)
+  await page.getByRole('button', { name: 'Re-extract' }).click()
+
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
+  await expect(modal.getByText('Checking which frames can be re-extracted…')).toBeVisible()
+  // The controls still render, and the submit stays gated on `eligible === 0`.
+  await expect(modal.getByRole('radio', { name: 'JPEG' })).toBeChecked()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+
+  await page.context().setOffline(false)
+})
+
+// Pass 2's re-attachment, fully stubbed — no job is ever started. Pass 2 needs no
+// persisted key (it emits per frame, so a reconnected stream repopulates
+// `jobStore` immediately); it re-attaches by adopting any live `video_reextract`
+// job whose `video_id` is one of the *preview's* groups. That is what makes
+// closing the dialog mid-run safe, and it is why both exits are now offered.
+test('the re-extract dialog re-attaches to a job it did not start', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-reattach-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+  const stubVideoId = 'stub-video-id'
+
+  // The preview names the scope's videos without writing anything — the whole
+  // reason a reopened dialog knows what to adopt.
+  await page.route('**/api/v1/videos/reextract/preview', (route) =>
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        groups: [{ video_id: stubVideoId, filename: 'clip.mp4', frames: 2, job_id: null }],
+        skipped: [], eligible: 2, total: 2,
+      }),
+    }),
+  )
+
+  // The live job, delivered the way the app really receives one: the global SSE
+  // stream `TopBar` holds open. One frame is enough — `jobStore` merges by id.
+  const frame = JSON.stringify({
+    type: 'progress', job_id: 'stub-reextract-job', job_type: 'video_reextract',
+    label: 'Re-extract - clip.mp4', status: 'running', dataset_id: ds.id,
+    video_id: stubVideoId, done: 1, total: 2, percent: 50, message: 'Frame 1 of 2',
+  })
+  await page.route('**/api/v1/jobs/stream/all/events', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: `data: ${frame}\n\n` }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const opener = page.getByRole('button', { name: 'Re-extract' })
+  await opener.click()
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
+  await expect(modal).toBeVisible()
+
+  // Adopted: the pill this dialog never started, and the submit guard that
+  // follows from `running`.
+  await expect(modal.getByText('Frame 1 of 2')).toBeVisible()
+  await expect(modal.getByText('1/2')).toBeVisible()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+  // Both exits are live mid-run, and the note says why that is safe.
+  await expect(modal.getByRole('button', { name: 'Close', exact: true })).toBeEnabled()
+  await expect(modal.getByRole('button', { name: '×' })).toBeVisible()
+  await expect(modal.getByText(/Closing this window is safe/)).toBeVisible()
+
+  // Close and reopen — the claim itself. The ids lived only in component state
+  // before this, so Escape used to destroy the only tracking that existed.
+  await page.keyboard.press('Escape')
+  await expect(modal).toHaveCount(0)
+  await opener.click()
+  await expect(modal.getByText('Frame 1 of 2')).toBeVisible()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
 })
 
 // Rename and delete from the detail page. Neither has any coverage, and both are

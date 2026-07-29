@@ -12,9 +12,10 @@ import JobProgressBar from "../components/common/JobProgressBar";
 import LicenseBadge from "../components/common/LicenseBadge";
 import ExtractFramesModal from "../components/video/ExtractFramesModal";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
-import { extractPhaseLabel, useVideoExtractJobs } from "../hooks/useVideoExtractJobs";
+import { extractPhaseLabel, useVideoExtractJobs, videoExtractJobKey } from "../hooks/useVideoExtractJobs";
+import { clearPersisted } from "../utils/persistentState";
 import { formatDuration } from "../utils/duration";
-import { apiErrorDetail } from "../utils/apiError";
+import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { safeExternalUrl } from "../utils/url";
 import type { Video } from "../types";
 
@@ -59,8 +60,7 @@ export default function VideoDetailPage() {
     staleTime: 0,
     // A 404 (deleted video) is terminal — don't burn retries on it. Same
     // short-circuit ImageDetailPage uses.
-    retry: (failureCount, err) =>
-      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 1,
+    retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
 
   // Prev/next needs no nav-context plumbing. `["videos", datasetId]` is a single
@@ -145,6 +145,9 @@ export default function VideoDetailPage() {
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.removeQueries({ queryKey: ["video", videoId] });
       qc.removeQueries({ queryKey: ["video-frames", videoId] });
+      // The video is gone, so is any extraction job for it — leaving the key
+      // behind means every future mount re-fetches a dead id and 404s on it.
+      clearPersisted(videoExtractJobKey(videoId!));
       // The frames survive with their lineage cut, so every image payload that
       // carried a source_video_id for this video is now wrong.
       qc.invalidateQueries({ queryKey: ["images", datasetId] });

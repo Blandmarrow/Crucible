@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import { jobsApi } from "../api/jobs";
 import { useJobStore } from "../store/jobStore";
-import { loadPersisted, savePersisted } from "../utils/persistentState";
+import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
+import { isNotFound } from "../utils/apiError";
+import { clearPersisted, loadPersisted, savePersisted } from "../utils/persistentState";
 import type { JobProgress } from "../types";
 
-const TERMINAL = ["completed", "failed", "cancelled"];
+/** A fresh `{}` default would be a new identity per call and defeat the `jobs`
+ *  memo below — it sits in that memo's dep list, so the Map would be rebuilt on
+ *  every `VideoDetailPage` render and every consumer of it re-rendered. */
+const NO_STARTED_JOBS: Record<string, string> = Object.freeze({});
 
 /** Component-local persisted key — computed per video, so it cannot be a static
  *  constant in `constants/storage.ts`. The same sanctioned exception as
@@ -37,7 +42,7 @@ export function videoExtractJobKey(videoId: string): string {
  */
 export function useVideoExtractJobs(
   videoIds: string[],
-  startedJobIds: Record<string, string> = {},
+  startedJobIds: Record<string, string> = NO_STARTED_JOBS,
 ): Map<string, JobProgress> {
   const activeJobs = useJobStore((s) => s.activeJobs);
   const idsKey = videoIds.join(",");
@@ -46,7 +51,7 @@ export function useVideoExtractJobs(
     const out = new Map<string, JobProgress>();
     // Primary: any live job that has announced which video it is working on.
     for (const p of activeJobs.values()) {
-      if (p.job_type === "video_extract" && p.video_id && !TERMINAL.includes(p.status)) {
+      if (p.job_type === "video_extract" && p.video_id && !TERMINAL_JOB_STATUSES.has(p.status)) {
         out.set(p.video_id, p);
       }
     }
@@ -56,7 +61,7 @@ export function useVideoExtractJobs(
       if (out.has(id)) continue;
       const jobId = startedJobIds[id];
       const started = jobId ? activeJobs.get(jobId) : undefined;
-      if (started && !TERMINAL.includes(started.status)) out.set(id, started);
+      if (started && !TERMINAL_JOB_STATUSES.has(started.status)) out.set(id, started);
     }
     return out;
   }, [activeJobs, idsKey, startedJobIds]);
@@ -68,9 +73,22 @@ export function useVideoExtractJobs(
   // while we were away (or was TTL-evicted), or is still running and simply hasn't
   // emitted since the reload — seeding the store makes the bar appear now, and the
   // global SSE stream takes over at the next emit.
+  //
+  // **No cleanup, deliberately.** There is nothing to abort here: every write in
+  // the `.then` is to a global singleton — `useJobStore`, localStorage — never to
+  // component state, so an unmounted or re-keyed instance triggers no React
+  // warning and loses nothing. A `dropped` flag guarding these writes was the bug
+  // it looked like a fix for: arrowing past a video mid-fetch discarded the
+  // response that had already been marked recovered, and the bar stayed missing
+  // until a full reload. Do not reintroduce one.
+  //
+  // `recoveredRef` is an in-flight-*or*-settled guard: the id is added before the
+  // GET so two instances watching the same video cannot both fetch, and removed
+  // again on a transient failure so a later `idsKey` change or remount retries.
+  // Only a 404 is terminal — the job row is gone, so the persisted id is dropped
+  // and nothing will ever re-attach to it.
   const recoveredRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    let dropped = false;
     for (const id of idsKey ? idsKey.split(",") : []) {
       if (recoveredRef.current.has(id)) continue;
       recoveredRef.current.add(id);
@@ -78,9 +96,8 @@ export function useVideoExtractJobs(
       if (!savedId || useJobStore.getState().activeJobs.has(savedId)) continue;
       jobsApi.get(savedId)
         .then((j) => {
-          if (dropped) return;
-          if (TERMINAL.includes(j.status)) {
-            savePersisted(videoExtractJobKey(id), { jobId: null });
+          if (TERMINAL_JOB_STATUSES.has(j.status)) {
+            clearPersisted(videoExtractJobKey(id));
             return;
           }
           useJobStore.getState().updateJob(j.id, {
@@ -89,13 +106,19 @@ export function useVideoExtractJobs(
             percent: 0, video_id: id, dataset_id: j.dataset_id ?? undefined,
           });
         })
-        .catch(() => { /* job row gone — nothing to re-attach to */ });
+        .catch((err) => {
+          if (isNotFound(err)) clearPersisted(videoExtractJobKey(id));
+          else recoveredRef.current.delete(id);
+        });
     }
-    return () => { dropped = true; };
   }, [idsKey]);
 
   // Persist the live job id so a hard reload — which empties jobStore — can still
-  // find it. Cleared once the job goes terminal.
+  // find it. **Removed** once the job goes terminal, rather than overwritten with
+  // `{jobId: null}`: a null blob is indistinguishable from an absent key to every
+  // reader, but it accumulates one dead localStorage entry per video ever
+  // extracted, and a stale id inside it gets re-fetched and re-404'd on every
+  // future mount.
   //
   // Written **on transition only**, and never a `null` for an id this instance
   // has not yet seen live. `jobs` is a fresh Map on every `activeJobs` change,
@@ -112,7 +135,8 @@ export function useVideoExtractJobs(
       if (!persistedRef.current.has(id) && jobId === null) continue;
       if (persistedRef.current.get(id) === jobId) continue;
       persistedRef.current.set(id, jobId);
-      savePersisted(videoExtractJobKey(id), { jobId });
+      if (jobId === null) clearPersisted(videoExtractJobKey(id));
+      else savePersisted(videoExtractJobKey(id), { jobId });
     }
   }, [idsKey, jobs]);
 

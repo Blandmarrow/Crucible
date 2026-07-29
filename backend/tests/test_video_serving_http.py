@@ -7,6 +7,7 @@ writes — it comes from returning a `FileResponse`. Swapping that for a
 playback still appeared to work, so the 206 path is pinned here.
 """
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -262,6 +263,113 @@ def test_the_backfill_does_not_steal_a_siblings_poster_stem(tmp_path):
             assert healed.poster_path != sibling_poster
             assert Path(healed.poster_path).exists()
             assert Path(sibling_poster).read_bytes() == sibling_bytes, "the sibling's poster was overwritten"
+
+    run(scenario())
+
+
+def test_two_same_stem_backfills_do_not_claim_one_poster(tmp_path):
+    """The concurrent form of the test above, which is how it actually happens.
+
+    `VideoStrip` paints every card at once, so `clip.mp4` and `clip.mkv` heal in
+    parallel: without the per-dataset lock both resolve their stem against the
+    same empty directory, both pick `clip.webp`, and the second write clobbers
+    the first — PM-007's shape, two rows pointing at one picture.
+
+    No `threading.Barrier` to force the interleave: it would deadlock against the
+    very lock under test. A 50 ms sleep inside the executor widens the window
+    instead, and the assertion is on the outcome either way.
+    """
+    async def scenario():
+        import time as _time
+
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            vdir = Path(ds["folder_path"]) / "videos"
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "clip.mp4").write_bytes(mp4_bytes(frames=10))
+            (vdir / "clip.mkv").write_bytes(mp4_bytes(frames=10))
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            await wait_for_job(env, r.json()["job_id"])
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Video))).scalars().all()
+                ids = sorted(v.id for v in rows)
+                for v in rows:
+                    Path(v.poster_path).unlink(missing_ok=True)
+                    v.poster_path = None
+                await db.commit()
+
+            original = videos_router.generate_poster
+
+            def slow(*a, **k):
+                _time.sleep(0.05)  # executor thread, so the loop stays live
+                return original(*a, **k)
+
+            videos_router.generate_poster = slow
+            try:
+                responses = await asyncio.gather(
+                    *(env.client.get(f"{API}/videos/{vid}/poster") for vid in ids)
+                )
+            finally:
+                videos_router.generate_poster = original
+
+            assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+
+            async with env.Session() as db:
+                healed = (await db.execute(select(Video))).scalars().all()
+            posters = [v.poster_path for v in healed]
+            assert len(set(posters)) == 2, f"both rows claimed one poster: {posters}"
+            for p in posters:
+                assert Path(p).stat().st_size > 0
+
+    run(scenario())
+
+
+def test_a_raising_poster_generator_parks_the_video_instead_of_500ing(tmp_path):
+    """An exception from `generate_poster` is a False like any other.
+
+    Letting it escape bypassed the negative cache, so every card of every
+    subsequent render re-ran a full cv2 open + seek + decode — the unbounded
+    cliff the backoff exists to prevent — and reported an app fault for what
+    CLAUDE.md calls a nicety, never a gate.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.routers import videos as videos_router
+
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4")
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Video))).scalar_one()
+                Path(row.poster_path).unlink()
+                row.poster_path = None
+                await db.commit()
+
+            calls = []
+            original = videos_router.generate_poster
+
+            def boom(*a, **k):
+                calls.append(1)
+                raise OSError("decoder exploded")
+
+            videos_router.generate_poster = boom
+            try:
+                first = await env.client.get(f"{API}/videos/{video['id']}/poster")
+                assert first.status_code == 404, first.text
+                assert video["id"] in videos_router._poster_failures
+
+                second = await env.client.get(f"{API}/videos/{video['id']}/poster")
+                assert second.status_code == 404
+                assert calls == [1], "generation was retried while the backoff was live"
+            finally:
+                videos_router.generate_poster = original
+                videos_router._poster_failures.pop(video["id"], None)
+
+            async with env.Session() as db:
+                assert (await db.execute(select(Video))).scalar_one().poster_path is None
 
     run(scenario())
 

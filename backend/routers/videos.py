@@ -70,6 +70,25 @@ router = APIRouter(prefix="/videos", tags=["videos"])
 POSTER_RETRY_AFTER_SECONDS = 300.0
 _poster_failures: dict[str, float] = {}
 
+# One lock per dataset, serialising the backfill's resolve → generate → commit.
+# Keyed by dataset because that is the scope `claimed_poster_stems` queries: two
+# same-stem videos (`a.mp4` and `a.mkv`, which rescan registers side by side)
+# both resolve their poster stem against what their *siblings* claim, so two
+# concurrent first views — `VideoStrip` paints every card at once — read the same
+# empty directory, pick `a.webp` twice and leave two rows pointing at one file.
+# Shaped after `backend/ml/model_manager.py`'s per-model registry, the other
+# per-key `asyncio.Lock` map in the backend. The cost is that a legacy dataset's
+# un-postered rows heal sequentially on first paint; in exchange each video
+# decodes once rather than once per card, and peak RSS is one decoded frame.
+_poster_locks: dict[str, asyncio.Lock] = {}
+
+
+def _poster_lock(dataset_id: str) -> asyncio.Lock:
+    lock = _poster_locks.get(dataset_id)
+    if lock is None:
+        lock = _poster_locks[dataset_id] = asyncio.Lock()
+    return lock
+
 # Ceiling for the whole probe: twelve seeks at ~7.5 ms each leaves an enormous
 # margin, so hitting this means slow or failing storage, not a slow video.
 PROBE_TIMEOUT_SECONDS = 25.0
@@ -158,6 +177,12 @@ async def get_video_poster(video_id: str, db: AsyncSession = Depends(get_db)):
     `GET /images/{image_id}`: rows ingested before posters existed heal the
     first time anything looks at them, so no migration job has to walk the
     table. It also covers a poster deleted from disk out from under the row.
+
+    The backfill runs under the dataset's `_poster_lock` and re-reads the row
+    inside it, so a strip painting N cards at once cuts each poster once and
+    resolves each stem against the siblings a sibling backfill has already
+    committed. The fast path — a poster the row already names and disk still has
+    — stays outside the lock.
     """
     video = await db.get(Video, video_id)
     if not video:
@@ -167,41 +192,73 @@ async def get_video_poster(video_id: str, db: AsyncSession = Depends(get_db)):
     if p is None or not p.exists():
         if _poster_backoff_active(video_id):
             raise HTTPException(404, "No poster frame for this video")
-        src = safe_dataset_path(video.file_path, settings.datasets_dir)
-        if not src.exists():
-            raise HTTPException(404, "File not found on disk")
+        async with _poster_lock(video.dataset_id):
+            # Load-bearing, not cosmetic: `db.get` above opened this session's
+            # read transaction, so a re-read inside it would still see the
+            # pre-lock snapshot and miss a sibling request's commit.
+            await db.rollback()
+            video = (
+                await db.execute(select(Video).where(Video.id == video_id))
+            ).scalar_one_or_none()
+            if not video:
+                raise HTTPException(404, "Video not found")
+            if video.poster_path:
+                healed = safe_dataset_path(video.poster_path, settings.datasets_dir)
+                if healed.exists():
+                    return FileResponse(str(healed), media_type="image/webp")
+            if _poster_backoff_active(video_id):
+                raise HTTPException(404, "No poster frame for this video")
 
-        # The stem is *not* simply the video's own. Rescan adopts filenames off
-        # disk, so `a.mp4` and `a.mkv` can coexist in one dataset; healing both
-        # onto `a.webp` would have the second overwrite the first and leave two
-        # rows pointing at one file. Resolve against what the siblings claim.
-        poster_dir = src.parent / "thumbnails"
-        siblings = await db.execute(
-            select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == video.dataset_id)
-        )
-        claimed = claimed_poster_stems(
-            [(r.id, r.filename, r.poster_path) for r in siblings.all()], poster_dir, exclude_id=video_id
-        )
-        target = unique_poster_path(poster_dir, src.stem, claimed)
+            src = safe_dataset_path(video.file_path, settings.datasets_dir)
+            if not src.exists():
+                raise HTTPException(404, "File not found on disk")
 
-        ok = await asyncio.get_running_loop().run_in_executor(
-            None,
-            partial(
-                generate_poster,
-                src,
-                target,
-                duration_ms=video.duration_ms,
-                trim_start_ms=video.trim_start_ms,
-                trim_end_ms=video.trim_end_ms,
-            ),
-        )
-        if not ok:
-            _poster_failures[video_id] = time.monotonic() + POSTER_RETRY_AFTER_SECONDS
-            raise HTTPException(404, "No poster frame for this video")
-        _poster_failures.pop(video_id, None)
-        video.poster_path = str(target)
-        await db.commit()
-        p = target
+            # The stem is *not* simply the video's own. Rescan adopts filenames off
+            # disk, so `a.mp4` and `a.mkv` can coexist in one dataset; healing both
+            # onto `a.webp` would have the second overwrite the first and leave two
+            # rows pointing at one file. Resolve against what the siblings claim.
+            poster_dir = src.parent / "thumbnails"
+            siblings = await db.execute(
+                select(Video.id, Video.filename, Video.poster_path).where(
+                    Video.dataset_id == video.dataset_id
+                )
+            )
+            claimed = claimed_poster_stems(
+                [(r.id, r.filename, r.poster_path) for r in siblings.all()],
+                poster_dir,
+                exclude_id=video_id,
+            )
+            target = unique_poster_path(poster_dir, src.stem, claimed)
+
+            try:
+                ok = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    partial(
+                        generate_poster,
+                        src,
+                        target,
+                        duration_ms=video.duration_ms,
+                        trim_start_ms=video.trim_start_ms,
+                        trim_end_ms=video.trim_end_ms,
+                    ),
+                )
+            except Exception:
+                # A raise is a False like any other. Letting it escape as a 500
+                # skipped the negative cache, so every card of every subsequent
+                # render re-ran a full cv2 open + seek + decode — the unbounded
+                # cliff the backoff exists to prevent — and put an app fault in
+                # the JS error console for what CLAUDE.md calls a nicety, never a
+                # gate. `Exception`, not `BaseException`: a client disconnect
+                # (CancelledError) must not park the row for five minutes.
+                logger.warning("poster: generation failed for %s", src, exc_info=True)
+                ok = False
+            if not ok:
+                _poster_failures[video_id] = time.monotonic() + POSTER_RETRY_AFTER_SECONDS
+                raise HTTPException(404, "No poster frame for this video")
+            _poster_failures.pop(video_id, None)
+            video.poster_path = str(target)
+            await db.commit()
+            p = target
 
     return FileResponse(str(p), media_type="image/webp")
 

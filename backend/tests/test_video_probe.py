@@ -58,6 +58,14 @@ class _PoisonedCapture:
     def isOpened(self):
         return True
 
+    def set(self, prop, value):
+        # A real VideoCapture has one, and `apply_orientation` calls it on every
+        # capture this codebase opens. The double had none, which meant the
+        # production guard's broad `except` was load-bearing for the *test* —
+        # keeping a catch-all in production so a double can stay incomplete
+        # inverts the dependency.
+        return True
+
     def get(self, prop):
         import cv2
 
@@ -148,6 +156,38 @@ def test_zero_fps_yields_no_duration(tmp_path, monkeypatch):
     info = probe_video(p)
     assert info["duration_ms"] is None
     assert info["fps"] is None
+
+
+def test_a_backend_that_refuses_the_orientation_property_still_probes(tmp_path, monkeypatch, caplog):
+    """`VideoCapture.set` reports an unsupported property by returning False; it
+    does not raise, which is why the old `try/except` could never detect the
+    backend it documented. Autorotate is a nicety — a backend without it must
+    still yield full metadata."""
+    import logging
+
+    import cv2
+
+    class _RefusesSet(_PoisonedCapture):
+        def set(self, prop, value):
+            return False
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 500.0
+            return super().get(prop)
+
+    p = tmp_path / "nooriented.mkv"
+    p.write_bytes(b"\x00" * 128)
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _path: _RefusesSet(500))
+
+    with caplog.at_level(logging.DEBUG, logger="backend.services.video_service"):
+        info = probe_video(p)
+
+    assert info["width"] == 1920
+    assert info["height"] == 1080
+    assert info["fps"] == pytest.approx(25.0)
+    assert info["duration_ms"] == 20_000
+    assert any("ORIENTATION_AUTO" in r.message for r in caplog.records)
 
 
 def test_undecodable_files_are_rejected(tmp_path):

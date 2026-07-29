@@ -40,16 +40,18 @@ def apply_orientation(cap) -> None:
     hand the same crop rect frames in different orientations, and a poster would
     disagree with the frames extracted from the same file. Turning cv2's
     autorotate on is the cheaper half of making them agree; ffmpeg keeps its
-    default. Verified present in cv2 5.0.0; guarded anyway, because the property
-    is a no-op on backends that do not implement it and this must never be the
-    reason a video fails to open.
+    default. Verified present in cv2 5.0.0.
+
+    The check is on the *return value*, not a `try`. `VideoCapture.set` reports
+    an unsupported property by returning False; it does not raise, so a
+    `try/except` around it could never detect the backend it documented. Debug,
+    not warning: on a backend without the property this is a no-op, not a fault,
+    and it must never be the reason a video fails to open.
     """
     import cv2
 
-    try:
-        cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
-    except Exception:  # noqa: BLE001 — an unsupported property is not an error
-        logger.debug("CAP_PROP_ORIENTATION_AUTO not supported by this backend")
+    if not cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1):
+        logger.debug("CAP_PROP_ORIENTATION_AUTO not applied by this backend")
 
 
 # A duration search never runs past this, and it doubles as the plausibility

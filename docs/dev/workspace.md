@@ -24,12 +24,21 @@ Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered
 | `GET /list?path=` | Directory listing — dirs first, then files, both alphabetical; `media_kind` per entry (`"image"`, `"video"` or null), replacing the older `is_image` boolean |
 | `GET /preview?path=` | Serve any file in `MEDIA_EXTENSIONS` directly (`FileResponse`); videos get `video_mime` as the content type, and the `FileResponse` supplies the Range/206 a `<video>` needs to seek |
 | `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB. Image-only on purpose: a video container carries no EXIF or generation parameters |
-| `POST /move` | Move file/dir; syncs `Image.file_path`, `Image.filename`, `Image.dataset_id` when path is inside a dataset folder |
-| `POST /rename` | Rename in place; same DB sync |
-| `POST /delete` | Delete file or directory (recursive); deletes files from filesystem first, then removes `Image` DB records — so a failed FS deletion leaves DB records intact |
+| `POST /move` | Move file/dir; syncs the `Image` or `Video` row's `file_path`/`filename`, and 409s rather than re-homing a registered file (below) |
+| `POST /rename` | Rename in place; syncs `file_path`/`filename` on whichever of `(Image, Video)` matches |
+| `POST /delete` | Delete file or directory (recursive); deletes from the filesystem first, then removes the matching `Image` **and** `Video` records — so a failed FS deletion leaves DB records intact |
 | `POST /mkdir` | Create directory |
 
-**DB sync**: `_find_dataset_for_path(path, session)` checks if `path` is inside any dataset's `folder_path` and returns the dataset. Move/rename/delete use this to keep `Image` records consistent without a separate import step.
+**`POST /move` has two branches, chosen from `src` *before* `shutil.move` runs** — `src` no longer exists afterwards, so a late `is_file()`/`is_dir()` answers False for both and the whole sync becomes dead code (PM-011).
+
+- **File branch.** Looks up the `Image` or `Video` row whose `file_path` is the source — also before the move, so the 409 below lands with the filesystem untouched, matching the collision guards' convention. If a row exists and the destination is not inside that row's own dataset, the move is **refused with a 409**: re-homing is `batch_move_dataset`'s job (provenance materialization, stats refresh, NULLing `Image.source_video_id`, moving the poster/thumbnail), and none of it happens here. The condition is `new_ds is None or new_ds.id != row.dataset_id` — deliberately broader than "another dataset", because a registered file moved out of the datasets tree entirely is equally broken: `utils.safe_dataset_path` then 403s every request for its bytes. Files with no DB row still move anywhere. Otherwise only `file_path`/`filename` are rewritten.
+- **Directory branch.** Prefix-rewrites `file_path` for every `Image` and `Video` row under the moved folder, plus that model's derived path (`Image.thumbnail_path`, `Video.poster_path`) **when and only when it also starts with the old prefix**. A poster lives under `videos/`, so it travels with the folder and its stored path must follow; an image's thumbnails live in `{ds}/thumbnails/`, beside `images/` rather than under it, so moving `images/` alone leaves them valid and an unconditional rewrite would point every row at a file that was never there.
+
+**No UI caller.** `filesystemApi.move` exists in `frontend/src/api/filesystem.ts` and nothing calls it — there is no move menu item, drag/drop or destination picker. The endpoint is API-only; the wrapper is scaffolding for a move UI that has not been built.
+
+Still open, recorded rather than fixed: `Image.subfolder` travels unchanged, so a file moved between subfolders of its own dataset keeps the old sidebar grouping; and moving a *dataset's own folder* does not rewrite `Dataset.folder_path`.
+
+**DB sync**: `_find_dataset_for_path(db, file_path)` checks if `file_path` is inside any dataset's `folder_path` and returns the dataset — a `LIKE` pre-filter over `Dataset.folder_path` (longest first) with `relative_to` as the authoritative check. Move uses it for the guard above; rename and delete match on the exact path and need no dataset lookup.
 
 **Path safety**: `sanitize_abs_path()` (from `backend/utils.py`) rejects null bytes and requires an absolute path. No further sandbox — this is a local desktop app with intentional full-filesystem access.
 

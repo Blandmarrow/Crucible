@@ -218,14 +218,13 @@ file when the extraction frontend landed; the two are read together but sized ap
 - The file browser (`docs/dev/workspace.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That
-  sync is not complete, and the gap predates videos: a cross-dataset `/move` sets
-  `dataset_id` without `materialize_provenance` and without `refresh_stats`, so the moved
-  row silently re-inherits the destination's defaults and both datasets' counts stay stale
-  until the next refresh. Already true for `Image`; now true for `Video` too — and now also
-  true of frame lineage, since that endpoint does not NULL `Image.source_video_id` the way
-  `batch_move_dataset` does, so a frame moved through the browser keeps pointing at a video
-  the destination dataset does not contain. Recorded here rather than fixed silently,
-  because the three omissions belong to one gap and should be closed together.
+  sync rewrites paths and nothing else, so `/filesystem/move` **refuses with a 409** to move
+  a registered file outside its own dataset. `materialize_provenance`, `refresh_stats` and
+  NULLing `Image.source_video_id` are the things a cross-dataset move owes and that endpoint
+  does none of; closing the gap by refusal leaves `batch_move_dataset` as the only path that
+  re-homes an image. It was also the only code path that could ever change a
+  `Video.dataset_id` — videos now have none at all, since `batch_move_dataset` moves `Image`
+  rows only. A video changes dataset by being re-uploaded, or not at all.
 
 ## Tests
 

@@ -95,7 +95,7 @@ A three-panel filesystem explorer built into the app:
 - Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Media only** toggle to hide anything that is neither an image nor a video, context menu (rename / delete / import into dataset)
 - Right panel: preview + size and modified date. For an image, also dimensions/format and generation metadata (A1111 / ComfyUI); for a video, a player you can scrub
 - Videos are listed with a film-strip icon and counted in the status bar
-- Create folders, rename, move and delete files and directories (syncs DB records automatically — an image or video that lands in another dataset's folder is re-homed to it)
+- Create folders, rename files and directories, delete items (syncs DB records automatically — renaming or deleting an image or video that belongs to a dataset keeps its record in step). Moving a file into a *different* dataset is not done here: use the gallery's **Move to dataset** action, which carries the caption, provenance and thumbnail with it
 - Import any folder of images directly into an existing dataset without leaving the browser; tick **Include videos** to bring video files in as well
 
 ## Booru Tag Lookup

@@ -194,6 +194,10 @@ it before editing any doc.
   whoever maintains it and never counts as documenting the feature. A change to
   anything a user can see — a page, a sidebar item, a settings tab, a setup step —
   updates `README.md` and the relevant `docs/*.md` **in the same change**.
-- **Run `python scripts/check_docs.py`** after any documentation change and fix what
-  it reports. It enforces word budgets, not line counts, and warns on any paragraph
-  over 250 words — see its module docstring for why.
+- **Run `python scripts/check_docs.py`** after any documentation change. Fix every
+  **FAIL** before you finish. A **WARN** is not a fix-it-now item: an over-budget file
+  wants a *split*, never compression — finish the task you were asked to do, record the
+  seam in `docs/dev/pending-splits.md`, and leave the prose alone. The split itself is
+  the **first** action of the next session that appends to that file, never the last
+  action of this one. Budgets count words, not lines, and any paragraph over 250 words
+  warns too — see the script's module docstring for why.

@@ -11,9 +11,21 @@ Checks (FAIL sets a non-zero exit code; WARN does not):
   2. FAIL  a markdown link to a .md file is missing, or its #anchor matches no heading
   3. FAIL  the `@docs/` / `@CLAUDE` auto-load footgun appears outside inline code
   4. WARN  any doc over its word budget (see word_limit())
-  5. WARN  any single paragraph/bullet over MAX_BLOCK_WORDS
-  6. WARN  a docs/dev/*.md file has no Documentation Map row, or vice versa
-  7. WARN  a Documentation Map row's hand-written word count has drifted from the file
+  5. WARN  an over-budget doc has no seam recorded in docs/dev/pending-splits.md
+  6. WARN  any single paragraph/bullet over MAX_BLOCK_WORDS
+  7. WARN  a docs/dev/*.md file has no Documentation Map row, or vice versa
+  8. WARN  a Documentation Map row's hand-written word count has drifted from the file
+
+The word-budget warning prints a remedy and a per-section breakdown rather than a bare
+number, because a bare number reads as a target to shrink and the cheapest way to shrink
+it is to compress accurate prose — which is the very failure MAX_BLOCK_WORDS exists to
+catch (see below). The remedy for an over-budget file is a SPLIT. Check 5 is what makes
+that enforceable: the seam has to be written down where the next session can find it,
+since the expensive half of a split is choosing the seam and that judgement is at its
+best in the session that just worked the file, while *executing* the split is at its
+worst there. So the two halves are deliberately separated in time — record the seam at
+the end of the session that trips the budget, execute it at the start of the next
+session that would append to the file. `docs/dev/pending-splits.md` is the handoff.
 
 Why the heuristics are conservative: the docs reference many paths relative to
 `backend/` (e.g. `routers/captioning.py`) and plenty of non-paths that superficially
@@ -72,6 +84,19 @@ README_MAX_WORDS = 2500   # the landing page
 
 # A single paragraph or bullet longer than this should be a list.
 MAX_BLOCK_WORDS = 250
+
+# The split handoff queue: one entry per over-budget file, naming the seam. See the
+# module docstring for why the seam is recorded separately from the split being done.
+PENDING_SPLITS = Path("docs/dev/pending-splits.md")
+
+# docs/dev/*.md files that are not topic files and so are exempt from the Documentation
+# Map. The Map indexes subsystems; a work queue is not one, and giving it a row would
+# advertise it as something to read when a task touches a subsystem.
+NON_TOPIC_DEV_DOCS = {PENDING_SPLITS.name}
+
+# A split should leave both halves with real headroom. Two 3,400-word files bought
+# nothing; if the natural seam cannot get under this, it is the wrong seam.
+SPLIT_TARGET_FRACTION = 0.6
 
 # How far the Documentation Map's hand-written `Words` column may drift from the
 # file it describes. Proportional, so a 3k-word file is not flagged for a 60-word
@@ -269,13 +294,139 @@ def word_limit(f: Path) -> int:
     return USER_MAX_WORDS
 
 
-def check_sizes(files: list[Path]) -> list[str]:
-    warnings: list[str] = []
+def section_words(path: Path) -> list[tuple[str, int]]:
+    """(heading, word count) per top-level section — the raw material for choosing a seam.
+
+    Splits on the *shallowest heading level the file actually uses below its `# Title`*,
+    rather than assuming `##`: the repo is not consistent here (`docs/dev/versioning.md`
+    is organised with `###`, `docs/dev/export.md` has no sub-headings at all), and
+    hardcoding a level reports those files as one undifferentiated block, which is
+    exactly the case where a seam is hardest to see and the breakdown is needed most.
+
+    Words before the first heading are attributed to "(intro)". Fenced code counts —
+    it costs context like anything else. Returns [] when the file has no sub-headings;
+    the caller says so rather than printing a single meaningless row.
+    """
+    text = path.read_text(encoding="utf-8")
+    levels = [
+        len(m.group(1))
+        for _, line, in_fence in iter_lines_outside_fences(text)
+        if not in_fence and (m := _HEADING.match(line)) and len(m.group(1)) >= 2
+    ]
+    if not levels:
+        return []
+    split_at = min(levels)
+
+    sections: list[tuple[str, int]] = []
+    heading = "(intro)"
+    words = 0
+    for _, line, in_fence in iter_lines_outside_fences(text):
+        m = None if in_fence else _HEADING.match(line)
+        if m and len(m.group(1)) == split_at:
+            if words:
+                sections.append((heading, words))
+            heading = _INLINE_CODE.sub(r"\1", m.group(2)).strip()
+            words = 0
+            continue
+        words += len(line.split())
+    if words:
+        sections.append((heading, words))
+    return sections
+
+
+def oversized(files: list[Path]) -> list[tuple[Path, int, int]]:
+    """(file, actual words, budget) for every file over its budget."""
+    out = []
     for f in files:
         n = len(f.read_text(encoding="utf-8").split())
         limit = word_limit(f)
         if n > limit:
-            warnings.append(f"{f.relative_to(REPO_ROOT)}: {n} words (> {limit})")
+            out.append((f, n, limit))
+    return out
+
+
+def check_sizes(files: list[Path]) -> list[str]:
+    """Report over-budget files with the remedy and a seam-picking breakdown.
+
+    Deliberately verbose, and deliberately not a bare number: this fires rarely, and
+    when it does it is the exact moment someone decides between splitting the file and
+    compressing its prose. Naming the remedy here is cheaper than hoping the reader
+    goes and looks it up.
+    """
+    warnings: list[str] = []
+    for f, n, limit in oversized(files):
+        target = int(limit * SPLIT_TARGET_FRACTION)
+        lines = [
+            f"{f.relative_to(REPO_ROOT)}: {n} words (> {limit})",
+            "  SPLIT this file — do NOT compress the prose to fit. Compressing is how "
+            "facts end up stacked several clauses deep; see the module docstring.",
+            f"  Aim for each half under ~{target} words. Record the seam in "
+            f"`{PENDING_SPLITS}`, then execute it at the START of the next session "
+            "that appends here — never at the end of this one.",
+        ]
+        sections = section_words(f)
+        if sections:
+            lines.append("  Sections:")
+            for heading, words in sorted(sections, key=lambda s: -s[1]):
+                lines.append(f"    {words:>5}  {heading}")
+        else:
+            lines.append("  No sub-headings — read the file to find the seam, and give "
+                         "each half a heading structure while you are in there.")
+        warnings.append("\n      ".join(lines))
+    return warnings
+
+
+def check_pending_splits(files: list[Path]) -> list[str]:
+    """Every over-budget file needs a recorded seam, and every recorded seam a file
+    that still needs it.
+
+    The second direction matters as much as the first: an entry left behind after a
+    split (or after the content shrank for another reason) is a standing instruction to
+    do work that is already done, which is how a queue stops being trusted.
+
+    The two directions deliberately use different thresholds, leaving three bands. Over
+    budget with no entry: record one. Under SPLIT_TARGET_FRACTION with an entry: the
+    split evidently happened (that is the fraction a split targets), so the entry is
+    stale. In between: entry recorded, split pending, silence. Keying staleness off the
+    budget instead would call an entry for a file sitting *at* 100% stale and invite
+    someone to delete it — the one entry most obviously about to be needed.
+    """
+    warnings: list[str] = []
+    pending = REPO_ROOT / PENDING_SPLITS
+    text = pending.read_text(encoding="utf-8") if pending.exists() else ""
+    over = {str(f.relative_to(REPO_ROOT)) for f, _, _ in oversized(files)}
+    settled = {
+        str(f.relative_to(REPO_ROOT))
+        for f in files
+        if len(f.read_text(encoding="utf-8").split()) < word_limit(f) * SPLIT_TARGET_FRACTION
+    }
+
+    for rel in sorted(over):
+        if rel not in text:
+            warnings.append(
+                f"{rel}: over budget with no seam recorded in {PENDING_SPLITS} "
+                "(add one; do not trim the file instead)"
+            )
+
+    for lineno, line, in_fence in iter_lines_outside_fences(text):
+        if in_fence:
+            continue
+        m = _HEADING.match(line)
+        if not m or len(m.group(1)) != 2:
+            continue
+        named = _INLINE_CODE.sub(r"\1", m.group(2)).strip()
+        # Only bare path headings are entries. Two things fall out of this, both wanted:
+        # the file's own prose sections use `##` too and would otherwise read as a stale
+        # queue, and a `## docs/dev/x.md (structural)` heading — an under-budget file
+        # recorded as a dumping ground — is exempt from the staleness sweep while its
+        # path still satisfies the has-an-entry check above, which matches on substring.
+        if not (named.endswith(".md") and "/" in named):
+            continue
+        if named in settled:
+            warnings.append(
+                f"{PENDING_SPLITS}:{lineno}: entry for `{named}`, now under "
+                f"{SPLIT_TARGET_FRACTION:.0%} of budget — delete it if the split is done"
+            )
     return warnings
 
 
@@ -346,7 +497,7 @@ def check_map_sync() -> list[str]:
         m = _MAP_ROW.match(line)
         if m:
             rows.add(m.group(1))
-    on_disk = {p.name for p in dev_dir.glob("*.md")}
+    on_disk = {p.name for p in dev_dir.glob("*.md")} - NON_TOPIC_DEV_DOCS
     for name in sorted(on_disk - rows):
         warnings.append(f"docs/dev/{name}: file has no Documentation Map row")
     for name in sorted(rows - on_disk):
@@ -410,6 +561,7 @@ def main() -> int:
     links = check_md_links(every)
     footgun = check_footgun(dev)      # user docs are not auto-loaded into context
     sizes = check_sizes(every)        # dev + user; see word_limit() for per-file budgets
+    pending = check_pending_splits(every)
     long_blocks = check_blocks(every)
     map_sync = check_map_sync()       # docs/*.md has no Documentation Map
     map_words = check_map_words()     # the Map's hand-written word counts
@@ -420,12 +572,14 @@ def main() -> int:
     _report("markdown links & anchors", links, is_error=True)
     _report("@-path auto-load footgun", footgun, is_error=True)
     _report("word budgets", sizes, is_error=False)
+    _report("recorded split seams", pending, is_error=False)
     _report("paragraph length", long_blocks, is_error=False)
     _report("Documentation Map <-> files sync", map_sync, is_error=False)
     _report("Documentation Map word counts", map_words, is_error=False)
 
     errors = broken + links + footgun
-    warns = len(sizes) + len(long_blocks) + len(map_sync) + len(map_words)
+    warns = (len(sizes) + len(pending) + len(long_blocks)
+             + len(map_sync) + len(map_words))
     print()
     print("RESULT:", "FAIL" if errors else "ok",
           f"({len(errors)} error(s), {warns} warning(s))")

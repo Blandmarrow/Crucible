@@ -20,11 +20,14 @@ needs mp4 fixtures and an optional dependency, and `video_service` is already
 covered by its own tests. One module would make the fast tests hostage to the
 slow ones. See `docs/dev/video-shots.md`.
 
-**RSS discipline** runs through every loop below. A decoded 4K frame is 24.9 MB;
-twelve are ~300 MB. Nothing here ever builds a `list[np.ndarray]` and maps over
-it afterwards — everything a frame contributes is extracted inside the iteration
-and the array released before the next seek. Same failure class as the
-"close PIL Images after preprocessing" invariant in CLAUDE.md.
+**RSS discipline** runs through every loop below. A decoded 4K frame is 24.9 MB
+and its float32 luma plane another 33 MB; twelve frames are ~300 MB. Nothing here
+ever builds a `list[np.ndarray]` and maps over it afterwards — everything a frame
+contributes is extracted inside the iteration and both arrays released before the
+next seek. The analysis holds **one** plane per frame, computed by `vf.luma` and
+passed to every consumer rather than recomputed inside each; the `finally` that
+drops the frame drops the plane with it. Same failure class as the "close PIL
+Images after preprocessing" invariant in CLAUDE.md.
 """
 
 from __future__ import annotations
@@ -361,13 +364,22 @@ def probe_samples(
 ) -> dict:
     """Sample a video for the extraction modal's first step. Blocking.
 
-    Measured at ~7.5 ms per seek-and-decode, which is why the endpoint on top of
-    this is a plain request rather than a job.
+    **Neither cost here is ~7.5 ms per sample**, which is what this docstring
+    used to claim and what `PROBE_TIMEOUT_SECONDS` was reasoned from. Measured:
+    a seek-and-decode is ~7.5 ms only on a light codec — on 10-bit HEVC it is
+    ~300 ms, the codec dominating far more than the resolution — and the numpy
+    analysis of one sample is ~40 ms at 1080p and ~0.2 s at 4K, three quarters of
+    it the `edge_profiles` percentiles. A full twelve-sample probe of a 1080p
+    HEVC source measures **4.4 s**: ~3.7 s decode, ~0.5 s analysis. Still a plain
+    request rather than a job, but it is seconds, not milliseconds.
 
     Every frame is consumed **inside** the loop: its two edge profiles, its
     combing ratio and its encoded preview are all taken and the array dropped
     before the next seek, so peak RSS is one frame plus a few hundred KB of
-    strings rather than `samples` × 24.9 MB.
+    strings rather than `samples` × 24.9 MB. The luma plane both analyses need is
+    computed **once** per sample by `vf.luma` and passed to each — recomputing it
+    inside both cost another 33 MB and ~40 ms per sample — and released in the
+    same `finally` as the frame.
 
     Cropdetect and combing both run on the **full-resolution** frame. The preview
     is downscaled; the analysis must not be. Resampling averages adjacent rows
@@ -407,15 +419,18 @@ def probe_samples(
                 # not the whole probe.
                 samples_failed += 1
                 continue
+            lum = None
             try:
-                rows, cols = vf.edge_profiles(frame)
+                # One luma plane for both analyses; only the preview wants BGR.
+                lum = vf.luma(frame)
+                rows, cols = vf.edge_profiles(lum)
                 acc_rows = vf.merge_profiles(acc_rows, rows)
                 acc_cols = vf.merge_profiles(acc_cols, cols)
                 # Assigned *after* the merges, so a rejected sample cannot leave
                 # its dimensions behind on the result.
                 height, width = frame.shape[:2]
                 per_sample_rects.append(vf.crop_rect_from_profiles(rows, cols))
-                combing.append(vf.combing_ratio(frame))
+                combing.append(vf.combing_ratio(lum))
                 url = _encode_preview(frame, max_edge=max_edge, quality=jpeg_quality)
             except ValueError:
                 # A mid-run resolution change — `merge_profiles` refuses to
@@ -423,7 +438,8 @@ def probe_samples(
                 # lines above: one bad sample costs one sample, not the probe.
                 # Left unhandled this escaped as a raw 422 quoting numpy shapes.
                 # Accumulator consistency holds: a size change fails on
-                # `acc_rows` before `acc_cols` is touched.
+                # `acc_rows` before `acc_cols` is touched — and a frame that is
+                # not BGR at all now fails in `luma` before either is.
                 logger.warning(
                     "probe: sample at %s ms has a different frame size — skipped", ts
                 )
@@ -431,6 +447,7 @@ def probe_samples(
                 continue
             finally:
                 del frame
+                lum = None
             if not url:
                 samples_failed += 1
                 continue
@@ -907,8 +924,11 @@ def render_shot(
     4K frames is 125 MB, and both `frames_per_shot` and `candidates` are
     user-settable — and cannot be short-circuited, because `pick_index`'s
     luma-outlier rejection is defined against the median of the whole candidate
-    set and so can change the winner retroactively. A second seek-and-decode is
-    about 7.5 ms.
+    set and so can change the winner retroactively. The second pass is one extra
+    seek-and-decode for the whole window — ~7.5 ms on a light codec, ~300 ms on
+    10-bit HEVC — against the ~90 ms of numpy *every* candidate already costs at
+    4K (mean + `sharpness` + `is_degenerate` off one shared plane, and 308 ms
+    before that plane was shared). The tradeoff is bought cheaply either way.
 
     The crop → resize → save → thumbnail tail is `_write_frame`, shared with
     pass 2 so the two passes cannot drift on format or quality.
@@ -931,14 +951,19 @@ def render_shot(
             read_positions(path, positions, deinterlace=deinterlace)
         ) as reader:
             for ts, frame in reader:
+                # One luma plane, handed to all three consumers: each of them
+                # would otherwise recompute it (~90 ms and 33 MB at 4K, three
+                # times over). The four lists stay index-aligned.
+                lum = None
                 try:
-                    lum_mean = float(vf._luma(frame).mean())
-                    scores.append(vf.sharpness(frame))
-                    lumas.append(lum_mean)
-                    degenerate.append(vf.is_degenerate(frame))
+                    lum = vf.luma(frame)
+                    lumas.append(float(lum.mean()))
+                    scores.append(vf.sharpness(lum))
+                    degenerate.append(vf.is_degenerate(lum))
                     stamps.append(ts)
                 finally:
                     del frame
+                    lum = None
         if not scores:
             result.failed += 1
             continue

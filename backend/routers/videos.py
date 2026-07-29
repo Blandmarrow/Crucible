@@ -89,8 +89,15 @@ def _poster_lock(dataset_id: str) -> asyncio.Lock:
         lock = _poster_locks[dataset_id] = asyncio.Lock()
     return lock
 
-# Ceiling for the whole probe: twelve seeks at ~7.5 ms each leaves an enormous
-# margin, so hitting this means slow or failing storage, not a slow video.
+# Ceiling for the whole probe. This used to be reasoned from "twelve seeks at
+# ~7.5 ms each", which understates the real cost by ~50x: measured end to end, a
+# twelve-sample probe of a 1080p 10-bit HEVC source takes 4.4 s — ~3.7 s of
+# seek-and-decode (~300 ms per seek; the codec dominates, not the resolution) and
+# ~0.5 s of numpy analysis, which is ~0.2 s per sample at 4K. So 25 s is roughly
+# 6x margin rather than the 200x the old comment implied, and the slack is
+# deliberate: 8K, a heavier codec or cold storage absorbs several multiples of
+# it, and a tighter ceiling would 504 on files that merely take their time.
+# Hitting this still means slow or failing storage, not a slow video.
 PROBE_TIMEOUT_SECONDS = 25.0
 
 
@@ -304,10 +311,11 @@ async def probe_video_samples(
 ):
     """Sample a video for the extraction modal's first step.
 
-    A plain request rather than a job: a seek-and-decode measures at ~7.5 ms, so
-    twelve samples is a request-path cost and a job would add a row, an SSE
-    subscription and a re-attach path to something that finishes before the
-    modal has finished animating.
+    A plain request rather than a job: a twelve-sample probe measures at 4.4 s on
+    a 1080p HEVC source (`PROBE_TIMEOUT_SECONDS` above carries the breakdown), so
+    it is a few seconds of request-path cost, and a job would add a row, an SSE
+    subscription and a re-attach path to something the user is already waiting on
+    with the modal open.
 
     **The only write here is metadata correction** — `duration_ms`, and
     `width`/`height`/`fps` if they were NULL. Crop, deinterlace and trims are

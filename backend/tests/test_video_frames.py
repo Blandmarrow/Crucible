@@ -365,3 +365,53 @@ def test_pick_index_rejects_mismatched_input_lengths():
         vf.pick_index([1.0, 2.0], [1.0])
     with pytest.raises(ValueError):
         vf.pick_index([], [])
+
+
+# ---------------------------------------------------------------------------
+# The luma plane
+# ---------------------------------------------------------------------------
+# `luma()` is computed once per frame by the callers in `video_extract.py` and
+# handed to every consumer instead of each recomputing it — ~3x the wall clock
+# and 2.5x the transient RSS on a 4K candidate. These tests are what stop that
+# from being undone: the second one *is* the contract, and the rest pin the
+# einsum rewrite to the Rec.601 expression it replaced.
+
+
+def test_luma_matches_the_rec601_expression():
+    f = _noise(48, 64, seed=3)
+    b, g, r = (f[:, :, i].astype(np.float32) for i in range(3))
+    # atol, not exact: einsum's summation order is an implementation detail.
+    got = vf.luma(f)
+    assert got.dtype == np.float32
+    assert np.allclose(got, 0.114 * b + 0.587 * g + 0.299 * r, atol=1e-4)
+
+
+def test_the_luma_plane_is_accepted_wherever_a_frame_is():
+    """Every consumer takes a plane in place of a frame, with the same answer."""
+    for f in (_noise(48, 64, seed=4), _sharp(96, 128), _frame(48, 64, 0)):
+        plane = vf.luma(f)
+        assert vf.sharpness(plane) == vf.sharpness(f)
+        assert vf.is_degenerate(plane) == vf.is_degenerate(f)
+        assert vf.combing_ratio(plane) == vf.combing_ratio(f)
+        rows_p, cols_p = vf.edge_profiles(plane)
+        rows_f, cols_f = vf.edge_profiles(f)
+        assert np.array_equal(rows_p, rows_f)
+        assert np.array_equal(cols_p, cols_f)
+
+
+def test_luma_of_a_plane_is_the_plane():
+    """The passthrough must not copy — that is what makes sharing it free."""
+    p = np.full((16, 16), 100.0, np.float32)
+    assert np.shares_memory(vf.luma(p), p)
+    wide = np.full((16, 16), 100.0, np.float64)
+    assert vf.luma(wide).dtype == np.float32
+
+
+def test_luma_still_rejects_a_non_bgr_frame():
+    with pytest.raises(ValueError):
+        vf.luma(np.zeros((8, 8, 2), np.uint8))
+    with pytest.raises(ValueError):
+        vf.luma(np.zeros((2, 4, 8, 3), np.uint8))
+    # BGRA is tolerated: the alpha channel is sliced off, not rejected.
+    bgra = np.dstack([_noise(8, 8, seed=5), np.full((8, 8), 200, np.uint8)])
+    assert np.array_equal(vf.luma(bgra), vf.luma(bgra[:, :, :3]))

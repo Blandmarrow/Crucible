@@ -76,18 +76,33 @@ LUMA_OUTLIER_FRAC = 0.4
 
 SHARPNESS_LONG_EDGE = 512
 
+# Rec.601 in cv2's channel order: B, G, R. Module-level so the einsum below
+# allocates nothing but its output.
+_LUMA_WEIGHTS = np.array([0.114, 0.587, 0.299], dtype=np.float32)
 
-def _luma(frame_bgr: np.ndarray) -> np.ndarray:
-    """Rec.601 luma as float32. Input is BGR, cv2's channel order."""
-    a = np.asarray(frame_bgr)
+
+def luma(frame: np.ndarray) -> np.ndarray:
+    """Rec.601 luma as float32. Input is BGR, cv2's channel order.
+
+    Already a 2-D plane — one this function returned — is handed straight back
+    without a copy, which is what lets a caller compute the plane **once** and
+    pass it to `edge_profiles`, `combing_ratio`, `sharpness` and `is_degenerate`
+    in place of the frame. That is only safe because no consumer in this module
+    mutates the plane: treat the result as read-only.
+
+    The `einsum` form rather than `0.114*b + 0.587*g + 0.299*r` is about the
+    transient, not the arithmetic — it sums in the same order and is bit-identical
+    on a real frame, but the three-term expression materialises three full-size
+    float32 temporaries. At 4K that is 166 MB peak against 33 MB, and half the
+    wall clock.
+    """
+    a = np.asarray(frame)
     if a.ndim == 2:
-        return a.astype(np.float32)
+        return a.astype(np.float32, copy=False)
     if a.ndim != 3 or a.shape[2] < 3:
         raise ValueError(f"expected an HxWx3 BGR frame, got shape {a.shape}")
-    b = a[:, :, 0].astype(np.float32)
-    g = a[:, :, 1].astype(np.float32)
-    r = a[:, :, 2].astype(np.float32)
-    return 0.114 * b + 0.587 * g + 0.299 * r
+    # `[:, :, :3]` keeps the BGRA tolerance the `>= 3` check above grants.
+    return np.einsum("ijk,k->ij", a[:, :, :3], _LUMA_WEIGHTS, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +110,11 @@ def _luma(frame_bgr: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def edge_profiles(frame_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def edge_profiles(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Per-row and per-column brightness profiles for one frame.
+
+    `frame` is a BGR frame, or a plane already returned by `luma()` — pass the
+    plane when more than one of these runs on the same frame.
 
     Returns `(rows, cols)` — `rows[i]` is the 95th-percentile luma of row `i`,
     `cols[j]` the same for column `j`. The percentile rather than the max is
@@ -104,7 +122,7 @@ def edge_profiles(frame_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     bug inside an otherwise black bar pins that row above the threshold, and one
     such pixel per bar is enough to detect no crop at all on real files.
     """
-    lum = _luma(frame_bgr)
+    lum = luma(frame)
     rows = np.percentile(lum, CROP_PERCENTILE, axis=1).astype(np.float32)
     cols = np.percentile(lum, CROP_PERCENTILE, axis=0).astype(np.float32)
     return rows, cols
@@ -223,8 +241,11 @@ def clamp_crop(rect: CropRect | None, width: int, height: int) -> CropRect | Non
 # ---------------------------------------------------------------------------
 
 
-def combing_ratio(frame_bgr: np.ndarray) -> float:
+def combing_ratio(frame: np.ndarray) -> float:
     """How much more adjacent rows differ than same-parity rows do.
+
+    `frame` is a BGR frame, or a plane already returned by `luma()` — pass the
+    plane when more than one of these runs on the same frame.
 
     `d1 = mean|L[1:] − L[:-1]|` compares neighbouring rows, which in interlaced
     material come from two different fields captured 1/50 s apart; `d2 =
@@ -239,7 +260,7 @@ def combing_ratio(frame_bgr: np.ndarray) -> float:
     correctly reads as no evidence. Real sources with fine horizontal texture
     still need the two-sample rule in `interlace_from_series`.
     """
-    lum = _luma(frame_bgr)
+    lum = luma(frame)
     if lum.shape[0] < 3:
         return 0.0
     d1 = float(np.abs(lum[1:] - lum[:-1]).mean())
@@ -350,8 +371,11 @@ def _box_downscale(lum: np.ndarray, long_edge: int) -> np.ndarray:
     return lum[:hh, :ww].reshape(hh // factor, factor, ww // factor, factor).mean(axis=(1, 3))
 
 
-def sharpness(frame_bgr: np.ndarray, *, long_edge: int = SHARPNESS_LONG_EDGE) -> float:
+def sharpness(frame: np.ndarray, *, long_edge: int = SHARPNESS_LONG_EDGE) -> float:
     """Laplacian variance of the luma plane, measured at a fixed resolution.
+
+    `frame` is a BGR frame, or a plane already returned by `luma()` — pass the
+    plane when more than one of these runs on the same frame.
 
     **The downscale is a correctness fix, not an optimization.** Raw Laplacian
     variance on a full-resolution frame ranks *noise* as sharpness: a grainy or
@@ -362,7 +386,7 @@ def sharpness(frame_bgr: np.ndarray, *, long_edge: int = SHARPNESS_LONG_EDGE) ->
     the moment anything compares across shots. Deleting this line must fail a
     test — `test_video_frames.py` pins it with pure Gaussian noise.
     """
-    lum = _box_downscale(_luma(frame_bgr), long_edge)
+    lum = _box_downscale(luma(frame), long_edge)
     if lum.shape[0] < 3 or lum.shape[1] < 3:
         return 0.0
     lap = (
@@ -375,14 +399,17 @@ def sharpness(frame_bgr: np.ndarray, *, long_edge: int = SHARPNESS_LONG_EDGE) ->
     return float(lap.var())
 
 
-def is_degenerate(frame_bgr: np.ndarray) -> bool:
+def is_degenerate(frame: np.ndarray) -> bool:
     """True for a frame not worth keeping regardless of how sharp it is.
+
+    `frame` is a BGR frame, or a plane already returned by `luma()` — pass the
+    plane when more than one of these runs on the same frame.
 
     Black and white flashes, fades, leader and flat-colour slates. A slate is
     often the *sharpest* thing in a shot — hard-edged text on a flat field — so
     without this the sharpest-in-window policy actively prefers it.
     """
-    lum = _luma(frame_bgr)
+    lum = luma(frame)
     mean = float(lum.mean())
     if mean < DEGENERATE_LUMA_MIN or mean > DEGENERATE_LUMA_MAX:
         return True

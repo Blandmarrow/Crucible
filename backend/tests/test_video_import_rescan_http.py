@@ -290,6 +290,58 @@ def test_two_containers_sharing_a_stem_get_separate_posters(tmp_path):
     run(scenario())
 
 
+def test_one_unprobeable_video_does_not_discard_the_image_pass(tmp_path, monkeypatch):
+    """`UnreadableVideoError` is the ingest gate; everything else the probe can
+    raise — an ImportError from cv2's lazy import, a raw cv2.error, a MemoryError
+    — used to escape the video pass entirely.
+
+    That mattered far beyond the one file: the video pass runs before rescan's
+    single commit, so the escape discarded every Image row the image pass had
+    just staged, while that pass's collision renames and thumbnails were already
+    permanent on disk. Renamed files, no rows, a 500 and no `failed` report."""
+    from backend.services import dataset_service
+    from backend.services.video_service import probe_and_poster as real_probe
+
+    def flaky(video_path, poster_path):
+        if Path(video_path).name == "bad.mp4":
+            raise RuntimeError("cv2 blew up")
+        return real_probe(video_path, poster_path)
+
+    monkeypatch.setattr(dataset_service, "probe_and_poster", flaky)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            root = Path(ds["folder_path"])
+            (root / "images").mkdir(parents=True, exist_ok=True)
+            (root / "images" / "a.png").write_bytes(png_bytes())
+            (root / "images" / "b.png").write_bytes(png_bytes(color=(3, 4, 5)))
+            (root / "videos").mkdir(parents=True, exist_ok=True)
+            (root / "videos" / "good.mp4").write_bytes(mp4_bytes())
+            (root / "videos" / "bad.mp4").write_bytes(mp4_bytes())
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            # The failure counts into the tally the image loop already reports —
+            # `_rescan_videos` returns its own keys only so the merge cannot
+            # clobber that one, never so the response grows a video-shaped key.
+            assert job["result_data"]["failed_count"] == 1
+            assert [d["file"] for d in job["result_data"]["failed"]] == ["bad.mp4"]
+            assert job["result_data"]["added"] == 2
+            assert job["result_data"]["videos_added"] == 1
+
+            async with env.Session() as db:
+                images = (await db.execute(select(Image))).scalars().all()
+                videos = (await db.execute(select(Video))).scalars().all()
+            # The load-bearing assertion: the image pass survived.
+            assert {i.filename for i in images} == {"a.png", "b.png"}
+            assert {v.filename for v in videos} == {"good.mp4"}
+
+    run(scenario())
+
+
 def test_a_rescan_with_no_collision_renames_nothing(tmp_path):
     """The guard above must not fire on ordinary input: the file being
     registered is already sitting in videos/, so a naive uniqueness check would

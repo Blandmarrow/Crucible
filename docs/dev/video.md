@@ -119,6 +119,17 @@ with `poster_path` NULL and heals on first view.
   the poster instead, per the stem rules above — the chosen stem is added to `claimed`
   inside the loop, since `unique_poster_path` does not mutate the set.
 
+  **Everything the probe can raise that is *not* `UnreadableVideoError` — an `ImportError`
+  from the lazy `import cv2`, a raw `cv2.error`, a `MemoryError` — is caught per file** and
+  reported under `videos_failed`/`videos_failed_count`, which `rescan_dataset` folds into
+  the shared `failed`/`failed_count` via `_fold_video_failures` (their own key names only so
+  the `**vids` splat cannot clobber the image loop's tally; the response shape is unchanged).
+  `rescan_dataset` also **commits the image pass before calling this** — the video pass runs
+  before the single trailing commit, so anything escaping it discarded every `Image` row just
+  staged while that pass's collision renames and thumbnails were already permanent on disk.
+  The per-file guard alone does not cover it: the pre-loop `select(Video)` and
+  `videos_dir.glob` can still raise.
+
 ## Stats
 
 `refresh_stats` writes `Dataset.video_count` and `video_size_bytes` from a third query and

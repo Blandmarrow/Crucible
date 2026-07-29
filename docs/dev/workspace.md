@@ -25,7 +25,7 @@ Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered
 | `GET /preview?path=` | Serve any file in `MEDIA_EXTENSIONS` directly (`FileResponse`); videos get `video_mime` as the content type, and the `FileResponse` supplies the Range/206 a `<video>` needs to seek |
 | `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB. Image-only on purpose: a video container carries no EXIF or generation parameters |
 | `POST /move` | Move file/dir; syncs the `Image` or `Video` row's `file_path`/`filename`, and 409s rather than re-homing a registered file, letting one leave its dataset's canonical `images/`/`videos/` folder, moving a folder holding either, or moving a folder of derived artifacts whose files live elsewhere (below) |
-| `POST /rename` | Rename in place; syncs `file_path`/`filename` on whichever of `(Image, Video)` matches |
+| `POST /rename` | Rename in place; for a matched `Image` also moves its thumbnail and `.txt` sidecar, and 409s on a name or thumbnail stem a sibling row owns (below) |
 | `POST /delete` | Delete file or directory (recursive), with the same care the router deletes take: busy guard, versioning hook, orphaned thumbnail/poster/sidecar cleanup, frame-lineage NULLing, `refresh_stats` (below) |
 | `POST /mkdir` | Create directory |
 
@@ -49,6 +49,18 @@ Still open, recorded rather than fixed: `Image.subfolder` travels unchanged, so 
 **DB sync**: `_find_dataset_for_path(db, file_path)` checks if `file_path` is inside any dataset's `folder_path` and returns the dataset — a `LIKE` pre-filter over `Dataset.folder_path` (longest first) with `relative_to` as the authoritative check. Both branches' guards use it; rename and delete match on the exact path and need no dataset lookup.
 
 **Path safety**: `sanitize_abs_path()` (from `backend/utils.py`) rejects null bytes and requires an absolute path. No further sandbox for the *client-supplied* path — this is a local desktop app with intentional full-filesystem access. A **stored** path is different: every dataset folder is created under `settings.datasets_dir`, so a `thumbnail_path`/`poster_path` outside it was never written by this app, and `POST /delete` runs each one through `utils.within_datasets_dir` before unlinking it as an orphan rather than deleting it on the strength of a request that named a different directory.
+
+### `POST /rename`
+
+Order: **gather → guard → mutate → commit**, the shape `/move` and `/delete` already use. The rows are loaded before `p.rename(...)`, so the 409s below land with the filesystem intact; the old code synced the DB *after* the rename and left no point at which a guard could still refuse.
+
+The File Browser is one of the three paths that **adopt** a name rather than pick one (rescan's two halves are the others, `docs/dev/image-files.md` § Importing captions & folder rescan), so it cannot step to `_001` the way upload does — a typed name is taken as typed or refused. The **`Image` arm** therefore 409s twice: on a `filename` a sibling row already holds (otherwise a raw `uq_dataset_filename` IntegrityError 500, reachable once that sibling's file is gone from disk, since `new_path.exists()` catches the ordinary case first), and on a thumbnail stem a sibling owns. The occupied set is the same two terms rescan uses — `{ds}/thumbnails/*.webp` plus sibling `filename` stems — minus the row's own stem, which is what still lets a **pure extension change** (`a.jpg` → `a.png`) through: the stem is unchanged, so the thumbnail and the sidecar stay put and no uniquifier is involved (CLAUDE.md § Key invariants). Without the stem guard, `b.jpg` → `a.jpg` beside a registered `a.png` cleared both `new_path.exists()` and the unique constraint, and the next `bulk_rename`/`batch_move_dataset`/crop/restore recomputed `thumbnail_path_for` and moved or overwrote **`a.png`'s** thumbnail — PM-007 through a different door.
+
+Permitted renames run `ensure_not_busy(row.dataset_id)` like `rename_image`/`rename_video` do, then mutate in `rename_image`'s exact order: assign `filename`, `file_path`, `thumbnail_path` and `is_auto_named = False`, then `utils.rename_with_sidecar`, then `old_thumb.replace(new_thumb)`, then `commit()` — nothing fallible between the filesystem mutation and the commit describing it (PM-013). A stored `thumbnail_path` outside `settings.datasets_dir` is left alone with a `logger.warning` rather than `.replace()`d into the tree, the rule `_add_orphan` follows below.
+
+The **`Video` arm** rewrites `file_path`/`filename`, adds the cheap `uq_dataset_video_filename` pre-check for symmetry, and deliberately does **nothing** to `poster_path`: nothing re-derives a poster path — every consumer reads the column — so a poster whose stem no longer matches its video is the normal state rescan produces on purpose, not a hazard. A file with no row is a plain rename, which is the file browser's actual job. `backend/tests/test_filesystem_rename_http.py` covers all of it.
+
+Still open, recorded rather than fixed: renaming a **directory** syncs nothing (the arms above match on `file_path == str(p)`), so renaming `{ds}/images` returns 200 and strands every row — the rename twin of the `/move` directory hole above. `/move`'s directory branch has the prefix rewrite this would need.
 
 ### `POST /delete`
 

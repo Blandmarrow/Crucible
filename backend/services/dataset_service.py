@@ -657,8 +657,25 @@ async def import_images_from_folder(
     return {"added": added, "videos_added": videos_added, "failed_count": failed_count, "failed": failed}
 
 
+def _fold_video_failures(vids: dict, failed: list[dict], failed_count: int) -> int:
+    """Merge `_rescan_videos`' failure tally into the image pass's shared one.
+
+    `_rescan_videos` reports under `videos_failed`/`videos_failed_count` because
+    `rescan_dataset` splats its result into a dict that already carries
+    `failed`/`failed_count` from the image loop — same names would silently
+    discard one pass's tally. The two become one number here, and
+    `_MAX_FAILED_DETAILS` stays a cap on the *combined* detail list, so the
+    public response shape never grows a video-specific key.
+    """
+    failed.extend(vids.pop("videos_failed")[: max(0, _MAX_FAILED_DETAILS - len(failed))])
+    return failed_count + vids.pop("videos_failed_count")
+
+
 async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
-    """Reconcile videos/ with the `videos` table. Returns {videos_added, videos_missing}.
+    """Reconcile videos/ with the `videos` table.
+
+    Returns {videos_added, videos_missing, videos_failed, videos_failed_count};
+    callers fold the last two into their own tally via `_fold_video_failures`.
 
     Its own pass because the image rescan walks `images_dir.rglob("*")`, which
     cannot see videos/ at all. The walk here is a **flat** glob: videos are never
@@ -669,7 +686,7 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
     """
     videos_dir = Path(dataset.folder_path) / "videos"
     if not videos_dir.exists():
-        return {"videos_added": 0, "videos_missing": []}
+        return {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
 
     disk_videos = [f for f in videos_dir.glob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS]
 
@@ -694,6 +711,8 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
 
     seen: set[str] = set()
     videos_added = 0
+    videos_failed_count = 0
+    videos_failed: list[dict] = []
     for f in disk_videos:
         seen.add(f.name)
         if f.name in by_filename:
@@ -709,6 +728,18 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
             # simply not a video we can register. Leave it on disk untouched.
             logger.info("rescan: skipping undecodable video %s", f)
             continue
+        except Exception as exc:
+            # Everything the probe can raise that *isn't* the ingest gate: an
+            # ImportError from cv2's lazy import, a raw cv2.error, a MemoryError
+            # on a huge frame. Without this arm one such file aborts the whole
+            # rescan — and the image pass's collision renames and thumbnails are
+            # already permanent on disk by then. Mirrors the image loop's
+            # handler, including its detail cap.
+            videos_failed_count += 1
+            if len(videos_failed) < _MAX_FAILED_DETAILS:
+                videos_failed.append({"file": f.name, "error": str(exc)})
+            logger.warning("rescan: video failed for %s", f, exc_info=True)
+            continue
         db.add(Video(
             dataset_id=dataset.id,
             filename=f.name,
@@ -720,7 +751,12 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
         videos_added += 1
 
     videos_missing = [fn for fn in by_filename if fn not in seen]
-    return {"videos_added": videos_added, "videos_missing": videos_missing}
+    return {
+        "videos_added": videos_added,
+        "videos_missing": videos_missing,
+        "videos_failed": videos_failed,
+        "videos_failed_count": videos_failed_count,
+    }
 
 
 async def rescan_dataset(
@@ -743,8 +779,16 @@ async def rescan_dataset(
     if not images_dir.exists():
         # videos/ can exist without images/ — reconcile it either way.
         vids = await _rescan_videos(db, dataset)
+        failed: list[dict] = []
+        failed_count = _fold_video_failures(vids, failed, 0)
+        # Explicit, rather than relying on `refresh_stats` to commit the staged
+        # Video rows on this branch's behalf.
+        await db.commit()
         await refresh_stats(db, dataset.id)
-        return {"added": 0, "renamed": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0, **vids}
+        return {
+            "added": 0, "renamed": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0,
+            "failed_count": failed_count, "failed": failed, **vids,
+        }
 
     disk_files = [
         f for f in images_dir.rglob("*")
@@ -775,10 +819,22 @@ async def rescan_dataset(
     # own would have that thumbnail silently orphaned by the next such
     # operation. Nothing re-derives a poster path — every consumer reads
     # `Video.poster_path`.
+    #
+    # Two terms, for the same reason `claimed_poster_stems` carries three (read
+    # its docstring — it is the model for this):
+    #
+    # - **registered rows' filename stems** — the conservative reservation for a
+    #   thumbnail that is not on disk. Delete `{ds}/thumbnails/` from the file
+    #   browser and the Image rows survive (their `file_path` is not under that
+    #   prefix), so a glob alone sees nothing occupied and hands a hand-dropped
+    #   `a.jpg` the very path registered `a.png` will regenerate into. PM-007,
+    #   silently.
+    # - **on-disk `*.webp`** — covers a thumbnail whose row is gone, and the
+    #   stem drift a row's own filename cannot express.
     thumbs_dir = Path(dataset.folder_path) / "thumbnails"
-    occupied_thumb_stems: set[str] = (
-        {p.stem for p in thumbs_dir.glob("*.webp")} if thumbs_dir.exists() else set()
-    )
+    occupied_thumb_stems: set[str] = {Path(fn).stem for fn in by_filename}
+    if thumbs_dir.exists():
+        occupied_thumb_stems |= {p.stem for p in thumbs_dir.glob("*.webp")}
     planned_thumb_stems: set[str] = set()
     db_names: set[str] = set(by_filename)
 
@@ -795,6 +851,11 @@ async def rescan_dataset(
             cancelled = True
             break
         try:
+            # Before the collision rename below rebinds `f`. This is the name the
+            # user gave the file, and `original_filename` is what
+            # `import_captions_from_folder` matches a later `a.txt` against — so
+            # recording the *new* name would lose both the record and the pairing.
+            original_name = f.name
             seen_filenames.add(f.name)
             caption = (
                 await asyncio.get_running_loop().run_in_executor(None, read_caption_sidecar, f)
@@ -816,8 +877,10 @@ async def rescan_dataset(
                     # it finds: unlike an import, the file is already sitting in
                     # images/, so without it `unique_filename` sees its own name
                     # occupied and steps straight to `_001`. Its own stem is
-                    # likewise absent from occupied_thumb_stems — nothing has
-                    # generated its thumbnail yet.
+                    # likewise absent from occupied_thumb_stems: nothing has
+                    # generated its thumbnail yet, and this arm only runs when
+                    # the file has no row, so the set's row term cannot hold it
+                    # either.
                     new_name = unique_filename_with_thumb(
                         images_dir, f.stem, f.suffix.lower(),
                         db_names, occupied_thumb_stems, planned_thumb_stems,
@@ -840,7 +903,7 @@ async def rescan_dataset(
                 img = Image(
                     dataset_id=dataset.id,
                     filename=f.name,
-                    original_filename=f.name,
+                    original_filename=original_name,
                     subfolder="",
                     file_path=str(f),
                     thumbnail_path=thumb_path,
@@ -887,9 +950,24 @@ async def rescan_dataset(
         if fn not in seen_filenames
     ]
 
+    # Commit the image pass *before* the video pass runs. Everything the image
+    # loop did to the filesystem — collision renames, thumbnails — is already
+    # permanent, so a video-pass failure that reached the caller would discard
+    # only the rows describing it, leaving renamed files with nothing pointing at
+    # them. The per-file guard in `_rescan_videos` is not enough on its own: its
+    # pre-loop `select(Video)` and `videos_dir.glob` can still raise. Safe with
+    # `AsyncSessionLocal`'s `expire_on_commit=False` — the `by_filename` Image
+    # instances stay usable below, and the trailing commit still lands the Video
+    # rows.
+    await db.commit()
+
     # Videos are reported under their own keys rather than folded into `missing`,
     # whose entries are image-shaped ({subfolder, filename}).
-    vids = {"videos_added": 0, "videos_missing": []} if cancelled else await _rescan_videos(db, dataset)
+    vids = (
+        {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
+        if cancelled else await _rescan_videos(db, dataset)
+    )
+    failed_count = _fold_video_failures(vids, failed, failed_count)
 
     await db.commit()
     await refresh_stats(db, dataset.id)

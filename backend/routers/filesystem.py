@@ -21,7 +21,13 @@ from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import extract_generation_metadata, get_image_info
-from backend.utils import chunked, sanitize_abs_path, within_datasets_dir
+from backend.utils import (
+    chunked,
+    rename_with_sidecar,
+    sanitize_abs_path,
+    thumbnail_path_for,
+    within_datasets_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +336,19 @@ class RenameRequest(BaseModel):
 
 @router.post("/rename")
 async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
+    """Rename a file or folder, carrying a registered media row's derived artifacts.
+
+    Order: **gather → guard → mutate → commit**, the shape `/move` and `/delete`
+    already use. Rows are loaded *before* `p.rename(...)` so every 409 below can
+    still refuse with the filesystem intact — the old code synced the DB after
+    the rename, which left no point at which a guard could say no.
+
+    The file browser is one of the three paths that **adopt** a name rather than
+    pick one (rescan's two halves are the others), so it cannot dodge a stem
+    collision through `unique_filename_with_thumb`: a name the user typed must
+    either be taken as typed or refused. It refuses, matching the endpoint's
+    other conflicts.
+    """
     if "/" in req.new_name or "\\" in req.new_name or "\x00" in req.new_name:
         raise HTTPException(400, "new_name must not contain path separators")
 
@@ -341,22 +360,107 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     if new_path.exists():
         raise HTTPException(409, "A file or folder with that name already exists")
 
+    # Gather. A directory matches neither — renaming one still syncs nothing.
+    img: Image | None = None
+    vid: Video | None = None
+    if p.is_file():
+        img = (await db.execute(select(Image).where(Image.file_path == str(p)))).scalar_one_or_none()
+        if img is None:
+            vid = (await db.execute(select(Video).where(Video.file_path == str(p)))).scalar_one_or_none()
+
+    if img is not None:
+        ensure_not_busy(img.dataset_id)
+        siblings = (await db.execute(
+            select(Image.filename)
+            .where(Image.dataset_id == img.dataset_id, Image.id != img.id)
+        )).all()
+        db_names = {r[0] for r in siblings}
+        if req.new_name in db_names:
+            # Would otherwise surface as a raw uq_dataset_filename IntegrityError 500.
+            raise HTTPException(409, f"Another image in this dataset is already named {req.new_name}")
+
+        # Thumbnails are .webp keyed by stem, so `a.jpg` and `a.png` share one
+        # derived path: taking a sibling's stem means the next bulk_rename /
+        # batch_move / crop / restore recomputes `thumbnail_path_for` and moves or
+        # overwrites *that sibling's* thumbnail. Same two terms rescan uses — the
+        # on-disk glob, plus the rows' own stems for a thumbnail not yet cut.
+        thumb_dir = p.parent.parent / "thumbnails"
+        occupied = {q.stem for q in thumb_dir.glob("*.webp")} if thumb_dir.exists() else set()
+        occupied |= {Path(fn).stem for fn in db_names}
+        # This row's own stem does not block it, which is also what lets a **pure
+        # extension change** (`a.jpg` → `a.png`) through: the stem is unchanged,
+        # so the thumbnail and the .txt sidecar stay exactly where they are.
+        occupied.discard(p.stem)
+        if new_path.stem in occupied:
+            clash = next((fn for fn in db_names if Path(fn).stem == new_path.stem), None)
+            raise HTTPException(
+                409,
+                f"The thumbnail name '{new_path.stem}.webp' is already taken"
+                + (f" by {clash}" if clash else "")
+                + " — pick a different name.",
+            )
+
+        # A stored path is not a client-supplied one, and the same rule
+        # `delete_path._add_orphan` follows applies: a hand-edited pointer outside
+        # the datasets tree is left alone with a warning, never `.replace()`d into
+        # the tree. The column keeps naming the file that did not move.
+        old_thumb: Path | None = None
+        if img.thumbnail_path:
+            if within_datasets_dir(img.thumbnail_path, settings.datasets_dir) is None:
+                logger.warning(
+                    "rename_path: leaving out-of-tree thumbnail_path %s alone", img.thumbnail_path
+                )
+            else:
+                old_thumb = Path(img.thumbnail_path)
+        new_thumb = Path(thumbnail_path_for(str(new_path)))
+
+        # PM-013: assign every field, then the filesystem, then the commit, with
+        # nothing fallible in between. `rename_image` mutates in this exact order.
+        img.filename = new_path.name
+        img.file_path = str(new_path)
+        if old_thumb is not None:
+            img.thumbnail_path = str(new_thumb)
+        img.is_auto_named = False  # a name the user typed is not auto-generated
+        try:
+            rename_with_sidecar(p, new_path)  # FS last — if this raises, commit never runs
+        except PermissionError:
+            raise HTTPException(403, "Access denied")
+        if old_thumb is not None and old_thumb.exists() and old_thumb != new_thumb:
+            old_thumb.replace(new_thumb)
+        await db.commit()
+        return {"new_path": str(new_path)}
+
+    if vid is not None:
+        ensure_not_busy(vid.dataset_id)
+        siblings = (await db.execute(
+            select(Video.filename)
+            .where(Video.dataset_id == vid.dataset_id, Video.id != vid.id)
+        )).all()
+        if req.new_name in {r[0] for r in siblings}:
+            # Cheap pre-check for uq_dataset_video_filename: a 409 like the
+            # image arm's, rather than an IntegrityError 500.
+            raise HTTPException(409, f"Another video in this dataset is already named {req.new_name}")
+
+        # `poster_path` is deliberately untouched, and there is no stem guard:
+        # nothing re-derives a poster path — every consumer reads the column — so
+        # a poster whose stem no longer matches its video is the normal state
+        # (rescan produces it on purpose) and cannot be clobbered by a later
+        # operation. Compare the image arm above, where the derived path *is*
+        # recomputed from the filename by eleven sites.
+        vid.filename = new_path.name
+        vid.file_path = str(new_path)
+        try:
+            p.rename(new_path)  # FS last — if this raises, commit never runs
+        except PermissionError:
+            raise HTTPException(403, "Access denied")
+        await db.commit()
+        return {"new_path": str(new_path)}
+
+    # No row: a plain rename, which is the file browser's actual job.
     try:
         p.rename(new_path)
     except PermissionError:
         raise HTTPException(403, "Access denied")
-
-    # Sync DB
-    if new_path.is_file():
-        for model in (Image, Video):
-            result = await db.execute(select(model).where(model.file_path == str(p)))
-            row = result.scalar_one_or_none()
-            if row:
-                row.file_path = str(new_path)
-                row.filename = new_path.name
-                await db.commit()
-                break
-
     return {"new_path": str(new_path)}
 
 

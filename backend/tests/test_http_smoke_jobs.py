@@ -176,6 +176,91 @@ def test_an_ordinary_rescan_renames_nothing(tmp_path):
     run(scenario())
 
 
+def test_rescan_disambiguates_against_a_row_whose_thumbnail_is_gone(tmp_path):
+    """The occupied set has to carry the registered rows' own filename stems, not
+    just what is on disk.
+
+    Delete `{ds}/thumbnails/` from the file browser and the Image rows survive —
+    their `file_path` is not under that prefix — so a glob-only set sees nothing
+    occupied and hands a hand-dropped `a.jpg` the exact path registered `a.png`
+    regenerates into. `claimed_poster_stems` carries the same term for the same
+    reason on the video side."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("rescan-thumbless")
+            registered = await upload_image(env, ds["id"], "a.png")
+
+            thumbs_dir = Path(ds["folder_path"]) / "thumbnails"
+            for t in thumbs_dir.glob("*.webp"):
+                t.unlink()
+            assert not list(thumbs_dir.glob("*.webp"))
+
+            images_dir = Path(ds["folder_path"]) / "images"
+            (images_dir / "a.jpg").write_bytes(jpeg_bytes())
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["added"] == 1
+            assert job["result_data"]["renamed"] == 1
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            by_id = {row.id: row for row in rows}
+            assert by_id[registered["id"]].filename == "a.png"
+            new_row = next(row for row in rows if row.id != registered["id"])
+            assert new_row.filename == "a_001.jpg"
+            assert len({row.thumbnail_path for row in rows}) == 2
+
+    run(scenario())
+
+
+def test_a_collision_rename_keeps_the_name_the_file_arrived_with(tmp_path):
+    """`original_filename` records what the user called the file, and
+    `import_captions_from_folder` matches a later sidecar against it first — so
+    the collision rename must not rebind it to the name rescan chose."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("rescan-orig")
+            registered = await upload_image(env, ds["id"], "a.png")
+
+            images_dir = Path(ds["folder_path"]) / "images"
+            (images_dir / "a.jpg").write_bytes(jpeg_bytes())
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["renamed"] == 1
+
+            async with env.Session() as db:
+                row = (await db.execute(
+                    select(Image).where(Image.filename == "a_001.jpg")
+                )).scalar_one()
+            assert row.original_filename == "a.jpg"
+
+            # And that is what makes a later `a.txt` pairable at all: the row is
+            # named `a_001.jpg` now, so `by_filename`'s stem is `a_001` and only
+            # the original name can match. (The other row goes first so the
+            # sidecar has exactly one candidate — both share the stem `a`.)
+            await env.client.delete(f"{API}/images/{registered['id']}")
+            caps = tmp_path / "caps"
+            caps.mkdir()
+            (caps / "a.txt").write_text("from the sidecar", encoding="utf-8")
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/import-captions", json={
+                "folder_path": str(caps),
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["matched"] == 1
+
+            async with env.Session() as db:
+                row = (await db.execute(
+                    select(Image).where(Image.filename == "a_001.jpg")
+                )).scalar_one()
+            assert row.caption_text == "from the sidecar"
+
+    run(scenario())
+
+
 # --- versioning ----------------------------------------------------------
 
 

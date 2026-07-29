@@ -157,6 +157,22 @@ def jpeg_bytes(color=(200, 60, 20), size=(16, 16)) -> bytes:
     return buf.getvalue()
 
 
+def bmp_bytes(colour=(200, 90, 40), size=(32, 24)) -> bytes:
+    """A real BMP — the fixture for the PNG-fallback paths.
+
+    `.bmp` is in `media_types.IMAGE_EXTENSIONS` and is one of the four suffixes
+    `utils.normalize_image_format` refuses to write back, so every save path
+    reached with one of these writes a `.png` beside it instead (PM-009). Prefer
+    it to `.avif`, also in the set: AVIF is a build-time Pillow feature, so a
+    fixture in that format may not be readable in CI.
+    """
+    from PIL import Image as PilImage
+
+    buf = io.BytesIO()
+    PilImage.new("RGB", size, colour).save(buf, "BMP")
+    return buf.getvalue()
+
+
 def mp4_bytes(frames: int = 25, size=(64, 48), fps: float = 25.0) -> bytes:
     """A real, decodable .mp4 — the video counterpart of `png_bytes`.
 

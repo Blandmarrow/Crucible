@@ -773,7 +773,9 @@ export default function ImageDetailPage() {
         );
       }
     },
-    onError: () => toast.error("Crop failed"),
+    // The 409 from a crop+upscale whose PNG-fallback path is occupied names the
+    // file in the way, which is the whole point of refusing rather than skipping.
+    onError: (err) => toast.error(apiErrorDetail(err, "Crop failed")),
   });
 
   const upscaleMutation = useMutation({

@@ -1,4 +1,13 @@
-# PM-009: replace-mode LUT stranded the row on the PNG fallback
+# PM-009: the PNG-fallback writers stranded the row
+
+### Scope
+
+The class is **every writer that goes through `utils.normalize_image_format`**, not the LUT
+path specifically; LUT was merely where it was found first. The original write-up named only
+`routers/lut.py`, and a later review found the sibling still broken — see "Fix" below for the
+second round. Read "one consumer followed the correction, its neighbour did not" as a
+statement about a *set* of call sites, and enumerate that set before calling any instance
+fixed.
 
 ### Symptom
 
@@ -70,6 +79,14 @@ It was found only by building the adjacent feature: pass 2's extension change ne
 the same "the stem stays, the suffix moves" reasoning, and writing that up surfaced the LUT
 path as the place it had already been got wrong.
 
+The **second** round has two more reasons, both about the sibling. `backend/tests/` had no
+upscaling module at all — not a thin one, none — so nothing about that router had ever been
+asserted. And the one test that touched `upscale_image_sync` (`test_provenance_http.py`)
+monkeypatched it with a fake returning `out_path`, a key production did not return: the fake
+was *more correct than the code*, and stood in for it in the only place a test could have
+noticed. A stub that implements the contract as it ought to be conceals the fact that the
+real helper does not.
+
 ### Fix
 
 Commit `a62bb3c`. `routers/lut.py`'s replace branch now follows the written path — updating
@@ -83,12 +100,28 @@ Test: `backend/tests/test_lut_replace_extension_http.py`, which feeds the replac
 format PIL cannot write back and asserts the row, the file on disk and the thumbnail all
 name the same picture.
 
-See `docs/dev/ml-models.md` § LUT grading and `docs/dev/video-reextract.md` § The extension
-change.
+**Second round** (V-02 of the `experimental-video-support` review). `upscale_image_sync` ran
+the identical correction and **returned no `out_path` at all**, so its three callers were
+structurally unable to follow it — a strictly worse position than the LUT router's partial
+adoption, and one no amount of reading the callers would reveal. It now returns the key, and
+all three follow it: `routers/upscaling.py` in both modes (plus the pre-write collision
+guard, and the copy-mode name reserved under the *written* extension), and
+`routers/images.py`'s two crop+upscale workers, whose `_croptmp` source carries the original
+suffix. The single-image crop endpoint refuses with a 409 instead of skipping, since it has
+no batch to keep going. The same copy-mode name-reservation gap was closed in `routers/lut.py`
+at the same time rather than in one sibling only — fixing one of a pair is how this recurred.
+
+Test: `backend/tests/test_upscale_png_fallback_http.py` — seven cases across both modes and
+both crop workers, faking only the model call so the correction under test is the production
+one, and reading the thumbnail's colour back to prove it was cut from the file that was
+written.
+
+See `docs/dev/ml-models.md` § Upscaling and § LUT grading, `docs/dev/image-detail.md` for the
+crop 409, and `docs/dev/video-reextract.md` § The extension change.
 
 ### Status & date
 
-MITIGATED — this call site is fixed and tested, but the class is reachable by any new caller
-of a correcting helper; only review catches that. Found in code review of the
-`experimental-video-support` branch, not in production.
-Last reviewed for staleness: 2026-07-28.
+MITIGATED — every call site of both helpers is now fixed and tested, but the class is
+reachable by any new caller of a correcting helper; only review catches that. Found in code
+review of the `experimental-video-support` branch, not in production.
+Last reviewed for staleness: 2026-07-29.

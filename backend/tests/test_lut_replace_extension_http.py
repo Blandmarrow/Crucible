@@ -9,21 +9,12 @@ Found while writing the video re-extraction pass, which does the same extension
 swap deliberately; this is the same operation happening by accident.
 """
 
-import io
 from pathlib import Path
 
 from sqlalchemy import select
 
 from backend.models import Image
-from backend.tests.conftest import API, api_env, run, wait_for_job
-
-
-def _bmp_bytes(size=(32, 24), colour=(200, 90, 40)) -> bytes:
-    from PIL import Image as PilImage
-
-    buf = io.BytesIO()
-    PilImage.new("RGB", size, colour).save(buf, "BMP")
-    return buf.getvalue()
+from backend.tests.conftest import API, api_env, bmp_bytes, run, upload_image, wait_for_job
 
 
 def _identity_cube(path: Path) -> Path:
@@ -37,18 +28,6 @@ def _identity_cube(path: Path) -> Path:
     return path
 
 
-async def _upload_bmp(env, dataset_id, name="shot.bmp"):
-    r = await env.client.post(
-        f"{API}/images/upload",
-        params={"dataset_id": dataset_id},
-        files=[("files", (name, _bmp_bytes(), "image/bmp"))],
-    )
-    assert r.status_code == 201, r.text
-    filename = r.json()["files"][0]
-    listing = (await env.client.get(f"{API}/images/", params={"dataset_id": dataset_id})).json()
-    return next(i for i in listing if i["filename"] == filename)
-
-
 def test_lut_replace_follows_the_png_fallback_and_leaves_no_orphan(tmp_path):
     """The row must point at the file that was written, not at the `.bmp` that
     was read — and the `.bmp` must not be left sitting in `images/`. The
@@ -56,7 +35,7 @@ def test_lut_replace_follows_the_png_fallback_and_leaves_no_orphan(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload_bmp(env, ds["id"])
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
             lut = _identity_cube(tmp_path / "identity.cube")
 
             async with env.Session() as db:
@@ -98,7 +77,7 @@ def test_lut_replace_never_clobbers_an_unregistered_file_at_the_fallback_path(tm
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            img = await _upload_bmp(env, ds["id"])
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
             lut = _identity_cube(tmp_path / "identity.cube")
 
             async with env.Session() as db:
@@ -131,8 +110,6 @@ def test_lut_replace_on_a_png_is_unaffected(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            from backend.tests.conftest import upload_image
-
             img = await upload_image(env, ds["id"], "plain.png")
             lut = _identity_cube(tmp_path / "identity.cube")
 

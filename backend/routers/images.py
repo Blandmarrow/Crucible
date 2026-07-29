@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -937,6 +937,20 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
     # --- Replace mode: overwrite the original image ---
     if body.replace:
+        if body.upscale_model:
+            # The upscaler writes through `normalize_image_format`, which falls
+            # back to PNG for .bmp/.gif/.tiff/.avif — so a replace of one of
+            # those lands at a *different* path, and an unregistered file already
+            # sitting there has no DB row guarding it. Unlike the LUT and upscale
+            # batch jobs, which skip the image and keep going, this endpoint
+            # handles exactly one image and can refuse before touching anything.
+            _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+            if planned_out != str(src_path) and Path(planned_out).exists():
+                raise HTTPException(
+                    409,
+                    f"Upscaling {src_path.name} writes {Path(planned_out).name}, "
+                    "which already exists on disk. Rename or remove it first.",
+                )
         await version_service.protect_file_before_overwrite(img.id, img.file_path, db)
         await db.commit()  # persist the COW hash backfill before the overwrite
         tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
@@ -1009,7 +1023,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 except OSError:
                     pass
 
-            await loop2.run_in_executor(None, generate_thumbnail, replace_cfg["dest_path"], replace_cfg["thumb_path"])
+            # The PNG fallback may have written a different path than the one
+            # asked for; the thumbnail has to be cut from the file that exists.
+            actual_out_path = info.get("out_path", replace_cfg["dest_path"])
+            await loop2.run_in_executor(None, generate_thumbnail, actual_out_path, replace_cfg["thumb_path"])
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
@@ -1017,6 +1034,17 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     updated.width = info["width"]
                     updated.height = info["height"]
                     updated.file_size_bytes = info["file_size_bytes"]
+                    if actual_out_path != replace_cfg["dest_path"]:
+                        # A .bmp read back as .png: the row has to follow the
+                        # written file and the original has to go, or the dataset
+                        # ends up with two files and one row (PM-009). The COW
+                        # copy already exists — `protect_file_before_overwrite`
+                        # ran before the crop — so the unlink is safe. The stem is
+                        # unchanged, so the thumbnail and sidecar stay put.
+                        Path(replace_cfg["dest_path"]).unlink(missing_ok=True)
+                        updated.filename = Path(actual_out_path).name
+                        updated.file_path = actual_out_path
+                        updated.format = info["format"]
                     _record_in_place(
                         updated, "crop_upscale",
                         rect=replace_cfg["crop_rect"],
@@ -1053,8 +1081,17 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     )
     db_names: set[str] = {r[0] for r in existing.all()}
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
+    # A plain crop keeps the source extension — `crop_image_to_dest` saves by the
+    # destination suffix and never falls back — but a crop+upscale is written by
+    # `upscale_image_sync`, whose PNG fallback changes it. Reserve the name under
+    # the extension that will actually be written, so both the db_names and the
+    # on-disk check apply to the real path.
+    dest_suffix = src_path.suffix
+    if body.upscale_model:
+        _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+        dest_suffix = Path(planned_out).suffix
     new_filename = unique_filename_with_thumb(
-        dest_images, crop_stem, src_path.suffix, db_names, occupied_thumb_stems, set()
+        dest_images, crop_stem, dest_suffix, db_names, occupied_thumb_stems, set()
     )
     dest_path = dest_images / new_filename
 
@@ -1109,16 +1146,20 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 except OSError:
                     pass
 
-            thumb_path = str(Path(cfg["dest_thumbs"]) / (Path(cfg["new_filename"]).stem + ".webp"))
-            await loop2.run_in_executor(None, generate_thumbnail, dst, thumb_path)
+            # Everything downstream names the file that was written, not the one
+            # requested: `generate_thumbnail` on a path the PNG fallback moved
+            # would raise and fail the job, leaving an orphan and no row.
+            actual_out_path = info.get("out_path", dst)
+            thumb_path = str(Path(cfg["dest_thumbs"]) / (Path(actual_out_path).stem + ".webp"))
+            await loop2.run_in_executor(None, generate_thumbnail, actual_out_path, thumb_path)
 
             async with AsyncSessionLocal() as session:
                 new_img = Image(
                     dataset_id=cfg["dataset_id"],
-                    filename=cfg["new_filename"],
+                    filename=Path(actual_out_path).name,
                     original_filename=cfg["original_filename"],
                     subfolder=cfg["subfolder"],
-                    file_path=dst,
+                    file_path=actual_out_path,
                     thumbnail_path=thumb_path,
                     width=info["width"],
                     height=info["height"],

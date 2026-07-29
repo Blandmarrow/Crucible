@@ -111,6 +111,13 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                 src_path = Path(img.file_path)
                 dest_path_str: str
 
+                # Where `apply_lut_sync` will actually write. For .gif/.bmp/
+                # .tiff/.avif that is a *different* path — PNG is the fallback
+                # format. Computed once for both modes: replace needs the whole
+                # path to check for a squatter, copy needs the suffix.
+                _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+                out_suffix = Path(planned_out).suffix
+
                 if replace:
                     dest_path_str = str(src_path)
                 else:
@@ -123,20 +130,23 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                         )
                     )
                     db_names: set[str] = {r[0] for r in existing.all()}
+                    # `out_suffix`, not the source's: reserving the name under the
+                    # extension that will actually be written is what makes both
+                    # the db_names and the on-disk check apply to the real path.
+                    # `unique_filename` only stats the suffix it is handed, so a
+                    # copy-mode grade of shot.bmp would otherwise overwrite an
+                    # existing shot_lut.png, registered or not.
                     new_filename = unique_filename_with_thumb(
-                        dest_images, dest_stem, src_path.suffix, db_names,
+                        dest_images, dest_stem, out_suffix, db_names,
                         occupied_thumb_stems, planned_thumb_stems,
                     )
                     dest_path_str = str(dest_images / new_filename)
 
                 if replace:
-                    # Where `apply_lut_sync` will actually write. For .gif/.bmp/
-                    # .tiff/.avif that is a *different* path — PNG is the fallback
-                    # format — so the collision has to be caught before the write,
-                    # not after: an unregistered file hand-dropped into images/ has
-                    # no DB row guarding it, and by the time the save has run it is
-                    # already gone.
-                    _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+                    # The collision has to be caught before the write, not after:
+                    # an unregistered file hand-dropped into images/ has no DB row
+                    # guarding it, and by the time the save has run it is already
+                    # gone.
                     if planned_out != str(src_path) and Path(planned_out).exists():
                         logger.warning(
                             "LUT: %s would be written as %s, which already exists on disk — skipped",

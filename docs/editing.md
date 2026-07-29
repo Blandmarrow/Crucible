@@ -34,6 +34,7 @@ ML-based image upscaling via the [`spandrel`](https://github.com/chaiNNer-org/sp
 - Place `.pth` or `.safetensors` model files in `models/upscale_models/` — or point `UPSCALE_MODELS_DIR=` in `.env` at an existing models folder
 - Two output modes: **Replace** (overwrites source image, updates DB record) or **New file** (`{stem}_upNx{ext}`, creates a new DB record)
 - Optional target width × height — upscales first, then resizes down to fit, preserving aspect ratio
+- BMP, GIF, TIFF and AVIF cannot be written back, so the result is saved as **PNG** and the image is renamed to match — same as LUT grading. If a file of that name is already sitting in the folder untracked, the image is skipped (the job carries on) rather than overwriting it
 
 Available from: the **Upscale** button in the ImageDetailPage toolbar, the **Upscale** modal in SelectionToolbar, and the **Upscale** tab on the Bulk Edit page.
 
@@ -48,5 +49,5 @@ Available from: the **LUT** button in the ImageDetailPage toolbar (mutually excl
 
 ### Crop & Resize
 
-- **Crop** — by default creates a new image record (non-destructive); toggle **Replace** to overwrite the source instead; choose aspect ratio, anchor point, and optional output pixel dimensions; supports atomic crop + upscale in one step
+- **Crop** — by default creates a new image record (non-destructive); toggle **Replace** to overwrite the source instead; choose aspect ratio, anchor point, and optional output pixel dimensions; supports atomic crop + upscale in one step. Replace + upscale on a BMP/GIF/TIFF/AVIF saves as PNG (above); it is refused with a message naming the file if something untracked already occupies that name
 - **Resize** — downscale the longest side of selected images to a target pixel count (original untouched)

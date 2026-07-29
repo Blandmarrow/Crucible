@@ -16,7 +16,7 @@ from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -120,6 +120,14 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 src_path = Path(img.file_path)
                 dest_path_str: str
 
+                # Where `upscale_image_sync` will actually write: for .gif/.bmp/
+                # .tiff/.avif that is a *different* suffix, PNG being the
+                # fallback format. One call answers both modes — the replace
+                # branch needs the full path to check for a squatter, the copy
+                # branch needs the suffix so it reserves the name it will use.
+                _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+                out_suffix = Path(planned_out).suffix
+
                 if replace:
                     dest_path_str = str(src_path)
                 else:
@@ -133,12 +141,28 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     )
                     db_names: set[str] = {r[0] for r in existing.all()}
                     new_filename = unique_filename_with_thumb(
-                        dest_images, dest_stem, src_path.suffix, db_names,
+                        dest_images, dest_stem, out_suffix, db_names,
                         occupied_thumb_stems, planned_thumb_stems,
                     )
                     dest_path_str = str(dest_images / new_filename)
 
                 if replace:
+                    # The collision has to be caught before the write, not after:
+                    # an unregistered file hand-dropped into images/ has no DB row
+                    # guarding it, and by the time the save has run it is gone.
+                    if planned_out != str(src_path) and Path(planned_out).exists():
+                        logger.warning(
+                            "Upscale: %s would be written as %s, which already exists on disk — skipped",
+                            img.filename, Path(planned_out).name,
+                        )
+                        await broadcaster.emit(job_id, {
+                            "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                            "status": "running", "done": i + 1, "total": len(images),
+                            "percent": round((i + 1) / len(images) * 100, 1),
+                            "current_item": img.filename,
+                            "message": f"Skipped: {Path(planned_out).name} already exists on disk",
+                        })
+                        continue
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
 
@@ -158,12 +182,27 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     })
                     continue
 
+                # upscale_image_sync may change out_path if format conversion occurred
+                actual_out_path = info.get("out_path", dest_path_str)
+
                 if replace:
                     now = datetime.now(timezone.utc)
                     img.width = info["width"]
                     img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
                     img.updated_at = now
+                    if Path(actual_out_path) != src_path:
+                        # The PNG fallback wrote a *different* file. Without this
+                        # the row keeps pointing at the stale original, which is
+                        # also left on disk — PM-009, at its second call site.
+                        #
+                        # A pure extension change moves nothing derived: the stem
+                        # is unchanged, so the thumbnail ({stem}.webp) and the
+                        # caption sidecar ({stem}.txt) stay where they are.
+                        src_path.unlink(missing_ok=True)
+                        img.filename = Path(actual_out_path).name
+                        img.file_path = actual_out_path
+                        img.format = info["format"]
                     img.processing_history = (img.processing_history or []) + [{
                         "op": "upscale",
                         "model": model_filename,
@@ -171,21 +210,21 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     }]
                     if img.thumbnail_path:
                         await loop.run_in_executor(
-                            None, generate_thumbnail, str(src_path), img.thumbnail_path
+                            None, generate_thumbnail, actual_out_path, img.thumbnail_path
                         )
                     last_image_id = img.id
                 else:
-                    dest_path = Path(dest_path_str)
-                    thumb_path = thumbnail_path_for(dest_path_str)
+                    dest_path = Path(actual_out_path)
+                    thumb_path = thumbnail_path_for(actual_out_path)
                     await loop.run_in_executor(
-                        None, generate_thumbnail, dest_path_str, thumb_path
+                        None, generate_thumbnail, actual_out_path, thumb_path
                     )
                     new_img = Image(
                         dataset_id=img.dataset_id,
                         filename=dest_path.name,
                         original_filename=img.original_filename,
                         subfolder=img.subfolder,
-                        file_path=dest_path_str,
+                        file_path=actual_out_path,
                         thumbnail_path=thumb_path,
                         width=info["width"],
                         height=info["height"],

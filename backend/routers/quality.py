@@ -16,7 +16,7 @@ from backend.models import BackgroundJob, Image
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
-from backend.utils import normalize_subfolder
+from backend.utils import chunked, normalize_subfolder
 from backend.workers.job_queue import job_queue
 
 router = APIRouter(prefix="/quality", tags=["quality"])
@@ -247,9 +247,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
         async with AsyncSessionLocal() as session:
             affected_ids = list(dup_of.keys())
-            # Chunk the in_() to stay well under SQLite's ~32k bound-parameter limit.
-            for start in range(0, len(affected_ids), 10000):
-                chunk = affected_ids[start : start + 10000]
+            for chunk in chunked(affected_ids):
                 result = await session.execute(select(Image).where(Image.id.in_(chunk)))
                 for img in result.scalars().all():
                     flags = dict(img.quality_flags or {})

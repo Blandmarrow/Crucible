@@ -672,7 +672,7 @@ async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depend
 
     ids = [r.id for r in rows]
     updated = 0
-    # Chunked so the bind-parameter count stays under SQLite's 999 limit.
+    # Chunked so the bind-parameter count stays under SQLite's ceiling (utils.chunked).
     for batch in chunked(ids):
         result = await db.execute(
             sa_update(Image).where(Image.id.in_(list(batch))).values(**values)

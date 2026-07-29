@@ -637,8 +637,8 @@ async def bulk_delete_detections(
             valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
             if valid_flags:
                 q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
-        # Correlated subquery — never materialize the id list, which can exceed
-        # SQLite's 999-variable limit on large datasets.
+        # Correlated subquery — never materialize the id list, which on a large
+        # dataset can exceed SQLite's bind-parameter ceiling (see utils.chunked).
         scope_condition = Detection.image_id.in_(q)
 
     conditions = [scope_condition]

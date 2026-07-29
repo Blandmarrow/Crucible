@@ -17,9 +17,12 @@ def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
     """Yield successive ``size``-length slices of ``seq``.
 
     The single source of truth for chunking id lists before an SQL ``IN (...)``
-    so the number of bind parameters stays under SQLite's 999-variable limit.
-    ``size`` defaults to 10k. Empty ``seq`` yields nothing. Use this in every
-    batched ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
+    so the number of bind parameters stays under SQLite's ``SQLITE_MAX_VARIABLE_NUMBER``.
+    That ceiling is **32766** on any SQLite >= 3.32 (2020); the widely-quoted 999
+    is the pre-3.32 default and does not apply here — note the 10k default below
+    would already exceed it, so a comment citing 999 is describing the wrong limit,
+    not a tighter one. Empty ``seq`` yields nothing. Use this in every batched
+    ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
     """
     if size <= 0:
         raise ValueError("size must be positive")

@@ -25,14 +25,18 @@ export function usePaneVideoId(): string | undefined {
  *
  * Written exactly like `usePaneVideoId`, except the fallback is a query string
  * rather than a route param — there is no `:subfolder` segment, and there should
- * not be one: it is a filter, not an identity. `paneGo` writes both the pane view
- * and the URL, so pane state wins in split view and the query string covers the
- * routed case. "" is a real value here (the dataset root).
+ * not be one: it is a filter, not an identity. Inside a pane the view is the whole
+ * answer and the query string is not consulted: `paneGo` only sets the view there,
+ * so the URL still carries whatever was routed before split view opened — reading
+ * it would apply one pane's deep link to the other, resetting its page. The query
+ * string is the carrier in the routed case only. "" is a real value here (the
+ * dataset root).
  */
 export function usePaneGallerySubfolder(): string | undefined {
   const ctx = usePaneContext();
   const [params] = useSearchParams();
-  return ctx?.view.subfolder ?? params.get("subfolder") ?? undefined;
+  if (ctx) return ctx.view.subfolder;
+  return params.get("subfolder") ?? undefined;
 }
 
 /**
@@ -41,10 +45,12 @@ export function usePaneGallerySubfolder(): string | undefined {
  *
  * The sibling of `usePaneGallerySubfolder`, and for the same reason: `routeToView`
  * parses the pathname only, so the query-string fallback is what carries the link
- * in the routed (non-split) case.
+ * in the routed (non-split) case — and, for the same reason as its sibling, is not
+ * consulted at all inside a pane.
  */
 export function usePaneGallerySourceVideo(): string | undefined {
   const ctx = usePaneContext();
   const [params] = useSearchParams();
-  return ctx?.view.sourceVideoId ?? params.get("source_video_id") ?? undefined;
+  if (ctx) return ctx.view.sourceVideoId;
+  return params.get("source_video_id") ?? undefined;
 }

@@ -275,12 +275,12 @@ nothing to caption. Without this line, a frame moved out of its extraction subfo
 longer say where it came from.
 
 The history panel links into the gallery through **`PaneView.subfolder`**
-(`docs/dev/panes-routing.md`) and `usePaneGallerySubfolder()`, written exactly like
-`usePaneVideoId` except the fallback is `useSearchParams().get("subfolder")` rather than a
-route param — a subfolder is a filter, not an identity, so there is no route segment for
-it. `paneGo` does **not** write both: `usePaneNavigate`'s `go` sets the pane view when it is
-inside a pane and calls `navigate(url)` when it is not, never both. The fallback chain inside
-the hook is what covers the two cases. `GalleryPage` applies it during render, recording the last applied value so it
+(`docs/dev/panes-routing.md`) and `usePaneGallerySubfolder()` — the pane view inside a pane,
+`useSearchParams().get("subfolder")` outside, and never a `??` chain across the two:
+`usePaneNavigate`'s `go` sets the view *or* navigates, never both, so a URL param left over
+from before the split would hand this pane its neighbour's deep link and reset this gallery
+to page 1. A subfolder is a filter, not an identity, which is why there is no route segment
+for it. `GalleryPage` applies it during render, recording the last applied value so it
 fires on arrival and on a *change* of the incoming value but never fights a user who then
 clicks a different subfolder in the sidebar. `undefined` means "no link asked for
 anything", which is why the record is the value and not a boolean: `""` is a real target.
@@ -289,7 +289,7 @@ anything", which is why the record is the value and not a boolean: `""` is a rea
 cannot: curation moves and re-files frames, so the extraction subfolder stops being a
 handle, while `Image.source_video_id` does not move. `PaneView.sourceVideoId` and
 `usePaneGallerySourceVideo()` mirror `subfolder` / `usePaneGallerySubfolder()` exactly,
-except the query-string fallback is `source_video_id` and `""` carries no meaning (an opaque
+except the routed-mode query param is `source_video_id` and `""` carries no meaning (an opaque
 uuid). `GalleryPage` holds it as `frameVideoId` and applies an incoming link during render
 against an `appliedVideo` record — **clearing `activeSubfolder` when it does**. That is
 load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder` undefined, so a

@@ -248,23 +248,32 @@ export default function GalleryPage() {
     });
   }, []);
 
+  // Both debounce effects bail when the input already equals the committed value.
+  // That guard is what makes the page/scroll restore stick: without it the effect
+  // fires once on *mount* — 350ms after arriving back from the detail view — and
+  // resets `page` to 1, throwing away the page just restored from localStorage
+  // (which the persist effect then overwrites with 1, so the loss is permanent).
+  // It also covers typing a query and deleting it again before the timer: nothing
+  // changed, so the page must not jump.
   useEffect(() => {
+    if (searchInput === search) return;
     const t = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
       hasRestoredScroll.current = false;
     }, 350);
     return () => clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, search]);
 
   useEffect(() => {
+    if (detectionLabelInput === detectionLabel) return;
     const t = setTimeout(() => {
       setDetectionLabel(detectionLabelInput);
       setPage(1);
       hasRestoredScroll.current = false;
     }, 350);
     return () => clearTimeout(t);
-  }, [detectionLabelInput]);
+  }, [detectionLabelInput, detectionLabel]);
 
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
   useEffect(() => {

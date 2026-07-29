@@ -187,10 +187,18 @@ snap the handle to wherever inside its 10 px hit box the press landed, which fli
 8-sample re-probe for a stray click. It takes focus explicitly instead — `preventDefault`
 suppresses the focus shift, so without that call a mouse user could never reach the arrow
 keys. Those keys `preventDefault` for `ArrowLeft`/`ArrowRight` **only**, so Tab still moves
-focus and an arrow no longer scrolls the modal body out from under the control. Both
-*grow* directions are floored at `Math.max(0, …)`, matching the pointer path: a clip whose
-remaining span is under `MIN_SPAN_MS` otherwise took one press to a negative trim and a raw
-422 on the endpoint's `ge=0`.
+focus — that is the slider contract rather than a fix for an observed scroll: measured, it
+prevents nothing visible, because the arrows scroll horizontally and the modal body has no
+horizontal overflow at any tested viewport.
+
+**Both arrow *grow* directions are floored at `Math.max(0, …)`**, matching the pointer path.
+This looked unreachable and is not: the endpoint is **looser than the component**. The
+pointer path caps the tail so the remaining span never drops under `MIN_SPAN_MS`, but
+`extract_frames` refuses only `start + end >= duration`, so `trim_end_ms: 1900` on a 2 s clip
+is accepted and stored. Reopening on that row leaves `endPos - MIN_SPAN_MS` negative, and one
+press took `trimStart` to -400 and the next submit to a raw 422 on the schema's `ge=0`. Its
+sibling — the crossed-trim render below — really is unreachable that way, since the same
+check is what makes `startMs > endPos` impossible to store.
 
 **A crossed trim is warned about, never silently clamped.** `trimStart`/`trimEnd` are seeded
 from the stored `Video` row while `durationMs` comes from the fresh probe, so the only way
@@ -229,8 +237,9 @@ that is not a lie. Four details are load-bearing:
   anything it does not consider a valid float (`-`, `1e`, `1.2.3`), which lands in that same
   branch.
 
-`frontend/e2e/video-extract.spec.ts` covers the draft contract, the pointerdown fix and the
-`NULL` wipe, all through the submitted request body. Three things there are deliberate:
+`frontend/e2e/video-extract.spec.ts` covers the draft contract, the pointerdown fix, the
+`NULL` wipe and the arrow-key floor — the first three through the submitted request body,
+the last through `aria-valuenow`. Three things there are deliberate:
 values are typed with `pressSequentially`, since `fill()` dispatches one input event
 carrying the whole string and passes against the broken code; the trim-handle click passes
 an off-centre `position`, because the handle straddles the track's left edge at 0 ms and a

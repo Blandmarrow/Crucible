@@ -192,6 +192,41 @@ test('tabbing through the crop fields sends no crop', async ({ page, request }) 
   expect(body).not.toHaveProperty('clear_crop')
 })
 
+// The arrow key that grows the head trim, floored at 0. This looked
+// unreachable — the component's own pointer path caps the tail so the remaining
+// span never drops under `MIN_SPAN_MS` — but the *endpoint* is looser than the
+// component: it refuses only `start + end >= duration`, so `trim_end_ms: 1900`
+// on a 2 s clip is accepted and stored. Reopening on that row leaves the start
+// handle with `endPos - MIN_SPAN_MS` negative, and one press used to take
+// `trimStart` to -400 and the next submit to a raw 422 on the schema's `ge=0`.
+//
+// (Its sibling, the crossed-trim render, really is unreachable this way: the
+// same endpoint check is exactly what makes `startMs > endPos` impossible to
+// store, so it needs a duration corrected downward after the fact.)
+test('growing the head trim past the tail stops at zero', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-trimfloor-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  const res = await request.post('/api/v1/videos/extract', {
+    data: { video_ids: [video.id], trim_start_ms: 0, trim_end_ms: 1900, mode: 'new_subfolder' },
+  })
+  expect(res.status(), await res.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // The precondition, asserted so this cannot quietly go vacuous: the tail trim
+  // stored above leaves the end handle 100 ms in, well under `MIN_SPAN_MS`.
+  const start = dialog.getByTestId('trim-handle-start')
+  await expect(start).toHaveAttribute('aria-valuenow', '0')
+  await expect(dialog.getByTestId('trim-handle-end')).toHaveAttribute('aria-valuenow', '100')
+
+  await start.focus()
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight')
+  await expect(start).toHaveAttribute('aria-valuenow', '0')
+})
+
 // The two modes resolve a subfolder differently — `new_subfolder` steps whatever
 // name it is given through `_step_subfolder`, so offering an existing folder
 // there would silently produce `{name}_2`. The control has to differ, and this is

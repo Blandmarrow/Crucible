@@ -141,9 +141,13 @@ export default function TrimBar({ durationMs, startMs, endMs, onChange, disabled
               onPointerCancel={endDrag}
               onKeyDown={(e) => {
                 if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                // Handled keys only, so Tab still moves focus. Without this the
-                // arrows scroll the modal body out from under the control being
-                // adjusted.
+                // The slider contract: a key that adjusts the control does not
+                // also reach the scroll container. Handled keys only, so Tab
+                // still moves focus. Measured, this currently prevents nothing
+                // visible — the arrows scroll *horizontally* and the modal body
+                // has no horizontal overflow at any tested viewport — so treat
+                // it as insurance for a future layout, not as a fix for an
+                // observed scroll.
                 e.preventDefault();
                 const step = e.shiftKey ? 5000 : 500;
                 if (e.key === "ArrowLeft") onChange(Math.max(0, startMs - step), endMs);

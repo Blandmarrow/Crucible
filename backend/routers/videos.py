@@ -1707,6 +1707,12 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
     # /private/var).
     safe_dataset_path(video.file_path, settings.datasets_dir)
     old_path = Path(video.file_path)
+    # After the containment predicate, never before it: an out-of-tree path must
+    # 403 whether or not the file happens to exist. Without this the rename ran
+    # to `old_path.rename`, which raised FileNotFoundError out of the router as a
+    # 500 — and the row had already been assigned the new name.
+    if not old_path.exists():
+        raise HTTPException(404, "File not found on disk")
     existing = await db.execute(
         select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == video.dataset_id)
     )
@@ -1754,10 +1760,34 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
         video.poster_path = str(new_poster)
     # Path.rename, not rename_with_sidecar: a video has no .txt companion —
     # captions belong to the frames extracted from it.
-    old_path.rename(new_path)  # FS last — if this raises, commit never runs
-    if old_poster is not None and old_poster.exists() and old_poster != new_poster:
-        old_poster.replace(new_poster)
+    try:
+        old_path.rename(new_path)  # FS last — if this raises, commit never runs
+    except FileNotFoundError:
+        # Lost the TOCTOU race against the check above. Same answer either way.
+        raise HTTPException(404, "File not found on disk") from None
     await db.commit()
+
+    # Post-commit epilogue, per CLAUDE.md § *Nothing fallible between an
+    # irreversible filesystem mutation and the `commit()`*. The poster move used
+    # to sit between the video rename and the commit, so an OSError there threw
+    # away a rename that had already happened: the file was at its new name and
+    # the row still claimed the old one.
+    #
+    # `video.poster_path` names `new_poster` even when this fails — the row
+    # states intent, and `get_video_poster`'s condition is exactly
+    # `p is None or not p.exists()`, so it recuts on the next view. The old
+    # poster stays on disk keeping its stem claimed, so that heal picks a free
+    # name rather than clobbering a sibling. Deliberately no second commit to
+    # null the column: an epilogue must not be able to change the outcome.
+    if old_poster is not None and old_poster != new_poster:
+        try:
+            if old_poster.exists():  # inside the try — an lstat can raise too
+                old_poster.replace(new_poster)
+        except OSError:
+            logger.warning(
+                "rename_video %s: poster move failed; the backfill will recut", video_id,
+                exc_info=True,
+            )
     return {"filename": new_filename}
 
 

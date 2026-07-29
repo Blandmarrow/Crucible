@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import select
 
 from backend.models import Video
-from backend.tests.conftest import API, api_env, run, upload_video
+from backend.tests.conftest import API, api_env, mp4_bytes, run, upload_video, wait_for_job
 
 pytest.importorskip("cv2", reason="opencv is not installed")
 
@@ -202,6 +202,90 @@ def test_an_empty_or_path_bearing_stem_is_rejected(tmp_path):
             # unreachable. Same in rename_image; recorded rather than diverged.
             r = await env.client.patch(f"{API}/videos/{video['id']}/rename", json={"new_stem": "!!!"})
             assert r.json()["filename"] == "image.mp4"
+
+    run(scenario())
+
+
+def test_rename_404s_when_the_row_outlives_the_file(tmp_path):
+    """`GET /file` already answers 404 for this; rename used to run all the way
+    to `old_path.rename` and surface FileNotFoundError as a 500 — with the row
+    already carrying the new name."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4")
+            async with env.Session() as db:
+                old = Path((await db.execute(select(Video))).scalar_one().file_path)
+            old.unlink()
+
+            r = await env.client.patch(
+                f"{API}/videos/{video['id']}/rename", json={"new_stem": "renamed"}
+            )
+            assert r.status_code == 404, r.text
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Video))).scalar_one()
+            assert row.filename == "clip.mp4"
+            assert row.file_path == str(old)
+            assert not (old.parent / "renamed.mp4").exists()
+
+    run(scenario())
+
+
+def test_a_failed_poster_move_does_not_lose_the_rename(tmp_path):
+    """The poster move is a post-commit epilogue and cannot undo the rename.
+
+    It used to sit between `old_path.rename` and the commit, so an OSError there
+    threw away a rename that had already happened on disk: the file was at its
+    new name and the row still claimed the old one. Now the row is committed
+    first; the poster recuts on the next view, and because the stale poster is
+    still on disk claiming its stem, that recut cannot land on a sibling's.
+    """
+    async def scenario():
+        import pathlib
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            vdir = Path(ds["folder_path"]) / "videos"
+            vdir.mkdir(parents=True, exist_ok=True)
+            (vdir / "clip.mp4").write_bytes(mp4_bytes(frames=10))
+            (vdir / "clip.mkv").write_bytes(mp4_bytes(frames=10))
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={})
+            await wait_for_job(env, r.json()["job_id"])
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Video))).scalars().all()
+                target_id = next(v.id for v in rows if v.filename == "clip.mkv")
+                sibling_poster = Path(next(v.poster_path for v in rows if v.filename == "clip.mp4"))
+            sibling_bytes = sibling_poster.read_bytes()
+
+            original_replace = pathlib.Path.replace
+
+            def failing_replace(self, target):
+                if str(target).endswith(".webp"):
+                    raise OSError("poster move refused")
+                return original_replace(self, target)
+
+            pathlib.Path.replace = failing_replace
+            try:
+                r = await env.client.patch(
+                    f"{API}/videos/{target_id}/rename", json={"new_stem": "renamed"}
+                )
+            finally:
+                pathlib.Path.replace = original_replace
+
+            assert r.status_code == 200, r.text
+            assert r.json()["filename"] == "renamed.mkv"
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Video).where(Video.id == target_id))).scalar_one()
+            assert row.filename == "renamed.mkv"
+            assert Path(row.file_path).exists(), "the rename was lost"
+            assert row.poster_path.endswith("/renamed.webp"), "the row must state intent"
+
+            # The payoff: the backfill recuts, and the sibling's poster survives.
+            assert (await env.client.get(f"{API}/videos/{target_id}/poster")).status_code == 200
+            assert sibling_poster.read_bytes() == sibling_bytes
 
     run(scenario())
 

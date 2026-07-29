@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from backend.models import BackgroundJob, Video
-from backend.tests.conftest import API, api_env, run, upload_video
+from backend.models import BackgroundJob, Image, Video
+from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, upload_video
 
 # Only the video-move test below encodes a container; the rest of the module is
 # media-free, so the guard is per-test rather than a module-level importorskip.
@@ -114,17 +114,12 @@ def test_mkdir_over_an_existing_entry_is_a_409(tmp_path):
 
 
 @needs_cv2
-def test_moving_a_video_between_datasets_rewrites_its_row(tmp_path):
-    """The file browser is the one place a video's file can move without going
-    through `/videos`, and its DB sync treats `Video` exactly like `Image` — a
-    moved file whose row still points at the old path is a dangling record
-    either way.
-
-    **Recorded, not fixed:** the sync rewrites `file_path`, `filename` and
-    `dataset_id`, and *not* `poster_path`, so after a cross-dataset move the row
-    still points into the source dataset's `videos/thumbnails/`. Pinned here as
-    current behaviour, the way `test_video_rename_http.py` records its own known
-    divergence; changing it is a code change and belongs in its own commit.
+def test_moving_a_video_between_datasets_is_refused(tmp_path):
+    """The file browser is the one place a media file can move without going
+    through `/videos` or `batch_move_dataset`, and it knows how to rewrite a path
+    and nothing else. Re-homing means everything `batch_move_dataset` does —
+    provenance materialization, stats refresh, the poster or thumbnail beside the
+    file — so this endpoint refuses instead, with the filesystem untouched.
     """
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -145,20 +140,85 @@ def test_moving_a_video_between_datasets_rewrites_its_row(tmp_path):
             r = await env.client.post(
                 f"{FS}/move", json={"src": src, "dst_dir": str(dst_dir)}
             )
-            assert r.status_code == 200, r.text
+            assert r.status_code == 409, r.text
+            assert "belongs to a dataset" in r.json()["detail"]
 
             async with env.Session() as db:
                 row = (await db.execute(
                     select(Video).where(Video.id == video["id"])
                 )).scalar_one()
 
-            assert row.file_path == str(dst_dir / "clip.mp4")
-            assert row.filename == "clip.mp4"
-            assert row.dataset_id == b["id"]
-            assert Path(row.file_path).exists()
-            # The gap: the poster stayed behind, in dataset A.
+            # Nothing moved and nothing was rewritten — not the row, not the file.
+            assert row.file_path == src
+            assert row.dataset_id == a["id"]
             assert row.poster_path == poster_before
-            assert str(Path(a["folder_path"])) in row.poster_path
+            assert Path(src).exists()
+            assert not (dst_dir / "clip.mp4").exists()
+
+    run(scenario())
+
+
+def test_moving_a_registered_image_out_of_its_dataset_is_refused(tmp_path):
+    """The `Image` twin of the case above, plus the reason the guard is broader
+    than "another dataset": a registered image moved *outside* the datasets tree
+    is equally broken, because `utils.safe_dataset_path` then 403s every request
+    for its bytes. Both destinations must be refused."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            a = await env.create_dataset("a")
+            b = await env.create_dataset("b")
+            image = await upload_image(env, a["id"], "pic.png")
+            await upload_image(env, b["id"], "other.png")
+
+            async with env.Session() as db:
+                row = await db.get(Image, image["id"])
+                src, thumb_before = row.file_path, row.thumbnail_path
+
+            elsewhere = tmp_path / "outside"
+            elsewhere.mkdir()
+            for dst_dir in (Path(b["folder_path"]) / "images", elsewhere):
+                assert dst_dir.is_dir()
+                r = await env.client.post(
+                    f"{FS}/move", json={"src": src, "dst_dir": str(dst_dir)}
+                )
+                assert r.status_code == 409, r.text
+                assert not (dst_dir / "pic.png").exists()
+
+            async with env.Session() as db:
+                row = (await db.execute(
+                    select(Image).where(Image.id == image["id"])
+                )).scalar_one()
+
+            assert row.file_path == src
+            assert row.dataset_id == a["id"]
+            assert row.thumbnail_path == thumb_before
+            assert Path(src).exists()
+            # The image still serves — the point of refusing in the first place.
+            r2 = await env.client.get(f"{API}/images/{image['id']}/file")
+            assert r2.status_code == 200, r2.text
+
+    run(scenario())
+
+
+def test_moving_a_loose_file_into_a_dataset_still_works(tmp_path):
+    """The negative control. The guard keys off *having a row*, not off the
+    destination, so a file the DB has never heard of keeps moving anywhere —
+    including into a dataset folder, which is the file browser's actual job."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("a")
+            await upload_image(env, ds["id"], "seed.png")
+
+            loose = tmp_path / "loose.png"
+            loose.write_bytes(png_bytes())
+            dst_dir = Path(ds["folder_path"]) / "images"
+
+            r = await env.client.post(
+                f"{FS}/move", json={"src": str(loose), "dst_dir": str(dst_dir)}
+            )
+            assert r.status_code == 200, r.text
+            assert (dst_dir / "loose.png").exists()
+            assert not loose.exists()
 
     run(scenario())
 

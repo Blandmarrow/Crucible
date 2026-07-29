@@ -160,27 +160,46 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     src_is_file = src.is_file()
     src_is_dir = src.is_dir()
 
+    # Look the row up before the move too, so the 409 below lands with the
+    # filesystem still untouched — the convention every other guard in this file
+    # follows. Videos get the same treatment as images: a moved file whose row
+    # still points at the old path is a dangling record either way.
+    kind = media_kind_for(src.suffix) if src_is_file else None
+    row = None
+    if kind is not None:
+        model = Image if kind == "image" else Video
+        row = (
+            await db.execute(select(model).where(model.file_path == str(src)))
+        ).scalar_one_or_none()
+        if row is not None:
+            # Refuse to re-home a registered file. This endpoint knows how to
+            # rewrite a path and nothing else, while re-homing means everything
+            # `batch_move_dataset` does — materialize_provenance, refresh_stats,
+            # NULLing `Image.source_video_id`, and moving `Video.poster_path` /
+            # `Image.thumbnail_path` — none of which happens here.
+            #
+            # The check is broader than "another dataset" on purpose: moving a
+            # registered file out of the datasets tree entirely is equally
+            # broken, since `utils.safe_dataset_path` then 403s every request for
+            # its bytes. Unregistered files still move anywhere — that is the
+            # file browser's actual job.
+            new_ds = await _find_dataset_for_path(db, new_path)
+            if new_ds is None or new_ds.id != row.dataset_id:
+                raise HTTPException(
+                    409,
+                    "This file belongs to a dataset. Use the gallery's "
+                    "'Move to dataset' action to move it.",
+                )
+
     try:
         shutil.move(str(src), str(new_path))
     except PermissionError:
         raise HTTPException(403, "Access denied")
 
-    # Sync DB records for any media within the moved path. Videos get the same
-    # treatment as images: a moved file whose row still points at the old path is
-    # a dangling record either way.
-    kind = media_kind_for(src.suffix) if src_is_file else None
-    if kind is not None:
-        model = Image if kind == "image" else Video
-        result = await db.execute(select(model).where(model.file_path == str(src)))
-        row = result.scalar_one_or_none()
-        if row:
-            row.file_path = str(new_path)
-            row.filename = new_path.name
-            # Update dataset if destination is inside a different dataset folder
-            new_ds = await _find_dataset_for_path(db, new_path)
-            if new_ds and new_ds.id != row.dataset_id:
-                row.dataset_id = new_ds.id
-            await db.commit()
+    if row is not None:
+        row.file_path = str(new_path)
+        row.filename = new_path.name
+        await db.commit()
     elif src_is_dir:
         # Update every media row whose file_path started with the old dir path
         old_prefix = str(src) + os.sep

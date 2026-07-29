@@ -57,6 +57,21 @@ endpoint, a cleanup sweep and a traversal guard on an unauthenticated server, to
 preview for the life of a modal. Failed seeks cost one sample each and are reported through
 `samples_failed`; broken tails are common and a partial result is still a result.
 
+**A mid-run resolution change costs one sample too.** `merge_profiles` refuses to
+accumulate mismatched shapes, and its `ValueError` used to escape the per-sample handler
+and surface as a raw 422 quoting numpy shapes — so a concatenated or variable-resolution
+source lost the whole probe, and with it the extraction modal's first step. It is caught
+alongside the failed-seek case. `height`/`width` are assigned *after* the merges so a
+rejected sample leaves no dimensions behind, and accumulator consistency holds because a
+size change fails on `acc_rows` before `acc_cols` is touched.
+
+**Generators handed to a `for` loop that may walk away are wrapped in
+`contextlib.closing`.** `read_positions` owns a `VideoCapture` or, on the `bwdif` path, an
+ffmpeg subprocess; both `render_shot` passes and `render_at_timestamps` break on the first
+item, once per written frame. CPython refcounting happens to collect the abandoned
+generator, which is not something to rely on — a leak there would be one capture or
+subprocess per frame written.
+
 `crop_confidence` is *agreement*, not certainty: the fraction of samples that saw any matte
 and saw this one. A rect derived from one letterboxed shot in eight is exactly the case a
 user should override.

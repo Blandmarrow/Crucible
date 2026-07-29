@@ -53,6 +53,22 @@ autocorrelation, which is the right answer: that is plain interlace, and reporti
 telecine would recommend the wrong fix. It drives a **warning string only** — `bwdif` is the
 one filter this phase ships.
 
+**The 13-sample floor is derived, not chosen**:
+`TELECINE_MIN_SAMPLES = ceil(TELECINE_LAG / (1 − TELECINE_MIN_AUTOCORR))`. The
+autocorrelation above is the *biased* estimator — its numerator sums n−LAG products against
+a denominator over all n — so a perfect 3:2 series scores about (n−LAG)/n and simply cannot
+clear 0.6 below n = 13. The old hand-picked 10 therefore admitted runs of 10 to 12 frames
+and then rejected every one of them, collecting the run for nothing. Measured across all
+five phases: n=12 peaks at 0.588, n=13 clears on four of five (0.551–0.623), n=14 on all
+five, and the 20-frame probe pass sits at 0.75. Retuning either input constant moves the
+floor, and a test pins the identity.
+
+Switching to the *normalized* estimator was rejected: it returns exactly 1.0 for a perfect
+series at every n ≥ 9, discarding the length information the threshold was tuned against.
+Measured, false positives on shuffled series inside the duty gate go 0.0003 → 0.0035 at
+n=20 (11.7×), and a single-glitch run at n=20 goes 0.553 (rejected) → 0.732 (accepted) —
+a live change to a warning users act on, for no gain.
+
 **Sharpness** is Laplacian variance of the luma plane measured at a fixed resolution, and
 **the downscale before the Laplacian is a correctness fix, not an optimization**. Raw
 variance on a full-resolution frame ranks *noise* as sharpness, so a grainy candidate
@@ -67,6 +83,8 @@ slates; a slate is often the *sharpest* thing in a shot, so without this the pol
 prefers it). Then any candidate whose brightness deviates more than 40% from the candidate
 set's median — that one is not about picture quality, it means the detector missed a cut
 *inside* the window and keeping the outlier would file a frame from the next scene under
-this shot's index. If everything is rejected it returns the middle rather than nothing: a
+this shot's index. That median needs no zero guard — `eligible` only admits lumas at or
+above 8.0, so a non-empty set's median cannot be zero, and the guard that used to sit there
+was unreachable. If everything is rejected it returns the middle rather than nothing: a
 shot that is entirely a fade still owes the caller one frame, and a "no pick" return grows
 a second, untested branch in every caller.

@@ -16,6 +16,8 @@ Quality scorers and what they add to `Image`:
 
 The column is NULL until the technical scorer runs again, and nothing detects that: `score_coverage["technical"]` counts `blur_score` alone, so a dataset scored before the column existed reports full technical coverage beside an empty Brightness histogram. Stats carries the re-score hint that says so — see `docs/dev/statistics.md` (`score_coverage`). The same staleness applies to `color_score`/`saturation_score` on anything last scored before quality-v2, and to whatever technical column is added next.
 
+**The technical scorer's failure contract is "nothing measured", not zeros.** Both branches — `cv2.imread` returning None for an unreadable file, and an exception out of the executor in `score_images_technical` — return the shared `_unmeasured()` dict: all six scores `None`, all three flags `False`, one logged warning each. A zero is a *measurement*; writing 0.0 claimed the image was pitch black, perfectly uniform, fully desaturated and (via `is_blurry=True`) out of focus, about a file no decoder ever read. The booleans stay `False` rather than `None` because `routers/quality.py` folds them into a JSON flags dict via `t.get(..., False)`, where `None` is not expressible. Every consumer is already null-safe — nullable `Float` columns assigned straight through, histogram buckets guarded on `is not None`, `get_score_values` skipping `None`, nullable pydantic schemas and TypeScript types. The visible consequence is that such a file now reads as **unscored** rather than inflating `score_coverage["technical"]` and sitting in the darkest brightness bucket; `docs/scoring.md` says so for users.
+
 Flag thresholds:
 | Flag | Column | Default threshold | Source |
 |---|---|---|---|

@@ -153,13 +153,18 @@ in `docs/dev/video-extract.md` § The endpoints), `GET /{id}/frames-summary`,
 `PATCH /{id}/rename`, `DELETE /{id}`.
 Both file responses go through `utils.safe_dataset_path`, promoted out of
 `routers/images.py` so the video routes are not importing a private helper from another
-router.
+router. `GET /{id}/file` and `PATCH /{id}/rename` both answer 404 "File not found on disk"
+for a row whose file is gone.
 
 `PATCH /{id}/rename` takes `{new_stem}` and is a near-verbatim mirror of
 `routers/images.py::rename_image` — `ensure_not_busy`, the same stem validation and
 `slugify_filename`, sibling `Video.filename`s as `db_names`, the dual occupied-poster-stem
-set described above, `unique_filename_with_thumb`, then ORM fields → filesystem →
-`commit` last so a filesystem failure means no commit runs. Two deliberate differences:
+set described above, `unique_filename_with_thumb`, then ORM fields → the file rename →
+`commit` → the poster move as a **post-commit epilogue**. A failed rename means no commit;
+a failed poster move is logged and cannot undo one, and `poster_path` names the new poster
+either way so the lazy backfill recuts it. A row whose file vanished underneath it 404s
+before any of that — after the containment predicate, so an out-of-tree path still 403s.
+Two deliberate differences:
 the **suffix is preserved and never user-settable**, because the container extension is a
 claim about the bytes and `video_mime` picks the browser's decoder from it; and it uses
 `Path.rename`, not `rename_with_sidecar`, since a video has no `.txt` companion. Renaming

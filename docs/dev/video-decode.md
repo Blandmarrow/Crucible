@@ -16,8 +16,15 @@ cv2 and ffmpeg disagree by default: ffmpeg autorotates, cv2 does not. Left alone
 decode paths would apply the same crop rect to differently-oriented frames, and a poster
 would disagree with the frames extracted from the same file. Every capture this codebase
 opens therefore goes through `video_service.apply_orientation(cap)`, which sets
-`CAP_PROP_ORIENTATION_AUTO` (present in cv2 5.0.0, guarded anyway because an unsupported
-property must never be why a video fails to open); ffmpeg keeps its default.
+`CAP_PROP_ORIENTATION_AUTO` (present in cv2 5.0.0); ffmpeg keeps its default.
+
+The guard there is a **return-value check, not a `try`**. `cv2.VideoCapture.set` reports an
+unsupported property by returning False; it does not raise, so the `try/except` this
+replaced could never detect the backend it documented — and the broad `except` was in
+practice load-bearing for a test double that had no `set` at all. A False is logged at
+debug and ignored: on a backend without the property this is a no-op, not a fault, and it
+must never be why a video fails to open. Doubles standing in for a `VideoCapture` need a
+`set` returning a bool.
 
 ## Metadata: the ladder and its guard
 
@@ -45,6 +52,13 @@ the function, matching the convention in `backend/ml/technical_scorer.py`.
   naive divide stores a duration of −9.2e15 seconds. Parsing the `ffmpeg -i` banner is no
   rescue; it prints `Duration: N/A` for exactly that file. `measure_duration_ms` backfills
   a true one; see the next section.
+- **A second ceiling bounds the quotient, not just the frames.** `fps=0.01` with
+  `frames=500_000` clears the guard above and yields about 578 days, which would then drive
+  the trim bar and every sample position. A `duration_ms` over `MEASURE_MAX_MS` (24 h, the
+  same constant the seek search stops at) is logged and stored NULL. The cost is real
+  rather than theoretical: a genuine video longer than 24 h reads as "unknown". That is the
+  tradeoff `MEASURE_MAX_MS` already made for the search, applied consistently — the
+  constants block sits above `probe_video` so both readers can see it.
 
 ## Measuring a duration the header does not have
 
@@ -69,6 +83,12 @@ Three details are load-bearing:
   `NON_SEEKABLE_PROBE_FLOOR_MS` (2 s), because early on, when the probe is still tens of
   milliseconds, a *correct* seek to frame 0 also sits below half of it. Without that floor
   a small `hint_ms` makes every seekable file measure as None.
+- **`hint_ms` is clamped to `max_ms` before the first probe.** The exponential loop's
+  condition `probe <= max_ms` is evaluated *before* probing, so an over-ceiling hint used to
+  skip the phase entirely and return None without a single seek — and an over-ceiling hint
+  is exactly what a poisoned header supplies. A first probe clamped to the ceiling is
+  unreachable on any real file, so `hi` is set immediately and bisection converges to the
+  40 ms tolerance in about 21 probes, inside `MEASURE_MAX_PROBES` (40).
 - **The reached position is the last frame's own timestamp**, so the duration is one frame
   period later. `hi` — the first position at which no frame starts — is deliberately *not*
   used as a ceiling; clamping to it returns a duration exactly 1/fps short on every file.
@@ -132,12 +152,38 @@ and `VideoDetailPage` point at it regardless, the strip falling back to the glyp
 claimed set (`docs/dev/video.md` § Poster stems and collisions), not from the video's own
 name, or healing one of two same-stem rows would overwrite the other's poster.
 
+**The backfill is serialised per dataset.** `routers/videos.py::_poster_lock(dataset_id)` —
+a per-key `asyncio.Lock` registry shaped after `backend/ml/model_manager.py`'s per-model
+one — brackets resolve → generate → commit. The dataset is the right key because it is the
+scope the claimed-stem query covers: two same-stem videos (`clip.mp4` and `clip.mkv`, which
+rescan registers side by side) each resolve their poster stem against what their *siblings*
+claim, and `VideoStrip` paints every card at once, so unserialised both read the same empty
+directory, both pick `clip.webp`, and the second write clobbers the first — two rows
+pointing at one picture.
+
+Inside the lock the row is **re-read**, preceded by `await db.rollback()`. That rollback is
+load-bearing rather than cosmetic: the initial `db.get` already opened this session's read
+transaction, so a re-read inside it would still see the pre-lock snapshot and miss a
+sibling request's commit. The fast path — a poster the row names and disk still has — stays
+outside the lock entirely. The accepted cost is that a legacy dataset of un-postered rows
+heals sequentially on first paint; in exchange each video decodes once rather than once per
+card, and peak RSS is one decoded frame instead of N. Reserving the stem by creating the
+file first was rejected: a failed generate then leaves a 0-byte `.webp` that the claimed-set
+glob counts forever.
+
 A failure parks that video in `routers/videos.py::_poster_failures`, an in-process
 `{video_id: monotonic deadline}` map checked before regeneration is attempted
 (`POSTER_RETRY_AFTER_SECONDS`, 300). Because the UI points at the endpoint
 unconditionally, without it an undecodable video re-runs a full cv2 open on every strip
 render of every gallery visit — cheap per call, unbounded in visits. A `poster_failed_at`
 column is the durable form and is not worth a migration for a retry hint.
+
+**An exception out of `generate_poster` is a False like any other**: caught at the endpoint,
+logged, parked, 404. Letting it escape as a 500 bypassed the negative cache — so the
+unbounded re-decode above happened on exactly the videos most likely to trigger it — and
+reported an app fault in the JS error console for what is by design a nicety, never a gate.
+It is `except Exception`, not `BaseException`: a client disconnect raises `CancelledError`
+and must not park the row for five minutes.
 
 `backend/config.py` sets `OPENCV_FFMPEG_LOGLEVEL=-8` at module scope. Rejecting a file is a
 normal outcome here, but each rejection makes OpenCV's ffmpeg backend print

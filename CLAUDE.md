@@ -102,7 +102,9 @@ This file covers what applies across the whole codebase: commands, the data flow
 
 **`backend/licenses.py`** — the license vocabulary (`LICENSES`, `LICENSE_IDS`, `FIELD_MAX_LEN`, `normalize_license`, `license_info`, `allows_commercial`) and the provenance rules built on it; `frontend/src/constants/licenses.ts` mirrors it under test. Read side: `resolve_provenance(img, ds)`. Write side: `merge_provenance(*layers)`, `clamp_provenance(values)`, `normalize_license_input(v)`, `copy_provenance(img)` (same-dataset derivative), `materialize_provenance(img, ds)` (cross-dataset copy/move), `materialize_by_source(rows, ds_by_id)` (the batch form). A **client-supplied** license-id list is read only through `utils.parse_license_filter_param` / `normalize_license_filter` — a JSON array, never comma-separated, because an `other:<free text>` id may contain commas; an empty list always means "no filter", never "match nothing". Whether `""` inside that list is meaningful **differs by endpoint**, so check which one you are on. See `docs/dev/provenance.md`.
 
-**Shared frontend components** recur across the topic files below; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog` and `useModalBehavior` → `docs/dev/styling.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/datasets-page.md`; `JobProgressBar` → `docs/dev/versioning.md`.
+**Shared frontend components** recur across the topic files below; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog` and `useModalBehavior` → `docs/dev/styling.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/datasets-page.md`; `JobProgressBar` → `docs/dev/versioning.md`;
+`NumberField` (any bounded numeric input — never re-clamp per keystroke) →
+`docs/dev/frontend-core.md`.
 
 ### Key invariants
 
@@ -146,7 +148,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
 | `docs/dev/video.md` | Working on videos, video ingest, the `/videos` endpoints, any file-extension allowlist, or a cv2-gated test — the `Video` model and `videos/` layout, poster stems and collisions, range serving | ~3255 |
 | `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~1450 |
-| `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, `CropOverlay`/`TrimBar`, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2175 |
+| `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, `CropOverlay`/`TrimBar`/`NumberField`, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~3085 |
 | `docs/dev/video-decode.md` | Working on video probe/metadata, video duration, or poster frames — the cv2 probe ladder, `measure_duration_ms`, `isOpened()` as ingest gate, the poster fallback ladder | ~2105 |
 | `docs/dev/video-shots.md` | Working on probe sampling, shot detection, or frame rendering — the pass 1 pipeline in `video_extract.py`: the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` | ~1815 |
 | `docs/dev/video-extract.md` | Working on the extract/probe endpoints or the `video_extract` job — Pass 1's router half: crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage | ~2360 |
@@ -158,7 +160,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting, or `threshold_service.py` — the `ThresholdSettings` singleton row and every tab it backs | ~1060 |
 | `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search and its TTL cache | ~1095 |
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the seven endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~2820 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~1965 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2070 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns) | ~1190 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~955 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~1585 |

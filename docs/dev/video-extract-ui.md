@@ -62,6 +62,18 @@ other video's rect. Three `*Touched` flags gate the fields; the API is built for
 host cannot run. The batch header line says so: each control applies to the batch *only if you
 change it*.
 
+**A change that changes nothing marks nothing touched.** The crop's three writers — the
+overlay's `onChange`, **Use detected** and **Clear crop** — all route through one
+`applyCrop(r)`, which sets `cropTouched` only when a null-safe `sameRect` says the rect
+actually moved; the `TrimBar` `onChange` compares both values the same way. This is not
+defensive tidiness. `cropTouched` decides whether `crop` is sent at all, the modal shows the
+**full frame** when no crop is set (`active = rect ?? full`), and `clamp_crop` maps a
+full-frame rect to `None`, which `extract_frames` then writes as `crop_* = NULL` to every
+video in the batch. So a spurious touch — a tab through a crop field with no typing, a drag
+that jitters back to where it started, an arrow press on a handle already at 0 — wiped the
+whole batch's stored rects. The guard sits on the flag, not only on the control that would
+have tripped it.
+
 **Step 2 — Extract.** Pick (`frames_per_shot`, `pick`, `candidates`), output (`long_edge`,
 mode, subfolder) and `sensitivity`, with `min_shot_ms` / `detector_frame_skip` / `max_shots`
 inside a collapsed `<details>` — those are the cost-cliff levers, not first-run controls.
@@ -148,7 +160,13 @@ and still ends. Handles move in **frame** coordinates (`scale = displayedWidth /
 re-measured by a `ResizeObserver`), clamp to the frame and **snap to even numbers**,
 mirroring `video_frames.clamp_crop` so the rect shown is the rect stored. The handles are
 `aria-hidden`; the paired numeric x/y/w/h inputs beneath are the keyboard path, because
-there is no honest ARIA pattern for a 2-D rect. **Use detected** re-applies `probe.crop`
+there is no honest ARIA pattern for a 2-D rect — which is why they render `NumberField`
+(see below) rather than a bare input: the naive per-keystroke clamp made *the* a11y path
+silently lie about what was typed. `clampRect` is projected onto the single field being
+edited (`clamp={(n) => clampRect({ ...active, [field]: n })[field]}`) so both of that
+component's props stay honest about the cross-field bounds. Editing a field while `rect`
+is null still creates a crop from the full frame; that is how this path creates a rect, and
+only the *no-typing* case changed. **Use detected** re-applies `probe.crop`
 and **Clear crop** sets it to null, which sends `clear_crop: true` — the disambiguation
 `VideoExtractRequest` exists for. The rect sent is only a proposal: the server normalizes
 again and stores that, so a later re-extraction replays the stored value.
@@ -161,6 +179,62 @@ and converts back on the way out. Disabled with an explanation when
 `duration_source === "unknown"` — the backend already warns that the tail trim is
 unavailable for a non-seekable container, and a control that does nothing is worse than
 none.
+
+**`pointerdown` does not move the handle.** The pointer handlers sit on the two handles
+only, so there is no jump-to-click affordance a move-on-press would serve; all it did was
+snap the handle to wherever inside its 10 px hit box the press landed, which flipped
+`trimTouched` (see the no-op guard above) and minted a fresh probe query key, costing an
+8-sample re-probe for a stray click. It takes focus explicitly instead — `preventDefault`
+suppresses the focus shift, so without that call a mouse user could never reach the arrow
+keys. Those keys `preventDefault` for `ArrowLeft`/`ArrowRight` **only**, so Tab still moves
+focus and an arrow no longer scrolls the modal body out from under the control. Both
+*grow* directions are floored at `Math.max(0, …)`, matching the pointer path: a clip whose
+remaining span is under `MIN_SPAN_MS` otherwise took one press to a negative trim and a raw
+422 on the endpoint's `ge=0`.
+
+**A crossed trim is warned about, never silently clamped.** `trimStart`/`trimEnd` are seeded
+from the stored `Video` row while `durationMs` comes from the fresh probe, so the only way
+to reach one is a clip whose duration was corrected downward — the case `duration_source`
+exists for. The range fill is therefore plain arithmetic floored at 0
+(`width: pct(Math.max(0, endPos - startMs))`, not a `calc()` subtraction that goes negative
+and renders as overlapped handles with no fill), and the modal derives
+`trimStart + trimEnd >= durationMs` — **exactly** `extract_frames`' own condition, so the
+copy cannot drift from the 400 it predicts. Clamping instead would be worse either way:
+without setting `trimTouched` it fixes the picture and leaves the submit still taking the
+400, and with it, it writes the primary's trim across the whole batch.
+
+**`components/common/NumberField.tsx`** — `{ value, clamp, onCommit, …inputProps }`, the
+shared number input both controls above are built from (ten call sites; step 2's six
+spinners take an `intClamp(lo, hi)` that also rounds, since the schema is `int` and a typed
+`1.5` used to reach the API). Every field here used to re-clamp `Number(e.target.value)` on
+each keystroke, which rewrites the prefix you are still typing: `2048` into **Long edge**
+arrived as `8192` — `"2"` clamps up to 64 and the remaining three digits append — and the
+crop's even-snap turned `150` into `250`. So the raw string is held in a `draft` and clamped
+on blur, with one refinement: **it commits live whenever clamping would be the identity**,
+so a consumer that paints from the value (the crop mattes) keeps moving for every keystroke
+that is not a lie. Four details are load-bearing:
+
+- **Commit is a no-op when `draft === null`.** This is what stops a focus-and-tab with no
+  typing from firing `onCommit` and tripping `cropTouched` into the batch-wide `NULL` wipe.
+- **It commits on unmount**, via a latest-ref + empty-deps effect. React fires no blur for a
+  focused element it removes, and **Next** swaps the whole step-1 subtree, so without it a
+  typed crop width was silently discarded.
+- **A stale draft is dropped when `value` changes underneath**, using the render-time-adjust
+  idiom this file's modal already uses for `lastProbe`. `CropOverlay` calls `preventDefault`
+  on its handles' `pointerdown`, which suppresses the focus shift — so an input keeps focus
+  *and* its draft while an edge drag rewrites the rect.
+- **No per-field `|| 1024` fallback** anywhere in the commit path. Those are artifacts of
+  `Number("") === 0` and make a typed `0` indistinguishable from an empty field; empty or
+  unparseable reverts to the current `value` instead. Note `type="number"` reports `""` for
+  anything it does not consider a valid float (`-`, `1e`, `1.2.3`), which lands in that same
+  branch.
+
+`frontend/e2e/video-extract.spec.ts` covers the draft contract and the pointerdown fix
+together. Two things there are deliberate: values are typed with `pressSequentially`, since
+`fill()` dispatches one input event carrying the whole string and passes against the broken
+code; and the trim-handle click passes an off-centre `position`, because the handle
+straddles the track's left edge at 0 ms and a centred click lands at exactly 0 ms, which the
+no-op guard absorbs.
 
 ## Re-attaching to the job
 

@@ -18,6 +18,8 @@ Coordinate convention: a crop rect is `(x, y, w, h)`, matching the
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 CropRect = tuple[int, int, int, int]  # x, y, w, h — Video.crop_* order
@@ -45,10 +47,23 @@ COMBING_THRESHOLD = 0.9
 COMBING_D2_FLOOR = 1.0
 # One combed sample is a pinstripe shirt or a picket fence. Two is a source.
 COMBING_MIN_SAMPLES = 2
-TELECINE_MIN_SAMPLES = 10
 TELECINE_LAG = 5
 TELECINE_MIN_AUTOCORR = 0.6
 TELECINE_DUTY_RANGE = (0.3, 0.5)
+# Derived, not chosen. The autocorrelation below is the *biased* estimator: the
+# numerator sums n-LAG products against a denominator over all n, so a perfect
+# 3:2 series scores about (n-LAG)/n and cannot clear the threshold until
+# n >= LAG/(1-MIN_AUTOCORR) = 13. At the old 10, a run ending early between 10
+# and 12 frames was admitted and then provably undetectable. Measured, worst
+# phase: n=12 -> 0.588, n=13 -> 0.551..0.623 (4 of 5 phases clear), n=14 -> all
+# five, n=20 (PROBE_TELECINE_RUN) -> 0.75.
+#
+# The biased estimator is kept on purpose. The normalized form returns exactly
+# 1.0 for a perfect 3:2 series at every n >= 9 — it discards the length
+# information this threshold was tuned against. Measured false-positive rate on
+# shuffled series inside the duty gate: 0.0003 -> 0.0035 at n=20 (11.7x), and a
+# single-glitch run at n=20 goes 0.553 (rejected) -> 0.732 (accepted).
+TELECINE_MIN_SAMPLES = math.ceil(TELECINE_LAG / (1 - TELECINE_MIN_AUTOCORR))  # 13
 
 # --- Candidate rejection ---------------------------------------------------
 DEGENERATE_LUMA_MIN = 8.0    # black frames, fades, leader
@@ -410,11 +425,14 @@ def pick_index(
         and DEGENERATE_LUMA_MIN <= mean_lumas[i] <= DEGENERATE_LUMA_MAX
     ]
     if eligible:
+        # No `if median > 0` guard: `eligible` only admits lumas at or above
+        # DEGENERATE_LUMA_MIN (8.0), so the median of a non-empty set cannot be
+        # zero and the guard was unreachable. Its dead branch also read as though
+        # a zero median were a real case worth skipping the filter for.
         median = float(np.median([mean_lumas[i] for i in eligible]))
-        if median > 0:
-            kept = [i for i in eligible if abs(mean_lumas[i] - median) <= LUMA_OUTLIER_FRAC * median]
-            if kept:
-                eligible = kept
+        kept = [i for i in eligible if abs(mean_lumas[i] - median) <= LUMA_OUTLIER_FRAC * median]
+        if kept:
+            eligible = kept
     if not eligible:
         return middle
 

@@ -234,7 +234,29 @@ def test_telecine_is_gated_on_the_frame_rate():
 
 
 def test_telecine_needs_enough_consecutive_frames():
-    assert vf.telecine_from_series([1.5, 1.5, 0.5, 0.5, 0.5], fps=29.97)[0] is False
+    """The floor is the shortest run the estimator can *possibly* detect, not a
+    round number. Below it a perfect 3:2 series is admitted and then provably
+    rejected by the autocorrelation, so the run was collected for nothing."""
+    base = [1.5, 1.5, 0.5, 0.5, 0.5]
+
+    assert vf.telecine_from_series(base, fps=29.97)[0] is False
+
+    twelve = (base * 3)[:12]
+    assert vf.telecine_from_series(twelve, fps=29.97)[0] is False
+
+    thirteen = (base * 3)[:13]
+    assert vf.telecine_from_series(thirteen, fps=29.97)[0] is True
+
+
+def test_the_telecine_floor_is_derived_from_the_autocorrelation_threshold():
+    """Retuning either constant without the floor must fail here rather than
+    silently reintroduce the undetectable window."""
+    import math
+
+    assert vf.TELECINE_MIN_SAMPLES == math.ceil(
+        vf.TELECINE_LAG / (1 - vf.TELECINE_MIN_AUTOCORR)
+    )
+    assert vf.TELECINE_MIN_SAMPLES == 13
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +333,16 @@ def test_pick_index_rejects_a_luma_outlier_from_a_missed_cut():
 def test_pick_index_rejects_black_and_white_candidates_by_luma():
     got = vf.pick_index([99.0, 1.0], [2.0, 130.0])
     assert got == 1
+
+
+def test_pick_index_keeps_candidates_sitting_on_the_luma_floor():
+    """The darkest a candidate can be and still be eligible is exactly
+    `DEGENERATE_LUMA_MIN`, so the outlier filter's median can never be zero —
+    which is what made the `if median > 0` guard around it unreachable. Pins the
+    branch that guard sat on: the filter runs, nothing is dropped, and the
+    sharpest wins."""
+    floor = vf.DEGENERATE_LUMA_MIN
+    assert vf.pick_index([1.0, 9.0, 3.0], [floor, floor, floor]) == 1
 
 
 def test_pick_index_falls_back_to_the_middle_when_all_are_rejected():

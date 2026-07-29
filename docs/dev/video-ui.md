@@ -24,9 +24,17 @@ serve stale from cache.
 **`components/gallery/VideoStrip.tsx`** — a collapsible horizontal strip above the image
 grid, keyed on `["videos", datasetId]` (already invalidated after upload and rescan).
 Renders `null` when the dataset has no videos, so an image-only dataset looks untouched.
-Collapse state persists per dataset under `VIDEO_STRIP_COLLAPSED_KEY`. Cards show the
-poster (or a `Film` glyph), a duration badge and the filename, and open the detail view
-via `usePaneNavigate`.
+Collapse state persists per dataset under `VIDEO_STRIP_COLLAPSED_KEY`, and is **re-read
+from that key whenever `datasetId` changes**, in the same render-adjust as the selection
+clear below. `GalleryPage` is not remounted on a dataset change, so a lazy `useState`
+initializer alone would show dataset A's collapse state on dataset B — and stickily, since
+`toggle` writes back the key it read. Cards show the poster (or a `Film` glyph), a duration
+badge and the filename, and open the detail view via `usePaneNavigate`.
+
+A poster that 404s is remembered **by URL, not by mount**: `VideoCard` stores the failed
+`posterUrlVersioned(...)` string rather than a boolean, so the glyph shows for that URL
+only. An extraction backfills a poster and bumps `updated_at`, which changes the URL, and
+the card retries without a reload. The comparison is the reset — no render-adjust needed.
 
 It is mounted in `GalleryPage` **outside** the `<DndContext>` and outside the grid's
 scroll container, and that placement is load-bearing: inside the context the cards would
@@ -115,6 +123,22 @@ against an `appliedVideo` record — **clearing `activeSubfolder` when it does**
 load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder` undefined, so a
 subfolder restored from `gallery-state-${datasetId}` would silently intersect the filter and
 show an empty grid. Lineage spans subfolders; that is the point.
+
+The clear runs in **both** directions: the subfolder branch likewise clears `frameVideoId`,
+because a lineage filter restored from that same key would intersect the linked subfolder
+and the history panel's own "N frames" row would open an empty grid — the very count it had
+just named. `frameVideoId`'s `useState` therefore sits above both render-adjust blocks; from
+its old position below them the subfolder branch's clear would be a TDZ read.
+
+**Both branches also suppress the scroll restore**, via a shared `dropScrollRestore()` that
+marks the restore done and queues a scroll to top for the effect to apply once the new page
+has rendered (a DOM write during render would fire before the rows exist). The saved offset
+belongs to the list the user left, so replaying it onto a freshly filtered page 1 lands the
+user in the middle of a different result set, or nowhere at all if it is shorter. Every
+other filter change routes through the same helper — `resetPage`, the search and
+detection-label debounces, `handleResetFilters` — which is why the restore effect keys on the
+`images` array identity rather than its length: with `keepPreviousData` a same-length result
+set would otherwise leave the queued scroll armed for an unrelated later load.
 
 A **stale-id guard**, derived during render like `appliedSubfolder`, drops `frameVideoId`
 once `["videos", datasetId]` resolves without a match — otherwise a deleted video leaves a

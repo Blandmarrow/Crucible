@@ -165,6 +165,57 @@ def test_probe_does_not_write_crop_or_trims(tmp_path):
     run(scenario())
 
 
+def test_a_resolution_change_mid_probe_costs_one_sample_not_the_run(tmp_path):
+    """A concatenated or variable-resolution source hands the probe frames of
+    two sizes. `merge_profiles` refuses to accumulate mismatched shapes, and that
+    ValueError escaped the per-sample `try` and surfaced as a raw 422 quoting
+    numpy shapes — "profile shape changed mid-run: (240,) vs (120,)". Same rule
+    as the failed seek: one bad sample costs one sample."""
+    async def scenario():
+        import cv2
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            real_capture = cv2.VideoCapture
+
+            class _ShrinksOneFrame:
+                """Delegates to a real capture, but hands back the second frame
+                at half size — the shape mismatch, with everything else intact."""
+
+                def __init__(self, path):
+                    self._inner = real_capture(path)
+                    self._reads = 0
+
+                def read(self):
+                    ok, frame = self._inner.read()
+                    self._reads += 1
+                    if ok and frame is not None and self._reads == 2:
+                        frame = frame[:120, :160].copy()
+                    return ok, frame
+
+                def __getattr__(self, name):
+                    return getattr(self._inner, name)
+
+            cv2.VideoCapture = _ShrinksOneFrame
+            try:
+                r = await env.client.post(
+                    f"{API}/videos/{video['id']}/probe", json={"samples": 5}
+                )
+            finally:
+                cv2.VideoCapture = real_capture
+
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["samples_failed"] >= 1
+            assert len(body["samples"]) == 4
+            # The rejected sample left no dimensions behind.
+            assert body["width"] == 320 and body["height"] == 240
+
+    run(scenario())
+
+
 def test_probe_404s_for_an_unknown_video(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

@@ -408,13 +408,27 @@ def probe_samples(
                 samples_failed += 1
                 continue
             try:
-                height, width = frame.shape[:2]
                 rows, cols = vf.edge_profiles(frame)
                 acc_rows = vf.merge_profiles(acc_rows, rows)
                 acc_cols = vf.merge_profiles(acc_cols, cols)
+                # Assigned *after* the merges, so a rejected sample cannot leave
+                # its dimensions behind on the result.
+                height, width = frame.shape[:2]
                 per_sample_rects.append(vf.crop_rect_from_profiles(rows, cols))
                 combing.append(vf.combing_ratio(frame))
                 url = _encode_preview(frame, max_edge=max_edge, quality=jpeg_quality)
+            except ValueError:
+                # A mid-run resolution change — `merge_profiles` refuses to
+                # accumulate mismatched shapes. Same rule as the failed seek two
+                # lines above: one bad sample costs one sample, not the probe.
+                # Left unhandled this escaped as a raw 422 quoting numpy shapes.
+                # Accumulator consistency holds: a size change fails on
+                # `acc_rows` before `acc_cols` is touched.
+                logger.warning(
+                    "probe: sample at %s ms has a different frame size — skipped", ts
+                )
+                samples_failed += 1
+                continue
             finally:
                 del frame
             if not url:

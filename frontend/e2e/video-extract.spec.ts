@@ -65,6 +65,10 @@ test('a video can be driven through the extraction modal', async ({ page, reques
   await expect(dialog.getByRole('button', { name: 'Clear crop' })).toBeVisible()
   await expect(dialog.getByRole('checkbox', { name: /Deinterlace/ })).toBeVisible()
   await expect(dialog.getByTestId('trim-bar')).toBeVisible()
+  // The handles render only when the duration is known, and the spec below
+  // drives one. Asserted here so a fixture that ever stopped reporting a
+  // duration fails loudly instead of leaving that test vacuous.
+  await expect(dialog.getByTestId('trim-handle-start')).toBeVisible()
 
   // Step 2 — the three re-extraction modes, with New subfolder the default.
   await dialog.getByRole('button', { name: 'Next' }).click()
@@ -82,6 +86,79 @@ test('a video can be driven through the extraction modal', async ({ page, reques
 
   // No frames were produced, so the history panel stays hidden entirely.
   await expect(page.getByRole('heading', { name: 'Extracted frames' })).toHaveCount(0)
+})
+
+// The modal's controls, on the claim that they report what you actually did.
+// Three of them at once, because all three are read off one submitted body:
+//
+//   - a numeric field must not rewrite the prefix you are still typing (every
+//     one of them re-clamped `Number(e.target.value)` per keystroke, so `2048`
+//     into Long edge arrived as `8192`);
+//   - a typed value must survive the step swap, which fires no blur;
+//   - a plain **click** on a trim handle must not count as setting a trim —
+//     that flag hands the previewed video's trim to every video in the batch.
+//
+// `fill()` cannot see the first bug: it dispatches one input event carrying the
+// whole string, so it passes against the broken code. Every value below is typed
+// a character at a time on purpose. Extraction itself is stubbed — the point is
+// the request body, and a real run is already covered end to end further down.
+test('the modal reports what was typed and what was clicked', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-controls-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // A click with no drag. `pointerdown` used to move the handle to wherever
+  // inside its 10 px hit box the press landed, which set the trim.
+  //
+  // The position is not decoration. The handle is 10 px wide with `marginLeft:
+  // -5`, so at `startMs === 0` it straddles the track's left edge and a default
+  // centred click lands at exactly 0 ms — a no-op the modal's own guard would
+  // absorb, leaving this assertion passing against the unfixed component. The
+  // near-right edge of the hit box is a few px *into* the track, which is the
+  // press this is actually about.
+  const startHandle = dialog.getByTestId('trim-handle-start')
+  await expect(startHandle).toBeVisible()
+  await startHandle.click({ position: { x: 9, y: 11 } })
+
+  // The fixture is 128×96, so `99` is in range but odd: the even-snap that
+  // mirrors `clamp_crop` would rewrite it, which is exactly the case the field
+  // holds as an uncommitted draft rather than rewriting under the caret.
+  const cropW = dialog.getByRole('spinbutton', { name: 'Crop w' })
+  await cropW.fill('')
+  await cropW.pressSequentially('99')
+  await expect(cropW).toHaveValue('99')
+
+  // **Next** without blurring first — React fires no blur for a focused element
+  // it removes, so the draft only survives because the field commits on unmount.
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Back' }).click()
+  await expect(dialog.getByRole('spinbutton', { name: 'Crop w' })).toHaveValue('100')
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  const longEdge = dialog.getByRole('spinbutton', { name: /Long edge/ })
+  await longEdge.press('Control+a')
+  await longEdge.pressSequentially('2048')
+  await expect(longEdge).toHaveValue('2048')
+
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  // Which also pins the ordering: the click blurs the field before the submit.
+  expect(body!.long_edge).toBe(2048)
+  // Key *presence*, not value: an untouched trim is sent as `undefined`, which
+  // serialization drops, so this is the exact assertion that the click on the
+  // handle did not flip `trimTouched` and write a trim across the batch.
+  expect(body).not.toHaveProperty('trim_start_ms')
+  expect(body).not.toHaveProperty('trim_end_ms')
 })
 
 // The two modes resolve a subfolder differently — `new_subfolder` steps whatever

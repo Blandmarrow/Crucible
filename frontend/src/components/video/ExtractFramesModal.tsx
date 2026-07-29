@@ -9,6 +9,7 @@ import { extractPhaseLabel, useVideoExtractJobs } from "../../hooks/useVideoExtr
 import { apiErrorDetail } from "../../utils/apiError";
 import { formatDuration } from "../../utils/duration";
 import JobProgressBar from "../common/JobProgressBar";
+import NumberField from "../common/NumberField";
 import CropOverlay from "./CropOverlay";
 import TrimBar from "./TrimBar";
 import type { CropRect, JobProgress, Video, VideoExtractResult, VideoProbeResult } from "../../types";
@@ -31,6 +32,18 @@ const SUB_CUSTOM = "__custom__";
 /** The rect stored on a Video row, or null when it carries no crop. */
 function storedCrop(v: Video): CropRect | null {
   return v.crop_w && v.crop_h ? { x: v.crop_x ?? 0, y: v.crop_y ?? 0, w: v.crop_w, h: v.crop_h } : null;
+}
+
+/** Null-safe rect equality — the test behind the `cropTouched` guard. */
+function sameRect(a: CropRect | null, b: CropRect | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+/** A whole-number clamp for one of step 2's spinners. The schema is `int`, so the
+ *  rounding is not decoration: a typed `1.5` otherwise reached the API. */
+function intClamp(lo: number, hi: number) {
+  return (n: number) => Math.max(lo, Math.min(hi, Math.round(n)));
 }
 
 /**
@@ -143,6 +156,16 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   const durationMs = probe?.duration_ms ?? primary.duration_ms ?? 0;
   const trimUnavailable = probe?.duration_source === "unknown" || !durationMs;
 
+  // Derived to mirror the endpoint's own refusal at `videos.py`'s trim check, so
+  // the copy cannot drift from the 400 it predicts. Reachable only one way:
+  // `trimStart`/`trimEnd` are seeded from the stored row while `durationMs` comes
+  // from the fresh probe, so this is a clip whose duration was corrected
+  // downward — exactly what `duration_source` exists for. **Warn, never silently
+  // clamp**: clamping without setting `trimTouched` would fix the picture and
+  // leave the submit still taking the 400, and clamping *with* it would write the
+  // previewed video's trim across the whole batch.
+  const trimInvalid = !trimUnavailable && durationMs > 0 && trimStart + trimEnd >= durationMs;
+
   const samples = probe?.samples ?? [];
   const sample = samples[Math.min(selectedSample, Math.max(samples.length - 1, 0))];
 
@@ -235,6 +258,18 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
     mode === "new_subfolder" && subSelect !== SUB_AUTO && subSelect !== SUB_CUSTOM
       ? SUB_AUTO
       : subSelect;
+
+  // The single write path for the crop, shared by the overlay, **Use detected**
+  // and **Clear crop**. The guard is the point: `cropTouched` decides whether
+  // `crop` is sent at all, the modal shows the *full frame* when no crop is set,
+  // and the endpoint maps a full-frame rect to `None` and writes `crop_* = NULL`
+  // to every video in the batch. So a spurious touch — a tab through a crop field
+  // with no typing, a drag that jitters back to where it started — wipes the
+  // batch's stored rects. A change that changes nothing marks nothing.
+  function applyCrop(r: CropRect | null) {
+    setCrop(r);
+    if (!sameRect(r, crop)) setCropTouched(true);
+  }
 
   async function handleSubmit() {
     setSubmitting(true);
@@ -364,7 +399,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                   frameW={frameW}
                   frameH={frameH}
                   rect={crop}
-                  onChange={(r) => { setCrop(r); setCropTouched(true); }}
+                  onChange={applyCrop}
                 />
               )}
 
@@ -372,7 +407,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 <button
                   className="btn ghost sm"
                   disabled={!probe?.crop}
-                  onClick={() => { if (probe?.crop) { setCrop(probe.crop); setCropTouched(true); } }}
+                  onClick={() => { if (probe?.crop) applyCrop(probe.crop); }}
                   title={probe?.crop ? "Apply the matte the probe detected" : "No letterbox matte was detected"}
                 >
                   Use detected
@@ -382,7 +417,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                     {Math.round((probe.crop_confidence ?? 0) * 100)}% of samples agreed
                   </span>
                 )}
-                <button className="btn ghost sm" onClick={() => { setCrop(null); setCropTouched(true); }} disabled={!crop}>
+                <button className="btn ghost sm" onClick={() => applyCrop(null)} disabled={!crop}>
                   Clear crop
                 </button>
               </div>
@@ -421,10 +456,25 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                   durationMs={durationMs}
                   startMs={trimStart}
                   endMs={trimEnd}
-                  onChange={(s, e) => { setTrimStart(s); setTrimEnd(e); setTrimTouched(true); }}
+                  // Same no-op guard as `applyCrop`: an arrow press already at 0
+                  // must not flip `trimTouched` and hand the previewed video's
+                  // trim to the whole batch.
+                  onChange={(s, e) => {
+                    setTrimStart(s);
+                    setTrimEnd(e);
+                    if (s !== trimStart || e !== trimEnd) setTrimTouched(true);
+                  }}
                   disabled={trimUnavailable}
                   disabledNote="This container will not seek, so trimming is unavailable"
                 />
+                {trimInvalid && (
+                  <p style={{ fontSize: 11.5, color: "var(--warn)", margin: "4px 0 0" }}>
+                    The trims saved on this video — {formatDuration(trimStart)} off the head and{" "}
+                    {formatDuration(trimEnd)} off the tail — cover its whole measured length of{" "}
+                    {formatDuration(durationMs)}, so there is nothing left to extract from.
+                    Extraction will be refused until one of them is reduced.
+                  </p>
+                )}
               </div>
 
               {probe && (
@@ -448,9 +498,11 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
               <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: "var(--fg-mute)" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
                   Frames per shot
-                  <input className="input" type="number" min={1} max={20} style={{ width: 56, fontSize: 12 }}
-                    value={framesPerShot}
-                    onChange={(e) => setFramesPerShot(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} />
+                  {/* `NumberField` throughout: clamping each keystroke rewrote
+                      the prefix, so `2048` typed into Long edge below came out
+                      as `8192`. The bounds live in the `clamp` prop. */}
+                  <NumberField className="input" min={1} max={20} style={{ width: 56, fontSize: 12 }}
+                    value={framesPerShot} clamp={intClamp(1, 20)} onCommit={setFramesPerShot} />
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
                   Pick
@@ -461,15 +513,13 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 5 }} title="How many frames are scored before one is chosen">
                   Candidates
-                  <input className="input" type="number" min={1} max={15} style={{ width: 52, fontSize: 12 }}
-                    value={candidates}
-                    onChange={(e) => setCandidates(Math.max(1, Math.min(15, Number(e.target.value) || 5)))} />
+                  <NumberField className="input" min={1} max={15} style={{ width: 52, fontSize: 12 }}
+                    value={candidates} clamp={intClamp(1, 15)} onCommit={setCandidates} />
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
                   Long edge
-                  <input className="input" type="number" min={64} max={8192} step={64} style={{ width: 68, fontSize: 12 }}
-                    value={longEdge}
-                    onChange={(e) => setLongEdge(Math.max(64, Math.min(8192, Number(e.target.value) || 1024)))} />
+                  <NumberField className="input" min={64} max={8192} step={64} style={{ width: 68, fontSize: 12 }}
+                    value={longEdge} clamp={intClamp(64, 8192)} onCommit={setLongEdge} />
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 5 }} title="Lower = more cuts detected">
                   Sensitivity
@@ -566,18 +616,18 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: "var(--fg-mute)", paddingTop: 6 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 5 }} title="Shots shorter than this are merged into their neighbour">
                     Min shot (ms)
-                    <input className="input" type="number" min={0} max={600000} step={100} style={{ width: 74, fontSize: 12 }}
-                      value={minShotMs} onChange={(e) => setMinShotMs(Math.max(0, Math.min(600000, Number(e.target.value) || 0)))} />
+                    <NumberField className="input" min={0} max={600000} step={100} style={{ width: 74, fontSize: 12 }}
+                      value={minShotMs} clamp={intClamp(0, 600000)} onCommit={setMinShotMs} />
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 5 }} title="Skip N frames between detector reads — faster, but short cuts are missed">
                     Frame skip
-                    <input className="input" type="number" min={0} max={10} style={{ width: 52, fontSize: 12 }}
-                      value={frameSkip} onChange={(e) => setFrameSkip(Math.max(0, Math.min(10, Number(e.target.value) || 0)))} />
+                    <NumberField className="input" min={0} max={10} style={{ width: 52, fontSize: 12 }}
+                      value={frameSkip} clamp={intClamp(0, 10)} onCommit={setFrameSkip} />
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 5 }} title="Detection stops once this many shots have been found">
                     Max shots
-                    <input className="input" type="number" min={1} max={50000} step={100} style={{ width: 74, fontSize: 12 }}
-                      value={maxShots} onChange={(e) => setMaxShots(Math.max(1, Math.min(50000, Number(e.target.value) || 5000)))} />
+                    <NumberField className="input" min={1} max={50000} step={100} style={{ width: 74, fontSize: 12 }}
+                      value={maxShots} clamp={intClamp(1, 50000)} onCommit={setMaxShots} />
                   </label>
                 </div>
               </details>

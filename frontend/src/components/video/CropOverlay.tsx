@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import NumberField from "../common/NumberField";
 import type { CropRect } from "../../types";
 
 interface Props {
@@ -195,15 +196,22 @@ export default function CropOverlay({ src, frameW, frameH, rect, onChange }: Pro
         {(["x", "y", "w", "h"] as const).map((field) => (
           <label key={field} style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ textTransform: "uppercase" }}>{field}</span>
-            <input
+            {/* `NumberField`, not a bare input: re-clamping each keystroke made
+                the documented keyboard path lie about what was typed — `800`
+                into W became `1600`, and the even-snap turned `150` into `250`.
+                `clampRect` is projected onto the one field so both props stay
+                honest about the cross-field bounds. Editing while `rect` is null
+                still creates a crop from the full frame — that is how this path
+                creates a rect; only the *no-typing* case changes. */}
+            <NumberField
               className="input"
-              type="number"
               step={2}
               min={0}
               aria-label={`Crop ${field}`}
               style={{ width: 66, fontSize: 11.5 }}
               value={active[field]}
-              onChange={(e) => onChange(clampRect({ ...active, [field]: Number(e.target.value) || 0 }))}
+              clamp={(n) => clampRect({ ...active, [field]: n })[field]}
+              onCommit={(n) => onChange(clampRect({ ...active, [field]: n }))}
             />
           </label>
         ))}

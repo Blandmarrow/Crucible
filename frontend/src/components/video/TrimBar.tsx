@@ -62,7 +62,17 @@ export default function TrimBar({ durationMs, startMs, endMs, onChange, disabled
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setDragging(handle);
-    move(handle, e.clientX);
+    // **No `move()` here.** The handlers sit on the handles only, so there is no
+    // jump-to-click affordance this would serve; all it did was snap the handle
+    // to wherever inside its 10 px hit box the press landed. That is not
+    // cosmetic: a plain click flipped the modal's `trimTouched`, which writes
+    // the previewed video's trim to *every* video in the batch, and it
+    // invalidated the probe query key, costing an 8-sample re-probe.
+    //
+    // `preventDefault` above suppresses the focus shift, so focus is taken
+    // explicitly — without it a mouse user cannot click a handle and then use
+    // the arrow keys, which is the whole keyboard path below.
+    (e.currentTarget as HTMLElement).focus();
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -105,7 +115,12 @@ export default function TrimBar({ durationMs, startMs, endMs, onChange, disabled
         <div
           style={{
             position: "absolute", top: 0, bottom: 0,
-            left: pct(startMs), width: `calc(${pct(endPos)} - ${pct(startMs)})`,
+            // Arithmetic, not `calc()`: a crossed trim (a stored pair against a
+            // duration since corrected downward) made that subtraction negative,
+            // which renders as the handles visibly overlapped with no fill at
+            // all. `pct` clamps to 0–100, so flooring the span at 0 gives a
+            // zero-width fill and `left` needs no ceiling of its own.
+            left: pct(startMs), width: pct(Math.max(0, endPos - startMs)),
             background: "var(--accent)", opacity: 0.28,
           }}
         />
@@ -125,9 +140,18 @@ export default function TrimBar({ durationMs, startMs, endMs, onChange, disabled
               onPointerUp={endDrag}
               onPointerCancel={endDrag}
               onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                // Handled keys only, so Tab still moves focus. Without this the
+                // arrows scroll the modal body out from under the control being
+                // adjusted.
+                e.preventDefault();
                 const step = e.shiftKey ? 5000 : 500;
                 if (e.key === "ArrowLeft") onChange(Math.max(0, startMs - step), endMs);
-                if (e.key === "ArrowRight") onChange(Math.min(endPos - MIN_SPAN_MS, startMs + step), endMs);
+                // `Math.max(0, …)` for the same reason the pointer path has it:
+                // a clip whose remaining span is under `MIN_SPAN_MS` otherwise
+                // takes one press to a negative `trimStart`, which the endpoint
+                // rejects as a raw 422 on its `ge=0`.
+                else onChange(Math.max(0, Math.min(endPos - MIN_SPAN_MS, startMs + step)), endMs);
               }}
               style={{ ...handleStyle, left: pct(startMs) }}
             />
@@ -145,9 +169,13 @@ export default function TrimBar({ durationMs, startMs, endMs, onChange, disabled
               onPointerUp={endDrag}
               onPointerCancel={endDrag}
               onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
                 const step = e.shiftKey ? 5000 : 500;
-                if (e.key === "ArrowLeft") onChange(startMs, Math.min(duration - startMs - MIN_SPAN_MS, endMs + step));
-                if (e.key === "ArrowRight") onChange(startMs, Math.max(0, endMs - step));
+                // Same floor on this handle's *grow* direction — the tail trim
+                // is a length, so it is just as negatable as the head's.
+                if (e.key === "ArrowLeft") onChange(startMs, Math.max(0, Math.min(duration - startMs - MIN_SPAN_MS, endMs + step)));
+                else onChange(startMs, Math.max(0, endMs - step));
               }}
               style={{ ...handleStyle, left: pct(endPos) }}
             />

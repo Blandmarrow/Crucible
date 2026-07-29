@@ -101,3 +101,44 @@ def test_stats_and_score_values_carry_luminance(tmp_path):
             assert r.json()["luminance_score"] == [0.05]
 
     run(scenario())
+
+
+def test_a_null_brightness_is_absent_from_the_histogram_and_the_filter(tmp_path):
+    """The wiring V-35 depends on. An image the technical scorer could not read
+    records NULL rather than 0.0, so it must be *absent* from the distribution
+    rather than counted in the darkest bucket — the bucket it never belonged in
+    when the failure path wrote zeros."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            from backend.models import Image
+
+            ds = await env.create_dataset("d")
+            scored = await upload_image(env, ds["id"], "a.png", png_bytes())
+            unread = await upload_image(env, ds["id"], "b.png", png_bytes((90, 90, 90)))
+
+            async with env.Session() as db:
+                (await db.get(Image, scored["id"])).luminance_score = 0.05
+                (await db.get(Image, unread["id"])).luminance_score = None
+                await db.commit()
+
+            r = await env.client.get(f"{API}/datasets/{ds['id']}/stats")
+            assert r.json()["luminance_distribution"] == {"<0.15": 1}
+
+            r = await env.client.get(f"{API}/datasets/{ds['id']}/score-values")
+            assert r.json()["luminance_score"] == [0.05]
+
+            # `score_coverage["technical"]` counts blur_score, so an unread file
+            # reads as unscored rather than inflating coverage.
+            async with env.Session() as db:
+                (await db.get(Image, scored["id"])).blur_score = 120.0
+                await db.commit()
+            r = await env.client.get(f"{API}/datasets/{ds['id']}/stats")
+            assert r.json()["score_coverage"]["technical"] == 1
+
+            r = await env.client.get(
+                f"{API}/images/",
+                params={"dataset_id": ds["id"], "score_field": "luminance_score", "min_score": 0.0},
+            )
+            assert [i["id"] for i in r.json()] == [scored["id"]]
+
+    run(scenario())

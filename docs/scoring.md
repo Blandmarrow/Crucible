@@ -45,6 +45,11 @@ dataset as fully scored, because coverage is counted on blur alone. Brightness i
 current case: it arrived with video frame extraction, so anything scored before that
 needs a Technical re-run. The Statistics panel says as much in place of a bare "No data".
 
+An image whose file cannot be read — corrupt, truncated, or a format the decoder does
+not handle — records **no** technical scores rather than zeros. It appears as unscored,
+which is what it is; previously it was stored as a pitch-black, perfectly uniform,
+out-of-focus image and counted toward the dataset's technical coverage.
+
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
 compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it.

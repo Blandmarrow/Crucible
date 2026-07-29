@@ -18,6 +18,29 @@ UNIFORMITY_THRESHOLD = 12.0  # grayscale std dev below this = near-uniform
 POPCNT = np.array([bin(x).count("1") for x in range(256)], dtype=np.uint8)
 
 
+def _unmeasured() -> dict:
+    """What a file that could not be scored records: nothing.
+
+    Every score NULL, every flag False. A zero is a *measurement*, and the six
+    score columns are nullable precisely so "not measured" has its own value —
+    writing 0.0 said the image is pitch black, perfectly uniform, fully
+    desaturated and (via `is_blurry`) out of focus, on a file no decoder ever
+    read. That put it in the `<0.15` brightness bucket it never belonged in and
+    counted it toward `score_coverage["technical"]`, which keys on
+    `blur_score` being non-null.
+
+    The three booleans are False in both failure branches. `routers/quality.py`
+    folds them into a JSON flags dict via `t.get(..., False)`, so None is not
+    expressible there anyway — and claiming `is_blurry` from a measurement that
+    was never taken is the same defect in a different column.
+    """
+    return {
+        "blur_score": None, "noise_score": None, "is_blurry": False, "is_noisy": False,
+        "uniformity_score": None, "is_uniform": False,
+        "color_score": None, "saturation_score": None, "luminance_score": None,
+    }
+
+
 def score_technical_sync(
     image_path: str,
     blur_threshold: float = BLUR_THRESHOLD,
@@ -32,11 +55,8 @@ def score_technical_sync(
 
     img_cv = cv2.imread(image_path)
     if img_cv is None:
-        return {
-            "blur_score": 0.0, "noise_score": 0.0, "is_blurry": True, "is_noisy": False,
-            "uniformity_score": 0.0, "is_uniform": True,
-            "color_score": 0.0, "saturation_score": 0.0, "luminance_score": 0.0,
-        }
+        logger.warning("technical: could not read %s — recording no scores", image_path)
+        return _unmeasured()
 
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
 
@@ -103,11 +123,8 @@ async def score_images_technical(
             fn = functools.partial(score_technical_sync, path, blur_threshold, noise_threshold, uniformity_threshold)
             scores = await loop.run_in_executor(None, fn)
         except Exception:
-            scores = {
-                "blur_score": 0.0, "noise_score": 0.0, "is_blurry": False, "is_noisy": False,
-                "uniformity_score": 0.0, "is_uniform": False,
-                "color_score": 0.0, "saturation_score": 0.0, "luminance_score": 0.0,
-            }
+            logger.warning("technical: scoring failed for %s", path, exc_info=True)
+            scores = _unmeasured()
         results.append(scores)
 
         if job_id and i % 10 == 0:

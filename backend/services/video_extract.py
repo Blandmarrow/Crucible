@@ -854,9 +854,17 @@ def render_at_timestamps(
         target = float(timestamps[i])
         out_path, thumb_path = dests[i]
         frame = None
-        for _ts, candidate in read_positions(path, [target], deinterlace=deinterlace):
-            frame = candidate
-            break
+        # `closing`, per this module's own rule at `_read_positions_ffmpeg`: a
+        # `break` out of the generator without a `close()` orphans whatever it
+        # owns — a VideoCapture, or an ffmpeg subprocess on the bwdif path — and
+        # this loop breaks on its first item, once per written frame. Refcounting
+        # happens to collect it on CPython; that is not something to rely on.
+        with contextlib.closing(
+            read_positions(path, [target], deinterlace=deinterlace)
+        ) as reader:
+            for _ts, candidate in reader:
+                frame = candidate
+                break
         if frame is None:
             result.failed += 1
             continue
@@ -919,15 +927,18 @@ def render_shot(
         lumas: list[float] = []
         degenerate: list[bool] = []
         stamps: list[float] = []
-        for ts, frame in read_positions(path, positions, deinterlace=deinterlace):
-            try:
-                lum_mean = float(vf._luma(frame).mean())
-                scores.append(vf.sharpness(frame))
-                lumas.append(lum_mean)
-                degenerate.append(vf.is_degenerate(frame))
-                stamps.append(ts)
-            finally:
-                del frame
+        with contextlib.closing(
+            read_positions(path, positions, deinterlace=deinterlace)
+        ) as reader:
+            for ts, frame in reader:
+                try:
+                    lum_mean = float(vf._luma(frame).mean())
+                    scores.append(vf.sharpness(frame))
+                    lumas.append(lum_mean)
+                    degenerate.append(vf.is_degenerate(frame))
+                    stamps.append(ts)
+                finally:
+                    del frame
         if not scores:
             result.failed += 1
             continue
@@ -937,9 +948,12 @@ def render_shot(
 
         # Pass 2: re-fetch the winner alone.
         frame = None
-        for _ts, candidate in read_positions(path, [chosen_ts], deinterlace=deinterlace):
-            frame = candidate
-            break
+        with contextlib.closing(
+            read_positions(path, [chosen_ts], deinterlace=deinterlace)
+        ) as reader:
+            for _ts, candidate in reader:
+                frame = candidate
+                break
         if frame is None:
             result.failed += 1
             continue

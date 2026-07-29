@@ -469,7 +469,8 @@ def subsume_tags(tags: list[str]) -> list[str]:
     Exact case-insensitive duplicates collapse to the first occurrence. Order-stable:
     survivors keep their first-seen order. Matching is case-insensitive and whole-word
     (so "car" does not subsume "scar" or "carpet"). Used by captioning post-processing
-    and the bulk dedupe operation so the rule never diverges.
+    and the bulk dedupe operation so the rule never diverges — never reimplement it.
+    See docs/dev/tag-consolidation.md.
     """
     seen: set[str] = set()
     deduped: list[str] = []

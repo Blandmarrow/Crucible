@@ -141,7 +141,7 @@ labels carry the numbers (*Add to `{last}`* / *New subfolder* / *Replace (delete
 frames)*, the last styled destructively, and reading *"deletes each video's previous
 frames"* for a batch, where one number would be wrong). `capabilities.shot_detection ===
 false` shows a standing warning that frames will be sampled at fixed intervals — the
-uniform-fallback disclosure is a user-facing contract (`docs/dev/video-extract.md`), and the
+uniform-fallback disclosure is a user-facing contract (`docs/dev/video-shots.md`), and the
 job announces it over SSE too. The *Add to…* label is batch-aware: `framesSummary` is the
 primary's history while the router resolves `previous` per video, so a batch names no folder.
 

@@ -3,7 +3,8 @@
 Covers the `Video` model, the `videos/` storage layout and its poster-stem rules, the three
 ingest paths that create a video, and the `/videos` endpoints. The cv2 decode surface itself
 — the metadata probe, the duration search and poster generation — is in
-`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-extract.md` (pass 1) and
+`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-shots.md` and
+`docs/dev/video-extract.md` (pass 1) and
 `docs/dev/video-reextract.md` (pass 2), and every screen that shows a video is in
 `docs/dev/video-ui.md`. The arc's roadmap was retired into these files when pass 2 landed,
 the same way the detection arc's was.
@@ -256,7 +257,7 @@ classes, the poster move, the busy 409). `test_http_smoke_crud.py` covers
 `/filesystem/preview` for both media kinds, and `test_http_smoke_jobs.py` pins the image
 side of the same stem-collision rule.
 
-Extraction (`docs/dev/video-extract.md`) adds four more.
+Extraction (`docs/dev/video-shots.md`, `docs/dev/video-extract.md`) adds four more.
 `test_video_frames.py` is pure numpy and needs no fixture at all — cropdetect, combing,
 telecine, sharpness, candidate rejection, all documented in `docs/dev/video-heuristics.md`. `test_video_extract.py` is service level, with
 `scenedetect` skipped rather than required, and covers `measure_duration_ms` (including a

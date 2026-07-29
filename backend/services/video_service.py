@@ -4,7 +4,7 @@ Division of labour for the video arc: **OpenCV** reads headers, measures
 durations and samples frames; the ffmpeg binary runs `bwdif` deinterlacing,
 which OpenCV cannot express, and nothing else. Cropping is a numpy slice on an
 already-decoded frame, so the progressive path never spawns a subprocess. See
-`backend/services/video_extract.py` and `docs/dev/video-extract.md`.
+`backend/services/video_extract.py` and `docs/dev/video-shots.md`.
 
 This module is the ingest entry point (`probe_video`, header-only, no decode
 pass), the duration search (`measure_duration_ms`, seeks rather than decodes)

@@ -4,7 +4,7 @@ The `services/video_service.py` decode surface. Three things live here: `probe_v
 which reads a container header for dimensions, fps, codec and duration;
 `measure_duration_ms`, which finds a real duration by seeking when the header has none; and
 `generate_poster`, which cuts the single WebP frame every video card and detail view shows.
-Frame extraction is a separate pair of modules — see `docs/dev/video-extract.md` for the
+Frame extraction is a separate pair of modules — see `docs/dev/video-shots.md` for the
 pipeline and `docs/dev/video-heuristics.md` for the numpy judgement calls it uses. The
 `Video` model, the `videos/` storage layout, the poster-stem collision rules, ingest, the
 `/videos` endpoints and the frontend surfaces stay in `docs/dev/video.md`; tests for all of

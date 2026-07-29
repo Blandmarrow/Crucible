@@ -6,14 +6,15 @@ All of it lives in `services/video_frames.py` and is **pure numpy** — an `ndar
 number or a rect out, no decoder — which is why it gets its own module and its own file here.
 That is the whole point of the boundary: every rule below is testable in milliseconds against
 synthetic arrays (`test_video_frames.py`), which is the only way heuristics like these get
-tested at all. Everything that needs cv2, PySceneDetect or ffmpeg — sampling, shot detection,
-rendering, the endpoints and the job — is in `docs/dev/video-extract.md`.
+tested at all. Everything that needs cv2, PySceneDetect or ffmpeg — sampling, shot detection
+and rendering — is in `docs/dev/video-shots.md`, and the endpoints and job that drive it are
+in `docs/dev/video-extract.md`.
 
 A crop rect is `(x, y, w, h)`, matching the `Video.crop_*` column order — note that
 PySceneDetect's `SceneManager.crop` is *inclusive corners* `(x0, y0, x1, y1)` instead, and
 `video_extract` converts at that boundary. `clamp_crop` is the single source of truth for the
 even-snap and the no-op rule, and it is called twice on the way to a pixel: once against the
-header dimensions, once per frame against `frame.shape` — see `docs/dev/video-extract.md`
+header dimensions, once per frame against `frame.shape` — see `docs/dev/video-shots.md`
 § Rendering a shot.
 
 **Cropdetect.** `edge_profiles` takes the **95th percentile** luma per row and per column,

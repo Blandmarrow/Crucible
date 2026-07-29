@@ -18,7 +18,7 @@ promised extraction would join the probe and the poster there; it should not. Th
 judgement calls live in `video_frames.py` and need no video at all, this module
 needs mp4 fixtures and an optional dependency, and `video_service` is already
 covered by its own tests. One module would make the fast tests hostage to the
-slow ones. See `docs/dev/video-extract.md`.
+slow ones. See `docs/dev/video-shots.md`.
 
 **RSS discipline** runs through every loop below. A decoded 4K frame is 24.9 MB;
 twelve are ~300 MB. Nothing here ever builds a `list[np.ndarray]` and maps over

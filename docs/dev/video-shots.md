@@ -37,12 +37,22 @@ reason the probe and the poster do — see `docs/dev/video-decode.md` § Contain
 § Endpoints). Sample positions are inset by half a step from both ends of the trimmed span,
 because frame 0 is very often a black leader and the final frame very often a fade.
 
-**Peak RSS is the load-bearing detail.** A decoded 4K frame is 24.9 MB; twelve are ~300 MB.
-Everything a frame contributes — its two edge profiles, its combing ratio, its encoded
-preview — is extracted **inside** the iteration and the array released before the next seek,
-so peak is one frame plus a few hundred KB of strings. Never build a `list[np.ndarray]` and
-map over it afterwards. Same failure class as CLAUDE.md's "close PIL Images after
-preprocessing".
+**Peak RSS is the load-bearing detail.** A decoded 4K frame is 24.9 MB and its float32 luma
+plane another 33 MB; twelve frames are ~300 MB. Everything a frame contributes — its two
+edge profiles, its combing ratio, its encoded preview — is extracted **inside** the
+iteration and both arrays released before the next seek, so peak is one frame, one plane and
+a few hundred KB of strings. The plane is computed **once** per sample with `vf.luma` and
+passed to both analyses rather than recomputed inside each, and the `finally` that drops the
+frame drops it too. Never build a `list[np.ndarray]` and map over it afterwards. Same
+failure class as CLAUDE.md's "close PIL Images after preprocessing".
+
+**A probe costs seconds, not milliseconds.** The "~7.5 ms per seek-and-decode" this was
+once costed at holds only for a light codec: measured, a seek on 10-bit HEVC is ~300 ms —
+the codec dominates, not the resolution — and the numpy analysis of one sample is ~40 ms at
+1080p, ~0.2 s at 4K, three quarters of it the `edge_profiles` percentiles. End to end, a
+twelve-sample probe of a 1080p HEVC source is **4.4 s**: ~3.7 s decode, ~0.5 s analysis.
+That is the real margin `PROBE_TIMEOUT_SECONDS` (25.0, in `routers/videos.py`) has — about
+6×, not the 200× the old arithmetic implied.
 
 **Cropdetect and combing run on the full-resolution frame; only the preview is downscaled.**
 Resampling averages adjacent rows together, which is precisely the field structure
@@ -155,7 +165,14 @@ alternative holds every candidate in memory — five 4K frames is 125 MB, and bo
 `frames_per_shot` and `candidates` are user-settable — and cannot be short-circuited,
 because `pick_index`'s luma-outlier rejection is defined against the median of the whole
 candidate set (`docs/dev/video-heuristics.md`) and so can change the winner retroactively.
-A second seek-and-decode costs about 7.5 ms.
+The second pass is one extra seek-and-decode for the whole window (~7.5 ms on a light codec,
+~300 ms on 10-bit HEVC) against the ~90 ms of numpy *every* candidate costs at 4K, so it is
+cheap either way. Pass 1 computes each candidate's luma plane once with `vf.luma` and hands
+it to all three of `mean` / `sharpness` / `is_degenerate`; letting each recompute it cost
+308 ms and 166 MB per candidate instead of 89 ms and 66 MB. Measured on a real 1080p HEVC
+source, three frames at five candidates went 2.42 s → 1.64 s, byte-identical output. The
+four per-candidate lists must stay index-aligned — `pick_index` is given
+`scores`/`lumas`/`degenerate` positionally.
 
 The crop → resize → save → thumbnail tail is **`_write_frame`**, shared with pass 2 so the
 two cannot drift on format or quality. The crop is clamped there against `frame.shape`,

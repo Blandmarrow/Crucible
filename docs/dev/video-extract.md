@@ -15,10 +15,11 @@ a shot or picks a frame.
 
 ## The endpoints
 
-`POST /videos/{id}/probe` is a **plain request, not a job**. A seek-and-decode measures at
-~7.5 ms, so twelve samples is a request-path cost, and a job would add a row, an SSE
-subscription and a re-attach path to something that finishes before the modal has finished
-animating. It runs `probe_samples` through `run_in_executor` inside an
+`POST /videos/{id}/probe` is a **plain request, not a job**. A twelve-sample probe measures
+at 4.4 s on a 1080p HEVC source — decode-dominated, and *not* the ~7.5 ms per seek this was
+once costed at (`docs/dev/video-shots.md` § Probe sampling) — so it is a few seconds of
+request-path cost, and a job would add a row, an SSE subscription and a re-attach path to
+something the user is already waiting on with the modal open. It runs `probe_samples` through `run_in_executor` inside an
 `asyncio.wait_for(25 s)` → 504.
 
 That `wait_for` is legitimate, unlike the one CLAUDE.md forbids around a stdlib `re` match:

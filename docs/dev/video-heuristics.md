@@ -77,6 +77,19 @@ into a fixed grid first removes the per-pixel component and leaves real edges, a
 scores comparable between a 4K source and a 480p one. `test_video_frames.py` pins the
 ordering with pure Gaussian noise; deleting that line fails a test.
 
+**One luma plane per frame.** `luma()` is public and every consumer here —
+`edge_profiles`, `combing_ratio`, `sharpness`, `is_degenerate` — takes *either* a BGR frame
+or a plane `luma()` already returned, because a 2-D input is handed straight back without a
+copy. The callers in `video_extract.py` compute it once and pass the plane, which is the
+whole of the fix: on a 4K frame, a candidate's `mean` + `sharpness` + `is_degenerate` went
+from 308 ms and 166 MB peak to **89 ms and 66 MB**, and a probe sample's `edge_profiles` +
+`combing_ratio` from 326 ms to 206 ms. The no-copy passthrough is only safe because nothing
+here mutates the plane — treat it as read-only. The `np.einsum` form of the Rec.601 sum
+exists for the same reason: it is bit-identical to `0.114*b + 0.587*g + 0.299*r` (same
+summation order) but does not materialise three full-size float32 temporaries, so `luma()`
+alone went 81 ms / 166 MB → 40 ms / 33 MB. No verdict changed; `test_video_frames.py`
+§ The luma plane holds the equivalence tests that keep it that way.
+
 **`pick_index` rejects before it ranks.** First anything `is_degenerate` flagged (mean luma
 under 8 or over 247, or standard deviation under 3 — black and white flashes, fades, flat
 slates; a slate is often the *sharpest* thing in a shot, so without this the policy actively

@@ -693,6 +693,111 @@ def test_extract_404s_when_no_video_matches(tmp_path):
     run(scenario())
 
 
+def test_an_id_that_no_longer_resolves_is_reported_not_fatal(tmp_path):
+    """One deleted video in a fifty-video batch must not cost the other
+    forty-nine their run — the re-extract resolver's contract, mirrored here. The
+    404 above still covers "nothing at all resolved", where there is no run to
+    report on."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            r = await _extract(env, [video["id"], "missing"])
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert [j["video_id"] for j in body["jobs"]] == [video["id"]]
+            assert body["skipped"] == [
+                {"video_id": "missing", "filename": "", "reason": "no longer exists"}
+            ]
+
+            for job in body["jobs"]:
+                await wait_for_job(env, job["job_id"], timeout=120)
+
+    run(scenario())
+
+
+def test_trims_that_leave_no_window_are_refused_and_stored_nowhere(tmp_path):
+    """The stored trim is sticky — it is replayed by every later extraction and
+    read by `generate_poster` too — so a pair covering the whole duration has to
+    be a 400 at the endpoint. Committed, it collapses detection to one zero-width
+    window, every render fails, and the breaker reports it as a decode fault."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            async with env.Session() as db:
+                duration = (await db.get(Video, video["id"])).duration_ms
+            assert duration, "the fixture must have a known duration for this"
+
+            r = await _extract(env, [video["id"]], trim_start_ms=duration, trim_end_ms=0)
+            assert r.status_code == 400, r.text
+            assert "clip.mp4" in r.json()["detail"]
+
+            # Split across the two fields — the gate is on their sum.
+            r = await _extract(
+                env, [video["id"]],
+                trim_start_ms=duration // 2 + 1, trim_end_ms=duration // 2 + 1,
+            )
+            assert r.status_code == 400, r.text
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                assert (row.trim_start_ms, row.trim_end_ms) == (0, 0)
+
+            async with env.Session() as db:
+                assert (await db.execute(select(BackgroundJob))).scalars().all() == []
+
+    run(scenario())
+
+
+def test_a_stored_trim_is_gated_even_when_the_body_omits_it(tmp_path):
+    """The *effective* value, following the deinterlace gate's precedent: the row
+    carries the trim the job will replay, so a request that omits the field is
+    still governed by it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                row.trim_start_ms = row.duration_ms
+                await db.commit()
+
+            r = await _extract(env, [video["id"]])
+            assert r.status_code == 400, r.text
+            assert "clip.mp4" in r.json()["detail"]
+
+    run(scenario())
+
+
+def test_an_absurd_trim_is_a_422_not_an_overflowing_500(tmp_path):
+    """`10**30` is a valid `ge=0` int and reaches `commit()`, where SQLite raises
+    `OverflowError: Python int too large to convert to SQLite INTEGER` — an
+    unhandled 500. `TRIM_MAX_MS` is the bound; both fields and both schemas carry
+    it, so the probe endpoint is checked here as well."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            for field in ("trim_start_ms", "trim_end_ms"):
+                r = await _extract(env, [video["id"]], **{field: 10 ** 30})
+                assert r.status_code == 422, (field, r.text)
+                r = await env.client.post(
+                    f"{API}/videos/{video['id']}/probe", json={field: 10 ** 30}
+                )
+                assert r.status_code == 422, (field, r.text)
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                assert (row.trim_start_ms, row.trim_end_ms) == (0, 0)
+
+    run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Subfolder modes
 # ---------------------------------------------------------------------------
@@ -829,6 +934,67 @@ def test_replace_removes_the_previous_frames_rows_files_and_thumbnails(tmp_path)
                 i.filename for i in sorted(after, key=lambda x: x.filename)
             ]
             assert len(list(thumbs_dir.glob("*.webp"))) == 3
+
+    run(scenario())
+
+
+def test_the_replace_delete_is_chunked(tmp_path, monkeypatch):
+    """The one unbounded `IN (...)` this file used to hold. A triage subfolder is
+    exactly where an id list runs past SQLite's `SQLITE_MAX_VARIABLE_NUMBER` and
+    the delete dies with `OperationalError: too many SQL variables`.
+
+    The call is pinned rather than the crash: the limit is a compile-time option,
+    and the Debian SQLite these tests run on is built with a far higher one, so no
+    id list this suite could build would ever reach it. The spy returns one id per
+    chunk, which also proves the caller loops rather than using `chunked` for show.
+    """
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            await _extract_and_wait(env, [video["id"]])
+            async with env.Session() as db:
+                before = (await db.execute(select(Image))).scalars().all()
+            old_ids = {i.id for i in before}
+            old_files = [Path(i.file_path) for i in before]
+            old_thumbs = [Path(i.thumbnail_path) for i in before]
+            images_dir = old_files[0].parent
+            thumbs_dir = old_thumbs[0].parent
+            assert len(old_ids) == 3
+
+            calls: list[list[str]] = []
+
+            def spy(seq, size=10_000):
+                items = list(seq)
+                calls.append(items)
+                return [[item] for item in items]
+
+            monkeypatch.setattr(videos_router, "chunked", spy)
+            _body, jobs = await _extract_and_wait(env, [video["id"]], mode="replace")
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["replaced"] == 3
+
+            assert calls, "the delete did not go through chunked"
+            assert set(calls[0]) == old_ids
+
+            # And a chunked delete is still a complete one: every row went, and
+            # nothing accumulated on disk. Counting the directories is what proves
+            # it — the replacements deliberately reuse the same filenames, since
+            # the delete runs first and the uniquifier then sees them free, so the
+            # old paths existing says nothing. `_001` suffixes here, or six files,
+            # would mean a chunk was skipped.
+            async with env.Session() as db:
+                after = (await db.execute(select(Image))).scalars().all()
+            assert {i.id for i in after}.isdisjoint(old_ids)
+            assert sorted(p.name for p in images_dir.glob("*.jpg")) == sorted(
+                p.name for p in old_files
+            )
+            assert sorted(p.name for p in thumbs_dir.glob("*.webp")) == sorted(
+                p.name for p in old_thumbs
+            )
 
     run(scenario())
 
@@ -1020,6 +1186,79 @@ def test_a_frame_whose_info_cannot_be_read_is_dropped_not_stored(tmp_path):
                 images = (await db.execute(select(Image))).scalars().all()
             assert len(images) == 2
             assert all(i.width and i.height for i in images)
+
+    run(scenario())
+
+
+def test_the_failure_breaker_counts_shots_not_frames(tmp_path, monkeypatch):
+    """The breaker's sensitivity must not depend on a user-facing tuning knob.
+
+    Counted in frames, one exception from `render_shot` added `frames_per_shot` at
+    once, so any legal `frames_per_shot >= 10` tripped the ten-failure threshold on
+    the very first shot and ended a twenty-minute job over one transient failure.
+    Counted in shots, ten shots have to write nothing — which is what the render
+    call count pins here.
+    """
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            # More shots than the breaker's threshold and fewer than the rate
+            # breaker's 20, so only the consecutive rule can be what fires.
+            shots = [
+                video_extract.Shot(index=i, start_ms=i * 100, end_ms=i * 100 + 50)
+                for i in range(12)
+            ]
+
+            def fake_detect(*_args, **_kwargs):
+                return shots, "adaptive"
+
+            calls = {"n": 0}
+
+            def always_fails(*_args, **_kwargs):
+                calls["n"] += 1
+                raise RuntimeError("this shot will not decode")
+
+            monkeypatch.setattr(video_extract, "detect_shots", fake_detect)
+            monkeypatch.setattr(video_extract, "render_shot", always_fails)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], frames_per_shot=10)
+            assert jobs[0]["status"] == "failed", jobs
+            assert "failed to decode" in (jobs[0]["error_msg"] or "")
+            assert calls["n"] == videos_router.EXTRACT_MAX_CONSECUTIVE_FAILURES, calls
+
+    run(scenario())
+
+
+def test_a_zero_width_fallback_shot_writes_one_frame_not_n_identical_ones(tmp_path, monkeypatch):
+    """`detect_shots`' no-duration fallback is a single zero-width window, so every
+    pick inside it resolves to the same candidate position. Left alone,
+    `frames_per_shot > 1` writes byte-identical files carrying identical
+    `source_timestamp_ms` and `source_shot_index` — a synthetic duplicate cluster
+    for the user to dedup by hand."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            def fake_detect(*_args, **_kwargs):
+                return [video_extract.Shot(index=0, start_ms=0, end_ms=0)], "uniform"
+
+            monkeypatch.setattr(video_extract, "detect_shots", fake_detect)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], frames_per_shot=3)
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["written"] == 1, jobs[0]["result_data"]
+            # The clamp lands before the totals are derived, so the bar is not
+            # sized for two frames that will never arrive.
+            assert jobs[0]["total_items"] == 1
+
+            async with env.Session() as db:
+                images = (await db.execute(select(Image))).scalars().all()
+            assert len(images) == 1
 
     run(scenario())
 
@@ -1241,7 +1480,11 @@ def test_lineage_is_visible_from_the_frame_side(tmp_path):
 def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
     """A batch runs one job per video, so a frontend holding every event in one
     store cannot route a payload without this key. Asserted across the whole run
-    rather than on `_emit` in isolation — the risk is a call site that forgot."""
+    rather than on `_emit` in isolation — the risk is a call site that forgot.
+
+    Two runs, the second in replace mode, so the `replacing` phase is covered as
+    well: it is a phase that emits, and it was the one that omitted `done`/`total`.
+    """
     async def scenario():
         from backend.workers.progress import broadcaster
 
@@ -1260,6 +1503,8 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
 
             _body, jobs = await _extract_and_wait(env, [video["id"]])
             assert [j["status"] for j in jobs] == ["completed"], jobs
+            _body2, jobs2 = await _extract_and_wait(env, [video["id"]], mode="replace")
+            assert [j["status"] for j in jobs2] == ["completed"], jobs2
 
             # `phase` is what distinguishes the job's own payloads from the
             # queue's generic lifecycle events (pending/running/completed), which
@@ -1271,7 +1516,7 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
             ]
             assert progress, seen
             assert all(p.get("video_id") == video["id"] for p in progress), progress
-            assert {p["phase"] for p in progress} >= {"detecting", "extracting"}
+            assert {p["phase"] for p in progress} >= {"detecting", "replacing", "extracting"}
 
             # One meaning for the whole job: `done` counts frames a gallery
             # refetch would actually see. Detection writes none, so it must not
@@ -1280,8 +1525,19 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
             # an invariant rather than on the field names, because the defect
             # this guards was two phases each counting something different.
             assert not [p for p in progress if p["phase"] == "detecting" and p.get("done")], progress
-            counts = [p["done"] for p in progress if "done" in p]
-            assert counts == sorted(counts), progress
+            assert not [p for p in progress if p["phase"] == "replacing" and p.get("done")], progress
+            # No phase may *omit* either key either. The merge is by job id, so an
+            # absent `done` silently inherits whatever the client last held —
+            # which, mid-replace, is the previous run's final frame count.
+            assert all("done" in p and "total" in p for p in progress), progress
+
+            by_job: dict[str, list[dict]] = {}
+            for p in progress:
+                by_job.setdefault(p["job_id"], []).append(p)
+            assert len(by_job) == 2, by_job
+            for payloads in by_job.values():
+                counts = [p["done"] for p in payloads]
+                assert counts == sorted(counts), payloads
             assert all(
                 p["done"] <= p["total"] for p in progress if p["phase"] == "extracting"
             ), progress

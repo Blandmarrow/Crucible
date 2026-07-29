@@ -186,6 +186,91 @@ def test_preview_names_every_skip_reason_and_agrees_with_the_enqueue(tmp_path):
     run(scenario())
 
 
+def test_an_unknown_video_id_is_a_404_on_both_endpoints(tmp_path):
+    """An empty result means "this video has no eligible frames" — a real answer
+    the modal renders. Returning it for a video that does not exist makes the two
+    indistinguishable. Both endpoints, because they share one resolver."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await env.create_dataset("d")
+            for call in (_preview, _reextract):
+                r = await call(env, video_id="nope")
+                assert r.status_code == 404, r.text
+
+    run(scenario())
+
+
+def test_the_video_scope_refuses_more_frames_than_one_run_may_cover(tmp_path, monkeypatch):
+    """The `image_ids` scope is bounded by the schema's `max_length`; this one
+    resolves its ids from the DB and needs the same ceiling applied server-side.
+    It bounds the `BackgroundJob.config` id blob, the job's `select(Image)` entity
+    load and the preview's `skipped` array at once.
+
+    The cap is monkeypatched rather than approached with 5001 real frames — that
+    would be a minutes-long test of pass 1, not of this bound."""
+    async def scenario():
+        from backend.routers import videos as videos_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video, frames = await _triage(env, ds["id"], long_edge=160)
+            assert len(frames) == 3
+
+            monkeypatch.setattr(videos_router, "REEXTRACT_MAX_FRAMES", 2)
+            for call in (_preview, _reextract):
+                r = await call(env, video_id=video["id"])
+                assert r.status_code == 400, r.text
+                assert "3 frames" in r.json()["detail"]
+                assert "subfolder" in r.json()["detail"]
+
+            async with env.Session() as db:
+                jobs = (await db.execute(
+                    select(BackgroundJob).where(BackgroundJob.job_type == "video_reextract")
+                )).scalars().all()
+            assert jobs == []
+
+            # And the narrower scope the message points at still works.
+            r = await env.client.post(
+                f"{API}/images/batch/move-subfolder",
+                json={"image_ids": [frames[0].id], "subfolder": "narrow"},
+            )
+            assert r.status_code == 200, r.text
+            r = await _preview(env, video_id=video["id"], subfolder="narrow")
+            assert r.status_code == 200, r.text
+            assert r.json()["eligible"] == 1
+
+    run(scenario())
+
+
+def test_a_duplicated_image_id_is_counted_once(tmp_path):
+    """The `IN` query collapses duplicates on its own, so an id sent twice used to
+    report `eligible=2` against one row: a phantom entry in the job config, a
+    phantom skip, and a progress bar that topped out at 1 / 2."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _video, frames = await _triage(env, ds["id"], long_edge=160)
+            target = frames[0]
+
+            preview = (await _preview(env, image_ids=[target.id, target.id])).json()
+            assert preview["eligible"] == 1
+            assert preview["total"] == 1
+            assert preview["skipped"] == []
+            assert [g["frames"] for g in preview["groups"]] == [1]
+
+            payload, jobs = await _reextract_and_wait(
+                env, image_ids=[target.id, target.id]
+            )
+            assert [j["status"] for j in jobs] == ["completed"], jobs
+            assert payload["eligible"] == 1
+            assert payload["total"] == 1
+            assert jobs[0]["total_items"] == 1
+            assert jobs[0]["result_data"]["rewritten"] == 1
+            assert jobs[0]["result_data"]["skipped"] == 0
+
+    run(scenario())
+
+
 def test_a_missing_source_video_file_is_reported_not_attempted(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

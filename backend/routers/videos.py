@@ -18,6 +18,7 @@ from backend.licenses import copy_provenance, resolve_provenance
 from backend.media_types import codec_label, video_mime
 from backend.models import BackgroundJob, Dataset, Image, Video
 from backend.schemas.video import (
+    REEXTRACT_MAX_FRAMES,
     CropRect,
     RenameVideoRequest,
     VideoExtractJob,
@@ -347,7 +348,10 @@ FRAME_SIZE_ESTIMATE_BYTES = 300_000
 EXTRACT_COMMIT_EVERY = 25
 EXTRACT_DISK_RECHECK_EVERY = 100
 # Circuit breaker. A file that decoded well enough to poster can still die
-# partway through; writing 4000 broken frames is worse than stopping.
+# partway through; writing 4000 broken frames is worse than stopping. The unit is
+# one *work item*, never one frame: pass 1 counts consecutive shots that wrote
+# nothing (a shot is one item however many frames it was asked for), pass 2
+# counts consecutive frames, because there the two are the same thing.
 EXTRACT_MAX_CONSECUTIVE_FAILURES = 10
 EXTRACT_FAILURE_RATE_AFTER_SHOTS = 20
 EXTRACT_MAX_FAILURE_RATE = 0.5
@@ -442,6 +446,12 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
     return a 400. This endpoint has the request session, already holds the busy
     guard, and is the only place that can validate a rect against each video's
     real dimensions.
+
+    That write being durable is also why the gates below are 400s rather than
+    per-video skips: a stored crop or trim pair is **sticky**. It outlives the job
+    that set it, is replayed by every later extraction and re-extraction, and (for
+    trims) is read by `generate_poster` too, so a value that leaves no window
+    turns into a video that has quietly stopped working everywhere.
     """
     rows = (await db.execute(select(Video).where(Video.id.in_(body.video_ids)))).scalars().all()
     if not rows:
@@ -460,7 +470,17 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
     # pass 1 may be about to delete.
     busy_video_ids = await _videos_with_running_extractions(db)
 
-    skipped: list[dict] = []
+    # An id that no longer resolves is named, not dropped and not fatal — the
+    # re-extract resolver's contract, mirrored here so one deleted video in a
+    # fifty-video batch cannot cost the other forty-nine their run. The 404 above
+    # still covers "nothing at all resolved", where there is no run to report on.
+    # `dict.fromkeys` dedupes while keeping request order.
+    found_ids = {v.id for v in rows}
+    skipped: list[dict] = [
+        {"video_id": vid, "filename": "", "reason": "no longer exists"}
+        for vid in dict.fromkeys(body.video_ids)
+        if vid not in found_ids
+    ]
     to_run: list[Video] = []
     for v in rows:
         if v.id in busy_video_ids:
@@ -513,6 +533,26 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
         # has nothing to normalize against — the per-frame clamp inside
         # `render_shot` is the real authority anyway.
         normalized_crop = clamp_crop(rect, width, height) if width and height else rect
+
+    # Trims that leave no window are refused here, and on the *effective* value
+    # for the same reason the deinterlace gate above uses one: the stored trim is
+    # what this job — and every later re-run — replays, so a request that omits
+    # the field is still governed by the row's own value.
+    #
+    # This has to be a 400 because the write below is *sticky*. A large but
+    # storable pair commits, `detect_shots` then collapses to a single zero-width
+    # window, every render fails, the circuit breaker reports the whole thing as a
+    # decode fault, and `GET /videos/{id}/poster` stops regenerating too — none of
+    # which names the trim as the cause. Clearing it means another extract request.
+    for v in to_run:
+        start = body.trim_start_ms if body.trim_start_ms is not None else (v.trim_start_ms or 0)
+        end = body.trim_end_ms if body.trim_end_ms is not None else (v.trim_end_ms or 0)
+        if v.duration_ms and start + end >= v.duration_ms:
+            raise HTTPException(
+                400,
+                f"Trims leave nothing to extract from {v.filename}: "
+                f"{start} ms + {end} ms covers its whole {v.duration_ms} ms duration.",
+            )
 
     # The cheap request-path form of the disk preflight, so a full volume is a
     # 507 the user sees immediately rather than N jobs that each fail minutes
@@ -765,13 +805,24 @@ async def _delete_previous_frames(
             files.extend([p, p.with_suffix(".txt")])
             if r.thumbnail_path:
                 files.append(Path(r.thumbnail_path))
-        await session.execute(sa_delete(Image).where(Image.id.in_([r.id for r in rows])))
+        # Chunked, like every other id list in this file: a long-running triage
+        # subfolder is exactly where a single `IN (...)` exceeds SQLite's
+        # SQLITE_MAX_VARIABLE_NUMBER and raises `OperationalError: too many SQL
+        # variables` — on the stock Windows build `manage.ps1` targets, where the
+        # limit is not the patched-up one a Debian container reports.
+        for chunk in chunked([r.id for r in rows]):
+            await session.execute(sa_delete(Image).where(Image.id.in_(chunk)))
         await session.commit()
         for f in files:
             f.unlink(missing_ok=True)
+    # `done`/`total` pinned to zero rather than omitted, for the reason spelled
+    # out in `_detect_with_progress`: `jobStore` merges partials by job id, so an
+    # omitted key inherits whatever the client last held. This phase writes no
+    # frames, so the job's counter is zero here.
     await _emit(
         job_id, "replacing", 1.0,
-        video_id=video_id, message=f"Removed {len(rows)} previous frame(s)",
+        video_id=video_id, done=0, total=0,
+        message=f"Removed {len(rows)} previous frame(s)",
     )
     return len(rows)
 
@@ -834,6 +885,19 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
         await _emit(job_id, "detecting", 1.0, video_id=video.id, done=0, total=0, message=(
             f"No shot boundaries were found, so frames were sampled at fixed intervals "
             f"({len(shots)} windows)"
+        ))
+
+    # The degenerate shot list: `video_extract`'s no-duration fallback is a single
+    # zero-width window, so every pick inside it resolves to the same candidate
+    # position. `frames_per_shot > 1` would then write byte-identical files
+    # carrying identical `source_timestamp_ms` and `source_shot_index` — a
+    # synthetic duplicate cluster for the user to dedup by hand. Clamped here,
+    # before step 4 derives `total_items`/`total_frames` from it.
+    if frames_per_shot > 1 and len(shots) == 1 and shots[0].end_ms <= shots[0].start_ms:
+        frames_per_shot = 1
+        await _emit(job_id, "detecting", 1.0, video_id=video.id, done=0, total=0, message=(
+            "This container yields a single zero-width window, so every frame in it "
+            "would be identical — frames per shot has been reduced to 1"
         ))
 
     # 4. Now the estimate is real, so the preflight can be.
@@ -909,15 +973,15 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
         except Exception as exc:
             logger.warning("video_extract: shot %d of %s failed: %s", shot.index, src.name, exc)
             counts["failed"] += frames_per_shot
-            consecutive_failures += frames_per_shot
             result = None
 
         last_image_id: str | None = None
+        # The breaker counts *shots that wrote nothing*, never frames — see the
+        # update after this block. `counts["failed"]` keeps its exact per-frame
+        # meaning and is what the rate breaker below reads.
+        shot_wrote = 0
         if result is not None:
             counts["failed"] += result.failed
-            # Parenthesised on purpose: the ternary binds looser than `+`, so the
-            # unbracketed form reads as `consecutive_failures + (… if … else 0)`.
-            consecutive_failures = (consecutive_failures + result.failed) if result.failed else 0
             for frame in result.written:
                 info = await loop.run_in_executor(None, get_image_info, frame.path)
                 if not info:
@@ -930,7 +994,6 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
                     if frame.thumb_path:
                         Path(frame.thumb_path).unlink(missing_ok=True)
                     counts["failed"] += 1
-                    consecutive_failures += 1
                     continue
                 img = Image(
                     dataset_id=dataset.id,
@@ -954,9 +1017,16 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
                 await session.flush()
                 last_image_id = img.id
                 counts["written"] += 1
-                consecutive_failures = 0
+                shot_wrote += 1
                 written_since_commit += 1
                 written_since_disk_check += 1
+
+        # One unit per shot, whatever `frames_per_shot` is. Counting frames made
+        # the breaker's sensitivity depend on a user-facing tuning knob: a single
+        # transient shot failure adds `frames_per_shot` at once, so any legal
+        # `frames_per_shot >= 10` tripped the ten-failure threshold on shot one and
+        # ended a twenty-minute job. Slow degradation is the rate breaker's job.
+        consecutive_failures = 0 if shot_wrote else consecutive_failures + 1
 
         planned = (shot_pos + 1) * frames_per_shot
         if written_since_commit >= EXTRACT_COMMIT_EVERY:
@@ -1052,25 +1122,53 @@ async def _reextract_rows(db: AsyncSession, body: VideoReextractRequest):
 
     A column select, not entities: the resolver is shared with the preview
     endpoint, which writes nothing and should not pay for an ORM load.
+
+    Both scopes are bounded at `REEXTRACT_MAX_FRAMES` and both raise here rather
+    than in either endpoint, so the preview and the enqueue refuse identically —
+    a preview that reported work the run would then refuse is the one thing a
+    shared resolver exists to prevent.
     """
     cols = (
         Image.id, Image.filename, Image.dataset_id, Image.file_path,
         Image.source_video_id, Image.source_timestamp_ms, Image.processing_history,
     )
     if body.image_ids is not None:
+        # Deduped *before* anything counts it. The `IN` query collapses duplicates
+        # on its own, so a selection sent twice used to give `eligible=2` against
+        # one row: a phantom entry in `cfg["image_ids"]`, a phantom skip, and a
+        # progress bar that topped out at 1 / 2. `dict.fromkeys` keeps request order.
+        requested = list(dict.fromkeys(body.image_ids))
         found = {}
-        for chunk in chunked(body.image_ids):
+        for chunk in chunked(requested):
             for row in (await db.execute(select(*cols).where(Image.id.in_(chunk)))).all():
                 found[row.id] = row
         # Request order, and every unresolved id named rather than dropped.
-        ordered = [found[i] for i in body.image_ids if i in found]
-        missing = [i for i in body.image_ids if i not in found]
+        ordered = [found[i] for i in requested if i in found]
+        missing = [i for i in requested if i not in found]
         return ordered, missing
+
+    # An unknown id is a 404, not an empty result. The empty result means "this
+    # video has no eligible frames", which is a real answer the modal renders;
+    # returning it for a video that does not exist makes the two indistinguishable.
+    if await db.get(Video, body.video_id) is None:
+        raise HTTPException(404, "Video not found")
 
     q = select(*cols).where(Image.source_video_id == body.video_id)
     if body.subfolder is not None:
         q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
     rows = (await db.execute(q.order_by(Image.source_timestamp_ms))).all()
+    # The `image_ids` scope is bounded by the schema's `max_length`; this one
+    # resolves its ids from the DB, so it needs the same ceiling applied here.
+    # It bounds three things at once: the `BackgroundJob.config` id blob, the
+    # `select(Image)` entity load the job does, and `preview_reextract`'s
+    # `skipped` array.
+    if len(rows) > REEXTRACT_MAX_FRAMES:
+        raise HTTPException(
+            400,
+            f"{len(rows)} frames is more than one re-extraction run can cover "
+            f"(the limit is {REEXTRACT_MAX_FRAMES}). Narrow it to a single subfolder, "
+            "or select the frames you want in the gallery.",
+        )
     return list(rows), []
 
 

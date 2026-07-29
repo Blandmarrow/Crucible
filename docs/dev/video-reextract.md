@@ -62,7 +62,27 @@ would mean N temp files coexisting against a disk preflight that budgets for one
 ## Target resolution — one function, two callers
 
 `_resolve_reextract_targets` backs both endpoints, so the modal's accounting and the job's
-cannot diverge. Per image, in order, each skip carrying a human reason:
+cannot diverge. Exactly one scope: `image_ids` for a gallery selection (which can span videos
+and datasets) or `video_id`, optionally narrowed by `subfolder`.
+
+Three rules apply to the scope itself, all inside `_reextract_rows` so preview and enqueue
+refuse identically:
+
+- **An unknown `video_id` is a 404**, not an empty result. An empty result means "this video
+  has no eligible frames" — a real answer the modal renders — and returning it for a video
+  that does not exist makes the two indistinguishable. It is raised *before* the busy guard,
+  preserving the ordering `test_a_reextract_with_nothing_to_do_does_not_409` pins.
+- **Both scopes are capped at `REEXTRACT_MAX_FRAMES` (5000)** — the schema's `max_length` for
+  `image_ids`, an explicit 400 naming the count for `video_id`, which resolves its ids from
+  the DB. The constant lives in `schemas/video.py` and the router imports it, so the two
+  cannot drift (and a schema must never import from a router). It bounds three things at
+  once: the `BackgroundJob.config` id blob, the job's `select(Image)` entity load, and the
+  preview's `skipped` array.
+- **`image_ids` is deduped** with `dict.fromkeys` before anything counts it. The `IN` query
+  collapses duplicates anyway, so an id sent twice reported `eligible=2` against one row: a
+  phantom entry in `cfg`, a phantom skip, and a bar that topped out at `1 / 2`.
+
+Per image, in order, each skip carrying a human reason:
 
 | Condition | Reason |
 |---|---|

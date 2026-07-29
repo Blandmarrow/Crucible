@@ -642,6 +642,12 @@ def detect_shots(
         if not duration_ms:
             # No span to divide. One open-ended window; render_shot clamps
             # against what actually decodes.
+            #
+            # This window is deliberately *zero-width*, and `_run_extraction` in
+            # routers/videos.py is the consumer that has to know: every pick
+            # inside it resolves to the same candidate position, so it clamps
+            # `frames_per_shot` to 1 rather than write N byte-identical frames
+            # sharing one `source_timestamp_ms` and `source_shot_index`.
             return [Shot(index=0, start_ms=int(start_ms), end_ms=int(start_ms))], "uniform"
         logger.info("detect_shots: uniform fallback for %s (%s)", path.name, reason)
         return _uniform_shots(start_ms, end_ms, min_shot_ms=min_shot_ms, max_shots=max_shots), "uniform"

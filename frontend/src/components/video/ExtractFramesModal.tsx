@@ -692,7 +692,9 @@ function ExtractProgressList({
 
       {skipped.map((s) => (
         <div key={s.video_id} style={{ fontSize: 12, color: "var(--warn)" }}>
-          {s.filename} — {s.reason}
+          {/* A skip for a video that no longer resolves has no filename to
+              print — the row it would have come from is gone. */}
+          {s.filename || s.video_id} — {s.reason}
         </div>
       ))}
 

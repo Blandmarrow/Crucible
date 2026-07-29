@@ -103,6 +103,12 @@ detection falls back to a uniform-interval sampler. That is the same code path a
 three report `method="uniform"` in `result_data` **and say so over SSE** — a user who asked
 for shot detection and silently got time slicing has been handed a different feature.
 
+**The no-duration variant of that fallback is one *zero-width* window**, so every pick in it
+resolves to the same position: `frames_per_shot > 1` would write N byte-identical files
+sharing one `source_timestamp_ms` and `source_shot_index`, a synthetic duplicate cluster to
+dedup. The job clamps it to 1 (saying so over SSE) for a single `end_ms <= start_ms` shot,
+before step 4 derives `total_items`.
+
 **A file that will not open raises instead of falling back.** Slicing a stream that does not
 exist into windows produces a shot list whose every render fails: a job that "completes"
 having written nothing. `detect_shots` re-raises as `UnreadableVideoError` and the job
@@ -159,11 +165,10 @@ subscription and a re-attach path to something that finishes before the modal ha
 animating. It runs `probe_samples` through `run_in_executor` inside an
 `asyncio.wait_for(25 s)` → 504.
 
-That `wait_for` is legitimate, unlike the one CLAUDE.md forbids around a stdlib `re` match,
-and the difference is not stylistic: cv2 releases the GIL for every grab and retrieve, so the
-event loop keeps getting scheduled and the timeout genuinely fires — the abandoned executor
-thread finishes one frame and discards it. `re` never releases the GIL, which is why wrapping
-*that* can never fire.
+That `wait_for` is legitimate, unlike the one CLAUDE.md forbids around a stdlib `re` match:
+cv2 releases the GIL for every grab and retrieve, so the loop keeps getting scheduled and the
+timeout genuinely fires — the abandoned executor thread finishes one frame and discards it.
+`re` never releases the GIL, which is why wrapping *that* can never fire.
 
 **The probe's only write is metadata correction** — `duration_ms`, plus `width`/`height`/
 `fps` if they were NULL. Crop, deinterlace and trims are deliberately *not* written here:
@@ -202,6 +207,12 @@ will never be applied cannot 400 the batch. That check is
 `_videos_with_running_extractions`, and it matches **both** job types: a `replace` here
 deletes the very rows a running pass 2 is rewriting.
 
+An id that **no longer resolves** joins them as
+`{video_id, filename: "", reason: "no longer exists"}` — pass 2's resolver contract, so one
+deleted video does not cost a fifty-video batch its run; the 404 survives for the case where
+*nothing* resolved. `ExtractProgressList` renders `s.filename || s.video_id`, these skips
+having no filename.
+
 **A crop is normalized, not rejected.** Only genuine overflow (`x + w > width`, per row,
 skipping NULL dimensions) is a 400; the rest goes through `clamp_crop` once, and the
 **normalized** tuple is what lands in `Video.crop_*` — the stored rect is the rect that will
@@ -213,6 +224,14 @@ The **deinterlace 503 gate tests the effective value per row** — `body.deinter
 else `Video.deinterlace`, which is what the job reads. Gating on the request alone lets a
 stored filter through, and the job then fails with "N frame(s) failed to decode": a missing
 package misreported as a decode fault.
+
+**Trims covering the whole known `duration_ms` are a 400**, on the effective value for the
+same reason. Both fields are capped at `TRIM_MAX_MS` (24 h) in `schemas/video.py`, on
+`VideoProbeRequest` too: an unbounded `ge=0` int reaches `commit()` as `OverflowError: Python
+int too large to convert to SQLite INTEGER`, an unhandled 500. A large-but-storable pair is
+worse, because a stored trim is **sticky** — detection collapses to one zero-width window,
+every render fails, the breaker calls it a decode fault, and `generate_poster` reads the same
+columns and stops regenerating, none of it naming the trim.
 
 **Subfolder modes are resolved in the router**, so the response can name the target —
 mirroring `crop_to_detection` normalizing `dest_subfolder` up front. `add` takes the given
@@ -259,7 +278,10 @@ The delete is scoped to `source_video_id == video.id` *within* the target subfol
 subfolder the user also hand-filled does not lose the hand-filled part, and it goes through
 the normal path — `mark_image_deleted_in_versions`, then the row, then the file, its `.txt`
 sidecar and its thumbnail — never a raw unlink. That is what lets a pre-existing snapshot
-restore the frames, and it is what makes step 5 acceptable at all.
+restore the frames, and it is what makes step 5 acceptable at all. The row delete goes through
+`utils.chunked` — a triage subfolder is exactly the id list that runs past SQLite's
+`SQLITE_MAX_VARIABLE_NUMBER` on the stock Windows build — and its test pins the *call*, not
+the crash: the limit is a compile-time option this container raises out of reach.
 
 **`dataset_busy` is taken around step 5 only.** Extraction as a whole does not take it: jobs
 are already serialized by the queue, and holding the flag for twenty minutes would 409 every
@@ -285,8 +307,15 @@ unlinked and the frame counted as failed. Constructing an `Image` from it would 
 NULL-dimension row in the table, which silently breaks grid layout, the dimension filters,
 dedup and the detection remap with nothing pointing at the cause.
 
-A circuit breaker aborts at 10 consecutive failures, or above a 50% failure rate after 20
-shots, with a message naming the timecode. Frames already written stay — they are real — and
+A circuit breaker aborts at **10 consecutive shots that wrote nothing**, or above a 50%
+failure rate after 20 shots, with a message naming the timecode. The unit is one *shot*, never
+one frame: counted in frames, one exception from `render_shot` added `frames_per_shot` at
+once, so any legal `frames_per_shot >= 10` tripped the threshold on shot one — the breaker's
+sensitivity must not depend on a user-facing tuning knob. Only `consecutive_failures` is
+per-shot (set after each shot's frame loop from whether it wrote anything);
+`counts["failed"]` keeps its per-frame meaning, which is what the rate breaker reads and how
+slow degradation is caught. Pass 2 uses the constant per *frame*, where the two coincide.
+Frames already written stay — they are real — and
 the job ends `failed`, not `cancelled`, because nobody asked for this. Disk is re-checked
 every 100 frames written, off a counter reset at each check — `written % 100` is evaluated
 once per shot, which `frames_per_shot > 1` steps straight over. It commits first, for the
@@ -300,9 +329,11 @@ can invalidate per-image caches). Detection emits at most every 0.5 s and extrac
 per shot — `broadcaster` queues are `maxsize=200` and drop on overflow.
 
 **`done` means one thing for the whole job: frames a gallery refetch would actually see.**
-Detection pins `done: 0, total: 0` — explicitly, never by omission, because `jobStore` merges
-partials by job id and an omitted key inherits whatever the client last held — and the
-decoded-frame count with its ETA rides on `message` instead. Extraction then carries the
+Every phase that writes no frames — `detecting` and `replacing` alike — pins `done: 0,
+total: 0` **explicitly, never by omission**, because `jobStore` merges partials by job id and
+an omitted key inherits whatever the client last held (mid-replace, that is the previous
+run's final count). Detection's decoded-frame count and its ETA ride on `message` instead.
+Extraction then carries the
 **committed** count (`written − written_since_commit`), which steps once per
 `EXTRACT_COMMIT_EVERY` rather than once per shot, while `_emit`'s `fraction` stays on
 *planned* frames so the bar keeps its per-shot smoothness. Both halves are required by

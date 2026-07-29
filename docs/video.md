@@ -77,6 +77,10 @@ Two choices: **JPEG** or **PNG** (lossless, and larger), and a **max long edge**
 for the video's native resolution. Choosing PNG changes the file extension; nothing else
 moves — captions and thumbnails stay attached, and the old file is removed.
 
+One run covers at most **5000 frames**. Past that the dialog asks you to narrow it — to a
+single subfolder, or to a selection made in the gallery — rather than starting a job whose
+size nothing on screen could report honestly.
+
 Quality scores are deliberately left alone, since they were measured on the small frames.
 The dialog says so and so does the completion message; re-run scoring if you want numbers
 that describe the full-resolution images. If you took a snapshot beforehand, restoring it

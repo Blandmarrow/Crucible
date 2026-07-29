@@ -4,6 +4,17 @@ from pydantic import BaseModel, Field, model_validator
 
 from backend.schemas import UtcDatetime
 
+# Frames one re-extraction run may cover, on *either* scope. The router imports
+# this and re-checks it for the `video_id` scope, which resolves its ids from the
+# DB rather than the request body — one constant so the two cannot drift, and it
+# lives here because a schema must never import from a router.
+REEXTRACT_MAX_FRAMES = 5000
+# 24 h. Every trim field is a millisecond offset into a video, so this is
+# generous by orders of magnitude for real footage; the point is that an
+# unbounded `ge=0` int reaches `commit()` and raises `OverflowError: Python int
+# too large to convert to SQLite INTEGER` as an unhandled 500.
+TRIM_MAX_MS = 86_400_000
+
 
 class RenameVideoRequest(BaseModel):
     """New filename stem only — the container extension is never user-settable."""
@@ -33,8 +44,8 @@ class VideoProbeRequest(BaseModel):
     """
 
     samples: int = Field(default=8, ge=1, le=12)
-    trim_start_ms: int = Field(default=0, ge=0)
-    trim_end_ms: int = Field(default=0, ge=0)
+    trim_start_ms: int = Field(default=0, ge=0, le=TRIM_MAX_MS)
+    trim_end_ms: int = Field(default=0, ge=0, le=TRIM_MAX_MS)
     max_edge: int = Field(default=640, ge=160, le=1280)
 
 
@@ -84,8 +95,8 @@ class VideoExtractRequest(BaseModel):
     # rect forever.
     clear_crop: bool = False
     deinterlace: Literal["", "bwdif"] | None = None
-    trim_start_ms: int | None = Field(default=None, ge=0)
-    trim_end_ms: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0, le=TRIM_MAX_MS)
+    trim_end_ms: int | None = Field(default=None, ge=0, le=TRIM_MAX_MS)
 
     # -- detector --
     sensitivity: float = Field(default=3.0, gt=0, le=100)
@@ -128,7 +139,9 @@ class VideoReextractRequest(BaseModel):
     which is what the extraction-history rows have to hand.
     """
 
-    image_ids: list[str] | None = Field(default=None, min_length=1, max_length=5000)
+    image_ids: list[str] | None = Field(
+        default=None, min_length=1, max_length=REEXTRACT_MAX_FRAMES
+    )
     video_id: str | None = None
     subfolder: str | None = None
     # PNG is offered for a lossless capture. It changes the extension, which the

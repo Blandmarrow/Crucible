@@ -83,8 +83,8 @@ def test_the_crop_is_clamped_against_the_decoded_frame_not_the_header(shots_mp4,
     result = _render(shots_mp4, tmp_path, [600.0], crop=(200, 100, 400, 400))
     assert result.failed == 0
     with PilImage.open(result.written[0].path) as img:
-        w, h = img.size
-    assert 0 < w <= 120 and 0 < h <= 140
+        # Exact, like both neighbours: a bound admits a 1x1 output as "clamped".
+        assert img.size == (120, 140)
 
 
 def test_a_full_frame_crop_is_a_no_op(shots_mp4, tmp_path):

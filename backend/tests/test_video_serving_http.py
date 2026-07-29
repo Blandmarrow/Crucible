@@ -65,11 +65,19 @@ def test_file_serves_the_whole_video_and_advertises_ranges(tmp_path):
 
 
 def test_a_range_request_gets_a_206_with_the_right_slice(tmp_path):
+    """A framework smoke test: `get_video_file` returns a `FileResponse` and
+    Starlette owns the parsing, so what is pinned here is that we keep handing it
+    the request rather than that we parse anything ourselves.
+
+    The three forms a `<video>` seek actually sends — a bounded range, an
+    open-ended one and a suffix — because a start of 0 alone would pass on an
+    implementation that ignored the range *start* entirely."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             video = await upload_video(env, ds["id"], "clip.mp4")
             total = video["file_size_bytes"]
+            assert total > 64, "the fixture is too small to seek within"
 
             full = (await env.client.get(f"{API}/videos/{video['id']}/file")).content
             r = await env.client.get(
@@ -79,6 +87,15 @@ def test_a_range_request_gets_a_206_with_the_right_slice(tmp_path):
             assert r.status_code == 206, r.text
             assert r.headers["content-range"] == f"bytes 0-99/{total}"
             assert r.content == full[:100]
+
+            tail = f"bytes {total - 64}-{total - 1}/{total}"
+            for header in (f"bytes={total - 64}-", "bytes=-64"):
+                r = await env.client.get(
+                    f"{API}/videos/{video['id']}/file", headers={"Range": header}
+                )
+                assert r.status_code == 206, (header, r.text)
+                assert r.headers["content-range"] == tail, header
+                assert r.content == full[-64:], header
 
     run(scenario())
 

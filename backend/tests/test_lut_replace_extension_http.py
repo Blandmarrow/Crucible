@@ -65,7 +65,9 @@ def test_lut_replace_follows_the_png_fallback_and_leaves_no_orphan(tmp_path):
             # artifact moves.
             assert row.thumbnail_path == str(thumb)
             assert thumb.exists()
-            assert sidecar.exists()
+            # Content, not just existence — a path that recreated an empty
+            # sidecar would pass the existence check having lost the caption.
+            assert sidecar.read_text(encoding="utf-8") == "kept"
 
     run(scenario())
 

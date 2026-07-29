@@ -146,11 +146,20 @@ def test_a_request_must_name_exactly_one_scope(tmp_path):
 
 def test_preview_names_every_skip_reason_and_agrees_with_the_enqueue(tmp_path):
     """One resolver behind both endpoints — the whole reason the preview exists
-    is that its accounting cannot drift from the job's."""
+    is that its accounting cannot drift from the job's.
+
+    The counters are only half of it. `_resolve_reextract_targets` decides the
+    skip, but `_run_reextraction` re-filters on `source_timestamp_ms` alone — so
+    a regression that counted a frame as skipped and still passed its id into
+    `cfg["image_ids"]` would overwrite a hand-edited frame with every counter
+    assertion green. Hence pass 1 at `long_edge=160`: any rewrite grows the
+    frame to the fixture's native 320x240 and cannot pass a byte comparison by
+    accident.
+    """
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            video, frames = await _triage(env, ds["id"])
+            video, frames = await _triage(env, ds["id"], long_edge=160)
             plain = await upload_image(env, ds["id"], "hand.png")
 
             async with env.Session() as db:
@@ -161,6 +170,18 @@ def test_preview_names_every_skip_reason_and_agrees_with_the_enqueue(tmp_path):
                 stampless = await db.get(Image, frames[1].id)
                 stampless.source_timestamp_ms = None
                 await db.commit()
+
+            # Both are skips, so both must come out of the run untouched.
+            untouched: dict[str, tuple[bytes, int, object]] = {}
+            async with env.Session() as db:
+                for frame_id in (frames[0].id, frames[1].id):
+                    row = await db.get(Image, frame_id)
+                    untouched[frame_id] = (
+                        Path(row.file_path).read_bytes(),
+                        row.width,
+                        row.processing_history,
+                    )
+            assert {w for _b, w, _h in untouched.values()} == {160}
 
             ids = [f.id for f in frames] + [plain["id"], "ghost"]
             preview = (await _preview(env, image_ids=ids)).json()
@@ -182,6 +203,15 @@ def test_preview_names_every_skip_reason_and_agrees_with_the_enqueue(tmp_path):
             assert enqueued["total"] == preview["total"]
             assert _reasons(enqueued) == _reasons(preview)
             assert enqueued["groups"][0]["job_id"]
+
+            # The counters agreed; now the pixels. A skipped frame keeps its
+            # bytes, its triage geometry and its history.
+            async with env.Session() as db:
+                for frame_id, (data, width, history) in untouched.items():
+                    row = await db.get(Image, frame_id)
+                    assert Path(row.file_path).read_bytes() == data, frame_id
+                    assert row.width == width, frame_id
+                    assert row.processing_history == history, frame_id
 
     run(scenario())
 
@@ -395,9 +425,15 @@ def test_quality_scores_survive_the_rewrite(tmp_path):
 
             _payload, jobs = await _reextract_and_wait(env, video_id=video["id"])
             assert [j["status"] for j in jobs] == ["completed"], jobs
+            # `completed` alone is satisfied by `rewritten=0, failed=3` — three
+            # frames is under the breaker — and "the scores survived" is vacuous
+            # if nothing was rewritten.
+            assert jobs[0]["result_data"]["rewritten"] == len(frames)
+            assert jobs[0]["result_data"]["failed"] == 0
 
             async with env.Session() as db:
                 rows = (await db.execute(select(Image))).scalars().all()
+            assert {(r.width, r.height) for r in rows} == {(320, 240)}
             assert {r.aesthetic_score for r in rows} == {4.25}
             assert {r.caption_text for r in rows} == {"a frame"}
 
@@ -432,11 +468,18 @@ def test_a_second_run_is_not_self_skipped(tmp_path):
 
             _p2, jobs = await _reextract_and_wait(env, video_id=video["id"], format="png")
             assert [j["status"] for j in jobs] == ["completed"], jobs
+            assert jobs[0]["result_data"]["rewritten"] == len(frames)
+            assert jobs[0]["result_data"]["failed"] == 0
             async with env.Session() as db:
-                row = (await db.execute(
+                rows = (await db.execute(
                     select(Image).where(Image.source_video_id == video["id"])
-                )).scalars().first()
-                assert [e["op"] for e in row.processing_history] == ["reextract", "reextract"]
+                )).scalars().all()
+            # Every row, not `.first()` of an unordered query: if the png run
+            # rewrote only some of them, which one came back was SQLite's choice.
+            assert len(rows) == len(frames)
+            for row in rows:
+                assert [e["op"] for e in row.processing_history] == ["reextract", "reextract"], \
+                    row.filename
 
     run(scenario())
 

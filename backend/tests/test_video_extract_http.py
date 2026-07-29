@@ -108,13 +108,27 @@ def test_probe_returns_data_urls_that_actually_decode(tmp_path):
                 assert prefix == "data:image/jpeg;base64"
                 with PilImage.open(io.BytesIO(base64.b64decode(payload))) as img:
                     assert img.format == "JPEG"
-                    assert max(img.size) <= 640
+                    # Exact, not `<= PROBE_PREVIEW_EDGE`: the fixture is already
+                    # under the default cap, so a bound would stay green with the
+                    # downscale deleted. This pins no-upscale and no aspect
+                    # distortion at once.
+                    assert img.size == (320, 240)
 
             # Ascending, and inset from both ends — frame 0 is very often a
             # black leader and the last frame very often a fade.
             stamps = [s["timestamp_ms"] for s in body["samples"]]
             assert stamps == sorted(stamps)
             assert stamps[0] > 0
+
+            # And a cap below the source really downscales, aspect kept.
+            r = await env.client.post(
+                f"{API}/videos/{video['id']}/probe", json={"samples": 2, "max_edge": 160}
+            )
+            assert r.status_code == 200, r.text
+            for sample in r.json()["samples"]:
+                _prefix, _, payload = sample["data_url"].partition(",")
+                with PilImage.open(io.BytesIO(base64.b64decode(payload))) as img:
+                    assert img.size == (160, 120)
 
     run(scenario())
 
@@ -362,7 +376,18 @@ def test_a_video_with_no_cuts_still_yields_frames(tmp_path):
 
             _body, jobs = await _extract_and_wait(env, [video["id"]])
             assert jobs[0]["status"] == "completed", jobs
-            assert jobs[0]["result_data"]["written"] >= 1
+            written = jobs[0]["result_data"]["written"]
+            assert written >= 1
+
+            # The count is what the job reports; the rows are what the gallery
+            # shows. Cross-check them, as every neighbouring test does.
+            async with env.Session() as db:
+                images = (await db.execute(select(Image))).scalars().all()
+            assert len(images) == written
+            for img in images:
+                assert img.source_video_id == video["id"]
+                assert img.source_timestamp_ms is not None
+                assert Path(img.file_path).exists()
 
     run(scenario())
 
@@ -435,7 +460,9 @@ def test_clear_crop_removes_a_stored_rect(tmp_path):
             assert r.status_code == 200, r.text
             async with env.Session() as db:
                 row = await db.get(Video, video["id"])
-                assert row.crop_x is None and row.crop_w is None
+                # All four: a clear that left `crop_y`/`crop_h` behind is exactly
+                # the stale-rect replay this endpoint exists to prevent.
+                assert (row.crop_x, row.crop_y, row.crop_w, row.crop_h) == (None,) * 4
             for job in r.json()["jobs"]:
                 await wait_for_job(env, job["job_id"], timeout=120)
 
@@ -1387,10 +1414,22 @@ def test_the_job_label_names_the_video_and_the_frame_count(tmp_path):
             assert job.label == "Extract: clip — 1 frame/shot"
             assert len(job.label) <= 200
 
-            r2 = await _extract(env, [video["id"]], label="custom")
-            assert r2.json()["skipped"] or r2.json()["jobs"]
+            # The override, on a *second* video: re-targeting the first would be
+            # skipped by the in-flight dedupe, and the request's `label` never
+            # reach a job row.
+            other = await upload_video(env, ds["id"], "other.mp4", SHOTS_MP4)
+            r2 = await _extract(env, [other["id"]], label="custom")
+            assert r2.status_code == 200, r2.text
+            assert r2.json()["skipped"] == [], r2.text
+            other_job_id = r2.json()["jobs"][0]["job_id"]
 
+            # Both jobs are drained before the label is read: nothing rewrites
+            # `label`, and a failing assertion with a job still in flight hangs
+            # the harness rather than reporting red.
             await wait_for_job(env, job_id, timeout=120)
+            await wait_for_job(env, other_job_id, timeout=120)
+            async with env.Session() as db:
+                assert (await db.get(BackgroundJob, other_job_id)).label == "custom"
 
     run(scenario())
 

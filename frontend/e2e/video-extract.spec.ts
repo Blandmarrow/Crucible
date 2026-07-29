@@ -227,8 +227,13 @@ test('an extraction runs end to end and its frame appears with lineage', async (
   // through the API rather than inferred from the page.
   const summary = await (await request.get(`/api/v1/videos/${video.id}/frames-summary`)).json()
   expect(summary.total).toBeGreaterThan(0)
+  // `limit` is explicit: `GET /images/` defaults to 50, so a fixture that ever
+  // yields more frames would silently truncate the list and fail this length
+  // check for a reason that has nothing to do with extraction.
   const frames = await (
-    await request.get('/api/v1/images/', { params: { dataset_id: ds.id, source_video_id: video.id } })
+    await request.get('/api/v1/images/', {
+      params: { dataset_id: ds.id, source_video_id: video.id, limit: 500 },
+    })
   ).json()
   expect(frames).toHaveLength(summary.total)
 

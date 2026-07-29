@@ -19,24 +19,28 @@ at a video the destination dataset does not contain; where in a video a frame
 came from is a fact about the frame and travels with it.
 """
 
-import importlib.util
 from pathlib import Path
 
-import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.models.versioning import VersionImageState
 from backend.services import version_service
-from backend.tests.conftest import API, api_env, run, upload_image, upload_video, wait_for_job
-
-# Per-test rather than a module-level `pytest.importorskip`: the four structural
-# guards below need no video at all, and they are the ones CLAUDE.md relies on to
-# fail CI when a new `Image` column goes unmirrored. Skipping *those* on a machine
-# without opencv would drop the coverage that matters most here.
-needs_cv2 = pytest.mark.skipif(
-    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+from backend.tests.conftest import (
+    API,
+    api_env,
+    needs_cv2,
+    run,
+    upload_image,
+    upload_video,
+    wait_for_job,
 )
+
+# `needs_cv2` is per-test here rather than a module-level `pytest.importorskip`:
+# the four structural guards below need no video at all, and they are the ones
+# CLAUDE.md relies on to fail CI when a new `Image` column goes unmirrored.
+# Skipping *those* on a machine without opencv would drop the coverage that
+# matters most in this file.
 
 LINEAGE = ("source_video_id", "source_timestamp_ms", "source_shot_index")
 

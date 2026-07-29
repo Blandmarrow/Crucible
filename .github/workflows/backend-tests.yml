@@ -70,11 +70,18 @@ jobs:
       # ~70 tests and the bulk of the video HTTP coverage. imageio-ffmpeg stays
       # out: no test needs the real bwdif path — both 503 tests monkeypatch
       # `capabilities`.
+      #
+      # `--no-deps` discards scenedetect's own constraints along with its cv2
+      # requirement, so the three deps it still needs are reinstated *with* the
+      # one constraint that matters: scenedetect declares `click!=8.3.0,~=8.0`.
+      # Unpinned, CI is green only for as long as latest click stays below 9 —
+      # and would then break on a run detached from any change, the same failure
+      # mode this file's header warns about for the main list.
       - name: Install video test dependencies
         run: |
           pip install opencv-python-headless
           pip install --no-deps scenedetect
-          pip install click platformdirs tqdm
+          pip install "click!=8.3.0,~=8.0" platformdirs tqdm
       - name: Run backend tests
         run: python -m pytest backend/tests/ -q
 

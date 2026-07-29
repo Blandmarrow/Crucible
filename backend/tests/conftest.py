@@ -27,12 +27,14 @@ background job runners import at call time — is swapped for the temp one and
 restored afterwards.
 """
 import asyncio
+import importlib.util
 import io
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import backend.database as database
@@ -41,6 +43,17 @@ from backend.config import settings
 from backend.database import Base, get_db
 
 API = "/api/v1"
+
+# The per-test cv2 guard, defined once. Modules that need a decodable video for
+# only *some* of their tests import this rather than declaring an identical
+# `skipif` of their own — three had it copied before it lived here, which is the
+# same drift `backend/media_types.py`'s header describes for extension sets. Use
+# a module-level `pytest.importorskip("cv2")` only where every test in the file
+# needs a container; per-test keeps the media-free cases running on a machine
+# without opencv, including the structural mirror guards CLAUDE.md relies on.
+needs_cv2 = pytest.mark.skipif(
+    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+)
 
 
 def run(coro):

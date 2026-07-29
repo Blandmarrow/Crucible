@@ -18,20 +18,20 @@ only the 409 would pass equally well for a guard that fires unconditionally, and
 the discriminator can be checked without enqueueing anything real: both
 endpoints have a cheap 400 immediately after the guard.
 """
-import importlib.util
 import os
 from pathlib import Path
 
-import pytest
 from sqlalchemy import select
 
 from backend.models import BackgroundJob, Image, Video
-from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, upload_video
-
-# Only the video-move test below encodes a container; the rest of the module is
-# media-free, so the guard is per-test rather than a module-level importorskip.
-needs_cv2 = pytest.mark.skipif(
-    importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
+from backend.tests.conftest import (
+    API,
+    api_env,
+    needs_cv2,
+    png_bytes,
+    run,
+    upload_image,
+    upload_video,
 )
 
 FS = f"{API}/filesystem"

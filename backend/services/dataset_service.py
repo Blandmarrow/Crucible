@@ -329,6 +329,23 @@ async def rename_dataset(
     new_name: str,
     new_description: str | None = None,
 ) -> Dataset:
+    """Rename the dataset, carrying its folder and **every** stored path in it.
+
+    Videos as well as images: `Video.file_path`/`poster_path` used to be left
+    behind, and the damage was invisible rather than loud — `_rescan_videos`
+    keys `by_filename` on the row's `filename`, and the files in the *new*
+    folder carry those same names, so each hits `continue` and `videos_missing`
+    comes back empty while every `file_path` names a folder that no longer
+    exists. `GET /videos/{id}/file` then 404s on a row nothing reports as broken.
+
+    Both row sets are loaded **before** `old_folder.rename(...)` (PM-013): the
+    query is fallible and the rename is not, so running it afterwards meant a
+    failed `SELECT` left the folder moved with nothing committed to describe it.
+
+    `.versions` needs nothing — `version_service._object_store_path` derives the
+    object store from `dataset.folder_path` at read time, so it travels as soon
+    as that column is updated.
+    """
     old_folder = Path(ds.folder_path)
     new_slug = _name_to_slug(new_name)
     new_folder = settings.datasets_dir / new_slug
@@ -336,17 +353,35 @@ async def rename_dataset(
     if old_folder.exists() and old_folder.resolve() != new_folder.resolve():
         if new_folder.exists():
             new_folder = settings.datasets_dir / f"{new_slug}_{ds.id[:8]}"
+
+        images = (
+            await db.execute(select(Image).where(Image.dataset_id == ds.id))
+        ).scalars().all()
+        videos = (
+            await db.execute(select(Video).where(Video.dataset_id == ds.id))
+        ).scalars().all()
+
         old_folder.rename(new_folder)
 
-        old_str = str(old_folder)
-        new_str = str(new_folder)
-        result = await db.execute(select(Image).where(Image.dataset_id == ds.id))
-        for img in result.scalars().all():
-            if img.file_path and img.file_path.startswith(old_str):
-                img.file_path = new_str + img.file_path[len(old_str):]
-            if img.thumbnail_path and img.thumbnail_path.startswith(old_str):
-                img.thumbnail_path = new_str + img.thumbnail_path[len(old_str):]
-        ds.folder_path = new_str
+        def _rebase(value: str | None) -> str | None:
+            # `/move`'s house shape (routers/filesystem.py) rather than a bare
+            # `startswith(old_str)`: one place for every column either model
+            # keeps a path in, and no dependence on the query's dataset scoping
+            # to keep a prefix from over-matching a sibling folder.
+            if not value:
+                return value
+            p = Path(value)
+            if not p.is_relative_to(old_folder):
+                return value
+            return str(new_folder / p.relative_to(old_folder))
+
+        for img in images:
+            img.file_path = _rebase(img.file_path)
+            img.thumbnail_path = _rebase(img.thumbnail_path)
+        for vid in videos:
+            vid.file_path = _rebase(vid.file_path)
+            vid.poster_path = _rebase(vid.poster_path)
+        ds.folder_path = str(new_folder)
 
     ds.name = new_name
     if new_description is not None:

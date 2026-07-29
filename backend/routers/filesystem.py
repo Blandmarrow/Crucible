@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, literal, select, update as sa_update
+from sqlalchemy import delete, func, literal, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -50,6 +50,148 @@ async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset |
         except ValueError:
             pass
     return None
+
+
+_DATASET_LAYOUT_DIRS = frozenset({"images", "videos", "thumbnails", ".versions"})
+"""The folder names a dataset's own layout owns, as rules rather than constructions.
+
+Two sources of truth: `dataset_service.create_dataset` mkdirs `images/` and
+`thumbnails/` (and `video_service` adds `videos/` on the first video ingest), and
+`version_service`'s module docstring pins `.versions/objects/{sha[:2]}/{sha[2:]}`.
+
+This is the first place the layout is stated as a *rule*; the ~20 sites that
+inline `Path(folder_path) / "images"` are unaffected and stay that way — no
+repo-wide layout-constant refactor rides along with this guard.
+"""
+
+
+async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
+    """Refuse a directory rename that would strand rows, a `Dataset` or the object store.
+
+    Renaming is a same-parent move, so — unlike `/move` — there is no prefix
+    rewrite to be had: the only directories that can hold registered media are
+    structural ones, and rewriting their paths leaves the DB agreeing with disk
+    while the *dataset* stays broken (a renamed `images/` makes `rescan_dataset`
+    take its no-`images_dir` early return and the next upload recreate the
+    folder; a renamed `videos/` makes `_rescan_videos` report every row missing
+    forever; a renamed `{ds}` leaves `Dataset.folder_path` stale, which no path
+    rewrite touches). There is also nothing to validate a rewrite against —
+    `/move`'s rewrite is coherent only because `_find_dataset_for_path(db,
+    new_path)` gives it a destination dataset to check containment against, and
+    a rename's new name is arbitrary. So this only ever refuses.
+
+    Guards run **C → D → A → B**: most specific and most actionable first, each
+    next one the more general fallback. `{ds}` holding rows should get C's
+    "rename the dataset instead", not A's generic message.
+
+    Comparisons are unresolved strings throughout, deliberately.
+    `sanitize_abs_path` does not resolve — it rejects null bytes and relative
+    paths and hands back a bare `Path`; `Dataset.folder_path` is stored as
+    `str(settings.datasets_dir / slug)`, equally unresolved; and the File
+    Browser only ever sends paths it got back from `GET /list`. Resolving here
+    would harden one guard against a request shape `/move`'s two and `/delete`'s
+    scope predicate all still let through.
+    """
+    old_prefix = str(p) + os.sep
+
+    # C — a dataset's own folder, or any folder above one. The prefix arm is not
+    # redundant with A: `p` can be `settings.datasets_dir` itself, which A only
+    # catches when some dataset under it is non-empty. This is the guard `/move`
+    # lacks entirely.
+    ds_row = (await db.execute(
+        select(Dataset.folder_path).where(
+            or_(
+                Dataset.folder_path == str(p),
+                Dataset.folder_path.startswith(old_prefix, autoescape=True),
+            )
+        )
+        # Shortest first, so an exact match beats a descendant to the one row we
+        # keep: only then does a folder that is both a dataset's own and a
+        # dataset's parent get the more actionable of the two messages.
+        .order_by(func.length(Dataset.folder_path))
+        .limit(1)
+    )).first()
+    if ds_row is not None:
+        if ds_row[0] == str(p):
+            raise HTTPException(
+                409,
+                "This is a dataset's own folder. Use the Datasets page's edit "
+                "action to rename the dataset instead.",
+            )
+        raise HTTPException(
+            409,
+            "This folder contains a dataset's own folder. Renaming it would "
+            "strand every dataset under it.",
+        )
+
+    # D — structural names, empty or not. A, B and C are all content-based, so a
+    # brand-new dataset's `images/` passes every one of them. Checked only when
+    # the name is in the set (an ordinary folder costs zero extra queries) and
+    # only for a **direct** child of a dataset folder.
+    #
+    # `.versions` is the strongest member of the set, not the marginal one: no
+    # row anywhere stores a path under it, so A, B and C are blind to it
+    # *permanently*, even for a full dataset. Rename it and `restore_version`
+    # takes its `elif needs_restore:` branch — `files_unavailable += 1`, every
+    # snapshot silently restoring nothing — `_prune_objects_sync` returns zeros
+    # forever, and the next `mark_image_deleted_in_versions` mkdirs a fresh
+    # `.versions/objects`, splitting the store across two folders.
+    #
+    # An empty `{ds}/thumbnails` is in the set for legibility — one rule, "a
+    # dataset's structural folders are not renameable" — rather than because it
+    # is dangerous. `{ds}/videos/thumbnails` is deliberately *not* covered: not a
+    # direct child, caught by B the moment a poster exists, and inert when empty
+    # (`get_video_poster` backfills into a re-derived path).
+    if p.name in _DATASET_LAYOUT_DIRS:
+        parent_ds = (await db.execute(
+            select(Dataset.id).where(Dataset.folder_path == str(p.parent)).limit(1)
+        )).first()
+        if parent_ds is not None:
+            raise HTTPException(
+                409,
+                f"{p.name}/ is part of a dataset's folder layout. Renaming it "
+                "would split the dataset across two folders.",
+            )
+
+    # A — rows under the prefix. `autoescape=True` for the reason `/move` and
+    # `/delete` both document at length: `_` is a LIKE wildcard *and* the
+    # character `_name_to_slug` puts in every multi-word dataset folder, so
+    # unescaped, `{ds}/my_dataset/…` matches `{ds}/myxdataset/…`. Here an
+    # over-match is an over-*refusal* rather than a delete, but it is still a
+    # refusal of somebody else's perfectly good rename.
+    for model in (Image, Video):
+        hit = (await db.execute(
+            select(model.id).where(
+                model.file_path.startswith(old_prefix, autoescape=True)
+            ).limit(1)
+        )).first()
+        if hit is not None:
+            raise HTTPException(
+                409,
+                "This folder holds files that belong to a dataset. Renaming it "
+                "would strand every one of their rows.",
+            )
+
+    # B — derived artifacts under the prefix while `file_path` is not. Lifted
+    # from `/move`'s guard of the same shape, same two conjuncts: for `{ds}/videos`
+    # the poster is under the prefix but so is `file_path` (second conjunct
+    # False), for `{ds}/images` the thumbnails are in the sibling
+    # `{ds}/thumbnails/` (first conjunct False), and for a folder holding only
+    # derived files both hold.
+    for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
+        col = getattr(model, derived)
+        stranded = (await db.execute(
+            select(model.id).where(
+                col.startswith(old_prefix, autoescape=True),
+                ~model.file_path.startswith(old_prefix, autoescape=True),
+            ).limit(1)
+        )).first()
+        if stranded is not None:
+            raise HTTPException(
+                409,
+                "This folder holds thumbnails or posters belonging to a dataset "
+                "whose files are elsewhere. Renaming it would strand them.",
+            )
 
 
 # ── Drive roots ──────────────────────────────────────────────────────────────
@@ -348,6 +490,10 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     collision through `unique_filename_with_thumb`: a name the user typed must
     either be taken as typed or refused. It refuses, matching the endpoint's
     other conflicts.
+
+    A **directory** takes neither arm — `_guard_directory_rename` refuses it
+    outright whenever it touches a dataset, since a rename has no coherent
+    prefix rewrite to offer the way `/move` does.
     """
     if "/" in req.new_name or "\\" in req.new_name or "\x00" in req.new_name:
         raise HTTPException(400, "new_name must not contain path separators")
@@ -360,7 +506,16 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     if new_path.exists():
         raise HTTPException(409, "A file or folder with that name already exists")
 
-    # Gather. A directory matches neither — renaming one still syncs nothing.
+    if p.is_dir():
+        # A directory matches neither arm below (both key on `file_path ==
+        # str(p)`), and a rename has no coherent prefix rewrite to offer in
+        # their place — so every directory that touches a dataset is refused
+        # here instead. No `ensure_not_busy`: every dataset-touching case is a
+        # refusal, and a permitted rename touches no dataset row at all.
+        await _guard_directory_rename(db, p)
+
+    # Gather. Only a file can match; a directory has already been through the
+    # guard above and holds nothing registered.
     img: Image | None = None
     vid: Video | None = None
     if p.is_file():

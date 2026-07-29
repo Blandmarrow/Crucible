@@ -22,18 +22,28 @@ Two properties are load-bearing here:
 The `Video` arm deliberately does none of this to its poster: nothing re-derives
 a poster path — every consumer reads `Video.poster_path` — so a poster whose stem
 no longer matches its video is the normal state, not a hazard.
+
+- **A directory takes neither arm, and is refused rather than rewritten.** Both
+  arms match on `file_path == str(p)`, so renaming `{ds}/images` used to return
+  200 and strand every row in the dataset. A rename is a same-parent move, so
+  the only directories that can hold registered media are structural ones, and
+  `/move`'s prefix rewrite would leave the DB agreeing with disk while the
+  *dataset* stayed broken. `_guard_directory_rename` therefore only ever
+  refuses, in the order C → D → A → B (dataset folder → layout name → rows under
+  the prefix → derived artifacts under it), most actionable message first.
 """
 
 from pathlib import Path
 
 from sqlalchemy import select
 
-from backend.models import Image, Video
+from backend.models import Dataset, Image, Video
 from backend.tests.conftest import (
     API,
     api_env,
     jpeg_bytes,
     needs_cv2,
+    png_bytes,
     run,
     upload_image,
     upload_video,
@@ -208,5 +218,320 @@ def test_renaming_a_registered_video_leaves_its_poster_alone(tmp_path):
             assert row.file_path == str(root / "videos" / "clip2.mp4")
             assert row.poster_path == poster_before
             assert Path(poster_before).exists()
+
+    run(scenario())
+
+
+# ── Directory renames ─────────────────────────────────────────────────────────
+
+
+def test_renaming_a_datasets_images_folder_is_refused(tmp_path):
+    """The hole this section closes: one request that strands every row in the
+    dataset behind a 200. Guard D catches it before A gets the chance, because
+    "part of a dataset's folder layout" is the more actionable of the two."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            img = await upload_image(env, ds["id"], "a.png")
+
+            images_dir = Path(ds["folder_path"]) / "images"
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(images_dir), "new_name": "pictures"}
+            )
+            assert r.status_code == 409, r.text
+            assert "folder layout" in r.json()["detail"]
+
+            assert images_dir.exists()
+            assert not (Path(ds["folder_path"]) / "pictures").exists()
+            assert (images_dir / "a.png").exists()
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+            assert row.file_path == str(images_dir / "a.png")
+            r2 = await env.client.get(f"{API}/images/{img['id']}/file")
+            assert r2.status_code == 200, r2.text
+
+    run(scenario())
+
+
+def test_renaming_an_empty_images_folder_is_still_refused(tmp_path):
+    """The test that dies if guard D is dropped. A, B and C are all
+    content-based, and `create_dataset` mkdirs `images/` and `thumbnails/`
+    before a single row exists — so a brand-new dataset's layout passes every
+    row-based guard while being exactly as unrenameable."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            images_dir = Path(ds["folder_path"]) / "images"
+            assert images_dir.is_dir()
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(images_dir), "new_name": "pictures"}
+            )
+            assert r.status_code == 409, r.text
+            assert "folder layout" in r.json()["detail"]
+            assert images_dir.exists()
+            assert not (Path(ds["folder_path"]) / "pictures").exists()
+
+    run(scenario())
+
+
+def test_renaming_a_datasets_versions_folder_is_refused(tmp_path):
+    """`.versions` is the strongest member of the layout set, not the marginal
+    one: **no row anywhere stores a path under it**, so guards A, B and C are
+    blind to it permanently — even for a full dataset — and D is the only thing
+    that can ever see it.
+
+    Renamed, `restore_version` takes its `elif needs_restore:` branch and every
+    snapshot silently restores nothing, `_prune_objects_sync` returns zeros
+    forever, and the next `mark_image_deleted_in_versions` mkdirs a fresh
+    `.versions/objects`, splitting the store across two folders.
+
+    The object is hand-built rather than snapshotted: the guard reads the
+    directory name and nothing else, so this stays fast and unconditional."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            root = Path(ds["folder_path"])
+            obj = root / ".versions" / "objects" / "ab" / "cdef"
+            obj.parent.mkdir(parents=True)
+            obj.write_bytes(b"stored bytes")
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(root / ".versions"), "new_name": "versions_old"}
+            )
+            assert r.status_code == 409, r.text
+            assert "folder layout" in r.json()["detail"]
+            assert obj.read_bytes() == b"stored bytes"
+            assert not (root / "versions_old").exists()
+
+    run(scenario())
+
+
+def test_renaming_a_datasets_thumbnails_folder_is_refused(tmp_path):
+    """Caught by D *and* by B, which is what makes it the ordering test: the
+    asserted substring is `folder layout`, so reordering the guards to run B
+    first turns it into `strand` and this fails."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            img = await upload_image(env, ds["id"], "a.png")
+
+            async with env.Session() as db:
+                thumb_before = (await db.get(Image, img["id"])).thumbnail_path
+            thumbs_dir = Path(thumb_before).parent
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(thumbs_dir), "new_name": "thumbs"}
+            )
+            assert r.status_code == 409, r.text
+            assert "folder layout" in r.json()["detail"]
+            assert Path(thumb_before).exists()
+            assert not (Path(ds["folder_path"]) / "thumbs").exists()
+
+    run(scenario())
+
+
+@needs_cv2
+def test_renaming_a_videos_thumbnails_folder_is_refused(tmp_path):
+    """Guard B alone, and the proof that D's direct-child scope is a decision
+    rather than an oversight: `{ds}/videos/thumbnails` is not a direct child of
+    the dataset folder, so D never looks at it — B catches it the moment a
+    poster exists, and an empty one is inert (`get_video_poster` backfills into
+    a re-derived path)."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            vid = await upload_video(env, ds["id"], "clip.mp4")
+
+            async with env.Session() as db:
+                poster_before = (await db.get(Video, vid["id"])).poster_path
+            poster_dir = Path(poster_before).parent
+            assert poster_dir.name == "thumbnails"
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(poster_dir), "new_name": "posters"}
+            )
+            assert r.status_code == 409, r.text
+            assert "strand" in r.json()["detail"]
+            assert Path(poster_before).exists()
+            assert not (poster_dir.parent / "posters").exists()
+
+    run(scenario())
+
+
+def test_renaming_a_datasets_own_folder_is_refused(tmp_path):
+    """Guard C's exact arm. A prefix rewrite would leave `Dataset.folder_path`
+    stale — a path rewrite never touches `Dataset` — so the message points at
+    the endpoint that does rename the folder *and* the row."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            img = await upload_image(env, ds["id"], "a.png")
+            root = Path(ds["folder_path"])
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(root), "new_name": "renamed_ds"}
+            )
+            assert r.status_code == 409, r.text
+            assert "dataset's own folder" in r.json()["detail"]
+
+            assert root.exists()
+            assert not (root.parent / "renamed_ds").exists()
+            async with env.Session() as db:
+                row = (await db.execute(select(Dataset).where(Dataset.id == ds["id"]))).scalar_one()
+            assert row.folder_path == str(root)
+            r2 = await env.client.get(f"{API}/images/{img['id']}/file")
+            assert r2.status_code == 200, r2.text
+
+    run(scenario())
+
+
+def test_renaming_an_empty_datasets_own_folder_is_refused(tmp_path):
+    """Guard C alone — the case `/move` and `/delete` still permit, since both
+    of theirs key off rows and an empty dataset has none."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            root = Path(ds["folder_path"])
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(root), "new_name": "renamed_ds"}
+            )
+            assert r.status_code == 409, r.text
+            assert "dataset's own folder" in r.json()["detail"]
+            assert root.exists()
+            assert not (root.parent / "renamed_ds").exists()
+
+    run(scenario())
+
+
+def test_renaming_a_folder_that_holds_dataset_folders_is_refused(tmp_path):
+    """Guard C's prefix arm, which dies if C is written as equality only: the
+    datasets root is not any dataset's own folder, and with no rows in it — or
+    with rows the equality arm cannot see — nothing else refuses it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+
+            r = await env.client.post(
+                f"{FS}/rename",
+                json={"path": str(env.datasets_dir), "new_name": "datasets_old"},
+            )
+            assert r.status_code == 409, r.text
+            assert "dataset's own folder" in r.json()["detail"]
+
+            assert env.datasets_dir.exists()
+            assert not (env.datasets_dir.parent / "datasets_old").exists()
+            assert Path(ds["folder_path"]).is_dir()
+
+    run(scenario())
+
+
+def test_a_folder_of_registered_media_outside_the_layout_is_refused(tmp_path):
+    """Guard A on its own: `{ds}/archive/images` carries a layout name but is
+    not a direct child of the dataset folder, so D cannot fire and only the rows
+    under the prefix give it away.
+
+    The fixture goes through `/move`, which permits a same-dataset directory
+    move today — the residual recorded in `docs/dev/file-browser.md` § Still
+    open."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            img = await upload_image(env, ds["id"], "a.png")
+
+            root = Path(ds["folder_path"])
+            archive = root / "archive"
+            archive.mkdir()
+            r = await env.client.post(
+                f"{FS}/move", json={"src": str(root / "images"), "dst_dir": str(archive)}
+            )
+            assert r.status_code == 200, r.text
+            moved = archive / "images"
+            assert (moved / "a.png").exists()
+
+            r2 = await env.client.post(
+                f"{FS}/rename", json={"path": str(moved), "new_name": "pictures"}
+            )
+            assert r2.status_code == 409, r2.text
+            assert "belong to a dataset" in r2.json()["detail"]
+
+            assert (moved / "a.png").exists()
+            assert not (archive / "pictures").exists()
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+            assert row.file_path == str(moved / "a.png")
+
+    run(scenario())
+
+
+def test_a_directory_with_no_registered_media_still_renames(tmp_path):
+    """The negative control, in both places it matters. The guards key off
+    structure and rows — not "is this under a dataset" — so an ordinary folder
+    inside a dataset renames just as a loose one outside does, which is the file
+    browser's actual job. The loose half holds an *unregistered* image so that
+    "holds media files" and "holds rows" are not accidentally the same thing."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            await upload_image(env, ds["id"], "a.png")
+
+            loose = tmp_path / "notes"
+            loose.mkdir()
+            (loose / "readme.txt").write_text("hello")
+            (loose / "stray.png").write_bytes(png_bytes())
+
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(loose), "new_name": "notes2"}
+            )
+            assert r.status_code == 200, r.text
+            assert (tmp_path / "notes2" / "stray.png").exists()
+            assert not loose.exists()
+
+            inside = Path(ds["folder_path"]) / "notes"
+            inside.mkdir()
+            r2 = await env.client.post(
+                f"{FS}/rename", json={"path": str(inside), "new_name": "notes2"}
+            )
+            assert r2.status_code == 200, r2.text
+            assert (Path(ds["folder_path"]) / "notes2").is_dir()
+            assert not inside.exists()
+
+    run(scenario())
+
+
+def test_an_underscore_in_a_dataset_folder_does_not_refuse_a_siblings_rename(tmp_path):
+    """The twin of `test_filesystem_delete_http.py`'s escaping test. `_` is a
+    single-character LIKE wildcard and `_name_to_slug` puts one in every
+    multi-word folder name, so unescaped, guard A's prefix over-matches the
+    *other* dataset's rows and 409s a rename that touches nothing. The two slugs
+    must stay the same length for the wildcard to line up."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            a = await env.create_dataset("my dataset")
+            b = await env.create_dataset("myxdataset")
+            assert Path(a["folder_path"]).name == "my_dataset"
+            assert Path(b["folder_path"]).name == "myxdataset"
+
+            await upload_image(env, a["id"], "mine.png")
+            await upload_image(env, b["id"], "theirs.png")
+
+            # B's rows move under `{b}/archive/images/`, so the only thing A's
+            # `{a}/archive/` prefix can match is B's — via the wildcard.
+            b_archive = Path(b["folder_path"]) / "archive"
+            b_archive.mkdir()
+            r = await env.client.post(
+                f"{FS}/move",
+                json={"src": str(Path(b["folder_path"]) / "images"), "dst_dir": str(b_archive)},
+            )
+            assert r.status_code == 200, r.text
+
+            a_archive = Path(a["folder_path"]) / "archive"
+            a_archive.mkdir()
+            r2 = await env.client.post(
+                f"{FS}/rename", json={"path": str(a_archive), "new_name": "archive2"}
+            )
+            assert r2.status_code == 200, r2.text
+            assert (Path(a["folder_path"]) / "archive2").is_dir()
 
     run(scenario())

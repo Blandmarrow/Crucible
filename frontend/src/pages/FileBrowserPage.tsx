@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import { filesystemApi, type FsEntry } from "../api/filesystem";
 import { parentOf, breadcrumbsFromPath } from "../utils/pathUtils";
+import { apiErrorDetail } from "../utils/apiError";
 import { datasetsApi } from "../api/datasets";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { Dataset, GenerationMetadata as GenMeta } from "../types";
@@ -322,7 +323,9 @@ export default function FileBrowserPage() {
   const renameMutation = useMutation({
     mutationFn: ({ path, name }: { path: string; name: string }) => filesystemApi.rename(path, name),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["fs-list"] }); setRenamingPath(null); },
-    onError: () => toast.error("Rename failed"),
+    // The rename 409s carry the reason (a dataset's own folder, part of its
+    // layout, holds registered rows) — surface it, or the guards are API-only.
+    onError: (e) => toast.error(apiErrorDetail(e, "Rename failed")),
   });
 
   // Sorted + filtered entries

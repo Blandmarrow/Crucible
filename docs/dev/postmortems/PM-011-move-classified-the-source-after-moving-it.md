@@ -81,10 +81,15 @@ thumbnail. Two follow-up commits closed that:
 - The directory branch now prefix-rewrites `Image.thumbnail_path` / `Video.poster_path` when
   the derived path is *inside* the moved tree (a poster is; an image's thumbnail, one level
   up in `{ds}/thumbnails/`, is not).
+- The directory branch later got the containment guard too — it had been fixed on the file
+  branch only, which a subsequent review caught (V-02's twin, V-01). Its rows are now loaded
+  before `shutil.move` so the 409 can land with the filesystem untouched, and the predicate
+  is set equality over the matched rows' `dataset_id`, since a moved tree can span two
+  datasets. A folder with no registered media still moves anywhere.
 
 The record-current-behaviour test became a refusal test, and its `Image` twin plus a
 loose-file negative control were added beside it.
 
 ### Status & date
 
-MITIGATED. Last reviewed for staleness: 2026-07-28.
+MITIGATED. Last reviewed for staleness: 2026-07-29.

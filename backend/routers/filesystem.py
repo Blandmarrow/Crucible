@@ -159,6 +159,9 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     # pointing at nothing.
     src_is_file = src.is_file()
     src_is_dir = src.is_dir()
+    # The directory branch's prefix is derived from `src` for the same reason:
+    # it has to be captured while `src` still means something.
+    old_prefix = str(src) + os.sep
 
     # Look the row up before the move too, so the 409 below lands with the
     # filesystem still untouched — the convention every other guard in this file
@@ -191,6 +194,35 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
                     "'Move to dataset' action to move it.",
                 )
 
+    # The directory branch's rows are loaded before the move as well — not for
+    # convenience but because the guard below has to be able to refuse with the
+    # filesystem untouched, which is the convention every guard in this file
+    # follows. The original code queried only *after* `shutil.move`, which is
+    # why it had nowhere to put a containment check.
+    dir_rows: list[tuple[Image | Video, str]] = []
+    if src_is_dir:
+        for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
+            result = await db.execute(select(model).where(model.file_path.startswith(old_prefix)))
+            dir_rows.extend((media, derived) for media in result.scalars().all())
+        if dir_rows:
+            # The directory twin of the file guard above, and refused for the
+            # same reason: this endpoint rewrites paths and nothing else, so a
+            # folder of registered media leaving its dataset strands every row —
+            # `utils.safe_dataset_path` 403s each one's bytes and the gallery
+            # goes blank with nothing in the DB saying why.
+            #
+            # Set equality, not "some dataset was found": a moved tree can span
+            # two datasets, and then no single destination is the same dataset
+            # for all of them, so `!=` refuses a move that would re-home half the
+            # rows and strand the rest.
+            new_ds = await _find_dataset_for_path(db, new_path)
+            if new_ds is None or {media.dataset_id for media, _ in dir_rows} != {new_ds.id}:
+                raise HTTPException(
+                    409,
+                    "This folder holds files that belong to a dataset. Use the "
+                    "gallery's 'Move to dataset' action to move them.",
+                )
+
     try:
         shutil.move(str(src), str(new_path))
     except PermissionError:
@@ -200,7 +232,7 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
         row.file_path = str(new_path)
         row.filename = new_path.name
         await db.commit()
-    elif src_is_dir:
+    elif dir_rows:
         # Update every media row whose file_path started with the old dir path,
         # plus the derived artifact each model keys off a path of its own. A
         # poster or thumbnail *inside* the moved tree travelled with it and its
@@ -208,19 +240,16 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
         # still right — an image's thumbnails sit in `{ds}/thumbnails/`, beside
         # `images/` rather than under it, so moving `images/` alone must leave
         # them alone. Hence the per-column prefix test, not a blanket rewrite.
-        old_prefix = str(src) + os.sep
-        touched = False
-        for model, derived in ((Image, "thumbnail_path"), (Video, "poster_path")):
-            result = await db.execute(select(model).where(model.file_path.startswith(old_prefix)))
-            rows = result.scalars().all()
-            for row in rows:
-                row.file_path = str(new_path / Path(row.file_path).relative_to(src))
-                old_derived = getattr(row, derived)
-                if old_derived and str(old_derived).startswith(old_prefix):
-                    setattr(row, derived, str(new_path / Path(old_derived).relative_to(src)))
-            touched = touched or bool(rows)
-        if touched:
-            await db.commit()
+        #
+        # No `refresh_stats`: it recomputes counts and sizes only — never a path,
+        # never `dataset_id` — and the guard above makes every permitted move a
+        # same-dataset one, so none of those numbers can change here.
+        for media, derived in dir_rows:
+            media.file_path = str(new_path / Path(media.file_path).relative_to(src))
+            old_derived = getattr(media, derived)
+            if old_derived and str(old_derived).startswith(old_prefix):
+                setattr(media, derived, str(new_path / Path(old_derived).relative_to(src)))
+        await db.commit()
 
     return {"new_path": str(new_path)}
 

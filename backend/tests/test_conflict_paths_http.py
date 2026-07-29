@@ -224,6 +224,90 @@ def test_moving_a_loose_file_into_a_dataset_still_works(tmp_path):
     run(scenario())
 
 
+def test_moving_a_folder_of_registered_media_out_of_its_dataset_is_refused(tmp_path):
+    """The directory twin of the file refusal above. Moving `{ds}/images` is one
+    request that re-homes every row in the dataset at once, and the branch
+    rewrites paths and nothing else — so out of the datasets tree entirely, where
+    `utils.safe_dataset_path` 403s every byte request, and into *another*
+    dataset's folder, where `dataset_id` would be left stale, are both refused.
+
+    The second destination is the one that proves containment rather than "some
+    dataset was found" — a guard that only checked `new_ds is not None` would let
+    it through."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            a = await env.create_dataset("a")
+            b = await env.create_dataset("b")
+            image = await upload_image(env, a["id"], "pic.png")
+
+            async with env.Session() as db:
+                row = await db.get(Image, image["id"])
+                images_dir = Path(row.file_path).parent
+                src_before, thumb_before = row.file_path, row.thumbnail_path
+
+            outside = tmp_path / "outside"
+            outside.mkdir()
+            # A sub-folder of B rather than B itself: dropping `images` straight
+            # into `{b}` collides with B's own `images/` and would return the
+            # name-collision 409, which proves nothing about the guard.
+            other_dataset = Path(b["folder_path"]) / "archive"
+            other_dataset.mkdir()
+
+            for dst_dir in (outside, other_dataset):
+                r = await env.client.post(
+                    f"{FS}/move", json={"src": str(images_dir), "dst_dir": str(dst_dir)}
+                )
+                assert r.status_code == 409, r.text
+                # The two branches word their detail differently; this is the
+                # substring they share.
+                assert "belong to a dataset" in r.json()["detail"]
+                assert not (dst_dir / "images").exists()
+
+            async with env.Session() as db:
+                row = (await db.execute(
+                    select(Image).where(Image.id == image["id"])
+                )).scalar_one()
+
+            assert row.file_path == src_before
+            assert row.dataset_id == a["id"]
+            assert row.thumbnail_path == thumb_before
+            assert Path(src_before).exists()
+            # Still serving — the point of refusing in the first place.
+            r2 = await env.client.get(f"{API}/images/{image['id']}/file")
+            assert r2.status_code == 200, r2.text
+
+    run(scenario())
+
+
+def test_moving_a_folder_with_no_registered_media_still_works(tmp_path):
+    """The directory twin of the loose-file negative control: the guard keys off
+    the folder *holding rows*, so an ordinary folder still moves anywhere —
+    which is the file browser's actual job."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("a")
+            await upload_image(env, ds["id"], "seed.png")
+
+            loose_dir = tmp_path / "notes"
+            loose_dir.mkdir()
+            (loose_dir / "readme.txt").write_text("hello")
+            # An unregistered image inside it, so "holds media files" and "holds
+            # rows" are not accidentally the same thing here.
+            (loose_dir / "stray.png").write_bytes(png_bytes())
+            elsewhere = tmp_path / "elsewhere"
+            elsewhere.mkdir()
+
+            r = await env.client.post(
+                f"{FS}/move", json={"src": str(loose_dir), "dst_dir": str(elsewhere)}
+            )
+            assert r.status_code == 200, r.text
+            assert (elsewhere / "notes" / "readme.txt").read_text() == "hello"
+            assert (elsewhere / "notes" / "stray.png").exists()
+            assert not loose_dir.exists()
+
+    run(scenario())
+
+
 @needs_cv2
 def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
     """The directory half of the same sync, which iterates `(Image, Video)` and
@@ -234,7 +318,14 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
 
     A video's poster lives *under* `videos/`, so it travels with the move and its
     stored path has to be rewritten too — otherwise `GET /poster` 403s on a path
-    outside the datasets tree."""
+    outside the datasets tree.
+
+    The destination is inside the dataset because the containment guard permits
+    nothing else; the prefix rewrite under test is the same either way. Note that
+    `{ds}/archive/videos` is outside the flat `{ds}/videos/` glob `_rescan_videos`
+    walks, so a later rescan reports this row missing — that is a separate open
+    finding (V-21), and *not* something to "fix" by moving the destination back
+    outside the dataset, which is exactly what the guard refuses."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("a")
@@ -245,7 +336,7 @@ def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
                 videos_dir = Path(row.file_path).parent
                 poster_rel = Path(row.poster_path).relative_to(videos_dir)
 
-            archive = tmp_path / "archive"
+            archive = Path(ds["folder_path"]) / "archive"
             archive.mkdir()
             r = await env.client.post(
                 f"{FS}/move", json={"src": str(videos_dir), "dst_dir": str(archive)}
@@ -271,7 +362,10 @@ def test_moving_an_images_folder_leaves_thumbnails_outside_it_alone(tmp_path):
     """The other half of the prefix test. An image's thumbnails live in
     `{ds}/thumbnails/`, *beside* `images/` and not under it, so moving `images/`
     does not move them — and rewriting `thumbnail_path` unconditionally would
-    point every row at a file that was never there."""
+    point every row at a file that was never there.
+
+    Destination inside the dataset, as in the video twin above: anywhere else is
+    a 409 now, and the prefix rewrite is unchanged by where it is permitted."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("a")
@@ -283,7 +377,7 @@ def test_moving_an_images_folder_leaves_thumbnails_outside_it_alone(tmp_path):
                 thumb_before = row.thumbnail_path
             assert not thumb_before.startswith(str(images_dir) + os.sep)
 
-            archive = tmp_path / "archive"
+            archive = Path(ds["folder_path"]) / "archive"
             archive.mkdir()
             r = await env.client.post(
                 f"{FS}/move", json={"src": str(images_dir), "dst_dir": str(archive)}

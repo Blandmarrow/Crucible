@@ -219,7 +219,7 @@ file when the extraction frontend landed; the two are read together but sized ap
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That
   sync rewrites paths and nothing else, so `/filesystem/move` **refuses with a 409** to move
-  a registered file outside its own dataset. `materialize_provenance`, `refresh_stats` and
+  a registered file — or a folder holding one — outside its own dataset. `materialize_provenance`, `refresh_stats` and
   NULLing `Image.source_video_id` are the things a cross-dataset move owes and that endpoint
   does none of; closing the gap by refusal leaves `batch_move_dataset` as the only path that
   re-homes an image. It was also the only code path that could ever change a

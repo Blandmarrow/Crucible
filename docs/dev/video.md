@@ -6,7 +6,8 @@ ingest paths that create a video, and the `/videos` endpoints. The cv2 decode su
 `docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-shots.md` and
 `docs/dev/video-extract.md` (pass 1) and
 `docs/dev/video-reextract.md` (pass 2), and every screen that shows a video is in
-`docs/dev/video-ui.md`. The arc's roadmap was retired into these files when pass 2 landed,
+`docs/dev/video-ui.md` and `docs/dev/video-extract-ui.md` (the extraction modal and its
+job re-attach hook). The arc's roadmap was retired into these files when pass 2 landed,
 the same way the detection arc's was.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
@@ -209,10 +210,11 @@ fresh one on the next view). `test_path_containment_http.py` pins both direction
 
 ## Frontend
 
-Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the two-step
-`ExtractFramesModal` with `CropOverlay`/`TrimBar`, the extraction history, the frame
-lineage line and the job re-attach hook — is in `docs/dev/video-ui.md`. Split out of this
-file when the extraction frontend landed; the two are read together but sized apart.
+Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the extraction
+history and the frame lineage line — is in `docs/dev/video-ui.md`; the two-step
+`ExtractFramesModal` with `CropOverlay`/`TrimBar` and the job re-attach hook is in
+`docs/dev/video-extract-ui.md`. Split out of this file when the extraction frontend
+landed; the three are read together but sized apart.
 
 ## What is free, and what is not
 

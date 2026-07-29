@@ -46,22 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-### Over budget or at it
-
-## docs/dev/video-ui.md
-
-- **Moves:** § ExtractFramesModal, including its `### CropOverlay and TrimBar` and
-  `### Re-attaching to the job` subsections (lines 86-266, 2,048 words — 59% of the file)
-- **New file:** docs/dev/video-extract-ui.md
-- **Why here:** the backend half of extraction already split this way — `docs/dev/video-extract.md`
-  is Pass 1's router/service half, and this is its UI counterpart. The remainder
-  (VideoStrip, VideoDetailPage, frame lineage) is video *browsing*, a different subsystem.
-- **Leaves:** 2,048 / 1,436 — both under the 60% target, but the new file only just, so do
-  not fold anything else into it.
-- **Watch for:** `useVideoExtractJobs` is described under § Re-attaching to the job and
-  referenced from the Map row's trigger keywords; `docs/dev/video-reextract.md` points at
-  this file's modal sections for the Pass 2 UI. Grep `§` in both video-extract files.
-
 ### Structure first — these need headings before they can be split well
 
 Four files are organised with `**Bold**:` lead-ins and have no ATX sub-headings (or one

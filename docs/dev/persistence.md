@@ -35,7 +35,7 @@ computed per entity, so it cannot be a static constant and has no meaningful reg
   batch runs one job per video. It is what lets `VideoDetailPage` show a live bar for its own
   video with no modal open, and what survives a reload. Read by the hook's **recovery**
   effect, which is declared before its persist effect so the stored id is seen before the
-  write can replace it with `null`. See `docs/dev/video-ui.md`.
+  write can replace it with `null`. See `docs/dev/video-extract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 

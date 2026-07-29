@@ -260,8 +260,8 @@ optional `headerExtra` slot — `SelectionToolbar`'s dataset breakdown, `VideoDe
 `{filename} · {subfolder}` line. A component rather than a hook call per page because the
 hook must not be called conditionally and every entry point renders behind a flag;
 `useModalBehavior`'s docstring rules out a *generic* wrapper, so a feature-specific one is
-the sanctioned shape. Backdrop-click closing stays off, matching `ExtractFramesModal` — the
-sibling on the same page.
+the sanctioned shape. Backdrop-click closing stays off, matching `ExtractFramesModal`
+(`docs/dev/video-extract-ui.md`) — the sibling on the same page.
 
 Three entry points, all opening that one modal:
 
@@ -280,7 +280,8 @@ Three entry points, all opening that one modal:
   `{videoId, subfolder}`, which is the only scope that panel has and the reason the request
   accepts it. `null` is closed and `""` is the dataset root, a real subfolder.
 
-`ExtractFramesModal` and `useVideoExtractJobs` are **not** involved: that hook filters
+`ExtractFramesModal` and `useVideoExtractJobs` (`docs/dev/video-extract-ui.md`) are **not**
+involved: that hook filters
 `job_type === "video_extract"` and exists for a two-step probe modal with a re-attach story
 pass 2 does not have. `TopBar` carries `video_reextract` in both `LIVE_IMAGE_JOB_TYPES` and
 `IMAGE_MODIFYING_JOB_TYPES`, and invalidates the singular `["image"]` key for it — otherwise

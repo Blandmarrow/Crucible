@@ -7,6 +7,8 @@ Detection *models* are registered and VRAM-managed like every other model — se
 
 Detection runs as a background job, same pattern as quality scoring. Four model families are supported.
 
+## Router and endpoints
+
 **Router**: `backend/routers/detection.py`, prefix `/detection`.
 
 | Endpoint | Body / params | Returns |
@@ -50,6 +52,8 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `point_labels` | `null` | Foreground (1) / background (0) labels matching `point_prompts` |
 | `sync_watermark_flag` | `false` | Set/clear `Image.has_watermark` from per-image results (see below); rejected with 400 for non-grounding tasks |
 
+## Model and task matrix
+
 **Tasks by model**:
 - Florence-2: `<OD>` (fixed-vocabulary, no prompt) and `<CAPTION_TO_PHRASE_GROUNDING>` (phrase grounding with text or per-image caption).
 - NudeNet: `"nudenet"` only — CPU ONNX, body-part bounding boxes. Not tracked by `model_manager`.
@@ -65,6 +69,8 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 **`_ALLOWED_MODELS`** (router): `{"florence2_large", "florence2_promptgen", "nudenet", "sam2", "sam3"}`. **`_ALLOWED_TASKS`**: `{"<OD>", "<CAPTION_TO_PHRASE_GROUNDING>", "nudenet", "text_prompt", "points"}`.
 
 **Watermark flag sync** (`sync_watermark_flag`) — grounds watermark phrases (e.g. prompt `"watermark. text. logo."`) and writes the located result back to the CLIP-derived `has_watermark` flag. Eligible only for the text-prompt grounding tasks in `_WATERMARK_SYNC_TASKS` = `{"text_prompt", "<CAPTION_TO_PHRASE_GROUNDING>"}` (so SAM2/SAM3 text_prompt and Florence grounding; the request-path check 400s for `<OD>`, `nudenet`, and SAM2 `points`). Inside each per-image session, immediately before that image's commit, `_apply_watermark_flag(session, img_id, bool(detections))` sets the flag `True` on a hit and `False` when scanned clean — using the in-memory result, never a re-query, and following the copy-then-reassign JSON invariant. It runs **only after successful inference** (`inference_ok` guard): an inference exception leaves the old flag untouched, never silently clearing a never-scanned image. Because it lives inside the run, "last synced run wins" — with `overwrite` off, the flag still reflects only this run's result. Under caption-as-prompt grounding, uncaptioned images are filtered out of the scan set and so are left untouched. Each branch's early `return` first awaits `_finish_watermark_sync()` — a no-op unless the run synced flags — which lazily imports `refresh_stats` (matching `captioning.py`) and refreshes the dataset's cached stats in a fresh session so the Stats flag counts update; a cancelled run may skip it (acceptable).
+
+## ML inference
 
 **ML inference**:
 - Florence-2: `backend/ml/florence_captioner.py::infer_sync_detection` / `detect_image`. Returns normalized bboxes `[x1, y1, x2, y2]` in 0–1 range.
@@ -83,7 +89,11 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 - **Do not filter sam3's "CUDA is not available ... Disabling autocast" warning.** It fires at sam3 import time exactly when `torch.cuda.is_available()` is False (`torch/cuda/amp/common.py::amp_definitely_not_available`), which makes it the clearest available signal that the venv has a CPU-only torch build. `backend/main.py` filters the neighbouring cosmetic timm `FutureWarning` and deliberately leaves this one alone.
 - **Deferred features:** freehand brush mask editing (the polygon storage has no hole/ring support, so background-brush "cut a hole" edits can't be represented — would need an RLE/raster mask option); watermark crop-away and watermark removal via ComfyUI inpainting (mask-exclusion on export covers the training case); video segmentation/tracking (Crucible is image-only).
 
+## Storage
+
 **Storage**: `backend/models/detection.py::Detection` table. Indexed on `image_id` and `label`. `Detection.mask: Text | None` stores polygon JSON: `{"polygons": [[[x,y],...], ...]}` in normalized 0–1 coordinates. `ImageOut.detections: list[DetectionOut]` is populated only in `GET /images/{image_id}` (the detail endpoint) — not in `list_images`.
+
+## Frontend surfaces
 
 **Frontend surfaces**:
 - `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, min_prob slider for NudeNet, overwrite toggle). Model list includes `sam2` and `sam3`; for either, the task dropdown is hidden (fixed `text_prompt`), the use-captions toggle is hidden, and a prompt is required. A **"Sync watermark flag from results"** checkbox renders below Overwrite only when `detectSyncEligible` (sam2/sam3, or Florence grounding); the mutation sends `sync_watermark_flag: detectSyncEligible && detectSyncWatermark` so a stale checkbox state is harmless. **The modal closes immediately on job start** (toast "Detection queued") — progress shows in the global job bar, not in the modal — and the job id is appended to a tracked `detectJobIds: string[]` (the id-list pattern, see `docs/dev/frontend-jobs.md`) so the user can reopen and queue another run right away. No extra completion invalidation is needed — the detection-job effect already invalidates `["images", datasetId]` and StatsPage live-polls `"detection"` jobs.

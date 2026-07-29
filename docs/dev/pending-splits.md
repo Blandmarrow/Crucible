@@ -46,51 +46,76 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-### Structure first — these need headings before they can be split well
+### Seam recorded, split pending
 
-Four files are organised with `**Bold**:` lead-ins and have no ATX sub-headings (or one
-wrapping everything). They are not over budget, so no split is due. But the missing
-structure is a prerequisite: `scripts/check_docs.py` picks a seam by reporting per-section
-word counts, and for these it can only say "read the file". Add `##` headings along the
-groupings below — the lead-ins already mark every boundary — and the eventual split
-becomes mechanical. Do this when next editing the file, not as a standalone sweep.
+None of these four is over budget, so no split is due today. All four now carry `##`
+headings, so `scripts/check_docs.py`'s per-section breakdown prints the counts quoted
+below and the seam is a measurement rather than a judgement call. The counts are the
+sections' own; the file total is larger by its intro and heading lines.
 
 ## docs/dev/export.md
 
-- **Problem:** 3,184 words (91%), one `#` title and no sub-headings. Its longest paragraph
-  is 246 words against the 250 limit — already at the compression ceiling.
-- **Proposed headings:** The shared export loop (shared loop, stem uniquification, disk
-  preflight) · Filters and license controls (filters, page controls, `unlicensed_count`) ·
-  Provenance manifests (manifests, untrusted values, lifecycle) · Output options (caption
-  format, resize, strip metadata, loss masks, captions-only)
-- **Watch for:** the eventual seam is almost certainly Provenance manifests → its own file,
-  since `docs/dev/provenance.md` already owns that vocabulary and is itself at 91%.
+- **Moves:** § Provenance manifests (857 w) — `CREDITS.md` / `licenses.csv`, the untrusted-value
+  neutralisers (`_md_inline`, `_md_link`, `_csv_cell`), the manifest lifecycle and the
+  supersede rule
+- **New file:** docs/dev/export-manifests.md
+- **Why here:** it is the one section that is about a *document the export ships*, not about
+  the export loop. The other three sections (shared loop 495, filters and license controls
+  965, output options 797) are one subsystem read together.
+- **Leaves:** 3,200 total today → ~2,340 / ~900. The remainder is still 67%, so this buys a
+  little room, not a lot.
+- **Watch for:** `docs/dev/provenance.md` already owns the license vocabulary and is itself
+  at 91%, so it **cannot** absorb this — a third file is implied, which is why the new name
+  is `export-manifests`, not a merge. § Filters and license controls (965 w) is the larger
+  section but the worse seam: it is half backend `_is_excluded`, half `ExportPage` panel, and
+  the two are described in each other's terms. This file's longest paragraph is 246 words
+  against the 250 limit, so it has no compression headroom either.
 
 ## docs/dev/detection.md
 
-- **Problem:** 2,888 words (83%), no sub-headings.
-- **Proposed headings:** Router and endpoints · Model and task matrix (tasks by model,
-  multi-phrase prompts, `_ALLOWED_MODELS`) · ML inference · Storage · Frontend surfaces
-- **Watch for:** § Deferred work & upstream constraints is a status note, not reference —
-  it dates fastest and should not travel into a new file unexamined.
+- **Moves:** § ML inference (873 w) plus § Model and task matrix (437 w)
+- **New file:** docs/dev/detection-inference.md
+- **Why here:** the `backend/ml/` predictors are a different subsystem from the router that
+  calls them — the SAM3 loader alone is a third of the file and changes on upstream's clock,
+  not Crucible's. Router and endpoints (840) + Storage (37) + Frontend surfaces (623) is the
+  `/detection` request path, read together.
+- **Leaves:** 2,905 total → ~1,570 / ~1,320.
+- **Watch for:** § Deferred work & upstream constraints lives inside § ML inference and is a
+  *status note*, not reference — it dates fastest of anything in the file and must not travel
+  into a new file unexamined. `docs/dev/ml-models.md` (2,425 w) is the sibling that already
+  owns model loading and VRAM, so check whether a piece belongs there before minting the new
+  file.
 
 ## docs/dev/statistics.md
 
-- **Problem:** 2,845 words (81%), no sub-headings.
-- **Proposed headings:** Frontend page (panel organization, live polling, error states) ·
-  Backend aggregation (server-side aggregation, validator-keyed cache, `DatasetStats`
-  schema and its subfolder invariant) · Panels (editable histograms, BucketPanel,
-  detections, licenses, lightbox) · CSV export
-- **Watch for:** the Frontend/Backend boundary is the natural seam if it ever trips.
+- **Moves:** § Backend aggregation (823 w), and probably the `GET /images/` filter table that
+  currently sits inside § Bucket drill-down (~600 w of that section's 736)
+- **New file:** docs/dev/statistics-backend.md
+- **Why here:** the Frontend/Backend boundary. § Frontend page (501), § CSV export (290) and
+  § Category panels (428) are all `StatsPage.tsx`; `get_dataset_stats`, the validator-keyed
+  cache and the `DatasetStats` schema are `dataset_service.py`.
+- **Leaves:** 2,860 total → roughly 1,400 / 1,450, depending on where the filter table lands.
+- **Watch for:** the seam is **not clean**, and that is the whole difficulty. The `GET /images/`
+  filter table is backend content living under the drill-down that consumes it, so leaving it
+  behind makes the new file incomplete and taking it makes § Bucket drill-down a stub that
+  points elsewhere for its own filter params. Decide that before starting. The table's
+  `license_filter` row also has to stay consistent with `docs/dev/export.md` and
+  `docs/dev/provenance.md`, which describe the same param with different `""` handling.
 
 ## docs/dev/versioning.md
 
-- **Problem:** 3,166 words (90%) with 3,141 of them under a single `### Dataset versioning`
-  — structurally identical to having none.
-- **Proposed headings:** promote the existing `###` contents to `##` groups: Model and
-  storage (object store, GC, `is_present`, DB tables, `DatasetVersion` fields,
-  `passive_deletes`) · Guards (versioning mode, dataset-busy) · Backend (router, service,
-  copy-on-write injection points) · Frontend (+ TanStack Query keys) · Provenance mirror
-  and regression tests
-- **Watch for:** the `### Dataset versioning` heading duplicates the `# Dataset versioning`
-  title; deleting it is the first move. Its anchor may be linked — grep before removing.
+- **Moves:** § Backend's `### Service` (1,246 w) — `version_service.py`, chiefly
+  `restore_snapshot`'s four passes
+- **New file:** docs/dev/versioning-restore.md
+- **Why here:** that one subsection is 39% of the file and is the only part of it that is
+  hard. Everything else (Guards 216, Model and storage 430, `### Router` 232,
+  `### Copy-on-write injection points` 306, Frontend 527, Provenance mirror and regression
+  tests 161) is reference a reader skims; the restore passes are read line by line when
+  something has gone wrong.
+- **Leaves:** 3,187 total → ~1,940 / ~1,250.
+- **Watch for:** `### Copy-on-write injection points` is a table of *call sites* in other
+  routers and belongs with whichever half documents the two hooks — the hooks themselves are
+  in `### Service`, so it likely travels with it despite reading like router content. The
+  CLAUDE.md invariant "Nothing fallible between an irreversible filesystem mutation and the
+  `commit()`" and the DB-before-filesystem invariant both point at restore's Pass 2/Pass 3,
+  so the new file is a cross-reference target from CLAUDE.md, not only from siblings.

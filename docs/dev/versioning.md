@@ -2,9 +2,9 @@
 
 This file covers snapshot-based version control: branches, snapshots, the copy-on-write object store, diff, restore, and the frontend versioning UI.
 
-### Dataset versioning
-
 Snapshot-based version control for datasets. Users can create named snapshots, restore to any prior state, compare two snapshots (diff), and maintain named branches.
+
+## Guards
 
 **Versioning mode** — stored in `threshold_settings.versioning_mode` (same singleton row as quality thresholds, same `GET/PATCH /api/v1/settings/thresholds` endpoints). Three values:
 
@@ -16,14 +16,16 @@ Snapshot-based version control for datasets. Users can create named snapshots, r
 
 Deletion protection fires in both `"manual"` and `"auto"` because deletion is irreversible — the file is backed up before `Path.unlink()`.
 
+**Dataset-busy guard** — `backend/services/dataset_busy.py`, a small in-process module (single-process app): `busy(dataset_id, reason)` contextmanager + `ensure_not_busy(dataset_id)` which raises HTTP 409. The versioning job `_run` wrappers in `routers/versioning.py` (restore, checkout, background snapshot, background branch-create, prune) hold the flag for the job's duration. Interactive *direct-mutation* endpoints call `ensure_not_busy` after resolving the dataset id: `routers/images.py` (upload, delete/batch-delete/bulk-delete, bulk-rename, rename, resize, crop, batch move-subfolder, batch move-dataset + copy-dataset — both source and target), `routers/quality.py` (`resolve_duplicates`), `routers/captions.py` (single caption save, find-replace, bulk-edit). Enqueued background jobs are deliberately *not* guarded — the single job queue already serializes them against versioning jobs. No frontend change: the 409 surfaces through the normal error toast.
+
+## Model and storage
+
 **Object store** — content-addressable, git-style:
 `{dataset.folder_path}/.versions/objects/{sha256[:2]}/{sha256[2:]}`
 
 Files are stored **only once per unique content** (idempotent). All writes go through `_store_object(dataset_folder, src_path) -> sha256`: it streams the file once, hashing *while* writing to an `objects/.tmp-{uuid}` temp file (same filesystem), then atomically `os.replace`s it to the hash path — so the stored bytes and their address can never disagree, even if the source file is overwritten mid-copy. This closes the hash-then-copy TOCTOU that could permanently poison a content-addressed entry (realistic race: a manual-mode snapshot job vs. an interactive replace endpoint). Never add a separate "hash, then copy" path.
 
 **GC** — `prune_object_store(db, dataset_id, job_id=None, min_age_seconds=3600)` deletes objects no `VersionImageState.file_hash` of the dataset references, plus stale `.tmp-*` leftovers, and returns `{objects_deleted, objects_kept, bytes_freed}`. Files younger than `min_age_seconds` are always kept (a COW write racing the reference scan may have stored an object whose state row isn't committed yet — belt-and-suspenders on top of the busy flag). Objects are per-dataset (the store lives under the dataset folder), so cross-dataset references are impossible. User-triggered via `POST /{id}/versions/prune` (below) and the "Prune storage" button on `VersionsPage`.
-
-**Dataset-busy guard** — `backend/services/dataset_busy.py`, a small in-process module (single-process app): `busy(dataset_id, reason)` contextmanager + `ensure_not_busy(dataset_id)` which raises HTTP 409. The versioning job `_run` wrappers in `routers/versioning.py` (restore, checkout, background snapshot, background branch-create, prune) hold the flag for the job's duration. Interactive *direct-mutation* endpoints call `ensure_not_busy` after resolving the dataset id: `routers/images.py` (upload, delete/batch-delete/bulk-delete, bulk-rename, rename, resize, crop, batch move-subfolder, batch move-dataset + copy-dataset — both source and target), `routers/quality.py` (`resolve_duplicates`), `routers/captions.py` (single caption save, find-replace, bulk-edit). Enqueued background jobs are deliberately *not* guarded — the single job queue already serializes them against versioning jobs. No frontend change: the 409 surfaces through the normal error toast.
 
 **`is_present` invariant**: A `VersionImageState` row always has `is_present=True` — it records that the image was present at snapshot time. When an image is deleted, post-deletion snapshots simply have no row for it. This means restoring a pre-deletion snapshot correctly re-creates the image from the object store (the deletion hook backs up the file before it is unlinked). Do not retroactively set `is_present=False` on old rows.
 
@@ -36,6 +38,14 @@ Files are stored **only once per unique content** (idempotent). All writes go th
 | `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) + the five provenance columns (see **Provenance mirror** below) |
 
 `datasets.current_branch_id` — tracks the active branch (updated on checkout).
+
+**`DatasetVersion` fields**: `id`, `dataset_id`, `branch_id`, `parent_id`, `name`, `description`, `image_count`, `created_at`, `source` (`Literal["manual", "pre_restore", "branch_init"]`), `is_pinned` (`bool`).
+
+**`passive_deletes`**: `DatasetVersion.image_states` sets `passive_deletes=True` — `version_image_states.version_id` has `ondelete="CASCADE"` and `PRAGMA foreign_keys=ON` is set per connection in `backend/database.py`, so the DB deletes state rows and the ORM no longer loads thousands of them per version delete. `DatasetBranch.versions` deliberately does **not**: its FK is `ondelete="SET NULL"`, so the ORM cascade must keep deleting version rows itself (each of those deletes now skips loading states, which is the actual win).
+
+## Backend
+
+### Router
 
 **Backend router** (`backend/routers/versioning.py`, prefix `/datasets`, registered in `main.py`):
 
@@ -54,6 +64,8 @@ Files are stored **only once per unique content** (idempotent). All writes go th
 | `POST` | `/{id}/versions/{version_id}/restore` | Restore (always bg job → `{job_id}`) |
 | `POST` | `/{id}/versions/prune` | Prune unreferenced object-store files (bg job `prune_versions` → `{job_id}`); 400 if versioning mode is `off`; summary written to `BackgroundJob.result_data` and emitted as the final progress message |
 
+### Service
+
 **Backend service** (`backend/services/version_service.py`):
 
 Key functions:
@@ -69,6 +81,8 @@ Key functions:
   - **Pass 3 — collision-safe execution**: first the keep-mode extras renamed in 2a are physically moved to their new names (file + sidecar + thumbnail), *then* rename sources that are another image's restore target are staged to `{stem}.__restore_tmp_{id}{suffix}` temp names (swaps/renumber chains can't clobber a file that is still someone's current content). Content restores copy from the object store to `target_path`; a pure rename (auto mode leaves `file_hash=NULL`) *moves* the file (`rename_with_sidecar`). Stale files/sidecars/thumbnails at the old path are removed **only after the restore/move succeeded** — and when the object-store copy is missing, the current file is *moved* to the target, never deleted (it may be the only remaining copy; counted in `files_unavailable`). Each plan's file work is individually contained: an unexpected failure (disk full, permissions) logs, counts in `files_failed`, compensates that row's paths, and the batch continues; after the loop a sweep recovers any unconsumed `__restore_tmp` file to its row's committed path so none is ever left untracked. In `remove` mode, extras' files are unlinked last — **skipping any path in the restored target set** (a restored image owns it now; unlinking would delete the just-restored file). All unlinks go through `_remove_stale_files` via `run_in_executor`. Thumbnails are regenerated from the row's final `file_path`. Finally, `_sync_caption_sidecar` makes the on-disk `.txt` sidecar match the restored `caption_text` for every image (written when non-empty, deleted when empty) — without this, `rescan_dataset` treats the stale sidecar as a caption edit and silently reverts the restored caption seconds later when `auto_rescan_on_open` fires.
 - `diff_versions(db, dataset_id, v1, v2)` — pure DB, no background job; uses `_DIFF_COLS` column-explicit select for efficiency. Compared fields: `caption_text`, `quality_flags`, `subfolder`, the seven mirrored quality scores (incl. `color_score`; `saturation_score`, `luminance_score` and `nsfw_score` are scored-not-authored, so they are absent from `VersionImageState` entirely — see `NOT_MIRRORED` in `backend/tests/test_video_lineage_mirrors.py`), `dino_layer_scores`, `generation_metadata`, the five provenance columns (`source_name`, `source_url`, `license`, `attribution`, `source_meta`), `sort_order`, `processing_history`, plus `file` (hash). The list is the module-level **`_DIFF_COMPARE_FIELDS`** tuple, hand-synced with `_DIFF_COLS`: adding a column to `_DIFF_COLS` alone selects it from both versions and then throws it away (which is how `source_meta` was loaded on every diff without ever being compared), while a name in `_DIFF_COMPARE_FIELDS` that is missing from `_DIFF_COLS` is never selected and so silently reports "unchanged". `test_provenance_http.py` asserts the compare list is a subset of the selected columns. The heavy JSON fields in `_HEAVY_DIFF_FIELDS` (`dino_layer_scores`, `generation_metadata` — full ComfyUI workflow payloads — and `source_meta`, a scraper's raw sidecar payload) are compared but reported only as a compact `{"changed": true}` marker, never embedded. `processing_history` changes render as `+`/`−` operation badges in `DiffModal`; `{"changed": true}` renders as "field: changed"; the generic `ChangeRow` renders any other field via `JSON.stringify`.
 - `DELETE /{id}/versions/{version_id}` head reassignment: when the deleted version is the branch head, the head moves to the version's **parent** if it exists on the same branch, else to the newest remaining version on the branch. Parent-first matters after a restore: the newest-by-`created_at` version is then the pre-restore auto-snapshot — exactly the state the user restored away from.
+
+### Copy-on-write injection points
 
 **Copy-on-write injection points** (existing routers, all fire before the file operation):
 
@@ -86,6 +100,8 @@ Key functions:
 | `backend/routers/images.py` | `batch_move_dataset` — calls `mark_image_deleted_in_versions` per moved image *before* the dataset_id updates (a cross-dataset move is a deletion from the source dataset's history; without the backup, pre-move snapshots could never materialize the image) |
 | `backend/services/version_service.py` | `restore_snapshot`, Pass 1 — calls `protect_file_before_overwrite` (gated: only files that will actually be overwritten/moved/deleted, hash passed as `precomputed_sha256`) before any file operation, backing current content into the pre-restore snapshot so the restore is undoable in auto mode |
 | `backend/services/version_service.py` | `restore_snapshot`, `handle_extra_images="remove"` — calls `mark_image_deleted_in_versions` per extra in Pass 1 (before any FS write); files + `.txt` sidecars + thumbnails are unlinked in Pass 3c via `_remove_stale_files` in an executor |
+
+## Frontend
 
 **Frontend**:
 - `frontend/src/pages/VersionsPage.tsx` — route `/datasets/:datasetId/versions`, sidebar "Versions". Shows disabled-state when `versioning_mode="off"` (link to Settings). Otherwise shows branch selector, filter bar (debounced search + date range), version list with source badges (`Manual`/`Pre-restore`/`Branch init`) and pin icon per card. Pin toggle uses `setQueryData` optimistic update + client-side re-sort (no refetch). Active branch persisted to `sessionStorage` under `VERSIONS_BRANCH_KEY-${datasetId}`; falls back to `dataset.current_branch_id`, then `branches[0]`. `resolvedBranchId = activeBranch?.id` is passed to `BranchSelector` (not raw `activeBranchId`) so the dropdown stays in sync after restarts. A `useRef`+`useEffect` watches `dataset.current_branch_id` post-mount; the guard (`prev !== undefined`) prevents the initial data load from clobbering the stored preference.
@@ -106,9 +122,7 @@ Key functions:
 - `["dataset", datasetId]` — invalidated after restore and checkout (image count, `current_branch_id`)
 - `["dataset-stats", datasetId]`, `["tag-stats", datasetId]`, `["score-values", datasetId]`, `["tag-cooccurrence", datasetId]` — all four stats queries invalidated after restore (`VersionsPage` and `SidebarVersionPanel`) and after checkout (`BranchSelector`)
 
-**`DatasetVersion` fields**: `id`, `dataset_id`, `branch_id`, `parent_id`, `name`, `description`, `image_count`, `created_at`, `source` (`Literal["manual", "pre_restore", "branch_init"]`), `is_pinned` (`bool`).
-
-**`passive_deletes`**: `DatasetVersion.image_states` sets `passive_deletes=True` — `version_image_states.version_id` has `ondelete="CASCADE"` and `PRAGMA foreign_keys=ON` is set per connection in `backend/database.py`, so the DB deletes state rows and the ORM no longer loads thousands of them per version delete. `DatasetBranch.versions` deliberately does **not**: its FK is `ondelete="SET NULL"`, so the ORM cascade must keep deleting version rows itself (each of those deletes now skips loading states, which is the actual win).
+## Provenance mirror and regression tests
 
 **Provenance mirror**: `VersionImageState` mirrors the five `Image` provenance columns (`source_name`, `source_url`, `license`, `attribution`, `source_meta`) — they are set in the snapshot loop's `VersionImageState(...)` construction and written back field-by-field in restore Pass 2c, alongside `generation_metadata` in both, and all five are diffed. `create_snapshot`'s `select(Image)` must carry `options=[undefer(Image.source_meta)]`: that column is `deferred=True`, and the snapshot build reads it, so without the undefer it lazy-loads on an async session and raises `MissingGreenlet`. `restore_snapshot` only assigns it, which triggers no load. Omitting any of them makes a restore silently wipe provenance; `test_provenance.py::test_snapshot_restore_preserves_provenance` guards it. See `docs/dev/provenance.md`.
 

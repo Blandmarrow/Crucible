@@ -81,6 +81,12 @@ One run covers at most **5000 frames**. Past that the dialog asks you to narrow 
 single subfolder, or to a selection made in the gallery — rather than starting a job whose
 size nothing on screen could report honestly.
 
+Closing the dialog while a run is going is safe, and the dialog says so. Escape, the **✕**
+in its corner and the **Close** button all work mid-run; the re-extraction is a background
+job and carries on without the window. Reopening it on the same frames picks the progress
+bar back up, and whether or not you are watching, the gallery, the open image and the
+video's **Extracted frames** list all refresh themselves when the run finishes.
+
 Quality scores are deliberately left alone, since they were measured on the small frames.
 The dialog says so and so does the completion message; re-run scoring if you want numbers
 that describe the full-resolution images. If you took a snapshot beforehand, restoring it

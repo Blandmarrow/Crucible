@@ -266,15 +266,34 @@ Three details are load-bearing, all inherited from `GeneratePromptsModal`
 - The persisted id per video, `` `video-extract-job-${videoId}` `` (a sanctioned
   component-local key — see `docs/dev/persistence.md`), is read by the **recovery** effect,
   which is declared *before* the persist effect. Effects run in declaration order, so
-  recovery sees the stored id before the persist write can replace it with `null`.
+  recovery sees the stored id before the persist write can clear it.
 - The persist effect writes **on transition only**, tracking the last value per id, and never
-  writes `null` for an id it has not yet seen live. `jobs` is a fresh Map on every `activeJobs`
+  writes for an id it has not yet seen live. `jobs` is a fresh Map on every `activeJobs`
   change — i.e. every SSE event app-wide — so the unguarded form wrote localStorage for every
-  watched video on every event, nearly all of them `{jobId: null}` for videos with no job. It
+  watched video on every event, nearly all of those writes for videos with no job at all. It
   also raced the recovery effect above: `VideoDetailPage` and an open modal both run this hook
-  for the same video, so instance #2's null-write could land inside instance #1's in-flight
+  for the same video, so instance #2's write could land inside instance #1's in-flight
   `jobsApi.get` and erase the id it was re-attaching to. Declaration order fixes the ordering
   hazard, not this one.
+- **The key is removed, not nulled.** All four sites that retire it call `clearPersisted`: the
+  persist effect when the live job id becomes `null`, the recovery effect when the fetched job
+  is already terminal, the recovery effect's `.catch` on a **404**, and `VideoDetailPage`'s
+  delete handler (the video is gone, so is any job for it). `{jobId: null}` reads identically
+  to an absent key for every consumer but accumulates one dead entry per video ever extracted,
+  and a stale id inside one gets re-fetched and re-404'd on every future mount.
+- **The recovery effect has no cleanup, deliberately.** Every write in its `.then` is to a
+  global singleton — `useJobStore`, localStorage — never to component state, so an unmounted
+  or re-keyed instance triggers no React warning and loses nothing. The `dropped` flag that
+  once guarded them *was* the bug it looked like a fix for: arrowing past a video mid-fetch
+  discarded a response already marked recovered, and the bar stayed missing until a full
+  reload. `recoveredRef` is an in-flight-**or**-settled guard — the id is added before the GET
+  so two instances watching one video cannot both fetch, and deleted again on a *transient*
+  failure so a later `idsKey` change or remount retries. Only a 404 is terminal
+  (`utils/apiError.ts::isNotFound`).
+- `startedJobIds` defaults to a module-level frozen `NO_STARTED_JOBS`, not a fresh `{}`: the
+  parameter sits in the `jobs` memo's dep list, so a per-call identity would rebuild the Map on
+  every `VideoDetailPage` render. `TERMINAL_JOB_STATUSES` comes from `constants/jobs.ts`,
+  shared with `TopBar` and `ReextractFramesForm`.
 
 `extractPhaseLabel(job)` turns `progress.phase` into a stage label, because the generic
 done/total counts frames and says nothing during the long detection phase.

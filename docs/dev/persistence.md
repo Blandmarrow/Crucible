@@ -35,7 +35,12 @@ computed per entity, so it cannot be a static constant and has no meaningful reg
   batch runs one job per video. It is what lets `VideoDetailPage` show a live bar for its own
   video with no modal open, and what survives a reload. Read by the hook's **recovery**
   effect, which is declared before its persist effect so the stored id is seen before the
-  write can replace it with `null`. See `docs/dev/video-extract-ui.md`.
+  write can clear it. Retired with `clearPersisted` — never rewritten as `{jobId: null}`,
+  which reads the same to every consumer but leaves one dead entry per video ever extracted —
+  at all four sites: the job going terminal, a recovery GET that 404s, and deleting the video.
+  Pass 2's re-extract dialog deliberately has **no** counterpart key: it emits per frame, so it
+  re-attaches by adopting live jobs from `jobStore` instead. See
+  `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 

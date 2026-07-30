@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import shutil
 import time
@@ -9,6 +10,8 @@ from typing import TypeVar
 
 import regex as _regex
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -128,6 +131,45 @@ def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
     if resolved is None:
         raise HTTPException(403, "Access denied")
     return resolved
+
+
+def contained_path(
+    path_str: str | None, base_dir: Path, *, context: str, ident: str = ""
+) -> Path | None:
+    """Resolve one of a row's stored paths, or None if it escaped `base_dir`.
+
+    The form every **destructive** site takes: the non-raising counterpart of the
+    403 the serve routes give, with the log line attached. A delete still drops
+    the row for a path it refuses to touch — an undeletable row the user can see
+    is the worse failure — and skips only the filesystem work. Callers unlink the
+    *resolved* path this hands back, never the raw string: validating one path and
+    deleting another would defeat the check entirely. Gate **per row**, so one
+    escaped path does not stop its neighbours.
+
+    The gate covers the versioning hook as much as the unlink:
+    `mark_image_deleted_in_versions` reaches `_store_object(dataset_folder,
+    file_path)` and copies those bytes into `{ds}/.versions/objects/`, so an
+    out-of-tree `file_path` is an arbitrary-file *read* primitive — retrievable
+    through a snapshot restore — even with the unlink skipped.
+
+    `base_dir` is explicit because `utils.py` deliberately imports no
+    `backend.config`; pass `settings.datasets_dir`. `context` names the site and
+    `ident` the row, for the warning. Never raises — one caller
+    (`version_service._remove_stale_files`) sits inside a bare
+    `except Exception: pass` that would swallow it.
+
+    Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
+    `videos._delete_previous_frames`, `quality.resolve_duplicates`,
+    `version_service._remove_stale_files`. `videos.delete_video`'s inline loop and
+    `filesystem._add_orphan` still hand-roll the equivalent and are the remaining
+    two to fold in.
+    """
+    if not path_str:
+        return None
+    safe = within_datasets_dir(path_str, base_dir)
+    if safe is None:
+        logger.warning("%s %s: refusing to touch out-of-tree path %s", context, ident, path_str)
+    return safe
 
 
 def normalize_subfolder(s: str) -> str:

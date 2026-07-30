@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, within_datasets_dir
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -538,27 +538,6 @@ async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
     return img_out
 
 
-def _contained(context: str, image_id: str, path_str: str | None) -> Path | None:
-    """Resolve one of an image row's stored paths, or None if it escaped the tree.
-
-    The non-raising counterpart of the 403 the serve routes give: a delete still
-    drops the row for a path it refuses to touch — an undeletable row the user
-    can see is the worse failure — and skips only the filesystem work.
-
-    The gate covers the versioning hook as much as the unlink:
-    `mark_image_deleted_in_versions` reaches `_store_object(dataset_folder,
-    file_path)` and copies those bytes into `{ds}/.versions/objects/`, so an
-    out-of-tree `file_path` is an arbitrary-file *read* primitive — retrievable
-    through a snapshot restore — even with the unlink skipped.
-    """
-    if not path_str:
-        return None
-    safe = within_datasets_dir(path_str, settings.datasets_dir)
-    if safe is None:
-        logger.warning("%s %s: refusing to touch out-of-tree path %s", context, image_id, path_str)
-    return safe
-
-
 @router.delete("/{image_id}", status_code=204)
 async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
@@ -568,8 +547,10 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
     ensure_not_busy(dataset_id)
     # The *resolved* paths the guard hands back are what gets unlinked — validating
     # one path and deleting another would defeat the check entirely.
-    p = _contained("delete_image", img.id, img.file_path)
-    t = _contained("delete_image", img.id, img.thumbnail_path)
+    p = contained_path(img.file_path, settings.datasets_dir, context="delete_image", ident=img.id)
+    t = contained_path(
+        img.thumbnail_path, settings.datasets_dir, context="delete_image", ident=img.id
+    )
     txt = p.with_suffix(".txt") if p is not None else None
     if p is not None:
         await version_service.mark_image_deleted_in_versions(img.id, str(p), db)
@@ -598,11 +579,13 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
     for r in rows:
         # Per row, not per request: one escaped path must not stop its neighbours
         # from being deleted properly.
-        p = _contained("batch_delete", r.id, r.file_path)
+        p = contained_path(r.file_path, settings.datasets_dir, context="batch_delete", ident=r.id)
         if p is not None:
             await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
             files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = _contained("batch_delete", r.id, r.thumbnail_path)
+        t = contained_path(
+            r.thumbnail_path, settings.datasets_dir, context="batch_delete", ident=r.id
+        )
         if t is not None:
             files_to_delete.append(t)
 
@@ -868,11 +851,15 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
     image_ids = [r.id for r in rows]
     files_to_delete: list[Path] = []
     for r in rows:
-        p = _contained("bulk_delete_filtered", r.id, r.file_path)
+        p = contained_path(
+            r.file_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
+        )
         if p is not None:
             await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
             files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = _contained("bulk_delete_filtered", r.id, r.thumbnail_path)
+        t = contained_path(
+            r.thumbnail_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
+        )
         if t is not None:
             files_to_delete.append(t)
 

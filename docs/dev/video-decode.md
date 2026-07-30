@@ -70,6 +70,12 @@ end, then bisection, then a short sequential grab walk to land exactly on the la
 About thirty grabs. (`imageio_ffmpeg.count_frames_and_secs()` is the alternative and is a
 full `-f null -` decode pass, which its own docstring warns is slow.)
 
+**Every read of `CAP_PROP_POS_MSEC` here follows its `grab()`, never precedes it** — the
+property reports the position of the frame *just grabbed*, so reading first answers with
+the previous frame and every position comes back one period early. In the tail walk the
+order decides something further: recording before the grab discards whatever the final
+successful grab reached, losing a second period on top. Do not "simplify" either back.
+
 **The rule is that nothing downstream of the probe ever sees a NULL duration**: the probe
 endpoint measures and persists it, and the extraction job measures and persists it if no
 probe ran.
@@ -90,11 +96,16 @@ Three details are load-bearing:
   unreachable on any real file, so `hi` is set immediately and bisection converges to the
   40 ms tolerance in about 21 probes, inside `MEASURE_MAX_PROBES` (40).
 - **The reached position is the last frame's own timestamp**, so the duration is one frame
-  period later. `hi` — the first position at which no frame starts — is deliberately *not*
-  used as a ceiling; clamping to it returns a duration exactly 1/fps short on every file.
-- **The answer is the decodable extent, not the header's claim.** The two differ by one
-  frame on the test fixtures, because cv2 decodes one frame fewer than `VideoWriter`
-  emitted. That is the more useful number: it is what a seek can actually reach.
+  period later — the last frame is displayed, not instantaneous, and `+ period` is what
+  turns "when the last frame starts" into "when the video ends". `hi` — a position at which
+  the grab failed, which bisection drives down to just past that same timestamp — is
+  deliberately *not* used as a ceiling; clamping to it returns a duration exactly 1/fps
+  short on every file.
+- **The answer is the decodable extent, not the header's claim,** and on a well-formed file
+  the two agree: the fixtures measure exactly 3600 / 2000 / 1000 ms. A difference is a real
+  one — a broken tail the header still counts — not an artefact of the search. (Before the
+  read order was fixed, the 90-frame fixture measured 3560, and that 40 ms was documented
+  here as cv2 decoding one frame fewer than `VideoWriter` emitted. It was not.)
 
 An unmeasurable file is not a failure. It degrades to head-only samples, `end_time=None`,
 indeterminate progress and an explicit warning.

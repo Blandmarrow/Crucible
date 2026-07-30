@@ -243,6 +243,14 @@ def _read_positions_cv2(path: Path, positions: list[float]):
     is worse here: candidates are ~120 ms apart, and a container that snaps seeks
     to keyframes would hand back the *same* frame five times, silently reducing
     the sharpest-of-five pick to a coin toss with one side.
+
+    **The yielded timestamp is the timestamp of the frame yielded with it.** That
+    is why the walk grabs first and reads `CAP_PROP_POS_MSEC` after: the property
+    reports the position of the frame just grabbed, so reading before the grab
+    labels each frame with its predecessor's timestamp. `Image.source_timestamp_ms`
+    is written from this value and pass 2 re-seeks it, and the ffmpeg reader below
+    derives its timestamps arithmetically with no such lag — so the two readers
+    only agree, and a re-extract only lands on the picture on disk, in this order.
     """
     import cv2
 
@@ -256,10 +264,10 @@ def _read_positions_cv2(path: Path, positions: list[float]):
         for target in positions:
             hit = False
             while walked < CANDIDATE_WALK_LIMIT:
-                ts = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
                 if not cap.grab():
                     return
                 walked += 1
+                ts = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
                 if ts >= target:
                     ok, frame = cap.retrieve()
                     if ok and frame is not None:
@@ -841,6 +849,12 @@ def render_at_timestamps(
     and it does *not* re-detect shots or re-pick a frame, because the pick
     already happened in pass 1. `_shot_windows`, `_candidate_positions`,
     `sharpness`, `pick_index` and `is_degenerate` are all unused here.
+
+    That holds only because `read_positions` pairs each frame with its *own*
+    timestamp — see its docstring. Frames extracted before that was fixed carry a
+    timestamp one frame period early and were deliberately not migrated, so
+    re-extracting one returns the frame just before the picture on disk
+    (`docs/dev/video-reextract.md` § The contract).
 
     Geometry replays verbatim from the stored `Video.crop_*` / `Video.deinterlace`
     the extract endpoint normalized; trims are irrelevant to a direct seek.

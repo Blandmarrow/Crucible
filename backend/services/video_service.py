@@ -165,12 +165,16 @@ def measure_duration_ms(
     import cv2
 
     def reach(cap, ms: float) -> float | None:
-        """Seek to `ms` and grab. Returns the reached position, or None."""
+        """Seek to `ms` and grab. Returns the grabbed frame's own timestamp, or None.
+
+        The read follows the grab, never precedes it: `CAP_PROP_POS_MSEC` reports
+        the position of the frame *just grabbed*, so reading first answers with
+        the previous frame and every position comes back one period early.
+        """
         cap.set(cv2.CAP_PROP_POS_MSEC, float(ms))
-        before = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
         if not cap.grab():
             return None
-        return before
+        return float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
 
     cap = cv2.VideoCapture(str(path))
     try:
@@ -178,10 +182,12 @@ def measure_duration_ms(
             return None
         apply_orientation(cap)
 
-        # `reach` reports the *start* timestamp of the frame it grabbed, so the
-        # duration is one frame period past the last reachable one. Without this
-        # the answer is consistently short by 1/fps, which is invisible on a
-        # feature but wrong on a 25-frame clip.
+        # `reach` reports the own timestamp of the frame it grabbed — i.e. when
+        # that frame *starts* — so the stream ends one frame period after the
+        # last reachable one, and `period` is what turns "the last frame's start"
+        # into "the end of the video". Without it the answer is consistently
+        # short by 1/fps, which is invisible on a feature but wrong on a
+        # 25-frame clip.
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
         period = 1000.0 / fps if fps > 0 else 0.0
         tolerance = max(period, MEASURE_TOLERANCE_FLOOR_MS)
@@ -240,19 +246,25 @@ def measure_duration_ms(
         # Close it by walking sequentially from the last known-good position:
         # these are grabs with no seek, so a handful of them costs nothing, and
         # they make the result exact rather than within-a-frame-or-two.
+        #
+        # The record follows the grab for the same reason `reach` does, and here
+        # it also decides whether the *last* frame counts: recording before the
+        # grab discards whatever the final successful grab reached, which is a
+        # second lost frame period on top of the one the read order costs.
         if reach(cap, lo) is not None:
             for _ in range(MEASURE_TAIL_GRABS):
-                ts = float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0)
                 if not cap.grab():
                     break
-                best = max(best, ts)
+                best = max(best, float(cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0))
     finally:
         cap.release()
 
-    # `hi` is deliberately *not* used as a ceiling here. It is the first position
-    # at which no frame *starts*, i.e. one epsilon past the last frame's own
-    # timestamp — not the end of the stream, which is a whole frame period later.
-    # Clamping to it returns a duration exactly 1/fps short on every file.
+    # `hi` is deliberately *not* used as a ceiling here. It is a position at which
+    # the seek+grab failed, so bisection drives it down to just past the last
+    # frame's own start timestamp — which is what `best` already holds, to the
+    # frame, after the tail walk. `hi` is therefore never more than an epsilon
+    # above `best`, and clamping to it returns a duration one frame period short
+    # on every file: the last frame is displayed, not instantaneous.
     return int(round(best + period))
 
 

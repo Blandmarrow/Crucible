@@ -51,15 +51,19 @@ def flat_mp4(tmp_path_factory) -> Path:
 
 
 def test_duration_is_measured_by_seeking(shots_mp4):
-    """Within one frame of the header's own answer. It reads slightly *lower*
-    because it measures what actually decodes, and cv2 reliably decodes one
-    frame fewer than VideoWriter emitted."""
-    assert measure_duration_ms(shots_mp4) == pytest.approx(3600, abs=45)
+    """The measured extent is the true one: 90 frames at 25 fps, all of them
+    decodable, so the seek search lands on the same 3600 the header claims.
+
+    The tolerance is slack for a codec build that rounds timestamps differently
+    (CLAUDE.md notes the stock Windows cv2 differs from this container) — it is
+    *not* room for a frame. One frame here is 40 ms, so an off-by-one-frame
+    read order fails this by eight times the allowance."""
+    assert measure_duration_ms(shots_mp4) == pytest.approx(3600, abs=5)
 
 
 def test_duration_measurement_ignores_a_wildly_wrong_hint(shots_mp4):
-    assert measure_duration_ms(shots_mp4, hint_ms=999_999) == pytest.approx(3600, abs=45)
-    assert measure_duration_ms(shots_mp4, hint_ms=10) == pytest.approx(3600, abs=45)
+    assert measure_duration_ms(shots_mp4, hint_ms=999_999) == pytest.approx(3600, abs=5)
+    assert measure_duration_ms(shots_mp4, hint_ms=10) == pytest.approx(3600, abs=5)
 
 
 def test_a_hint_beyond_the_ceiling_still_measures(shots_mp4):
@@ -67,7 +71,21 @@ def test_a_hint_beyond_the_ceiling_still_measures(shots_mp4):
     hint used to skip the exponential phase entirely and return None without a
     single seek — and an over-ceiling hint is exactly what a poisoned header
     supplies. Clamping the first probe to the ceiling brackets immediately."""
-    assert measure_duration_ms(shots_mp4, hint_ms=1_000_000_000) == pytest.approx(3600, abs=45)
+    assert measure_duration_ms(shots_mp4, hint_ms=1_000_000_000) == pytest.approx(3600, abs=5)
+
+
+def test_the_tail_walk_closes_the_gap_the_tolerance_floor_leaves(tmp_path):
+    """At 50 fps the frame period (20 ms) is *below* `MEASURE_TOLERANCE_FLOOR_MS`
+    (40 ms), so bisection stops with a bracket two frames wide and only the
+    sequential tail walk can land on the last one.
+
+    That makes this the fixture the walk exists for — and the one that notices if
+    it records before the grab instead of after, which discards whatever the
+    final successful grab reached. The 25 fps fixtures cannot see it: there
+    tolerance *is* the period, so bisection already arrives on the last frame."""
+    p = tmp_path / "fast.mp4"
+    p.write_bytes(mp4_bytes(frames=100, size=(160, 120), fps=50.0))
+    assert measure_duration_ms(p) == pytest.approx(2000, abs=5)
 
 
 def test_duration_is_none_for_a_file_that_will_not_open(tmp_path):
@@ -125,6 +143,53 @@ def test_a_non_seekable_stream_measures_as_none(tmp_path, monkeypatch):
     monkeypatch.setattr(cv2, "VideoCapture", lambda _p: _NonSeekableCapture())
 
     assert measure_duration_ms(p) is None
+
+
+# ---------------------------------------------------------------------------
+# read_positions — the timestamp/frame pairing
+# ---------------------------------------------------------------------------
+
+
+def test_a_yielded_timestamp_labels_the_frame_yielded_with_it(shots_mp4):
+    """`Image.source_timestamp_ms` is written from the timestamp `read_positions`
+    yields, and pass 2 re-seeks that number to get the picture back — so the
+    number has to name the frame it arrived with.
+
+    `CAP_PROP_POS_MSEC` reports the position of the frame *just grabbed*, so
+    reading it before the grab labels every frame with its predecessor's
+    timestamp: the numbers look right, the pictures are one frame off, and
+    nothing downstream can tell. Ground truth is a plain sequential decode keyed
+    by each frame's own post-`read()` timestamp — codec-agnostic, and no
+    arithmetic over the fixture's geometry.
+
+    Byte identity rather than a difference bound: two decodes of this fixture
+    match exactly (`test_video_reextract.py::test_png_output_is_the_decoded_
+    frame_exactly` rests on the same fact).
+    """
+    import cv2
+    import numpy as np
+
+    truth: dict[int, np.ndarray] = {}
+    cap = cv2.VideoCapture(str(shots_mp4))
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            truth[round(cap.get(cv2.CAP_PROP_POS_MSEC))] = frame
+    finally:
+        cap.release()
+    assert len(truth) == 90, f"fixture decoded {len(truth)} frames, expected 90"
+
+    # On-grid and off-grid alike: a candidate rarely lands on a frame boundary.
+    targets = [0.0, 40.0, 45.0, 610.0, 1200.0, 1810.0, 3500.0]
+    seen = 0
+    for ts, frame in ve.read_positions(shots_mp4, targets):
+        seen += 1
+        key = round(ts)
+        assert key in truth, f"{ts}ms is not any frame's own timestamp"
+        assert np.array_equal(frame, truth[key]), f"the frame yielded at {ts}ms is not that frame"
+    assert seen == len(targets)
 
 
 # ---------------------------------------------------------------------------

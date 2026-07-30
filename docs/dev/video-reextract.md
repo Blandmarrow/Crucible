@@ -22,6 +22,17 @@ test_video_reextract.py::test_re_seeking_a_recorded_timestamp_lands_on_the_same_
 is the test to keep if only one survives review. Off-by-one-keyframe seeking silently
 yields the *wrong frame* — every count the job reports still says success.
 
+**Frames extracted before V-06 carry a timestamp one frame period early.** `read_positions`
+used to read `CAP_PROP_POS_MSEC` *before* the grab, so each frame was labelled with its
+predecessor's timestamp; pass 1 and pass 2 shared the reader, so the pairing was
+self-consistent and nothing visibly broke. Re-extracting one of those frames now returns
+the frame immediately *before* the picture on disk (~42 ms at 24 fps). The rows were
+deliberately not migrated: a migration cannot be complete by construction (`source_video_id`
+is `SET NULL` when the video is deleted, so a frame whose source is gone has no recoverable
+fps), the offset is `1000/fps` rather than a constant and is undefined for VFR, and
+`source_timestamp_ms` is itself the user-visible authoritative artifact. Expect the drift on
+old frames; it is not a seek bug.
+
 **Geometry replays verbatim.** `Video.crop_x/y/w/h` and `Video.deinterlace` hold the
 *normalized* values the extract endpoint stored (`docs/dev/video-extract.md` § The
 endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.

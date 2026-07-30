@@ -11,6 +11,13 @@ This file covers production frontend serving, server shutdown/restart control, d
 
 **Do not replace this with a bare `StaticFiles(html=True)` mount.** Starlette's `html=True` only falls back to `index.html` for directory-style paths (`/`); it returns 404 for deep URLs like `/datasets/abc123` on hard refresh. The catch-all route is required for SPA routing to work correctly.
 
+**The catch-all is containment-gated, and the order matters** (PM-015). `full_path` is raw client input reaching a `FileResponse`, so the handler resolves the candidate and requires `is_relative_to(frontend_dist)` **before** `is_file()`; anything outside falls through to `index.html`, which is the right answer for a path naming nothing in dist anyway. Two vectors made this an arbitrary-file read until 2026-07-30, and both are easy to talk yourself out of:
+
+- **`%2e%2e`.** The usual reasoning is "clients normalize `../` away" — they do, which is why this survived so long, but percent-encoded dots survive that normalization and Starlette decodes the path parameter *after* routing. The handler receives real `..` segments.
+- **A leading slash.** `Path.__truediv__` **discards the left operand** when the right is absolute, so `frontend_dist / "/etc/passwd"` *is* `/etc/passwd`. Sent as `//etc/passwd`, it needs no dots at all.
+
+`backend/tests/test_spa_fallback_containment.py` pins both. Note it drives the second one through a hand-built ASGI scope rather than the httpx client: httpx parses `//foo` as a URL *authority* and never sends it as a path, so an httpx-based test for that vector passes against the unguarded handler and proves nothing. uvicorn applies no such reinterpretation. The module skips when `frontend/dist` is absent, since `main.py` registers the whole block only when it exists.
+
 ### Server control endpoints
 
 Three endpoints are registered directly in `backend/main.py` (not via a router), immediately before the frontend-serving block:

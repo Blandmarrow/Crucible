@@ -179,13 +179,27 @@ if frontend_dist.exists():
     # 304 when unchanged); it does not disable caching.
     _NO_CACHE = {"Cache-Control": "no-cache"}
 
+    _INDEX_HTML = frontend_dist / "index.html"
+    _DIST_ROOT = frontend_dist.resolve()
+
     # Catch-all: serve index.html for any unmatched path so React Router handles
     # client-side navigation on hard refresh / direct URL access.
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        # Real file in dist (favicon.svg, apple-touch-icon.png, …) → serve it.
+        # Containment first, then is_file() — the same order every router uses, and
+        # for the same reason: `full_path` is raw client input and this is a
+        # FileResponse. Starlette percent-decodes the path parameter, so `%2e%2e`
+        # arrives as `..` having survived the normalization every well-behaved
+        # client does on literal `../`; and `Path.__truediv__` *discards* the left
+        # side when the right is absolute, so a leading `/` (sent as `//etc/passwd`)
+        # escapes without needing dots at all. Anything not inside dist falls
+        # through to the SPA, which is what an unknown route should do regardless.
         candidate = frontend_dist / full_path
-        if candidate.is_file():
-            return FileResponse(str(candidate), headers=_NO_CACHE)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = None
+        if resolved is not None and resolved.is_relative_to(_DIST_ROOT) and resolved.is_file():
+            return FileResponse(str(resolved), headers=_NO_CACHE)
         # Otherwise hand off to the SPA so React Router owns the route.
-        return FileResponse(str(frontend_dist / "index.html"), headers=_NO_CACHE)
+        return FileResponse(str(_INDEX_HTML), headers=_NO_CACHE)

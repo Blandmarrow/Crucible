@@ -23,12 +23,12 @@ def slice_layer_embedding(blob: bytes, layer: int) -> bytes:
 
 def extract_dino_embedding_sync(image_path: str, model_entry) -> bytes:
     """Returns L2-normalized float16 numpy bytes for DINOv2-base CLS token, shape (768,)."""
-    from PIL import Image as PILImage
+    from backend.ml.image_utils import open_rgb
 
     model = model_entry.model
     processor = model_entry.processor
 
-    img = PILImage.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     inputs = processor(images=img, return_tensors="pt")
     img.close()
     inputs = {k: v.to(_device.get_device()) for k, v in inputs.items()}
@@ -47,12 +47,12 @@ def extract_dino_layer_embeddings_sync(image_path: str, model_entry) -> bytes:
     Layer N (1-indexed) is at byte offset (N-1) * 768 * 2.
     Each row is independently L2-normalized.
     """
-    from PIL import Image as PILImage
+    from backend.ml.image_utils import open_rgb
 
     model = model_entry.model
     processor = model_entry.processor
 
-    img = PILImage.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     inputs = processor(images=img, return_tensors="pt")
     img.close()
     inputs = {k: v.to(_device.get_device()) for k, v in inputs.items()}

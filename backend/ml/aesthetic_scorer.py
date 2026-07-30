@@ -44,12 +44,12 @@ def download_weights(dest: Path) -> None:
 
 
 def score_image_sync(image_path: str, model_entry: dict) -> float:
-    from PIL import Image
+    from backend.ml.image_utils import open_rgb
     clip_model = model_entry["clip"]
     mlp = model_entry["mlp"]
     preprocess = model_entry["preprocess"]
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     tensor = preprocess(img).unsqueeze(0).to(_device.get_device())
     img.close()
 
@@ -83,8 +83,8 @@ def _precompute_watermark_text_features(model_entry: dict) -> torch.Tensor:
 def score_watermark_sync(image_path: str, model_entry: dict,
                           text_features: torch.Tensor,
                           watermark_threshold: float = 0.6) -> dict:
-    from PIL import Image as PILImage
-    img = PILImage.open(image_path).convert("RGB")
+    from backend.ml.image_utils import open_rgb
+    img = open_rgb(image_path)
     tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
     with torch.no_grad(), _device.autocast_ctx():
@@ -133,8 +133,8 @@ async def score_images_watermark(
 
 def extract_clip_embedding_sync(image_path: str, model_entry: dict) -> bytes:
     """Returns L2-normalized float16 numpy bytes, shape (768,) for ViT-L-14."""
-    from PIL import Image as PILImage
-    img = PILImage.open(image_path).convert("RGB")
+    from backend.ml.image_utils import open_rgb
+    img = open_rgb(image_path)
     tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
     with torch.no_grad():
@@ -145,9 +145,8 @@ def extract_clip_embedding_sync(image_path: str, model_entry: dict) -> bytes:
 
 def extract_clip_embedding_from_bytes_sync(image_bytes: bytes, model_entry: dict) -> bytes:
     """Returns L2-normalized float16 numpy bytes from raw image bytes."""
-    import io
-    from PIL import Image as PILImage
-    img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
+    from backend.ml.image_utils import open_rgb_bytes
+    img = open_rgb_bytes(image_bytes)
     tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
     img.close()
     with torch.no_grad():

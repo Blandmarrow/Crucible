@@ -149,7 +149,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 
 | File | Read this when... | Words |
 |---|---|---|
-| `docs/dev/ml-models.md` | Working on captioning models, upscaling, LUT grading, or `backend/ml/` loading — the model manager (VRAM/unload), model ID registry, device abstraction, TorchDynamo | ~2545 |
+| `docs/dev/ml-models.md` | Working on captioning models, upscaling, LUT grading, or `backend/ml/` loading — the model manager (VRAM/unload), model ID registry, device abstraction, EXIF-consistent opening, TorchDynamo | ~2795 |
 | `docs/dev/detection.md` | Working on object detection, masks, or `DetectionsPanel` — the `/detection` router, its scope/model/task matrix, SAM2/SAM3/Florence-2/NudeNet inference, `mask_area` | ~2890 |
 | `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, or thresholds — the scorers and the columns they write, duplicate detection, style similarity, DINOv2 per-layer scoring | ~2035 |
 | `docs/dev/gallery.md` | Working on `GalleryPage` or gallery drag & drop — selection and shift-click ranges, subfolder sidebar, filters, manual ordering, dnd-kit droppables and collision detection | ~2925 |

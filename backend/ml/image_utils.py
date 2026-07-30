@@ -1,4 +1,18 @@
+import io
+
 from PIL import Image, ImageOps
+
+
+def open_rgb_bytes(image_bytes: bytes) -> Image.Image:
+    """`open_rgb` for an in-memory image, for callers that never touch disk.
+
+    Exists so the bytes and path forms of the *same* embedding cannot drift: a
+    reference image uploaded as bytes is compared against embeddings extracted
+    from stored paths, so if only one of the two EXIF-transposes, style
+    similarity silently compares two different orientations of one picture.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return ImageOps.exif_transpose(img)
 
 
 def open_rgb(image_path: str) -> Image.Image:

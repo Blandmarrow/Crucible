@@ -14,13 +14,13 @@ _INPUT_SIZE = 384
 
 def score_image_sync(image_path: str, model_entry: dict) -> float:
     """Return NSFW probability (0–1) for the image at image_path."""
-    from PIL import Image
+    from backend.ml.image_utils import open_rgb
 
     processor = model_entry["processor"]
     model = model_entry["model"]
     nsfw_idx = model_entry["nsfw_idx"]
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     inputs = processor(images=img, return_tensors="pt")
     img.close()
 

@@ -190,6 +190,20 @@ class BulkCountRequest(BulkFilterBase):
     include_flagged: bool = False
 
 
+class BulkThumbnailRequest(BulkFilterBase):
+    """Re-cut the thumbnails of a scope whose previews have gone stale.
+
+    The repair for the four jobs that regenerate a thumbnail as a best-effort
+    post-commit epilogue (batch LUT, batch upscale, crop+upscale, video
+    re-extract): each reports a `thumbnails_stale` count, and this rebuilds them.
+    A **scope**, never the affected id list — the trigger (a full volume, a
+    read-only `thumbnails/`) is deterministic, so "the affected images" is
+    "everything the run touched", and over-scoping costs one re-encode per image.
+    """
+    include_flagged: bool = False
+    label: str | None = None
+
+
 class ProvenanceEdit(BaseModel):
     """Provenance edit fields: None = leave unchanged, "" = clear to NULL (inherit
     the dataset default), any other string = set that value.

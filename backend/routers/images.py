@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -38,6 +38,7 @@ from backend.schemas.image import (
     BulkProvenanceRequest,
     BulkProvenanceResult,
     BulkRenameRequest,
+    BulkThumbnailRequest,
     ImageCropRequest,
     ImageListItem,
     ImageOut,
@@ -871,6 +872,156 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
 
     await refresh_stats(db, body.dataset_id)
     return {"deleted": len(image_ids)}
+
+
+@router.post("/bulk-thumbnails")
+async def bulk_thumbnails(body: BulkThumbnailRequest, db: AsyncSession = Depends(get_db)):
+    """Re-cut the thumbnails for a scope — the repair for a stale-preview run.
+
+    Four jobs regenerate an image thumbnail as a best-effort post-commit epilogue
+    (`batch_lut`, `batch_upscale`, `crop_upscale`, `video_reextract`): the image
+    is correct and committed, but the tile the gallery renders is the old one and
+    nothing self-heals it — `GET /images/{id}/thumbnail` only regenerates when the
+    file is *missing*, and a stale file exists.
+    """
+    query = _apply_bulk_filters(
+        select(Image.id, Image.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
+    )
+    # An explicit image_ids selection can span datasets — SelectionToolbar shows a
+    # per-dataset breakdown precisely because of that — so scope by dataset_id
+    # only when the selection is a whole-dataset/subfolder one, as bulk_provenance
+    # does, and guard every dataset actually touched.
+    if not body.image_ids:
+        query = query.where(Image.dataset_id == body.dataset_id)
+    rows = (await db.execute(query)).all()
+    for ds_id in {r.dataset_id for r in rows} or {body.dataset_id}:
+        ensure_not_busy(ds_id)
+
+    image_ids = [r.id for r in rows]
+    total = len(image_ids)
+
+    # This is the repair you run *because* the volume filled up, so a 507 is the
+    # right answer rather than 400 more "no space left on device" log lines.
+    # Request-path, before the job row exists: an HTTPException raised inside the
+    # job coroutine would fail the job instead of reaching the client.
+    try:
+        require_free_space(settings.datasets_dir)
+    except InsufficientDiskSpaceError as e:
+        raise HTTPException(507, str(e)) from None
+
+    auto_label = f"Regenerate thumbnails — {total} image{'s' if total != 1 else ''}"
+    job = BackgroundJob(
+        job_type="regenerate_thumbnails",
+        label=body.label or auto_label,
+        dataset_id=body.dataset_id,
+        total_items=total,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+
+        counts = {"regenerated": 0, "failed": 0, "skipped": 0}
+        async with AsyncSessionLocal() as session:
+            # Chunked so the bind-parameter count stays under SQLite's ceiling
+            # (utils.chunked) — `_apply_bulk_filters` above builds one query and
+            # does not chunk, but it never binds the ids: only this loader does.
+            image_rows: list[Image] = []
+            for chunk in chunked(image_ids):
+                image_rows.extend(
+                    (await session.execute(select(Image).where(Image.id.in_(chunk)))).scalars().all()
+                )
+            loop = asyncio.get_running_loop()
+            cancelled = False
+            uncommitted = 0
+
+            for i, img in enumerate(image_rows):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "regenerate_thumbnails",
+                    "status": "running", "done": i, "total": len(image_rows),
+                    "percent": round(i / max(len(image_rows), 1) * 100, 1),
+                    "current_item": img.filename,
+                    "message": f"Re-cutting thumbnail for {img.filename}…",
+                })
+
+                # Both stored paths are gated, and the *resolved* paths are what
+                # get read and written. `generate_thumbnail` mkdir(parents=True)s
+                # its destination's parent, so an ungated `thumbnail_path` is an
+                # arbitrary-file-write primitive, not merely a stale tile.
+                src = contained_path(
+                    img.file_path, settings.datasets_dir, context="bulk_thumbnails", ident=img.id
+                )
+                if src is None or not src.exists():
+                    counts["skipped"] += 1
+                    continue
+                if img.thumbnail_path:
+                    dest = contained_path(
+                        img.thumbnail_path, settings.datasets_dir,
+                        context="bulk_thumbnails", ident=img.id,
+                    )
+                    stored = img.thumbnail_path
+                else:
+                    # Derived from the already-guarded source, so it is inside the
+                    # tree by construction. A row with no thumbnail at all is
+                    # exactly what this repair should give one.
+                    dest = Path(thumbnail_path_for(str(src)))
+                    # The *stored* form is derived from the stored file_path, not
+                    # from the resolved one the write uses: `contained_path`
+                    # hands back a `.resolve()`d path, and writing one of those
+                    # into the column changes the stored-path form mid-table
+                    # (visible on a symlinked temp dir such as macOS /private/var).
+                    stored = thumbnail_path_for(img.file_path)
+                if dest is None:
+                    counts["skipped"] += 1
+                    continue
+
+                try:
+                    await loop.run_in_executor(None, generate_thumbnail, str(src), str(dest))
+                except Exception as exc:
+                    # Per row, so the repair does not inherit the failure mode it
+                    # exists to fix: one unreadable source must not cost the other
+                    # 4,999 images their working previews.
+                    counts["failed"] += 1
+                    logger.warning(
+                        "regenerate_thumbnails: %s could not be re-cut: %s", img.filename, exc
+                    )
+                    continue
+
+                img.thumbnail_path = stored
+                # Mandatory, not bookkeeping: `imagesApi.thumbnailUrlVersioned`
+                # builds `?v=${Date.parse(updated_at)}`, so a repair that rewrites
+                # the .webp without moving the row leaves the <img src> unchanged
+                # and the browser serves the stale tile straight from cache — the
+                # repair would visibly do nothing.
+                img.updated_at = datetime.now(timezone.utc)
+                counts["regenerated"] += 1
+                uncommitted += 1
+                if uncommitted >= 50:
+                    uncommitted = 0
+                    await session.commit()
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
+            # the thumbnails it did repair.
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+            # No refresh_stats: a thumbnail is not counted in `total_size_bytes`
+            # (dataset_service builds it from Image.file_size_bytes), and nothing
+            # else this job writes appears in a dataset rollup.
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": total}
 
 
 @router.get("/{image_id}/file")

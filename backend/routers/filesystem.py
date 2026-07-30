@@ -567,7 +567,8 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
         new_thumb = Path(thumbnail_path_for(str(new_path)))
 
         # PM-013: assign every field, then the filesystem, then the commit, with
-        # nothing fallible in between. `rename_image` mutates in this exact order.
+        # nothing fallible in between. `rename_image` mutates in this exact order —
+        # this arm is a port of its V-81 fix, thumbnail epilogue included.
         img.filename = new_path.name
         img.file_path = str(new_path)
         if old_thumb is not None:
@@ -577,9 +578,24 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
             rename_with_sidecar(p, new_path)  # FS last — if this raises, commit never runs
         except PermissionError:
             raise HTTPException(403, "Access denied")
-        if old_thumb is not None and old_thumb.exists() and old_thumb != new_thumb:
-            old_thumb.replace(new_thumb)
         await db.commit()
+
+        # Post-commit epilogue: the thumbnail move used to sit between the rename
+        # and the commit, so an OSError there discarded a rename that had already
+        # happened on disk — the row kept the old path, the renamed file was
+        # unregistered, and the next rescan adopted it as a second row for the same
+        # bytes. `img.thumbnail_path` still names `new_thumb` even when this fails:
+        # `serve_thumbnail` regenerates a missing one, so the row states intent and
+        # the next view heals it.
+        if old_thumb is not None and old_thumb != new_thumb:
+            try:
+                if old_thumb.exists():  # inside the try — an lstat can raise too
+                    old_thumb.replace(new_thumb)
+            except OSError:
+                logger.warning(
+                    "rename_path %s: thumbnail move failed; it will be regenerated", img.id,
+                    exc_info=True,
+                )
         return {"new_path": str(new_path)}
 
     if vid is not None:

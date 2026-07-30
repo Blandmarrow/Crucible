@@ -117,6 +117,60 @@ def test_renaming_a_registered_image_carries_its_thumbnail_and_sidecar(tmp_path)
     run(scenario())
 
 
+def test_a_failed_thumbnail_move_does_not_lose_the_rename(tmp_path):
+    """V-87, the twin of `test_rename_collisions_http.py`'s test of the same name.
+
+    The thumbnail move used to sit between `rename_with_sidecar` and the commit,
+    so an `OSError` there (read-only `thumbnails/`, full volume) discarded a
+    rename that had already happened on disk: the row kept the old path, the
+    renamed file was unregistered, and the next `rescan_dataset` adopted it as a
+    second row for the same bytes. It is now a post-commit epilogue.
+    """
+    async def scenario():
+        import pathlib
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("fsr")
+            img = await upload_image(env, ds["id"], "a.png")
+            root = Path(ds["folder_path"])
+
+            original_replace = pathlib.Path.replace
+
+            def failing_replace(self, target):
+                # `rename_with_sidecar` uses `Path.rename`, so the file rename and
+                # the sidecar are unaffected — only the thumbnail move fails.
+                if str(target).endswith(".webp"):
+                    raise OSError("thumbnail move refused")
+                return original_replace(self, target)
+
+            pathlib.Path.replace = failing_replace
+            try:
+                r = await env.client.post(
+                    f"{FS}/rename",
+                    json={"path": str(root / "images" / "a.png"), "new_name": "b.png"},
+                )
+            finally:
+                pathlib.Path.replace = original_replace
+
+            assert r.status_code == 200, r.text
+            assert (root / "images" / "b.png").exists(), "the rename was lost"
+            assert not (root / "images" / "a.png").exists()
+
+            async with env.Session() as db:
+                row = (await db.execute(select(Image).where(Image.id == img["id"]))).scalar_one()
+            assert row.filename == "b.png"
+            assert row.file_path == str(root / "images" / "b.png")
+            assert row.thumbnail_path == str(root / "thumbnails" / "b.webp"), \
+                "the row must state intent"
+            assert not (root / "thumbnails" / "b.webp").exists()
+
+            # The self-heal: serve_thumbnail regenerates the missing one.
+            assert (await env.client.get(f"{API}/images/{img['id']}/thumbnail")).status_code == 200
+            assert (root / "thumbnails" / "b.webp").exists()
+
+    run(scenario())
+
+
 def test_taking_a_sibling_images_thumbnail_stem_is_a_409(tmp_path):
     """`b.jpg` → `a.jpg` clears both the `new_path.exists()` check and
     `uq_dataset_filename`, and would then hand `a.png`'s thumbnail away."""

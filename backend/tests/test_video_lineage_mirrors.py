@@ -1,4 +1,5 @@
-"""Frame lineage survives every path that copies, moves, snapshots or restores an Image.
+"""Frame lineage — and every quality score — survives every path that copies,
+moves, snapshots or restores an Image.
 
 Extraction writes `source_video_id`, `source_timestamp_ms` and
 `source_shot_index` once and nothing ever changes them again — which is exactly
@@ -17,6 +18,12 @@ The rule the behavioural tests pin: **a cross-dataset copy or move NULLs
 `source_video_id` and keeps the timestamp and shot index.** The id would point
 at a video the destination dataset does not contain; where in a video a frame
 came from is a fact about the frame and travels with it.
+
+The same eight paths carry the ten `*_score` columns, and lost three of them the
+same silent way — hence `SCORE_COLUMNS` and the guards over it here. A score is
+authored data as far as a snapshot is concerned: nothing recomputes one, so the
+rule is that every rebuild path carries every score, from the column of the same
+name.
 """
 
 import ast
@@ -64,9 +71,6 @@ NOT_MIRRORED = {
     "created_at",            # the state row carries the version's timestamp
     "updated_at",
     "phash",                 # recomputed from the restored file
-    "nsfw_score",            # scored, not authored; recomputed on demand
-    "saturation_score",
-    "luminance_score",
     "clip_embedding",        # blobs: megabytes per row, recomputed on demand
     "dino_embedding",
     "dino_layer_embeddings",
@@ -95,26 +99,69 @@ def _columns(model) -> set[str]:
     return {c.key for c in model.__table__.columns}
 
 
+def _ctor_kwargs(func, ctor_name: str) -> list[dict[str, tuple[str, str] | None]]:
+    """One dict per `ctor_name(...)` call in `func`'s source: kwarg name → the
+    `(variable, attribute)` it copies, or `None` where the value is computed.
+
+    Read out of the AST rather than by running the path, so the guards below fail
+    for the *next* column somebody adds even on a machine with no cv2 — the same
+    reason the `Image`↔`VersionImageState` guard is structural.
+
+    `**copy_provenance(row)` (an `ast.keyword` with `arg is None`) is skipped: it
+    contributes the five provenance keys, never a score.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    out: list[dict[str, tuple[str, str] | None]] = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == ctor_name):
+            continue
+        kwargs: dict[str, tuple[str, str] | None] = {}
+        for kw in n.keywords:
+            if kw.arg is None:
+                continue
+            v = kw.value
+            if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name):
+                kwargs[kw.arg] = (v.value.id, v.attr)
+            else:
+                kwargs[kw.arg] = None
+        out.append(kwargs)
+    return out
+
+
+def _assigned_attrs(func, target_var: str) -> dict[str, tuple[str, str] | None]:
+    """The assignment form of `_ctor_kwargs`: every `<target_var>.x = y.z` in
+    `func`, as `x → (y, z)`.
+
+    `restore_snapshot` writes its fields this way — its own `Image(...)` covers
+    only the columns needed to make the re-created row insertable, and the
+    assignment block that follows runs for re-created and pre-existing rows
+    alike, so *that* is the site a dropped column is lost at.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    out: dict[str, tuple[str, str] | None] = {}
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Assign) or len(n.targets) != 1:
+            continue
+        t = n.targets[0]
+        if not (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == target_var):
+            continue
+        v = n.value
+        if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name):
+            out[t.attr] = (v.value.id, v.attr)
+        else:
+            out[t.attr] = None
+    return out
+
+
 def _duplicate_video_kwargs() -> dict[str, str | None]:
     """Kwarg name → the source attribute it copies, for the one `Video(...)`
-    `duplicate_dataset` builds. `None` where the value is computed instead.
-
-    Read out of the AST rather than by running a duplicate, so the guard below
-    fails for the *next* column added to `Video` even on a machine with no cv2 —
-    the same reason the `Image`↔`VersionImageState` guard is structural.
-    """
-    tree = ast.parse(textwrap.dedent(inspect.getsource(dataset_service.duplicate_dataset)))
-    calls = [
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Video"
-    ]
+    `duplicate_dataset` builds. `None` where the value is computed instead."""
+    calls = _ctor_kwargs(dataset_service.duplicate_dataset, "Video")
     assert len(calls) == 1, f"expected one Video(...) in duplicate_dataset, found {len(calls)}"
-    out: dict[str, str | None] = {}
-    for kw in calls[0].keywords:
-        v = kw.value
-        carried = isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "vid"
-        out[kw.arg] = v.attr if carried else None
-    return out
+    return {
+        k: (src[1] if src and src[0] == "vid" else None)
+        for k, src in calls[0].items()
+    }
 
 
 def test_the_video_copy_carries_every_video_column():
@@ -157,6 +204,78 @@ def test_every_image_column_is_mirrored_on_version_image_state():
         "Mirror them (and copy them in create_snapshot and the restore "
         "write-back), or add them to NOT_MIRRORED with a reason."
     )
+
+
+def test_every_score_column_is_mirrored_on_version_image_state():
+    """Stronger than the allowlist alone, which only says *these three* are
+    unmirrored — this says no score may be. Nothing recomputes a technical score:
+    quality scoring is a manual job, and `score_coverage["technical"]` counts
+    `blur_score` alone, so a dataset missing one does not even report as needing
+    a re-score. A snapshot is the only record of an old value.
+    """
+    missing = SCORE_COLUMNS - _columns(VersionImageState)
+    assert not missing, (
+        f"{sorted(missing)} are Image score columns with no VersionImageState "
+        "mirror, so a restore blanks them. Mirror them; do not add a score to "
+        "NOT_MIRRORED."
+    )
+
+
+def _pick_call(calls: list[dict], var: str) -> dict:
+    """The one call among `calls` that reads its values off `var`."""
+    matches = [c for c in calls if any(src and src[0] == var for src in c.values())]
+    assert len(matches) == 1, f"expected one call sourced from `{var}`, found {len(matches)}"
+    return matches[0]
+
+
+def _score_carriers() -> dict[str, dict[str, tuple[str, str] | None]]:
+    """Site label → its kwarg/assignment map, for every path that rebuilds an
+    `Image`-shaped row field by field.
+
+    An **explicit** list, never every `Image(...)` in the codebase: five of the
+    nine constructor sites (`routers/images.py`'s crop and upscale replacements,
+    `detection.py`, `lut.py`, `upscaling.py`) build *derivatives*, whose pixels
+    are not the scored pixels — they must not carry a score forward.
+    """
+    from backend.routers import images as images_router
+
+    dup = _ctor_kwargs(dataset_service.duplicate_dataset, "Image")
+    assert len(dup) == 2, f"expected two Image(...) in duplicate_dataset, found {len(dup)}"
+    copy = _ctor_kwargs(images_router.batch_copy_dataset, "Image")
+    assert len(copy) == 1, f"expected one Image(...) in batch_copy_dataset, found {len(copy)}"
+    snap = _ctor_kwargs(version_service.create_snapshot, "VersionImageState")
+    assert len(snap) == 1, f"expected one VersionImageState(...) in create_snapshot, found {len(snap)}"
+
+    return {
+        "duplicate_dataset (on-disk branch)": _pick_call(dup, "row"),
+        "duplicate_dataset (snapshot branch)": _pick_call(dup, "state"),
+        "batch_copy_dataset": copy[0],
+        "create_snapshot": snap[0],
+        # The restore write-back, in its assignment form.
+        "restore_snapshot": _assigned_attrs(version_service.restore_snapshot, "img"),
+    }
+
+
+def test_every_rebuild_path_carries_every_score():
+    """The structural half of the round-trips below, and the only guard on
+    `duplicate_dataset`'s snapshot branch that does not need a running job.
+
+    Each site must carry every score **from the column of the same name** —
+    `nsfw_score=row.saturation_score` satisfies "carried" and is still wrong, and
+    the values a behavioural test seeds are distinct for the same reason.
+    """
+    missing: dict[str, list[str]] = {}
+    mismatched: dict[str, dict[str, str]] = {}
+    for label, kwargs in _score_carriers().items():
+        carried = {k: src for k, src in kwargs.items() if src}
+        gone = sorted(SCORE_COLUMNS - set(carried))
+        if gone:
+            missing[label] = gone
+        wrong = {k: src[1] for k, src in carried.items() if k in SCORE_COLUMNS and src[1] != k}
+        if wrong:
+            mismatched[label] = wrong
+    assert not missing, f"score columns dropped by a rebuild path: {missing}"
+    assert not mismatched, f"score columns copied from the wrong attribute: {mismatched}"
 
 
 def test_not_mirrored_has_no_stale_entries():
@@ -258,6 +377,46 @@ def test_a_cross_dataset_copy_carries_every_score(tmp_path):
                 copy = (await db.execute(
                     select(Image).where(Image.dataset_id == dest["id"])
                 )).scalar_one()
+            assert _read_scores(copy) == scores
+
+    run(scenario())
+
+
+def test_a_duplicate_from_a_snapshot_carries_every_score(tmp_path):
+    """`duplicate_dataset`'s snapshot branch, which nothing covered before.
+
+    Its bite is worth stating, because it cannot be shown the usual way: on the
+    parent commit the three columns do not exist on `VersionImageState` at all,
+    so this fails for a reason that says nothing about the branch it is aimed at.
+    It was proven red by applying the whole change *except* the three kwargs in
+    that branch's `Image(...)` — which then failed on exactly those three, with
+    every other path green.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            img = await upload_image(env, src["id"], "a.png")
+            scores = await _seed_scores(env, img["id"])
+
+            await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "manual"})
+            r = await env.client.post(f"{API}/datasets/{src['id']}/versions", json={"name": "v1"})
+            assert r.status_code in (200, 201, 202), r.text
+            if "job_id" in r.json():
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+            version_id = (await env.client.get(f"{API}/datasets/{src['id']}/versions")).json()[0]["id"]
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate",
+                json={"new_name": "from-snapshot", "source_version_id": version_id},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id != src["id"])
+                )).scalars().one()
             assert _read_scores(copy) == scores
 
     run(scenario())

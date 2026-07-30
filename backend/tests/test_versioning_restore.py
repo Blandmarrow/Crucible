@@ -18,6 +18,9 @@ Covered failure classes (all previously reproduced live):
 - restore's stale-file cleanup unlinked a raw stored `file_path`, so a
   hand-edited column made `handle_extra_images="remove"` delete outside the
   datasets tree (V-83)
+- three of the ten `*_score` columns had no `VersionImageState` mirror, so a
+  restore blanked them and a diff never reported them as changed, on the false
+  premise that a technical score is recomputed on demand
 """
 import asyncio
 from pathlib import Path
@@ -349,6 +352,80 @@ def test_restore_aborts_when_pre_snapshot_fails(tmp_path, monkeypatch):
             await db.refresh(img)
             assert img.aesthetic_score == 9.9, "aborted restore must change nothing"
         assert (imgdir / "1.png").read_bytes() == b"AAAA"
+        await engine.dispose()
+
+    run(scenario())
+
+
+SCORE_COLUMNS = sorted(c.key for c in Image.__table__.columns if c.key.endswith("_score"))
+
+
+def _distinct_scores() -> dict[str, float]:
+    """A different value per score column, so a mirror wired to the wrong
+    neighbour fails as loudly as a missing one."""
+    return {name: 0.1 + i / 100 for i, name in enumerate(SCORE_COLUMNS)}
+
+
+def test_restore_puts_back_every_score(tmp_path):
+    """All ten `*_score` columns are snapshotted and restored — covering
+    `create_snapshot`'s mirror and the restore write-back in one round trip.
+
+    Three of them (`nsfw_score`, `saturation_score`, `luminance_score`) were
+    unmirrored until d1c7b4e9f0a3 on the theory that a score is recomputed on
+    demand. Nothing recomputes one: quality scoring is a manual job, so a restore
+    silently dropped a value that existed nowhere else — while preserving
+    `color_score`, which the same scorer writes in the same pass.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        scores = _distinct_scores()
+        async with Session() as db:
+            img = await _get_by_filename(db, ds_id, "1.png")
+            for name, value in scores.items():
+                setattr(img, name, value)
+            await db.commit()
+
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+
+            for name in scores:
+                setattr(img, name, None)
+            await db.commit()
+
+            await version_service.restore_snapshot(
+                db, ds_id, snap.id, pre_restore_snapshot=False)
+
+            await db.refresh(img)
+            assert {name: getattr(img, name) for name in scores} == scores
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_diff_reports_a_changed_technical_score(tmp_path):
+    """A score is mutable — every quality re-run can change one — so it belongs
+    in the diff as well as the mirror. `_DIFF_COLS`' carve-out is for *immutable*
+    columns (frame lineage, written once by extraction).
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        async with Session() as db:
+            img = await _get_by_filename(db, ds_id, "1.png")
+            img.luminance_score = 0.2
+            img.nsfw_score = 0.9
+            await db.commit()
+            a = await version_service.create_snapshot(db, ds_id, "s1", "")
+
+            img.luminance_score = 0.7
+            img.nsfw_score = 0.1
+            await db.commit()
+            b = await version_service.create_snapshot(db, ds_id, "s2", "")
+
+            diff = await version_service.diff_versions(db, ds_id, a.id, b.id)
+            assert diff["summary"]["modified"] == 1, diff
+            changes = diff["modified"][0]["changes"]
+            # Floats, not `_HEAVY_DIFF_FIELDS`, so both values are reported.
+            assert changes["luminance_score"] == {"from": 0.2, "to": 0.7}
+            assert changes["nsfw_score"] == {"from": 0.9, "to": 0.1}
         await engine.dispose()
 
     run(scenario())

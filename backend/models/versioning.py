@@ -79,13 +79,20 @@ class VersionImageState(Base):
     caption_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     quality_flags: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Quality scores
+    # Quality scores — same rule as the provenance and lineage blocks below: a
+    # score column added to `Image` without a mirror here is silently blanked by
+    # the next restore. Nothing recomputes a technical score (quality scoring is
+    # a manual job, and `score_coverage["technical"]` counts `blur_score` alone),
+    # so a snapshot is the only record of an old one. All ten are mirrored.
+    nsfw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     uniformity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     watermark_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     color_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    saturation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    luminance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     style_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)

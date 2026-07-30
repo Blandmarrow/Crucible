@@ -400,12 +400,15 @@ async def create_snapshot(
             format=img.format,
             caption_text=img.caption_text or "",
             quality_flags=img.quality_flags,
+            nsfw_score=img.nsfw_score,
             aesthetic_score=img.aesthetic_score,
             blur_score=img.blur_score,
             noise_score=img.noise_score,
             uniformity_score=img.uniformity_score,
             watermark_score=img.watermark_score,
             color_score=img.color_score,
+            saturation_score=img.saturation_score,
+            luminance_score=img.luminance_score,
             style_similarity_score=img.style_similarity_score,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
@@ -468,12 +471,15 @@ _DIFF_COLS = (
     VersionImageState.file_hash,
     VersionImageState.caption_text,
     VersionImageState.quality_flags,
+    VersionImageState.nsfw_score,
     VersionImageState.aesthetic_score,
     VersionImageState.blur_score,
     VersionImageState.noise_score,
     VersionImageState.uniformity_score,
     VersionImageState.watermark_score,
     VersionImageState.color_score,
+    VersionImageState.saturation_score,
+    VersionImageState.luminance_score,
     VersionImageState.style_similarity_score,
     VersionImageState.dino_layer_scores,
     VersionImageState.generation_metadata,
@@ -503,8 +509,9 @@ _HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata", "sou
 # and a test asserts this one is a subset of the columns above.
 _DIFF_COMPARE_FIELDS = (
     "caption_text", "quality_flags", "subfolder",
-    "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-    "watermark_score", "color_score", "style_similarity_score",
+    "nsfw_score", "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
     "source_meta", "sort_order",
@@ -864,12 +871,15 @@ async def restore_snapshot(
         img.original_filename = state.original_filename
         img.file_path = p.target_path
         img.subfolder = state.subfolder
+        img.nsfw_score = state.nsfw_score
         img.aesthetic_score = state.aesthetic_score
         img.blur_score = state.blur_score
         img.noise_score = state.noise_score
         img.uniformity_score = state.uniformity_score
         img.watermark_score = state.watermark_score
         img.color_score = state.color_score
+        img.saturation_score = state.saturation_score
+        img.luminance_score = state.luminance_score
         img.style_similarity_score = state.style_similarity_score
         img.dino_layer_scores = state.dino_layer_scores
         img.generation_metadata = state.generation_metadata

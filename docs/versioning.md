@@ -33,6 +33,10 @@ dataset's rights and later rewind past that point, the old labels come back. A
 diff lists provenance changes per image like any other field. See
 [Source & License Provenance](provenance.md).
 
+Every quality score is captured, including brightness, saturation and the NSFW
+score — a restore brings those back too, and a diff shows one that changed
+between two snapshots.
+
 The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
 
 While a restore, checkout, snapshot, or prune job is running on a dataset, edits to that dataset (uploads, deletes, renames, caption saves, …) are rejected with a clear "Dataset is busy" message — retry once the job finishes.

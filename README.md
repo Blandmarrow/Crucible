@@ -62,6 +62,7 @@ Every step from raw images to a training-ready export, in order:
 - **Batch edit** captions, crops, resizes, and renames across any selection → [details](docs/editing.md)
 - **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/tag-consolidation.md)
 - **Process** images with ML upscaling and LUT color grading → [details](docs/editing.md#image-processing)
+- **Regenerate thumbnails** across a dataset or a selection, for when an upscale, LUT, crop or frame re-extraction leaves gallery previews out of date → [details](docs/editing.md#batch-operations)
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/gallery.md#manual-image-ordering)
 
 ### Versioning & export

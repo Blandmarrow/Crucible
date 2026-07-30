@@ -163,7 +163,10 @@ wrapper verbatim, including its three load-bearing details — see
 8. **Best-effort epilogue**: unlink the superseded original (extension change only), then
    regenerate the thumbnail from the new file into `img.thumbnail_path`. Both are wrapped;
    a failure is logged and cannot change the frame's outcome, and a failed thumbnail
-   increments `counts["thumbnails_stale"]` so `result_data` still records it.
+   increments `counts["thumbnails_stale"]` so `result_data` still records it. All four jobs
+   with an epilogue of this shape now report that count — `batch_lut`, `batch_upscale` and
+   `crop_upscale` as well — and `TopBar` turns it into a warning naming the repair; see
+   `docs/dev/frontend-jobs.md` § The stale-thumbnail warning.
 
 Steps 6 and 7 used to be the other way round, with the thumbnail between them. That is
 PM-013: `generate_thumbnail` catches nothing, so an unwritable `thumbnails/` raised out of

@@ -45,6 +45,51 @@ frontend conventions are in `docs/dev/frontend-core.md`; storage keys are in
   `docs/dev/postmortems/PM-008-video-extract-progress-counter.md`. The corollary in `TopBar`'s
   own pill is that a phase counting nothing must report `total: 0` and be rendered without the
   `N / M` span at all.
+
+## The stale-thumbnail warning, and the ordering rule behind it
+
+`THUMBNAIL_EPILOGUE_JOB_TYPES` — `batch_lut`, `batch_upscale`, `crop_upscale`,
+`video_reextract` — are the four jobs that re-cut an image thumbnail as a best-effort
+post-commit epilogue (PM-013). Each reports `result_data["thumbnails_stale"]`, and
+**one branch in `TopBar`** turns that into the only warning the user gets. It lives there,
+not in the five forms that start these jobs (`LutForm`, `UpscaleForm`, `BulkEditPage`,
+`SelectionToolbar`, `ImageDetailPage`'s three handlers, `ReextractFramesForm`), because
+`TopBar` is always mounted — a 400-frame re-extraction is exactly the job you walk away
+from — and because it already watches every terminal job deduped by `processedJobsRef`.
+Those forms keep their own outcome toasts and are deliberately silent about the count;
+the warning stacks beside the outcome, as `ReextractFramesForm` already does with its
+`note` toast. The repair it points at is **Bulk Edit → Thumbnails**
+(`docs/dev/bulk-ops.md` § Rebuilding thumbnails).
+
+Three details are load-bearing:
+
+- **Transport is `jobsApi.get(jobId)`, not the SSE payload.** `broadcaster.emit` silently
+  drops events when a subscriber's 200-slot queue fills (`backend/workers/progress.py`), so
+  a piggybacked count would under-report exactly on the large runs where it matters.
+- **`cancelled` is included, `failed` is not.** All four workers commit their counts above
+  `raise_if_cancelled`, so a cancelled run has a durable number. A *failed* one does not:
+  `workers/job_queue.py` marks the job failed from a **separate** session and never persists
+  the worker's dict, so there is nothing to read.
+- **The read happens after the `processedJobsRef` add**, which is what makes
+  `crop_upscale`'s two terminal events toast once.
+
+**The general rule this branch depends on: a worker that emits its own terminal status must
+commit anything a completion handler will fetch above that emit.** `crop_upscale` is the
+worked example — `_run_crop_upscale_replace` emits `status: "completed"` from inside the
+worker, *outside* its `async with AsyncSessionLocal()` block and before `job_queue` marks
+the row, so `TopBar`'s branch fires on that first event and fetches immediately. Its
+`result_data` write therefore sits inside that block. `backend/tests/test_upscale_png_fallback_http.py::test_crop_upscale_commits_result_data_before_its_own_completed_event`
+is the guard: a spy snapshots the row from a fresh session at the moment the event goes out.
+
+**`regenerate_thumbnails` invalidates `["images", dataset_id]` and the singular `["image"]`,
+and is deliberately *not* in `IMAGE_MODIFYING_JOB_TYPES`** — it changes no count, size or
+score, so the four stats queries would all come back identical. The image queries do have to
+refetch, though, and for a reason worth stating: the tiles are cache-busted by
+`imagesApi.thumbnailUrlVersioned`'s `?v=${Date.parse(updatedAt)}`, so what must refetch is
+the row carrying that timestamp, not the image. **Known limit**: `DatasetsPage`'s dataset-card
+preview strip builds its thumbnail URLs with no `?v=` at all, so those particular tiles will
+not cache-bust after a repair. Pre-existing, and unrelated to the job.
+
 ## Detection and per-image invalidation
 
 - **Detection cache invalidation — one helper**: the dataset-scoped detection caches (`["detection-labels", id]`, `["detection-models", id]`, `["detection-stats", id]`) are always invalidated together via `invalidateDetectionQueries(qc, datasetId)` in `frontend/src/utils/detectionQueries.ts`. This is the single sanctioned way to refresh them (mirror of the backend "import the shared helper, never copy the logic" convention) — never hand-write the three `invalidateQueries` calls. The `detection-stats` key prefix-matches its live `[..., subfolder]` form. Call sites: `DetectionsPanel` (relabel/delete/merge), `DetectionBulkDeleteForm` (also invalidates `["detection-bulk-count", id]` + `["image"]`), `TopBar` on `detection` **and** `crop_to_detection` job completion (replace-mode crops now remap detection geometry), `DetectionRunForm` (on its own job completion — the id-list pattern named above), and `ImageDetailPage` detect/manual/refine completions + `createManualMutation.onSuccess`. Callers needing a per-image refresh add `["image", imageId]` alongside the helper.

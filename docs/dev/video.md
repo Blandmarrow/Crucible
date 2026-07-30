@@ -1,17 +1,53 @@
 # Video sources
 
 Covers the `Video` model, the `videos/` storage layout and its poster-stem rules, and the
-three ingest paths that create a video. The `/videos` request surface is in
-`docs/dev/video-endpoints.md` and the arc's tests are indexed in `docs/dev/video-tests.md`,
-both split out of this file. The cv2 decode surface itself
-— the metadata probe, the duration search and poster generation — is in
-`docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-shots.md` and
-`docs/dev/video-extract.md` (pass 1) and
-`docs/dev/video-reextract.md` (pass 2), and every screen that shows a video is in
-`docs/dev/video-ui.md`, `docs/dev/video-extract-ui.md` with
-`docs/dev/video-extract-controls.md`, and `docs/dev/video-reextract-ui.md` (the extraction modal, its controls, the re-extract dialog, and the
-job re-attach hook). The arc's roadmap was retired into these files when pass 2 landed,
-the same way the detection arc's was.
+three ingest paths that create a video. It is also the arc's entry point: the table below
+routes from a code path to whichever sibling doc owns it. The arc's roadmap was retired
+into these files when pass 2 landed, the same way the detection arc's was.
+
+## Where things live
+
+Video is documented across twelve files, so the reliable way in is the code file you are
+about to open rather than the topic you have in mind — a reader always knows the former.
+Each row names the doc that **owns** that code. A `+` clause is a second genuine owner,
+not a see-also, and says which part of the file it owns.
+
+### Backend
+
+| Editing… | Read |
+|---|---|
+| `backend/media_types.py` | This file — the single ingestible-extension allowlist |
+| `backend/models/video.py` | This file § The model |
+| `backend/routers/videos.py` | `docs/dev/video-endpoints.md`; + `docs/dev/video-extract.md` for the extract and probe routes; + `docs/dev/video-reextract.md` for `POST /videos/reextract` |
+| `backend/schemas/video.py` | `docs/dev/video-extract.md` (pass 1 bodies), `docs/dev/video-reextract.md` (pass 2) |
+| `backend/services/video_service.py` | `docs/dev/video-decode.md` — the probe ladder, duration search and poster generation; + this file § Poster stems and collisions for `claimed_poster_stems` |
+| `backend/services/video_extract.py` | `docs/dev/video-shots.md` — sampling, shot detection, `render_shot`; + `docs/dev/video-extract.md` for the `video_extract` job; + `docs/dev/video-reextract.md` for `render_at_timestamps` |
+| `backend/services/video_frames.py` | `docs/dev/video-heuristics.md` — the pure-numpy judgement calls |
+| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision |
+| `backend/tests/test_video_*.py` | `docs/dev/video-tests.md` — also the cv2 gate and the skip convention |
+
+### Frontend
+
+| Editing… | Read |
+|---|---|
+| `frontend/src/api/videos.ts` | `docs/dev/video-endpoints.md` — it is a thin client for the twelve routes and carries no behaviour of its own |
+| `frontend/src/components/gallery/VideoStrip.tsx` | `docs/dev/video-ui.md` § VideoStrip |
+| `frontend/src/pages/VideoDetailPage.tsx` | `docs/dev/video-ui.md` § VideoDetailPage |
+| `frontend/src/components/video/ExtractFramesModal.tsx` | `docs/dev/video-extract-ui.md` § ExtractFramesModal — `ExtractProgressList` lives inline in this file |
+| `frontend/src/hooks/useVideoExtractJobs.ts` | `docs/dev/video-extract-ui.md` § Re-attaching to the job |
+| `frontend/src/components/video/CropOverlay.tsx` | `docs/dev/video-extract-controls.md` § CropOverlay |
+| `frontend/src/components/video/TrimBar.tsx` | `docs/dev/video-extract-controls.md` § TrimBar |
+| `frontend/src/components/common/NumberField.tsx` | `docs/dev/video-extract-controls.md` § NumberField for the full draft contract; CLAUDE.md carries the one-line rule |
+| `frontend/src/components/video/ReextractFramesForm.tsx` | `docs/dev/video-reextract-ui.md` § ReextractFramesForm |
+| `frontend/src/components/video/ReextractFramesModal.tsx` | `docs/dev/video-reextract-ui.md` § ReextractFramesModal — and § The three entry points |
+| `frontend/e2e/video-extract.spec.ts` | `docs/dev/video-extract-controls.md` § End-to-end coverage |
+
+Every path above is inline code ending in a file extension, so `scripts/check_docs.py`
+verifies it resolves — a moved or deleted module breaks the check rather than silently
+rotting the index. Two habits keep that guarantee when adding a row: write the full path
+(a token without a `/` is not treated as a path and loses its verification), and prefer a
+glob like `backend/tests/test_video_*.py` over a bare directory, since `looks_like_path`
+only checks tokens ending in an extension while `path_exists` expands globs.
 
 **Videos are sources; frames are Images.** A video gets its own model, table and folder.
 It is deliberately not a row in `images`, which carries ~20 image-specific columns, FK

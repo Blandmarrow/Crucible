@@ -26,13 +26,15 @@ no longer matches its video is the normal state, not a hazard.
 - **A directory takes neither arm, and is refused rather than rewritten.** Both
   arms match on `file_path == str(p)`, so renaming `{ds}/images` used to return
   200 and strand every row in the dataset. A rename is a same-parent move, so
-  the only directories that can hold registered media are structural ones, and
-  `/move`'s prefix rewrite would leave the DB agreeing with disk while the
-  *dataset* stayed broken. `_guard_directory_rename` therefore only ever
+  the only directories that can hold registered media are structural ones, and a
+  prefix rewrite would leave the DB agreeing with disk while the *dataset* stayed
+  broken — which is why `/move` no longer offers one either (V-21). `_guard_directory_rename` therefore only ever
   refuses, in the order C → D → A → B (dataset folder → layout name → rows under
   the prefix → derived artifacts under it), most actionable message first.
 """
 
+import os
+import shutil
 from pathlib import Path
 
 from sqlalchemy import select
@@ -50,6 +52,31 @@ from backend.tests.conftest import (
 )
 
 FS = f"{API}/filesystem"
+
+
+async def _relocate_out_of_layout(env, src: Path, dst_dir: Path) -> Path:
+    """Put a dataset's media folder where the app's layout does not allow, and
+    point its rows at the new location.
+
+    This is the state `POST /move` produced until V-21 refused it, so the fixture
+    is built directly rather than through the endpoint (which now 409s — see
+    `docs/dev/file-browser.md` § `POST /move`). Still worth guarding `/rename`
+    against: a user who rearranges a dataset folder in their own file manager, or
+    a database written before V-21, arrives in exactly this state with no endpoint
+    involved. The app does not support that layout, but it must not corrupt
+    anything when it meets one.
+    """
+    dst = dst_dir / src.name
+    shutil.move(str(src), str(dst))
+    async with env.Session() as db:
+        for model in (Image, Video):
+            rows = (await db.execute(
+                select(model).where(model.file_path.startswith(str(src) + os.sep))
+            )).scalars().all()
+            for row in rows:
+                row.file_path = str(dst / Path(row.file_path).relative_to(src))
+        await db.commit()
+    return dst
 
 
 def test_renaming_a_registered_image_carries_its_thumbnail_and_sidecar(tmp_path):
@@ -432,9 +459,8 @@ def test_a_folder_of_registered_media_outside_the_layout_is_refused(tmp_path):
     not a direct child of the dataset folder, so D cannot fire and only the rows
     under the prefix give it away.
 
-    The fixture goes through `/move`, which permits a same-dataset directory
-    move today — the residual recorded in `docs/dev/file-browser.md` § Still
-    open."""
+    `_relocate_out_of_layout` builds the fixture, since V-21 stopped `/move` from
+    producing it — see that helper for why the state is still worth guarding."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("fsr")
@@ -443,11 +469,7 @@ def test_a_folder_of_registered_media_outside_the_layout_is_refused(tmp_path):
             root = Path(ds["folder_path"])
             archive = root / "archive"
             archive.mkdir()
-            r = await env.client.post(
-                f"{FS}/move", json={"src": str(root / "images"), "dst_dir": str(archive)}
-            )
-            assert r.status_code == 200, r.text
-            moved = archive / "images"
+            moved = await _relocate_out_of_layout(env, root / "images", archive)
             assert (moved / "a.png").exists()
 
             r2 = await env.client.post(
@@ -520,11 +542,7 @@ def test_an_underscore_in_a_dataset_folder_does_not_refuse_a_siblings_rename(tmp
             # `{a}/archive/` prefix can match is B's — via the wildcard.
             b_archive = Path(b["folder_path"]) / "archive"
             b_archive.mkdir()
-            r = await env.client.post(
-                f"{FS}/move",
-                json={"src": str(Path(b["folder_path"]) / "images"), "dst_dir": str(b_archive)},
-            )
-            assert r.status_code == 200, r.text
+            await _relocate_out_of_layout(env, Path(b["folder_path"]) / "images", b_archive)
 
             a_archive = Path(a["folder_path"]) / "archive"
             a_archive.mkdir()

@@ -306,9 +306,14 @@ def test_a_loose_file_still_moves_anywhere_inside_a_dataset(tmp_path):
 
 
 def test_moving_a_datasets_thumbnails_folder_is_refused(tmp_path):
-    """V-76. `{ds}/thumbnails` holds no `file_path` at all, so the folder guard
-    above sees nothing and the prefix rewrite has nothing to rewrite — every
-    stored `thumbnail_path` in it is stranded and the move returns 200.
+    """V-76. `{ds}/thumbnails` holds no `file_path` at all, so the registered-media
+    guard above sees nothing — every stored `thumbnail_path` in it would be
+    stranded and the move would return 200.
+
+    Since V-21 this is the only arm of the directory branch that still refuses
+    anything on its own: a folder holding `file_path`s never reaches it. The
+    distinct `detail` wording is what tells the two guards apart, so both this and
+    the registered-media tests assert their own substring.
 
     The damage is not permanently broken tiles: `serve_thumbnail` regenerates a
     missing thumbnail and `generate_thumbnail` mkdirs its parent. It is a silent
@@ -339,8 +344,9 @@ def test_moving_a_datasets_thumbnails_folder_is_refused(tmp_path):
 @needs_cv2
 def test_moving_a_videos_thumbnails_folder_is_refused(tmp_path):
     """The twin. A poster's directory is `{ds}/videos/thumbnails/`, so moving it
-    alone strands `Video.poster_path` the same way — while moving `{ds}/videos`
-    itself stays permitted, because there the videos travel with their posters."""
+    alone strands `Video.poster_path` the same way. Moving `{ds}/videos` itself is
+    refused by the registered-media guard rather than this one — a different 409,
+    which is why each asserts its own `detail` substring."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("a")
@@ -370,9 +376,13 @@ def test_moving_a_folder_of_registered_media_out_of_its_dataset_is_refused(tmp_p
     `utils.safe_dataset_path` 403s every byte request, and into *another*
     dataset's folder, where `dataset_id` would be left stale, are both refused.
 
-    The second destination is the one that proves containment rather than "some
-    dataset was found" — a guard that only checked `new_ds is not None` would let
-    it through."""
+    These are the two destinations that were *always* refused. Since V-21 the
+    guard no longer looks at the destination at all — holding one registered
+    `file_path` is the whole predicate — so the same-dataset case is a 409 too,
+    covered by `test_moving_a_canonical_media_folder_inside_its_own_dataset_is_
+    refused`. Keeping both here is deliberate: they are the failures that motivated
+    the guard, and a regression that re-permitted only cross-dataset moves would
+    otherwise pass."""
     async def scenario():
         async with api_env(tmp_path) as env:
             a = await env.create_dataset("a")
@@ -448,96 +458,61 @@ def test_moving_a_folder_with_no_registered_media_still_works(tmp_path):
 
 
 @needs_cv2
-def test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it(tmp_path):
-    """The directory half of the same sync, which iterates `(Image, Video)` and
-    rewrites `file_path` by prefix. It shares the file half's one hazard: both
-    branches are chosen from `src`, which no longer exists once `shutil.move` has
-    run, so a classification made too late turns the whole block into dead code
-    and leaves every row pointing at nothing.
+def test_moving_a_canonical_media_folder_inside_its_own_dataset_is_refused(tmp_path):
+    """V-21. The destination that used to be the *permitted* one: same dataset, so
+    nothing is re-homed and no row would be stranded. Both canonical folders, both
+    409, because the app supports exactly one layout — a registered file directly
+    in its dataset's `images/` or `videos/` — and this endpoint will not create a
+    layout the rest of the app cannot read.
 
-    A video's poster lives *under* `videos/`, so it travels with the move and its
-    stored path has to be rewritten too — otherwise `GET /poster` 403s on a path
-    outside the datasets tree.
+    Until V-21 both returned 200 and a prefix rewrite kept every row consistent
+    with the new location. The rows were right and the app was still wrong:
+    `rescan_dataset`/`_rescan_videos` glob the canonical folders non-recursively,
+    so every moved row reports missing forever while its file is fine, and
+    `thumbnail_path_for`'s `parent.parent` then resolves beside the *new* parent,
+    orphaning the real thumbnail at the next rename. The file branch already
+    refused this per row, and a folder move can only land its contents one level
+    deeper than the canonical folder (`new_path.exists()` refuses the move back),
+    so there was no destination the two branches could agree on — the permission
+    and its rewrite went together.
 
-    The destination is inside the dataset because the containment guard permits
-    nothing else; the prefix rewrite under test is the same either way. Note that
-    `{ds}/archive/videos` is outside the flat `{ds}/videos/` glob `_rescan_videos`
-    walks, so a later rescan reports this row missing. The *file* branch now
-    refuses exactly that (a registered file must stay directly in its dataset's
-    images/ or videos/ folder), but extending the predicate to this branch would
-    make the whole rewrite under test unreachable, so the directory branch keeps
-    the residual — recorded in `docs/dev/file-browser.md` § Still open. It is *not*
-    something to "fix" by moving the destination back outside the dataset, which
-    is exactly what the guard refuses."""
-    async def scenario():
-        async with api_env(tmp_path) as env:
-            ds = await env.create_dataset("a")
-            video = await upload_video(env, ds["id"], "clip.mp4")
-
-            async with env.Session() as db:
-                row = await db.get(Video, video["id"])
-                videos_dir = Path(row.file_path).parent
-                poster_rel = Path(row.poster_path).relative_to(videos_dir)
-
-            archive = Path(ds["folder_path"]) / "archive"
-            archive.mkdir()
-            r = await env.client.post(
-                f"{FS}/move", json={"src": str(videos_dir), "dst_dir": str(archive)}
-            )
-            assert r.status_code == 200, r.text
-
-            async with env.Session() as db:
-                row = await db.get(Video, video["id"])
-
-            assert row.file_path == str(archive / "videos" / "clip.mp4")
-            assert Path(row.file_path).exists()
-            # Unlike the file branch, this one rewrites paths only — the folder
-            # is not necessarily a dataset's, so there is no dataset to re-home to.
-            assert row.dataset_id == ds["id"]
-            # The poster moved with the folder, and the row followed it.
-            assert row.poster_path == str(archive / "videos" / poster_rel)
-            assert Path(row.poster_path).exists()
-
-    run(scenario())
-
-
-def test_moving_an_images_folder_leaves_thumbnails_outside_it_alone(tmp_path):
-    """The other half of the prefix test. An image's thumbnails live in
-    `{ds}/thumbnails/`, *beside* `images/` and not under it, so moving `images/`
-    does not move them — and rewriting `thumbnail_path` unconditionally would
-    point every row at a file that was never there.
-
-    Destination inside the dataset, as in the video twin above: anywhere else is
-    a 409 now, and the prefix rewrite is unchanged by where it is permitted.
-
-    It doubles as the negative control for V-76's guard: moving `images/` must
-    stay permitted precisely *because* the thumbnails are not under it, while
-    moving `{ds}/thumbnails` — where the derived files are under the prefix and
-    their `file_path`s are not — is refused."""
+    Nothing here restricts a user's own folders: `test_moving_a_folder_with_no_
+    registered_media_still_works` is the negative control, and moving files into a
+    hand-made layout *outside* the app remains unsupported rather than blocked."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("a")
             image = await upload_image(env, ds["id"], "pic.png")
+            video = await upload_video(env, ds["id"], "clip.mp4")
 
             async with env.Session() as db:
-                row = await db.get(Image, image["id"])
-                images_dir = Path(row.file_path).parent
-                thumb_before = row.thumbnail_path
-            assert not thumb_before.startswith(str(images_dir) + os.sep)
+                img = await db.get(Image, image["id"])
+                vid = await db.get(Video, video["id"])
+                images_dir = Path(img.file_path).parent
+                videos_dir = Path(vid.file_path).parent
+                before = (img.file_path, img.thumbnail_path, vid.file_path, vid.poster_path)
+            # The images thumbnails are *outside* `images/`, which is what used to
+            # make this move look harmless: only `file_path` needed rewriting.
+            assert not before[1].startswith(str(images_dir) + os.sep)
 
             archive = Path(ds["folder_path"]) / "archive"
             archive.mkdir()
-            r = await env.client.post(
-                f"{FS}/move", json={"src": str(images_dir), "dst_dir": str(archive)}
-            )
-            assert r.status_code == 200, r.text
+
+            for media_dir in (images_dir, videos_dir):
+                r = await env.client.post(
+                    f"{FS}/move", json={"src": str(media_dir), "dst_dir": str(archive)}
+                )
+                assert r.status_code == 409, r.text
+                assert "belong to a dataset" in r.json()["detail"]
+                assert not (archive / media_dir.name).exists()
+                assert media_dir.is_dir()
 
             async with env.Session() as db:
-                row = await db.get(Image, image["id"])
-
-            assert row.file_path == str(archive / "images" / "pic.png")
-            assert row.thumbnail_path == thumb_before
-            assert Path(row.thumbnail_path).exists()
+                img = await db.get(Image, image["id"])
+                vid = await db.get(Video, video["id"])
+                assert (img.file_path, img.thumbnail_path, vid.file_path, vid.poster_path) == before
+            for p in before:
+                assert Path(p).exists()
 
     run(scenario())
 

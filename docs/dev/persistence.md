@@ -40,7 +40,7 @@ computed per entity, so it cannot be a static constant and has no meaningful reg
   at all four sites: the job going terminal, a recovery GET that 404s, and deleting the video.
   Pass 2's re-extract dialog deliberately has **no** counterpart key: it emits per frame, so it
   re-attaches by adopting live jobs from `jobStore` instead. See
-  `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract.md`.
+  `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 

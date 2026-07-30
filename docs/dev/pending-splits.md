@@ -119,21 +119,3 @@ sections' own; the file total is larger by its intro and heading lines.
   CLAUDE.md invariant "Nothing fallible between an irreversible filesystem mutation and the
   `commit()`" and the DB-before-filesystem invariant both point at restore's Pass 2/Pass 3,
   so the new file is a cross-reference target from CLAUDE.md, not only from siblings.
-
-## docs/dev/video-reextract.md
-
-- **Moves:** § Frontend (879 w) — `ReextractFramesForm`/`ReextractFramesModal`, the three
-  entry points, the `jobStore` adoption re-attach and the `TopBar` invalidations
-- **New file:** docs/dev/video-reextract-ui.md (mirrors docs/dev/video-extract-ui.md, which
-  stands in exactly this relation to docs/dev/video-extract.md)
-- **Why here:** the rest of the file is the backend — the contract, the shared write half,
-  `render_at_timestamps`, the job and the extension change. § Frontend is the one section a
-  reader opens for a different reason, and pass 1's split already put its UI in its own file.
-- **Leaves:** 3,448 total → ~2,570 / ~880. The new half is small, but it is the half that
-  grows: this batch alone added ~330 words to it.
-- **Watch for:** § Frontend cross-references `docs/dev/video-extract-ui.md` three times (the
-  `ExtractProgressList` vanish-on-complete failure, `ExtractFramesModal`'s backdrop stance,
-  `useVideoExtractJobs`), and the persisted-key asymmetry is stated in *three* files —
-  here, `docs/dev/video-extract-ui.md` and `docs/dev/persistence.md`. Whichever half keeps
-  it, the other two must point at the new path. `docs/video.md`'s re-extraction section is
-  the user-facing mirror.

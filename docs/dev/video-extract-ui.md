@@ -11,7 +11,8 @@ decision here mirrors one there. The surfaces the modal's two entry points live 
 gallery's `VideoStrip` and `VideoDetailPage` — are in `docs/dev/video-ui.md`, along with
 `frontend/src/utils/duration.ts::formatDuration(ms)` and the
 `frontend/e2e/video-extract.spec.ts` coverage note in its § Elsewhere. Pass 2 and its
-`ReextractFramesForm` are in `docs/dev/video-reextract.md`. The re-attach pattern the hook
+`ReextractFramesForm` are in `docs/dev/video-reextract.md` and
+`docs/dev/video-reextract-ui.md`. The re-attach pattern the hook
 inherits from — `GeneratePromptsModal` — is in `docs/dev/comfy-prompts.md`.
 
 ## ExtractFramesModal

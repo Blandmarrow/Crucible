@@ -10,8 +10,8 @@ behind all of it is in `docs/dev/video.md` (model, storage, `/videos` endpoints)
 `docs/dev/video-extract.md` (the probe/extract endpoints and the `video_extract` job).
 
 `ReextractFramesForm` and its three entry points — two of which sit on surfaces described
-below, the lineage line and the extraction history panel — are documented with the rest of
-pass 2 in `docs/dev/video-reextract.md`.
+below, the lineage line and the extraction history panel — are in
+`docs/dev/video-reextract-ui.md`, with pass 2's backend in `docs/dev/video-reextract.md`.
 
 `frontend/src/utils/duration.ts::formatDuration(ms)` → `"4:12"`, `"1:02:33"`, `"—"` for
 NULL. Every video surface formats through it, because NULL is *unknown* and must never

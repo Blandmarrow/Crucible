@@ -67,8 +67,8 @@ sections' own; the file total is larger by its intro and heading lines.
   the question is where a file lives. § Tests is neither — it is an *index* answering "which
   module pins this behaviour", already spanning six other docs' subject matter, and it is the
   natural home for `video-reextract.md` § Tests and `video-extract.md`'s coverage notes too.
-- **Leaves:** 3,543 total → ~1,800 / ~900 / ~840. Either move **alone** is the wrong answer:
-  Endpoints alone leaves 2,640 (75% of budget) and Tests alone leaves 2,700, so the very next
+- **Leaves:** 3,634 total → ~1,890 / ~900 / ~840. Either move **alone** is the wrong answer:
+  Endpoints alone leaves 2,730 (78% of budget) and Tests alone leaves 2,790, so the very next
   fact appended trips the warning again. Both together land all three halves near 50%.
 - **Watch for:** § Endpoints is a cross-reference hub — `docs/dev/video-decode.md` § Poster
   frames, `docs/dev/video-extract.md` § The endpoints and `docs/dev/video-reextract.md` are all
@@ -115,13 +115,13 @@ sections' own; the file total is larger by its intro and heading lines.
 
 ## docs/dev/statistics.md
 
-- **Moves:** § Backend aggregation (823 w), and probably the `GET /images/` filter table that
+- **Moves:** § Backend aggregation (860 w), and probably the `GET /images/` filter table that
   currently sits inside § Bucket drill-down (~600 w of that section's 736)
 - **New file:** docs/dev/statistics-backend.md
 - **Why here:** the Frontend/Backend boundary. § Frontend page (501), § CSV export (290) and
   § Category panels (428) are all `StatsPage.tsx`; `get_dataset_stats`, the validator-keyed
   cache and the `DatasetStats` schema are `dataset_service.py`.
-- **Leaves:** 2,860 total → roughly 1,400 / 1,450, depending on where the filter table lands.
+- **Leaves:** 2,897 total → roughly 1,400 / 1,450, depending on where the filter table lands.
 - **Watch for:** the seam is **not clean**, and that is the whole difficulty. The `GET /images/`
   filter table is backend content living under the drill-down that consumes it, so leaving it
   behind makes the new file incomplete and taking it makes § Bucket drill-down a stub that

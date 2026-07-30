@@ -77,8 +77,11 @@ size change fails on `acc_rows` before `acc_cols` is touched.
 
 **Generators handed to a `for` loop that may walk away are wrapped in
 `contextlib.closing`.** `read_positions` owns a `VideoCapture` or, on the `bwdif` path, an
-ffmpeg subprocess; both `render_shot` passes and `render_at_timestamps` break on the first
-item, once per written frame. CPython refcounting happens to collect the abandoned
+ffmpeg subprocess. Two of the three sites break on the first item: `render_shot`'s **pass 2**
+(re-fetching the winner alone) and `render_at_timestamps`, once per written frame.
+`render_shot`'s pass 1 walks the generator to exhaustion instead — it has to score every
+candidate — so the wrapping there is for the raise path, not the break path. All three wrap
+regardless, which is the rule. CPython refcounting happens to collect the abandoned
 generator, which is not something to rely on — a leak there would be one capture or
 subprocess per frame written.
 
@@ -171,8 +174,10 @@ cheap either way. Pass 1 computes each candidate's luma plane once with `vf.luma
 it to all three of `mean` / `sharpness` / `is_degenerate`; letting each recompute it cost
 308 ms and 166 MB per candidate instead of 89 ms and 66 MB. Measured on a real 1080p HEVC
 source, three frames at five candidates went 2.42 s → 1.64 s, byte-identical output. The
-four per-candidate lists must stay index-aligned — `pick_index` is given
-`scores`/`lumas`/`degenerate` positionally.
+four per-candidate lists must stay index-aligned: `pick_index(scores, lumas, policy,
+rejected=degenerate)` takes the first two positionally, and `rejected` **cannot** be positional
+— it sits after the `*` in the signature. `stamps` is the fourth list and is never passed to
+`pick_index` at all; it is indexed by its return value.
 
 The crop → resize → save → thumbnail tail is **`_write_frame`**, shared with pass 2 so the
 two cannot drift on format or quality. The crop is clamped there against `frame.shape`,

@@ -256,8 +256,11 @@ tripping the breaker, a temp that will not re-open leaving the original intact, 
 between the render and the swap leaving no temp behind, cancel, the 507 and 503 gates,
 in-flight dedupe in both directions, route shadowing and the SSE invariants (including
 `done` reaching `N`). `backend/tests/test_lut_replace_extension_http.py` covers the LUT
-half. `frontend/e2e/video-extract.spec.ts` opens the modal (`docs/dev/video-reextract-ui.md`)
-from the gallery toolbar and
-asserts the preview accounting, the long-edge bound, and that it is a real dialog (Escape
-closes, focus returns to the opener); CI has no `scenedetect`, so no lineage-carrying frame
-exists there and the run is deliberately never submitted.
+half. `frontend/e2e/video-extract.spec.ts` covers the dialog
+(`docs/dev/video-reextract-ui.md`) in **three** specs, one per behaviour that has bitten:
+*reports what it can and cannot do* opens it from the gallery toolbar and asserts the preview
+accounting, the long-edge bound and that it is a real dialog (Escape closes, focus returns to
+the opener); *waits rather than crashing on an offline tab* pins the error → no data → content
+branch order, the one that took out the pane's ErrorBoundary; and *re-attaches to a job it did
+not start* pins the `jobStore` adoption. None of the three submits a re-extraction: CI has no
+`scenedetect`, so no lineage-carrying frame exists there to re-cut.

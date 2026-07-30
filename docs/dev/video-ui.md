@@ -161,14 +161,24 @@ controls preload="metadata">` in its preview panel for a `media_kind === "video"
 and skips the image-only `["fs-image-meta", path]` query for it.
 
 `frontend/e2e/video-extract.spec.ts` drives the whole path — strip, checkbox, detail view,
-both modal steps (`docs/dev/video-extract-ui.md`) — and closes **without submitting**, the
-same "never click the expensive
-button" convention as `quality.spec.ts`. Its mp4 fixture is inlined as base64 in
-`e2e/helpers.ts::mp4Buffer()`, following `pngBuffer`'s precedent. Two further cases stay
-inside that convention: the subfolder `<select>`'s option set changing with the mode (via
+both modal steps (`docs/dev/video-extract-ui.md`). Its mp4 fixture is inlined as base64 in
+`e2e/helpers.ts::mp4Buffer()`, following `pngBuffer`'s precedent. Most cases stop short of
+submitting, the same "never click the expensive button" convention as `quality.spec.ts` — among
+them the subfolder `<select>`'s option set changing with the mode (via
 `data-testid="extract-subfolder"`, since the `Subfolder` label is not associated with it), and
-a `page.route`-failed probe leaving `Next` enabled with the note visible. The progress list
-carries `data-testid="extract-running"` so it is addressable, but no test can reach it — CI
-has `shot_detection: false`, so a real run is never started. The union logic behind those rows
-therefore has **no** automated coverage: this repo has no frontend unit tests (no vitest; the
-gates are `tsc -b`, eslint and Playwright).
+a `page.route`-failed probe leaving `Next` enabled with the note visible.
+
+**One journey does submit**, and it retired the reasoning that said none could.
+`an extraction runs end to end and its frame appears with lineage` clicks *Extract from 1
+video*, waits on `data-testid="extract-running"` and then on the settled "Finished or no longer
+reporting" label, and goes on to assert the extraction-history panel, the `?source_video_id=`
+gallery deep link and the frame's lineage line — four surfaces for one extraction. The earlier
+claim that CI could not reach it was wrong on its premise: `shot_detection: false` does not
+block a run, it makes `detect_shots` fall back to `_uniform_shots`, which is pure arithmetic
+over the clip's span and needs only opencv — which the e2e workflow installs. The 2 s fixture
+yields one window and the run finishes in about a second. Nothing there asserts a shot *count*,
+because a dev machine with `scenedetect` installed runs the real detector and may find more.
+What still has **no** automated coverage is narrower than the old sentence claimed: the union of
+`result.jobs` and `liveJobs` across a **mixed batch**, since this run is single-video and the
+stubbed specs return `{"jobs": [], "skipped": []}`. This repo has no frontend unit tests (no
+vitest; the gates are `tsc -b`, eslint and Playwright).

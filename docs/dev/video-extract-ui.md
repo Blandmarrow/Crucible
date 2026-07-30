@@ -116,8 +116,15 @@ still holds the old path, which is strictly worse than the bug.
 
 - **`rows` is a union keyed by `video_id`** — `result.jobs` first (it alone carries `filename`
   and the resolved `subfolder`), then any `liveJobs` entry belonging to this modal (the hook
-  returns every live extraction in the app, so the membership check is load-bearing; and a
-  live payload never overwrites a `result` row, which knows strictly more). "Result if present,
+  returns every live extraction in the app, so the membership check is load-bearing). A live
+  payload is *meant* never to overwrite a `result` row, which knows strictly more — but
+  `mergeRows` compares against `prev`, the remembered Map, rather than against the row it may
+  have just written in the same pass, so on the **first** pass that sees a video both entries
+  find `old === undefined` and the live row wins. Filed as **V-84**; the faithful form is
+  `next?.get(r.videoId) ?? prev.get(r.videoId)`. Narrow and self-healing (it needs the worker's
+  first `video_id`-carrying emit in the same React commit as `setResult`, and the next render
+  re-upgrades the row), so the visible cost is a transient missing `→ subfolder` label, never a
+  lost row — but do not read the code comment there as a guarantee it enforces. "Result if present,
   otherwise liveJobs" breaks a mixed batch: submit A+B+C with A already busy and A's live bar
   vanishes the instant the response lands, leaving only an amber `skipped` line for the video
   working hardest. A `skipped` entry that produced a row is suppressed.

@@ -73,7 +73,11 @@ without saying what `done` had to mean for that to work.
 
 ### Fix
 
-- `backend/routers/videos.py`: all four `detecting` emits pin `done=0, total=0`; the
+- `backend/routers/videos.py`: every `detecting` emit pins `done=0, total=0` — **five** of them
+  today (`:831` in `_detect_with_progress`, plus `:931`, `:940`, `:950` and `:963`; the last is
+  the zero-width-window `frames_per_shot` clamp, added after this fix landed, and it pins them
+  too). Count the emits from the code rather than from this line: the invariant is "every emit
+  in the phase", and a new one that omits the keys is the whole failure mode. The
   extraction emit carries the committed count (`written − written_since_commit`) while
   `_emit`'s `fraction` stays on planned frames. The loop's local was renamed `planned` so the
   two quantities cannot be confused at the call site.

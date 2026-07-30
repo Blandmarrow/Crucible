@@ -22,6 +22,7 @@ Bulk score, upscale, LUT, detect, detection-crop, and rename operations all supp
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
 - **Merge tags** — drop redundant tags within each selected caption (e.g. `tail` when `long tail` is present) and collapse exact duplicates; also available per-image from the detail view → [details](tag-consolidation.md)
 - **Set source/license** — write source name, source URL, license, and attribution across the selection. Each field has its own mode: **Keep** (leave it alone), **Set** (write this value), or **Inherit** (clear it so the image follows its dataset default) → [details](provenance.md)
+- **Re-extract frames** — re-cut selected video frames from their source at full resolution, replacing the triage-sized files in place → [details](video.md)
 - **Bulk rename** — rename matching images to a sequential base name pattern (`{slug}_001.ext`, `_002`, …)
 - **Bulk delete** — remove selected images from the dataset and disk
 

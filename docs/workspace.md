@@ -6,7 +6,7 @@ The app shell: the top bar, background jobs, server control, hardware meters, sp
 
 Confirmation prompts and the app's main dialogs — the folder picker, folder import, move-to-dataset, set-provenance, and the ComfyUI and version dialogs — can be driven from the keyboard and are announced as dialogs by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
 
-Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**.
+Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**. The two video dialogs are not among them: **Extract frames** and **Re-extract at full resolution** have the full keyboard behaviour, and the re-extract one can be closed mid-run without stopping anything → [details](video.md).
 
 ## Background jobs & the top bar
 
@@ -14,7 +14,7 @@ Every long-running operation — captioning, scoring, import, export, detection,
 
 The centre of the top bar shows what is happening:
 
-- **Running job** — a progress pill with the job's label, a progress bar, and a `done / total` count. Jobs that cannot report a total (a few show no percentage) display an indeterminate bar instead. The **×** cancels the running job.
+- **Running job** — a progress pill with the job's label, a progress bar, and a `done / total` count. Two things can be missing, independently. A job that cannot report progress at all shows an indeterminate bar. A job that *can* show a percentage but is in a phase that finishes no items — frame extraction while it is still finding cuts, say — shows the bar and **no count**, rather than a misleading `0 / 0`. The **×** cancels the running job.
 - **Queued jobs** — an `N queued` badge followed by a chip per waiting job, each with its own **×** to drop just that one. Beyond three, the rest collapse into **+N more**; hover it to see their names.
 - **Cancel all** — cancels every queued job *and* the one currently running.
 - **Uploading images** — drag-and-drop uploads get their own pill with a file count; it turns amber if any file failed. It persists here if you navigate away mid-upload.

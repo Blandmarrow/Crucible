@@ -46,10 +46,11 @@ they should do.
 
 Two follow-ons for this repo:
 
-- **Flag any new path that overwrites an image file in place without calling
-  `images._record_in_place`.** That helper is now the single writer — list-concat
-  reassignment, never `.append()` (CLAUDE.md § Key invariants, "never mutate a loaded JSON
-  column in place"), plus the `updated_at` bump.
+- **Flag any new path that overwrites an image file in place and records nothing.** What it
+  must produce is a list-concat reassignment, never `.append()` (CLAUDE.md § Key invariants,
+  "never mutate a loaded JSON column in place"), plus the `updated_at` bump. Reach for
+  `images._record_in_place` if the path is in that router; the four writers outside it are
+  hand-rolled (see § Fix), so grepping for the helper alone will not find them.
 - **A rule stated only in a comment is not enforced.** The model comment named the invariant
   correctly for as long as it was decorative. If a rule matters, it needs a single choke
   point, a test, or both.
@@ -71,9 +72,19 @@ route shadowing hides code from coverage as effectively as it hides it from user
 
 ### Fix
 
-Commit `7f5d895`. `images._record_in_place(img, op, **params)` is the single writer; all
-five in-place paths call it, and the three that already recorded history were converted to
-it so there is one implementation rather than four.
+Commit `7f5d895`. `images._record_in_place(img, op, **params)` gave the five silent paths in
+`routers/images.py` a record — but note what it did **not** do, because the original wording
+here ("the single writer … one implementation rather than four") sent reviewers looking for a
+choke point that was never built. That commit touched `routers/images.py` alone. The helper is
+the single writer *within that module*, called from its five sites (`:954`, `:1012`, `:1089`,
+`:1295`, `:1330`); the other writers were never converted and are still hand-rolled
+list-concat blocks — `routers/lut.py:211`, `routers/upscaling.py:211`,
+`routers/detection.py:1077` and `routers/videos.py:1574` (added later, for `reextract`). So
+**five implementations**, not one. Nothing is behaviourally wrong: all five use list-concat
+reassignment plus an `updated_at` bump, which is what the invariant requires. But a reviewer
+checking a new path cannot grep for one call, which is why § Root cause's description of "hand-rolled
+list-concat blocks" still reads as a description of the tree today rather than of the tree
+before the fix.
 
 The consumer is `_resolve_reextract_targets` in `routers/videos.py`, which skips a frame
 whose `processing_history` holds any op **other than** `reextract` with the reason

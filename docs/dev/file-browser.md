@@ -1,6 +1,6 @@
 # File browser
 
-Covers the `/filesystem` router behind the File Browser page: its seven endpoints, the DB-sync guards on `POST /move`, `POST /rename` and `POST /delete`, the path-safety posture, and `FileBrowserPage` itself. It split out of `docs/dev/workspace.md`, which keeps the other three workspace surfaces — the sidebar hardware meters and `/system`, the Logs page, and Booru tag lookup. The dataset folder layout these guards defend is described in `docs/dev/datasets-page.md` (dataset rename, `DirPickerModal` — the other consumer of `GET /roots` and `GET /list`) and `docs/dev/versioning.md` (`.versions`); the rescan passes whose assumptions the guards protect are in `docs/dev/image-files.md` and `docs/dev/video.md`.
+Covers the `/filesystem` router behind the File Browser page: its eight endpoints, the DB-sync guards on `POST /move`, `POST /rename` and `POST /delete`, the path-safety posture, and `FileBrowserPage` itself. It split out of `docs/dev/workspace.md`, which keeps the other three workspace surfaces — the sidebar hardware meters and `/system`, the Logs page, and Booru tag lookup. The dataset folder layout these guards defend is described in `docs/dev/datasets-page.md` (dataset rename, `DirPickerModal` — the other consumer of `GET /roots` and `GET /list`) and `docs/dev/versioning.md` (`.versions`); the rescan passes whose assumptions the guards protect are in `docs/dev/image-files.md` and `docs/dev/video.md`.
 
 ## Endpoints
 
@@ -82,6 +82,6 @@ Recorded rather than fixed: `Image.subfolder` travels unchanged, so a file moved
 
 ## Frontend
 
-Frontend page: `FileBrowserPage.tsx`, route `/file-browser`, sidebar nav item "File Browser". Three-panel layout (`200px | 1fr | 280px`): left = drive roots + quick-access links, middle = breadcrumb + file list + context menu (rename/delete/import), right = image preview + `<GenerationMetadata>` panel.
+Frontend page: `FileBrowserPage.tsx`, route `/file-browser`, sidebar nav item "File Browser". Three-panel layout (`200px | 1fr | 280px`): left = drive roots + quick-access links, middle = breadcrumb + file list + context menu (rename/delete/import), right = a preview panel. That panel branches on `entry.media_kind`: a video renders `<video controls preload="metadata">` against `GET /preview` — `preload="metadata"` so selecting a file in the list does not pull a whole clip off disk, and seeking works because the `FileResponse` supplies Range/206 on its own — while an image renders `<img>` plus the `<GenerationMetadata>` panel. The `["fs-image-meta", path]` query is `enabled: !isVideo`, since `/image-meta` reads EXIF and generation parameters and a container carries neither.
 
 API client: `frontend/src/api/filesystem.ts` — thin wrappers over all endpoints; `previewUrl(path)` returns a URL string for use in `<img src>`.

@@ -65,8 +65,13 @@ assertion instead.
 
 Classify before the move — `src_is_file` / `src_is_dir` captured into locals immediately
 after the 409 guard — plus two tests in `backend/tests/test_conflict_paths_http.py`
-covering the file branch (cross-dataset, asserting `file_path`, `filename` and
-`dataset_id`) and the directory branch (prefix rewrite).
+covering the file branch and the directory branch. Note what the file-branch test asserts, since
+it is not what this paragraph originally implied: `test_moving_a_video_between_datasets_is_refused`
+(`:118`) asserts a **409** and that `file_path`, `dataset_id` and `poster_path` are *unchanged* —
+because the guard added later (V-01/PM-014's sibling) refuses the cross-dataset move outright, so
+there is no successful re-homing left to assert — the bullets at the end of this section record
+that conversion. The directory-branch test is
+`test_moving_a_folder_rewrites_the_paths_of_the_media_inside_it` (`:451`).
 
 Resurrecting the block made a cross-dataset re-home path *live* that had never actually run,
 and it had never learned the rules `batch_move_dataset` follows — provenance

@@ -4,7 +4,7 @@ This file covers everything the frontend stores in `localStorage`/`sessionStorag
 
 ### `constants/storage.ts` — the key registry
 
-Every *statically named* storage key is declared here rather than inline in a component. One row per key; the two documented exceptions are listed below the table.
+Every *statically named* storage key is declared here rather than inline in a component. One row per key; the four documented exceptions are listed below the table.
 
 | Key | Storage & value | Read / written by | Notes |
 |---|---|---|---|
@@ -24,8 +24,10 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `TAG_CONSOLIDATE_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
 | `CAPTIONING_FILTERS_PREFIX`, `EXPORT_FILTERS_PREFIX`, `QUALITY_FILTERS_PREFIX`, `BULK_EDIT_FILTERS_PREFIX`, `STATS_FILTERS_PREFIX` | `localStorage` prefix, JSON blob; append `-${datasetId}` via `datasetScopedKey()` | Their owning page | Per-dataset "filters" blobs |
 
-**Component-local keys — the three sanctioned exceptions.** All are storage whose key is
-computed per entity, so it cannot be a static constant and has no meaningful registry row:
+**Component-local keys — the four sanctioned exceptions.** Each is storage owned end-to-end by
+one component and read nowhere else, so a registry row would buy nothing. Three have a key
+computed per entity, which is why it cannot be a static constant; `STATS_VIS_KEY` is exempt for
+the other reason — its key *is* static, and single-owner locality is what earns it the exemption:
 
 - `` `comfy-genprompts-${planId}` `` and `` `comfy-genprompts-job-${planId}` ``
   (`components/comfy/GeneratePromptsModal.tsx`) — per-plan draft settings and the re-attachable
@@ -43,6 +45,11 @@ computed per entity, so it cannot be a static constant and has no meaningful reg
   `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
+- `` `stats-hist-edges-{metric}-${datasetId}` `` (`pages/StatsPage.tsx`) — one per editable
+  histogram, fourteen of them, passed to `HistPanel` as a `storageKey` and read/written there
+  with raw `localStorage` calls. Keyed by metric *and* dataset, so custom bucketing on one
+  metric never leaks to another. Not part of the `STATS_FILTERS_PREFIX` blob, which some prose
+  used to imply. See `docs/dev/statistics.md` § Editable histograms.
 
 Anything else belongs in `storage.ts` with a row above.
 

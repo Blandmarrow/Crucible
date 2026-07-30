@@ -6,7 +6,8 @@ ingest paths that create a video, and the `/videos` endpoints. The cv2 decode su
 `docs/dev/video-decode.md`, frame extraction is in `docs/dev/video-shots.md` and
 `docs/dev/video-extract.md` (pass 1) and
 `docs/dev/video-reextract.md` (pass 2), and every screen that shows a video is in
-`docs/dev/video-ui.md` and `docs/dev/video-extract-ui.md` (the extraction modal and its
+`docs/dev/video-ui.md`, `docs/dev/video-extract-ui.md` with
+`docs/dev/video-extract-controls.md`, and `docs/dev/video-reextract-ui.md` (the extraction modal, its controls, the re-extract dialog, and the
 job re-attach hook). The arc's roadmap was retired into these files when pass 2 landed,
 the same way the detection arc's was.
 
@@ -31,15 +32,20 @@ helper signatures only, not to the schema, which splits into two tables on purpo
 **Storage layout.** Video files live flat in `{dataset.folder_path}/videos/`, created
 lazily on first ingest so image-only datasets never grow an empty directory. Poster
 thumbnails go in `{dataset}/videos/thumbnails/` — a **separate** directory, not the images
-thumbnail folder with a distinguishing suffix. Nine **modules** build
-`occupied_thumb_stems` from `thumb_dir.glob("*.webp")` — `routers/images.py`,
+thumbnail folder with a distinguishing suffix. **Ten modules** derive image-thumbnail-stem
+occupancy from a `thumb_dir.glob("*.webp")` over that folder. Nine build
+`occupied_thumb_stems` to *pick* a free name — `routers/images.py`,
 `captioning.py`, `comfy.py`, `lut.py`, `upscaling.py`, `detection.py`, `videos.py`,
 `services/version_service.py` and `dataset_service.py` (the count is modules, not call
 sites; `routers/images.py` alone holds seven). `routers/videos.py` is in that list because
 frame extraction writes `Image` rows: it points `thumb_dir` at the dataset's *images*
 thumbnail folder, so it shares the collision domain despite living in the video router.
-A suffix convention would require all nine to learn a filter, and any one that forgot would
-be a silent thumbnail clobber. A separate directory means none of them change.
+The tenth is `routers/filesystem.py`'s `rename_path`, added later and easy to miss — its
+local is named `occupied`, not `occupied_thumb_stems`, and it consumes the set to **409 a
+rename** rather than to uniquify, so its failure mode under a suffix convention would be a
+spurious refusal instead of a silent clobber. It still has to learn the filter, which is the
+whole point of counting. A suffix convention would require all ten to learn one, and any one
+that forgot would be a bug. A separate directory means none of them change.
 
 ## Poster stems and collisions
 
@@ -233,12 +239,13 @@ fresh one on the next view). `test_path_containment_http.py` pins both direction
 
 ## Frontend
 
-Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the extraction
-history and the frame lineage line — is in `docs/dev/video-ui.md`; the two-step
-`ExtractFramesModal` and the job re-attach hook are in `docs/dev/video-extract-ui.md`, with
-its `CropOverlay`/`TrimBar`/`NumberField` controls in
-`docs/dev/video-extract-controls.md`. Split out of this file when the extraction frontend
-landed; they are read together but sized apart.
+Four files, all split out of this one as the frontend grew; they are read together but sized
+apart. `VideoStrip` and its selection, `VideoDetailPage`, the extraction history and the frame
+lineage line are in `docs/dev/video-ui.md`. The two-step `ExtractFramesModal` and the job
+re-attach hook are in `docs/dev/video-extract-ui.md`, with its `CropOverlay`/`TrimBar`/
+`NumberField` controls in `docs/dev/video-extract-controls.md`. Pass 2's
+`ReextractFramesForm`/`ReextractFramesModal` and their three entry points are in
+`docs/dev/video-reextract-ui.md`.
 
 ## What is free, and what is not
 

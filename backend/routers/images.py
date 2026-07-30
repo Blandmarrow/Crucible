@@ -468,8 +468,6 @@ async def upload_images(
                 poster_path=poster_path,
                 # A browser upload carries no provenance for a video (no EXIF
                 # equivalent we read), so everything inherits the dataset default.
-                # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.
-                **merge_provenance({}, fields=PROVENANCE_FIELDS),
                 **info,
             ))
             videos_added.append(filename)

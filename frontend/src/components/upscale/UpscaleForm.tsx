@@ -26,7 +26,8 @@ function resultToast(result: Record<string, unknown>) {
   if (skipped > 0) parts.push(`${skipped} skipped`);
   if (failed > 0) parts.push(`${failed} failed`);
   const msg = parts.join(", ");
-  failed > 0 ? toast(msg, { icon: "⚠️" }) : toast.success(msg);
+  if (failed > 0) toast(msg, { icon: "⚠️" });
+  else toast.success(msg);
 }
 
 export default function UpscaleForm({ datasetId, imageIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { savePersisted } from "../utils/persistentState";
+import { PERSIST_DEBOUNCE_MS } from "../constants/storage";
 
 /**
  * Debounced localStorage persistence for a page's UI state blob.
@@ -13,9 +14,10 @@ import { savePersisted } from "../utils/persistentState";
  *              per-dataset call sites pass `null` while `datasetId` is unset).
  * @param value the blob to store. Rebuilt every render by callers; it is compared
  *              by serialized form, not identity, so no `useMemo` is needed.
- * @param delay debounce window in ms.
+ * @param delay debounce window in ms. Defaults to `PERSIST_DEBOUNCE_MS`, the
+ *              shared constant the e2e restore spec waits on.
  */
-export function useDebouncedPersist(key: string | null, value: object, delay = 350): void {
+export function useDebouncedPersist(key: string | null, value: object, delay = PERSIST_DEBOUNCE_MS): void {
   // The dependency. Callers build `value` from an object literal, so property
   // order is stable and JSON equality is a sound change check. This also spares
   // every call site a hand-maintained dep array (Captioning's was 23 entries).

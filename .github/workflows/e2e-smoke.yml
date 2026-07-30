@@ -5,12 +5,13 @@ name: e2e-smoke
 # is the ONLY CI check that catches an API change breaking the UI — hence it
 # triggers on BOTH frontend/** and backend/**.
 #
-# The pip install mirrors backend-tests.yml's dependency list (see that file's
-# header for why each package is needed to import backend.main) PLUS `uvicorn`
-# and `alembic`, which serve.sh needs to migrate and serve the app. A missing
-# backend dep does NOT fail loudly here — it surfaces as a Playwright "webServer
-# timeout", which is why serve.sh's output is piped (stdout/stderr: "pipe" in
-# playwright.config.ts) so the traceback is visible in the logs.
+# The pip install is backend/requirements-ci.txt — the same pinned base file the
+# two backend-tests.yml jobs install (see its header for why each package is
+# needed to import backend.main) PLUS `uvicorn` and `alembic`, which serve.sh
+# needs to migrate and serve the app. A missing backend dep does NOT fail loudly
+# here — it surfaces as a Playwright "webServer timeout", which is why serve.sh's
+# output is piped (stdout/stderr: "pipe" in playwright.config.ts) so the
+# traceback is visible in the logs.
 
 on:
   pull_request:
@@ -39,15 +40,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # `opencv-python-headless` is here and not in backend-tests.yml's list for
-      # one reason: cv2 is the video *ingest gate*, so without it a video upload
-      # 400s rather than being skipped, and video-extract.spec.ts would fail
-      # rather than degrade. `scenedetect` and `imageio-ffmpeg` stay absent on
-      # purpose — that makes CI exercise the `capabilities: false` branches (the
-      # disabled deinterlace toggle, the fixed-interval-sampling warning) for
-      # real. Headless because there is no display; it costs ~60 MB and ~20 s.
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements-ci.txt
+            backend/requirements-dev.txt
+      # `opencv-python-headless` is added on top of the shared base file, and not
+      # put *into* it, for one reason: cv2 is the video *ingest gate*, so without
+      # it a video upload 400s rather than being skipped, and video-extract.spec.ts
+      # would fail rather than degrade. `scenedetect` and `imageio-ffmpeg` stay
+      # absent on purpose — that makes CI exercise the `capabilities: false`
+      # branches (the disabled deinterlace toggle, the fixed-interval-sampling
+      # warning) for real, which is the deliberate divergence from
+      # backend-tests.yml. Headless because there is no display; ~60 MB and ~20 s.
       - name: Install backend dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken uvicorn alembic opencv-python-headless
+        run: pip install -r backend/requirements-ci.txt "uvicorn[standard]>=0.48" "alembic>=1.13" "opencv-python-headless>=4.9"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

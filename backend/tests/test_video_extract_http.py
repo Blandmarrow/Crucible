@@ -174,7 +174,9 @@ def test_probe_does_not_write_crop_or_trims(tmp_path):
             async with env.Session() as db:
                 row = await db.get(Video, video["id"])
                 assert row.trim_start_ms == 0 and row.trim_end_ms == 0
-                assert row.crop_x is None and row.crop_w is None
+                # All four: "must not commit" is not satisfied by a probe that
+                # wrote only the columns this used to leave unchecked.
+                assert (row.crop_x, row.crop_y, row.crop_w, row.crop_h) == (None,) * 4
 
     run(scenario())
 
@@ -480,7 +482,10 @@ def test_a_crop_outside_the_frame_is_a_400(tmp_path):
             assert "does not fit" in r.json()["detail"]
 
             async with env.Session() as db:
-                assert (await db.get(Video, video["id"])).crop_x is None
+                row = await db.get(Video, video["id"])
+                # A rejected request writes nothing — all four columns, not just
+                # the first one the request happened to carry.
+                assert (row.crop_x, row.crop_y, row.crop_w, row.crop_h) == (None,) * 4
 
     run(scenario())
 

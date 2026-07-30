@@ -1,25 +1,10 @@
 name: backend-tests
 
-# Runs the backend test suite (backend/tests/). Installs only lightweight,
-# pure-Python deps: numpy, pillow, pytest, plus the DB/web-layer packages the
-# tests' import chains pull in — sqlalchemy, aiosqlite, greenlet, pydantic,
-# pydantic-settings, fastapi, regex. The detection/mask tests import the ORM
-# models (backend.database creates the async engine at import → aiosqlite +
-# greenlet) and the export_service/utils helpers, so those deps are needed just
-# to collect them.
-#
-# The second group — httpx, python-multipart, aiohttp, sse-starlette, psutil,
-# imagehash, tiktoken — is what importing the real app costs. tests/conftest.py
-# drives `backend.main.app` over httpx.ASGITransport, and that import pulls in
-# every router: python-multipart (FastAPI refuses `UploadFile` params without
-# it), sse-starlette (jobs), psutil (system), aiohttp (booru), imagehash and
-# tiktoken (image/caption services). All are small and pure-Python-ish. A
-# missing one fails at *collection*, taking down the whole suite rather than
-# just the HTTP tests — which is exactly how this list was found to be short.
-#
-# Deliberately NO torch-sized / GPU deps: no test imports torch or an ML model.
-# Keep it that way — if a new test needs torch-sized dependencies, reconsider the
-# test design before growing this install step.
+# Runs the backend test suite (backend/tests/). The dependency set is
+# backend/requirements-ci.txt — pinned, shared structurally with the job below
+# and with e2e-smoke.yml rather than hand-copied, and read as this workflow's pip
+# cache key. That file's header explains what each group is for and why it holds
+# no torch-sized / GPU deps; read it before adding a package here.
 #
 # cv2 is the one carve-out, installed as a separate step below. The video suite
 # is ~250 tests and cv2 is its decode gate: without it three modules error at
@@ -57,9 +42,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: backend/requirements-dev.txt
+          cache-dependency-path: |
+            backend/requirements-ci.txt
+            backend/requirements-dev.txt
       - name: Install test dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken -r backend/requirements-dev.txt
+        run: pip install -r backend/requirements-ci.txt -r backend/requirements-dev.txt
       # Separate step so a failure here is legible on its own. Order matters:
       # opencv-python-headless first, then scenedetect WITHOUT its deps —
       # scenedetect hard-requires `opencv-python` (the GUI wheel, ~90 MB, links
@@ -76,20 +63,22 @@ jobs:
       # one constraint that matters: scenedetect declares `click!=8.3.0,~=8.0`.
       # Unpinned, CI is green only for as long as latest click stays below 9 —
       # and would then break on a run detached from any change, the same failure
-      # mode this file's header warns about for the main list.
+      # mode backend/requirements-ci.txt exists to prevent for the base set.
+      # `platformdirs` and `tqdm` stay unpinned on purpose: scenedetect declares
+      # both with no constraint of its own, so any floor here would be invented.
       - name: Install video test dependencies
         run: |
-          pip install opencv-python-headless
-          pip install --no-deps scenedetect
+          pip install "opencv-python-headless>=4.9"
+          pip install --no-deps "scenedetect>=0.7.1"
           pip install "click!=8.3.0,~=8.0" platformdirs tqdm
       - name: Run backend tests
         run: python -m pytest backend/tests/ -q
 
   # Migration drift: `alembic upgrade head` on an empty DB must reproduce exactly
   # what the models declare. Separate job so a drift failure is legible on its own,
-  # and because it needs `alembic` on top of the test dependency set (the same
+  # and because it needs `alembic` on top of the base dependency set (the same
   # augmentation e2e-smoke.yml makes). The models import chain is what the rest of
-  # the list is for — see this file's header.
+  # requirements-ci.txt is for — see that file's header.
   #
   # This job is also the reason `check_migrations.py` must stay importable with no
   # pytest: it runs the dependency set directly, not under the test harness.
@@ -101,12 +90,16 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: backend/requirements-dev.txt
-      # Same base list as backend-tests above (and e2e-smoke.yml), plus alembic. Keep
-      # all three in sync: a trimmed list here breaks only this job, and only whenever
-      # `backend.models`' import chain later grows one of the omitted packages — a
-      # failure that arrives detached from the change that caused it.
+          cache-dependency-path: |
+            backend/requirements-ci.txt
+            backend/requirements-dev.txt
+      # The same base file as backend-tests above (and e2e-smoke.yml), plus alembic.
+      # Sharing the file is what keeps the three jobs honest: a package added for one
+      # of them lands in all three, instead of this job breaking later — whenever
+      # `backend.models`' import chain grows it — detached from the change that
+      # caused it. pytest is not needed here (requirements-dev.txt is only in the
+      # cache key, so a shared cache entry covers both jobs).
       - name: Install backend dependencies
-        run: pip install numpy pillow sqlalchemy aiosqlite greenlet pydantic pydantic-settings fastapi regex httpx python-multipart aiohttp sse-starlette psutil imagehash tiktoken alembic
+        run: pip install -r backend/requirements-ci.txt "alembic>=1.13"
       - name: Check migrations against the models
         run: python scripts/check_migrations.py

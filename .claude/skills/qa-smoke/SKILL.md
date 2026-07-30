@@ -21,12 +21,14 @@ discarded and it runs on system Python (no fastapi/sqlalchemy).
 ## 2. Frontend typecheck + lint (hard prerequisite for stage 3)
 
 ```bash
-cd frontend && npm run build && npm run lint
+cd frontend && npm run build && npm run typecheck:e2e && npm run lint
 ```
 
-`npm run build` (`tsc -b && vite build`) is the only real typecheck AND it
-refreshes `frontend/dist`, which the E2E server serves. **Stale dist tests stale
-code**, so a green build here is required before stage 3. Lint currently carries
+`npm run build` (`tsc -b && vite build`) is the only real typecheck for `src/`
+AND it refreshes `frontend/dist`, which the E2E server serves. **Stale dist tests
+stale code**, so a green build here is required before stage 3. `e2e/` sits
+outside the solution config, so `tsc -b` never sees it — `npm run typecheck:e2e`
+is the check for the Playwright specs (~2 s). Lint currently carries
 pre-existing react-hooks debt (non-blocking in CI) — report new lint errors your
 change introduced, but pre-existing hits are not a stage failure.
 

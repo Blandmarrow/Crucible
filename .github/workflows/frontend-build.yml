@@ -39,6 +39,12 @@ jobs:
         run: npm ci
       - name: Build (tsc -b && vite build)
         run: npm run build
+      # frontend/e2e/ is outside the solution config on purpose (its specs must
+      # never enter `vite build`), so `tsc -b` above sweeps none of it and
+      # Playwright transpiles without checking. This is the gate for that tree —
+      # blocking, and cheap (~2 s).
+      - name: Typecheck e2e specs (not covered by tsc -b)
+        run: npm run typecheck:e2e
       # Lint is reported but NON-BLOCKING: the tree carries pre-existing
       # eslint debt (react-hooks/set-state-in-effect and exhaustive-deps from
       # the newer react-hooks ruleset), untouched by this workflow. The build

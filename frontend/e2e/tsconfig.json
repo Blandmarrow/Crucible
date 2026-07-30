@@ -1,6 +1,9 @@
 {
-  // Editor-only types for the e2e specs. Deliberately NOT referenced from the
-  // root tsconfig (which is solution-style) so it never enters `npm run build`.
+  // Types for the e2e specs. Deliberately NOT referenced from the root tsconfig
+  // (which is solution-style) so these specs never enter `npm run build` and its
+  // `vite build` — but they are still checked, by `npm run typecheck:e2e`, which
+  // CI (.github/workflows/frontend-build.yml) and the qa-smoke skill both run.
+  // Playwright only transpiles, so without that script nothing here is checked.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",

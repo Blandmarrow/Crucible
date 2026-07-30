@@ -29,7 +29,7 @@ import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
-import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
+import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY, PERSIST_DEBOUNCE_MS } from "../constants/storage";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
@@ -297,6 +297,8 @@ export default function GalleryPage() {
   }, [detectionLabelInput, detectionLabel]);
 
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
+  // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
+  // at flush time; the window is the same shared constant either way.
   useEffect(() => {
     if (!datasetId) return;
     const t = setTimeout(() => {
@@ -305,7 +307,7 @@ export default function GalleryPage() {
         `gallery-state-${datasetId}`,
         JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
       );
-    }, 350);
+    }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId]);
 

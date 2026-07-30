@@ -1,9 +1,17 @@
 import { test, expect } from '@playwright/test'
 import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi } from './helpers'
+// The app's own debounce window, not a copy of it: this spec waits out the
+// gallery's persist timer, so a change to that timer must move the wait with it.
+// `npm run typecheck:e2e` is what keeps this cross-tree import compiling.
+import { PERSIST_DEBOUNCE_MS } from '../src/constants/storage'
 
 // Leaving the gallery for the detail view and coming back must land on the page
 // the user was on, not page 1.
 test('gallery returns to the page it was left on', async ({ page, request }) => {
+  // The two waits below are derived from the debounce; the per-test budget has to
+  // be too, or raising the window trips Playwright's 30 s default instead of the
+  // assertion and the spec fails for the wrong reason.
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 6)
   const ds = await createDatasetViaApi(request, `restore-${Date.now()}`)
   for (const n of ['a.png', 'b.png', 'c.png', 'd.png']) {
     await uploadViaApi(request, ds.id, n)
@@ -16,8 +24,16 @@ test('gallery returns to the page it was left on', async ({ page, request }) => 
 
   await page.getByRole('button', { name: 'Next →' }).click()
   await expect(page.getByText('Page 2')).toBeVisible()
-  // Past the debounce window that the mount effects run on.
-  await page.waitForTimeout(1000)
+  // Wait out the debounced persist (3× the window is the margin this spec has
+  // always used), then check both halves: the write landed, and the mount
+  // effects that run inside that window did not reset the page behind it.
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  expect(
+    await page.evaluate(
+      (k) => JSON.parse(localStorage.getItem(k)!).page,
+      `gallery-state-${ds.id}`,
+    ),
+  ).toBe(2)
   await expect(page.getByText('Page 2')).toBeVisible()
 
   await page.getByTestId('gallery-tile').first().click()
@@ -25,7 +41,7 @@ test('gallery returns to the page it was left on', async ({ page, request }) => 
   await page.getByRole('button', { name: 'Back' }).click()
 
   await expect(page.getByText('Page 2')).toBeVisible()
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
   await expect(page.getByText('Page 2')).toBeVisible()
 })
 

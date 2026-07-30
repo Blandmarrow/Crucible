@@ -33,8 +33,8 @@ reason the probe and the poster do — see `docs/dev/video-decode.md` § Contain
 
 ## Probe sampling
 
-`video_extract.probe_samples` backs `POST /videos/{id}/probe` (`docs/dev/video.md`
-§ Endpoints). Sample positions are inset by half a step from both ends of the trimmed span,
+`video_extract.probe_samples` backs `POST /videos/{id}/probe`
+(`docs/dev/video-endpoints.md`). Sample positions are inset by half a step from both ends of the trimmed span,
 because frame 0 is very often a black leader and the final frame very often a fade.
 
 **Peak RSS is the load-bearing detail.** A decoded 4K frame is 24.9 MB and its float32 luma

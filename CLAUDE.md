@@ -58,7 +58,7 @@ source venv/bin/activate && python -m pytest backend/tests/ -q
 
 Request-level tests drive `backend.main.app` over httpx (see
 `backend/tests/conftest.py`); everything else is service-level. Anything needing a
-decodable video is gated on cv2 — see `docs/dev/video.md` (§ cv2 in CI, and the skip
+decodable video is gated on cv2 — see `docs/dev/video-tests.md` (§ cv2 in CI, and the skip
 convention) before adding a test or a CI dependency there. **CI installs
 `backend/requirements-ci.txt`** — the pinned, torch-free base set all three CI jobs share
 (each adding only its own alembic/uvicorn/cv2 on top); a new import in the app or the
@@ -160,7 +160,9 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — kohya/ai-toolkit/plain, stem uniquification, license/commercial/no-derivatives filters, resize, loss masks, CREDITS.md | ~3185 |
 | `docs/dev/bulk-ops.md` | Working on `BulkEditPage`, `CropToDetectionForm`, or a `bulk-*` endpoint — caption find/replace/regex, image rename/delete/reorder, the thumbnail rebuild, `detection_crop_rect` and the crop remap | ~3095 |
 | `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
-| `docs/dev/video.md` | Working on videos, video ingest, the `/videos` endpoints, any file-extension allowlist, or a cv2-gated test — the `Video` model and `videos/` layout, poster stems and collisions, range serving | ~3545 |
+| `docs/dev/video.md` | Working on videos, video ingest, or any file-extension allowlist — the `Video` model and `videos/` layout, poster stems and collisions, the three ingest paths, the two `Dataset` columns | ~1920 |
+| `docs/dev/video-endpoints.md` | Working on the `/videos` router, video rename/delete, or range serving — the twelve routes, `GET /capabilities`' declaration order, `frames-summary`, the delete ordering and the containment gates | ~1030 |
+| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the arc's test index, the three `mp4_*` fixtures and their constraints, cv2/scenedetect in CI, the skip convention | ~940 |
 | `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~1930 |
 | `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, the touched-flag guards, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2510 |
 | `docs/dev/video-extract-controls.md` | Working on the crop/trim controls or any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract | ~1310 |

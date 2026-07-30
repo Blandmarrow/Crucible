@@ -48,37 +48,11 @@ staleness sweep while still recording the seam.
 
 ### Seam recorded, split pending
 
-One of these five — `docs/dev/video.md` — *is* over budget and is the split due next. The
-other four are not, so no split is due for them today. All five carry `##` headings, so
-`scripts/check_docs.py`'s per-section breakdown prints the counts quoted
+None of these four is over budget today, so no split is due for any of them — the queue holds
+files that need restructuring, not only files that are numerically over. All four carry `##`
+headings, so `scripts/check_docs.py`'s per-section breakdown prints the counts quoted
 below and the seam is a measurement rather than a judgement call. The counts are the
 sections' own; the file total is larger by its intro and heading lines.
-
-## docs/dev/video.md
-
-- **Moves:** § Endpoints (902 w) — the twelve `/videos` routes, range serving, the poster
-  route's containment guard, `PATCH /{id}/rename` and its two deliberate differences from
-  `rename_image`, `GET /{id}/frames-summary`, `DELETE /{id}` — **and** § Tests (842 w), the
-  arc-wide test index
-- **New file:** docs/dev/video-endpoints.md for the first, docs/dev/video-tests.md for the second
-- **Why here:** two files, not one, and that is the point. § Endpoints is a single router read
-  as a request surface; everything left behind (the `Video` model, the `videos/` layout,
-  poster stems, the three ingest paths, the two `Dataset` columns) is storage and is read when
-  the question is where a file lives. § Tests is neither — it is an *index* answering "which
-  module pins this behaviour", already spanning six other docs' subject matter, and it is the
-  natural home for `video-reextract.md` § Tests and `video-extract.md`'s coverage notes too.
-- **Leaves:** 3,634 total → ~1,890 / ~900 / ~840. Either move **alone** is the wrong answer:
-  Endpoints alone leaves 2,730 (78% of budget) and Tests alone leaves 2,790, so the very next
-  fact appended trips the warning again. Both together land all three halves near 50%.
-- **Watch for:** § Endpoints is a cross-reference hub — `docs/dev/video-decode.md` § Poster
-  frames, `docs/dev/video-extract.md` § The endpoints and `docs/dev/video-reextract.md` are all
-  pointed at *from* it, and CLAUDE.md's Map trigger for this file names "the `/videos`
-  endpoints" as a reason to open it, so that row needs rewording rather than only renumbering.
-  The § Tests move must not strand § cv2 in CI and the skip convention, which CLAUDE.md's Tests
-  section and `docs/dev/scoring.md` both cite by `docs/dev/video.md` § — decide whether that
-  subsection is testing policy (travels) or ingest policy (stays) before starting. The three
-  fixtures (`mp4_bytes`, `mp4_shots_bytes`, `mp4_corrupt_bytes`) and the 320×240/≥24-frame
-  `AdaptiveDetector` constraint live in § Tests and are the part no one can rediscover cheaply.
 
 ## docs/dev/export.md
 

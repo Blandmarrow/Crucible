@@ -17,7 +17,11 @@ class Image(Base):
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(512), default="")
     subfolder: Mapped[str] = mapped_column(String(512), nullable=False, default="")
-    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Indexed for the equality lookup the file browser does per file: every
+    # move, rename and delete under `routers/filesystem.py` asks "is there a row
+    # at this exact path?" once per affected file, and without an index each of
+    # those is a full scan of `images`. The videos twin is `ix_videos_file_path`.
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     thumbnail_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_auto_named: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 

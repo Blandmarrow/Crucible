@@ -23,7 +23,7 @@ only resolves once `env.py` has put the repo root on `sys.path`. Running alembic
 any directory but `backend/` crashes before that happens.
 
 Why ACCEPTED_DRIFT is a list of exact fingerprints and not a filter by diff *kind*:
-this repo starts from 14 pre-existing differences, none of them SQLite reflection
+this repo starts from 13 pre-existing differences, none of them SQLite reflection
 noise — they are real, deliberate decisions recorded in the migrations (see the
 grouped comments below). A category filter ("ignore modify_nullable") would also
 swallow the next one, which is the whole point of the check. Every entry is one
@@ -71,7 +71,6 @@ ACCEPTED_DRIFT = {
     "remove_index:dataset_versions:uq_version_branch_name",   # d6e7f8a9b0c1 (per-branch name uniqueness)
     "remove_index:images:ix_images_dataset_caption",          # a1b2c3d4e5f6 (performance indexes)
     "remove_index:images:ix_images_dataset_created_at",       # a1b2c3d4e5f6
-    "remove_index:images:ix_images_file_path",                # a1b2c3d4e5f6
 }
 
 

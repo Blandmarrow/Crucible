@@ -249,6 +249,9 @@ export default function DatasetsPage() {
   const [duplicateVersionId, setDuplicateVersionId] = useState<string | undefined>(undefined);
   const [duplicateJobId, setDuplicateJobId] = useState<string | null>(null);
   const [dupBranchId, setDupBranchId] = useState<string | undefined>(undefined);
+  // Off by default, matching the backend: doubling the footage is a costed
+  // choice, not something a duplicate does quietly.
+  const [duplicateIncludeVideos, setDuplicateIncludeVideos] = useState(false);
   const duplicateJobProgress = useJobStore((s) => s.activeJobs.get(duplicateJobId ?? ""));
 
   // ── Drag/drop ────────────────────────────────────────────────────────────
@@ -408,8 +411,20 @@ export default function DatasetsPage() {
     if (!duplicateJobId || !duplicateJobProgress) return;
     if (duplicateJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      const jobId = duplicateJobId;
+      jobsApi.get(jobId).then((job) => {
+        const r = (job.result_data ?? {}) as {
+          images_added?: number; videos_added?: number; videos_failed?: number;
+        };
+        // The video clauses drop out at zero, so an image-only duplicate reads
+        // exactly as it did before the toggle existed.
+        toast.success(
+          `Dataset duplicated — ${r.images_added ?? 0} image(s)` +
+          (r.videos_added ? `, ${r.videos_added} video(s)` : "") +
+          (r.videos_failed ? `, ${r.videos_failed} video(s) failed to copy` : "")
+        );
+      }).catch(() => toast.success("Dataset duplicated"));
       setDuplicateJobId(null);
-      toast.success("Dataset duplicated");
     } else if (duplicateJobProgress.status === "failed") {
       setDuplicateJobId(null);
       toast.error("Duplicate failed");
@@ -526,7 +541,14 @@ export default function DatasetsPage() {
   });
 
   const duplicateMutation = useMutation({
-    mutationFn: () => datasetsApi.duplicate(duplicateTarget!.id, duplicateName, duplicateVersionId),
+    mutationFn: () =>
+      datasetsApi.duplicate(
+        duplicateTarget!.id, duplicateName, duplicateVersionId,
+        // Never send true alongside a snapshot: the backend 400s that pairing,
+        // and the checkbox is disabled rather than cleared, so the state can
+        // still read true while a version is picked.
+        duplicateVersionId ? false : duplicateIncludeVideos,
+      ),
     onSuccess: (data) => {
       setDuplicateTarget(null);
       setDuplicateJobId(data.job_id);
@@ -727,6 +749,7 @@ export default function DatasetsPage() {
             setDuplicateName(`${ds.name} (copy)`);
             setDupBranchId(undefined);
             setDuplicateVersionId(undefined);
+            setDuplicateIncludeVideos(false);
           }}
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -1640,6 +1663,38 @@ export default function DatasetsPage() {
                         </select>
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Videos are counted apart from images and are not copied by
+                  default — so the cost is spelled out from the columns the card
+                  already shows, and the row only exists when there is footage
+                  to carry. */}
+              {duplicateTarget.video_count > 0 && (
+                <div>
+                  <label
+                    className="label"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, marginBottom: 0,
+                      cursor: duplicateVersionId ? "not-allowed" : "pointer",
+                      opacity: duplicateVersionId ? 0.5 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!duplicateVersionId && duplicateIncludeVideos}
+                      disabled={!!duplicateVersionId}
+                      onChange={(e) => setDuplicateIncludeVideos(e.target.checked)}
+                    />
+                    Copy {duplicateTarget.video_count}{" "}
+                    {duplicateTarget.video_count === 1 ? "video" : "videos"}{" "}
+                    ({formatSize(duplicateTarget.video_size_bytes)})
+                  </label>
+                  {duplicateVersionId && (
+                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0 0 24px" }}>
+                      Snapshots don't capture videos
+                    </p>
                   )}
                 </div>
               )}

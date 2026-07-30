@@ -42,11 +42,15 @@ export const datasetsApi = {
     data: { name?: string; description?: string; category?: string } & Partial<DatasetProvenance>,
   ) => client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
-  duplicate: (id: string, newName: string, sourceVersionId?: string) =>
+  // includeVideos is opt-in for the same reason as importFolder's: the footage
+  // dwarfs the images beside it. The backend 400s it alongside a
+  // sourceVersionId — snapshots never capture videos.
+  duplicate: (id: string, newName: string, sourceVersionId?: string, includeVideos = false) =>
     client
       .post<{ job_id: string }>(`/datasets/${id}/duplicate`, {
         new_name: newName,
         source_version_id: sourceVersionId ?? null,
+        include_videos: includeVideos,
       })
       .then((r) => r.data),
   // include_videos is opt-in: a video is orders of magnitude larger than the

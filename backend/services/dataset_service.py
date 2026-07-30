@@ -232,6 +232,17 @@ def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb:
         shutil.copy2(old_thumb, new_thumb)
 
 
+def _copy_video_sync(old_path: Path, new_path: Path, old_poster: Path | None, new_poster: Path | None) -> None:
+    """Copy a video and its poster. Runs in an executor.
+
+    No sidecar (a video has no `.txt`) and no re-probe: every probe column is
+    copied from the source row, so a slow decode is not repeated per video.
+    """
+    shutil.copy2(old_path, new_path)
+    if old_poster is not None and new_poster is not None and old_poster.exists():
+        shutil.copy2(old_poster, new_poster)
+
+
 def _copy_snapshot_image_sync(src_file: Path, new_path: Path, new_thumb: Path, caption_text: str) -> None:
     """Copy a snapshot object into a new dataset, writing its sidecar + regenerating a thumbnail."""
     shutil.copy2(src_file, new_path)
@@ -1556,14 +1567,33 @@ async def duplicate_dataset(
     new_name: str,
     job_id: str,
     source_version_id: str | None = None,
-) -> str:
-    """Deep-clone a dataset into a new one.  Returns the new dataset's id."""
+    include_videos: bool = False,
+) -> dict:
+    """Deep-clone a dataset into a new one.
+
+    Returns a summary dict — `{dataset_id, images_added, videos_added,
+    videos_failed}` — which the router (its only caller) writes to the job's
+    `result_data` so the completion toast can report what was carried.
+
+    `include_videos` copies the source's `Video` rows, files and posters too,
+    and *remaps* each copied frame's `source_video_id` onto the clone's own
+    video. It is off by default: the footage dwarfs the images beside it, so
+    doubling it is a costed choice at the moment of duplication. It cannot apply
+    to a snapshot — versions never capture videos, so carrying live videos would
+    pair a historical image set with present-day sources; the router answers 400
+    and this forces it back off defensively.
+    """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
     log = logger
     cancelled = False
     loop = asyncio.get_running_loop()
+    if source_version_id is not None:
+        include_videos = False
+    videos_added = 0
+    videos_failed = 0
+    images_added = 0
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
@@ -1590,11 +1620,124 @@ async def duplicate_dataset(
             Image.generation_metadata, Image.processing_history, Image.sort_order,
             Image.source_name, Image.source_url, Image.license, Image.attribution,
             Image.source_meta,
-            Image.source_timestamp_ms, Image.source_shot_index,
+            Image.source_video_id, Image.source_timestamp_ms, Image.source_shot_index,
         )
         result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
         rows = result.all()
         total = len(rows)
+
+        # --- Step 2A-pre: carry the videos, building the id map the image loop
+        # remaps lineage through. It has to run first: the map must exist before
+        # the first Image row is built.
+        video_id_map: dict[str, str] = {}
+        video_rows = []
+        if include_videos:
+            video_rows = list((await db.execute(
+                # A plain entity load — Video has no deferred columns, so no undefer.
+                select(Video).where(Video.dataset_id == source_dataset.id)
+            )).scalars().all())
+
+        # `done` has to stay non-decreasing across the two loops (PM-008), so the
+        # image loop continues the count where the video loop stopped.
+        grand_total = total + len(video_rows)
+
+        if video_rows:
+            dest_videos = Path(new_ds.folder_path) / "videos"
+            dest_posters = dest_videos / "thumbnails"
+            # Created lazily, only when there is a video to put in them, so an
+            # image-only clone never grows an empty videos/ (same rule as upload).
+            dest_posters.mkdir(parents=True, exist_ok=True)
+
+        for i, vid in enumerate(video_rows):
+            if job_queue.cancel_requested(job_id):
+                cancelled = True
+                break
+            old_path = Path(vid.file_path)
+            new_path = dest_videos / vid.filename
+            old_poster = Path(vid.poster_path) if vid.poster_path else None
+            # No uniquifier, deliberately. The destination folders are fresh and
+            # the source's names are already mutually unique (uq_dataset_video_
+            # filename, plus whatever poster-stem disambiguation the source
+            # resolved), so copying both basenames verbatim reproduces the
+            # source's resolution exactly — the same reasoning as the image
+            # branch's `dest_images / row.filename`. Do not "fix" this into a
+            # claimed_poster_stems / unique_poster_path call.
+            new_poster = dest_posters / old_poster.name if old_poster else None
+            try:
+                await loop.run_in_executor(
+                    None, _copy_video_sync, old_path, new_path, old_poster, new_poster
+                )
+                new_id = str(uuid4())
+                db.add(Video(
+                    id=new_id,
+                    dataset_id=new_ds.id,
+                    filename=vid.filename,
+                    original_filename=vid.original_filename,
+                    file_path=str(new_path),
+                    # A poster is a nicety, never a gate: a source without one,
+                    # or one whose file has gone missing, copies as NULL and
+                    # heals on first view.
+                    poster_path=str(new_poster) if new_poster and new_poster.exists() else None,
+                    file_size_bytes=vid.file_size_bytes,
+                    duration_ms=vid.duration_ms,
+                    fps=vid.fps,
+                    codec=vid.codec,
+                    width=vid.width,
+                    height=vid.height,
+                    # Raw, not resolved — same rationale as copy_provenance on
+                    # the image side: the clone carries the same dataset
+                    # defaults, so inheritance stays equivalent. Video has no
+                    # source_meta.
+                    source_name=vid.source_name,
+                    source_url=vid.source_url,
+                    license=vid.license,
+                    attribution=vid.attribution,
+                    # The user's saved decode fixups: a re-extraction in the
+                    # clone must reproduce the source's geometry exactly.
+                    crop_x=vid.crop_x,
+                    crop_y=vid.crop_y,
+                    crop_w=vid.crop_w,
+                    crop_h=vid.crop_h,
+                    deinterlace=vid.deinterlace,
+                    trim_start_ms=vid.trim_start_ms,
+                    trim_end_ms=vid.trim_end_ms,
+                ))
+                video_id_map[vid.id] = new_id
+                videos_added += 1
+            except Exception as exc:
+                # Skip and report, like the image loop. No map entry, which makes
+                # this video's frames fall back to NULL lineage for free.
+                log.warning("duplicate_dataset: failed to copy video %s: %s", old_path, exc)
+                videos_failed += 1
+
+            await broadcaster.emit(job_id, {
+                "type": "progress",
+                "job_id": job_id,
+                "job_type": "duplicate",
+                "dataset_id": source_dataset.id,
+                "status": "running",
+                "done": i + 1,
+                "total": grand_total,
+                "percent": round((i + 1) / grand_total * 100, 1) if grand_total else 100.0,
+                "message": f"Copying {vid.filename}",
+            })
+
+        if video_id_map:
+            # The copied frames carry `source_video_id` as a real FK to videos.id,
+            # so the video rows have to be **in the database** before the first
+            # Image is inserted — not merely in the session. One flush ordered
+            # here rather than trusting the unit of work to sort the two INSERTs,
+            # because getting it wrong fails the whole job with an IntegrityError
+            # and the test harness cannot see it: it builds its schema with
+            # `create_all` on its own engine and so never gets the
+            # `PRAGMA foreign_keys=ON` that backend/database.py installs on the
+            # app engine (the same blind spot as the delete cascade — see
+            # docs/dev/video.md § What is free, and what is not).
+            await db.flush()
+
+        # Items actually processed, which is what the last emit reported — so a
+        # cancelled video loop still hands the image loop a matching offset.
+        videos_done = videos_added + videos_failed
 
         # Build copy plan (path mappings)
         plan: list = []
@@ -1646,33 +1789,37 @@ async def duplicate_dataset(
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
                     sort_order=row.sort_order,
-                    # Frame lineage: the timestamp and shot index travel, but
-                    # source_video_id does not — duplicate_dataset copies only
-                    # Image rows, so the new dataset has no videos and the id
+                    # Frame lineage: the timestamp and shot index travel, and
+                    # source_video_id is **remapped** — never copied. A raw copy
                     # would point across a dataset boundary at a source the
-                    # duplicate does not contain. Same rule as a cross-dataset
-                    # copy. Not part of copy_provenance, which is exactly the
+                    # duplicate does not contain. With include_videos the clone
+                    # has its own video, so the map turns the id into that one;
+                    # a miss (videos not carried, or this video's copy failed)
+                    # falls back to NULL, the same answer a cross-dataset copy
+                    # gives. Not part of copy_provenance, which is exactly the
                     # five provenance keys.
-                    source_video_id=None,
+                    source_video_id=video_id_map.get(row.source_video_id),
                     source_timestamp_ms=row.source_timestamp_ms,
                     source_shot_index=row.source_shot_index,
                     # Raw, not resolved: the new dataset carries the same
                     # provenance defaults, so inheritance stays equivalent.
                     **copy_provenance(row),
                 ))
+                images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
 
             if i % 10 == 0:
-                pct = round((i + 1) / total * 100, 1) if total else 100.0
+                done = videos_done + i + 1
+                pct = round(done / grand_total * 100, 1) if grand_total else 100.0
                 await broadcaster.emit(job_id, {
                     "type": "progress",
                     "job_id": job_id,
                     "job_type": "duplicate",
                     "dataset_id": source_dataset.id,
                     "status": "running",
-                    "done": i + 1,
-                    "total": total,
+                    "done": done,
+                    "total": grand_total,
                     "percent": pct,
                     "message": f"Copying {row.filename}",
                 })
@@ -1744,13 +1891,17 @@ async def duplicate_dataset(
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,
                     sort_order=state.sort_order,
-                    # Same rule as the on-disk branch above: lineage timestamps
-                    # travel, the video id does not.
+                    # Lineage timestamps travel; the video id is NULL. The
+                    # remap the on-disk branch does cannot apply here: a version
+                    # snapshots images only, so include_videos is refused for a
+                    # snapshot source (400) and forced off above — there is no
+                    # copied video for an id to point at.
                     source_video_id=None,
                     source_timestamp_ms=state.source_timestamp_ms,
                     source_shot_index=state.source_shot_index,
                     **copy_provenance(state),
                 ))
+                images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)
                 skipped += 1
@@ -1774,10 +1925,17 @@ async def duplicate_dataset(
 
     # --- Step 3: commit and refresh stats ---
     await db.commit()
+    # refresh_stats already aggregates Video rows into video_count /
+    # video_size_bytes, so the clone's columns land with no change here.
     await refresh_stats(db, new_ds.id)
     if cancelled:
         job_queue.raise_if_cancelled(job_id)
-    return new_ds.id
+    return {
+        "dataset_id": new_ds.id,
+        "images_added": images_added,
+        "videos_added": videos_added,
+        "videos_failed": videos_failed,
+    }
 
 
 async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15, subfolder: str | None = None) -> dict:

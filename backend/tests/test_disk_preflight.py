@@ -14,6 +14,7 @@ from collections import namedtuple
 
 import pytest
 
+from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.tests.conftest import API, api_env, run, upload_image, wait_for_job
 from backend.utils import (
@@ -141,5 +142,65 @@ def test_export_job_fails_when_the_payload_exceeds_free_space(tmp_path, monkeypa
             assert "disk space" in (job["error_msg"] or "")
             # Nothing was written: the check runs before the first file.
             assert not (tmp_path / "out").exists() or not list((tmp_path / "out").rglob("*.png"))
+
+    run(scenario())
+
+
+# --- duplicate -----------------------------------------------------------
+# Duplicating is the one operation that can double a 500 GB dataset, and until
+# B14a it was the one that never checked for room. Both counts come from the
+# dataset's own maintained columns, so no traversal is involved and the videos'
+# bytes only join the estimate when the toggle asks for them.
+
+
+def test_duplicate_endpoint_rejects_a_full_disk_with_507(tmp_path, monkeypatch):
+    """Request-path, so the answer arrives before a job id the client would
+    otherwise have to poll to learn the duplicate never started."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("full-disk")
+            await upload_image(env, ds["id"], "a.png")
+
+            monkeypatch.setattr(shutil, "disk_usage", _usage(DISK_FLOOR_BYTES // 4))
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/duplicate", json={"new_name": "copy"})
+            assert r.status_code == 507, r.text
+            assert "disk space" in r.json()["detail"]
+
+            # No job, and no half-made dataset.
+            listing = (await env.client.get(f"{API}/datasets/")).json()
+            assert [d["name"] for d in listing] == ["full-disk"]
+
+    run(scenario())
+
+
+def test_include_videos_adds_the_video_bytes_to_the_duplicate_estimate(tmp_path, monkeypatch):
+    """The sharp edge of the preflight: free space that comfortably covers the
+    images is not enough once the footage joins them. The columns are set
+    directly so this stays cv2-free — the estimate reads them, not the disk."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("mixed")
+            await upload_image(env, ds["id"], "a.png")
+
+            async with env.Session() as db:
+                row = await db.get(Dataset, ds["id"])
+                row.total_size_bytes = 1 * GB
+                row.video_count = 1
+                row.video_size_bytes = 9 * GB
+                await db.commit()
+
+            monkeypatch.setattr(shutil, "disk_usage", _usage(4 * GB))  # > 1 GB × 1.2, < 10 GB × 1.2
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/duplicate", json={
+                "new_name": "images-only", "include_videos": False,
+            })
+            assert r.status_code in (200, 202), r.text
+            assert (await wait_for_job(env, r.json()["job_id"]))["status"] == "completed"
+
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/duplicate", json={
+                "new_name": "with-videos", "include_videos": True,
+            })
+            assert r.status_code == 507, r.text
+            assert "10.0 GB of files" in r.json()["detail"]
 
     run(scenario())

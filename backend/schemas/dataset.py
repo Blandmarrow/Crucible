@@ -79,6 +79,11 @@ class LicenseUsage(BaseModel):
 class DatasetDuplicateRequest(BaseModel):
     new_name: str = Field(..., min_length=1, max_length=255)
     source_version_id: str | None = None  # None = duplicate current on-disk state
+    # Opt-in for the same reason as DatasetImportWithOptions.include_videos: the
+    # footage dwarfs the images beside it, so doubling it is a visible, costed
+    # choice rather than a default. Rejected (400) alongside source_version_id —
+    # snapshots never capture videos.
+    include_videos: bool = False
 
 
 class DatasetOut(BaseModel):

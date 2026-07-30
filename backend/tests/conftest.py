@@ -76,12 +76,30 @@ class ApiEnv:
 
 
 @asynccontextmanager
-async def api_env(tmp_path: Path):
+async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
     from backend.main import app
 
     datasets_dir = tmp_path / "datasets"
     datasets_dir.mkdir(parents=True, exist_ok=True)
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+
+    if foreign_keys:
+        # SQLite defaults `foreign_keys` OFF *per connection*, and this harness
+        # builds its schema with `create_all` on its own engine, so it never gets
+        # the `PRAGMA foreign_keys=ON` that backend/database.py installs on the
+        # app engine. Every FK in the schema is therefore unenforced here by
+        # default — a blind spot that has hidden at least one real IntegrityError
+        # (see test_duplicate_video_fk_enforced.py). Opt in per test rather than
+        # globally: turning it on for the whole suite is a behaviour change to
+        # every existing scenario, which belongs in its own piece of work.
+        from sqlalchemy import event
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            cur.close()
+
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as conn:
@@ -122,6 +140,25 @@ async def api_env(tmp_path: Path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             yield ApiEnv(client=client, Session=Session, datasets_dir=datasets_dir)
     finally:
+        # KNOWN HAZARD — a scenario that enqueues a job and returns without
+        # awaiting it can hang here, forever, in `stop()`. Reproduced 4 runs in 5
+        # with: enqueue a duplicate, issue one more successful request, return.
+        # `stop()` cancels the worker task and awaits it; the task goes to
+        # "cancelling" and stays stuck on the pending future inside its
+        # `await self._queue.get()`, so the await never returns and the loop
+        # sits idle in `select()`. It is a race, not a rule — enqueue-and-return
+        # with no second request, enqueue-then-sleep-to-completion, and
+        # enqueue-then-tear-down-mid-job all pass repeatedly, so do not read the
+        # repro as the boundary. Root cause not identified.
+        #
+        # The fix in a test is simply to `wait_for_job(...)` before returning,
+        # which every scenario should be doing anyway. Left unfixed here because
+        # the cure belongs in `JobQueue.stop()` (a `wait_for` around the await,
+        # or draining before cancelling) and that is a change to production
+        # shutdown — `main.py`'s lifespan awaits this same unguarded `stop()`.
+        # Whether production can hit it is **unverified**: this harness rebuilds
+        # `job_queue._queue` and re-`start()`s the singleton once per test, which
+        # the app never does, so the repro does not transfer on its own.
         await job_queue.stop()
         job_queue_mod.AsyncSessionLocal = prev_worker_session_local
         app.dependency_overrides.pop(get_db, None)
@@ -312,6 +349,11 @@ async def wait_for_job(env: ApiEnv, job_id: str, timeout: float = 20.0) -> dict:
 
     Jobs are queued coroutines, so a test that returns straight after the 202 sees
     nothing; this is the request-level equivalent of awaiting the worker.
+
+    **Always call this before a scenario that enqueued a job returns.** Leaving a
+    job in flight can hang the whole pytest process at teardown, in
+    `api_env`'s `await job_queue.stop()` — see the note there. There is no pytest
+    timeout plugin installed, so that hang has no upper bound.
     """
     deadline = asyncio.get_running_loop().time() + timeout
     while True:

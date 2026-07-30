@@ -19,13 +19,16 @@ at a video the destination dataset does not contain; where in a video a frame
 came from is a fact about the frame and travels with it.
 """
 
+import ast
+import inspect
+import textwrap
 from pathlib import Path
 
 from sqlalchemy import select
 
 from backend.models import Image, Video
 from backend.models.versioning import VersionImageState
-from backend.services import version_service
+from backend.services import dataset_service, version_service
 from backend.tests.conftest import (
     API,
     api_env,
@@ -70,8 +73,74 @@ NOT_MIRRORED = {
 }
 
 
+# Columns the `include_videos` copy in `duplicate_dataset` deliberately does not
+# carry from the source row. Every one is written, just computed rather than
+# copied: the clone needs its own identity and its own paths, and the timestamps
+# are the copy's, not the original's.
+VIDEO_NOT_CARRIED = {
+    "id",            # a fresh uuid, and the key the lineage remap is built on
+    "dataset_id",    # the destination's
+    "file_path",     # under the clone's videos/
+    "poster_path",   # under the clone's videos/thumbnails/, or NULL if absent
+    "created_at",    # when the copy was made
+    "updated_at",
+}
+
+
 def _columns(model) -> set[str]:
     return {c.key for c in model.__table__.columns}
+
+
+def _duplicate_video_kwargs() -> dict[str, str | None]:
+    """Kwarg name → the source attribute it copies, for the one `Video(...)`
+    `duplicate_dataset` builds. `None` where the value is computed instead.
+
+    Read out of the AST rather than by running a duplicate, so the guard below
+    fails for the *next* column added to `Video` even on a machine with no cv2 —
+    the same reason the `Image`↔`VersionImageState` guard is structural.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(dataset_service.duplicate_dataset)))
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "Video"
+    ]
+    assert len(calls) == 1, f"expected one Video(...) in duplicate_dataset, found {len(calls)}"
+    out: dict[str, str | None] = {}
+    for kw in calls[0].keywords:
+        v = kw.value
+        carried = isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "vid"
+        out[kw.arg] = v.attr if carried else None
+    return out
+
+
+def test_the_video_copy_carries_every_video_column():
+    """The `Video` twin of the mirror guard. Without it, the next column added
+    to `Video` is silently dropped by every dataset duplicate that carries
+    videos — a decode fixup or a provenance field lost with no error anywhere."""
+    carried = {k for k, src in _duplicate_video_kwargs().items() if src}
+    missing = _columns(Video) - carried - VIDEO_NOT_CARRIED
+    assert not missing, (
+        f"{sorted(missing)} exist on Video but duplicate_dataset's copy does not "
+        "carry them. Copy them from the source row, or add them to "
+        "VIDEO_NOT_CARRIED with a reason."
+    )
+
+
+def test_the_video_copy_carries_each_column_from_its_own_name():
+    """`width=vid.height` would satisfy the guard above and still be wrong."""
+    mismatched = {k: src for k, src in _duplicate_video_kwargs().items() if src and src != k}
+    assert not mismatched, f"copied from the wrong source attribute: {mismatched}"
+
+
+def test_video_not_carried_has_no_stale_entries():
+    """Same contract as NOT_MIRRORED's: exactly the uncarried set, not a superset."""
+    kwargs = _duplicate_video_kwargs()
+    carried = {k for k, src in kwargs.items() if src}
+    stale = (VIDEO_NOT_CARRIED & carried) | (VIDEO_NOT_CARRIED - _columns(Video))
+    assert not stale, (
+        f"VIDEO_NOT_CARRIED entries that are no longer needed: {sorted(stale)} "
+        "(the column was dropped, or it is carried after all)"
+    )
 
 
 def test_every_image_column_is_mirrored_on_version_image_state():
@@ -261,7 +330,9 @@ def test_cross_dataset_move_nulls_the_video_id_and_keeps_the_rest(tmp_path):
 
 
 @needs_cv2
-def test_duplicate_dataset_from_disk_nulls_the_video_id_and_keeps_the_rest(tmp_path):
+def test_duplicate_without_videos_nulls_the_video_id_and_keeps_the_rest(tmp_path):
+    """The default-off case: `include_videos` is absent, so nothing carries the
+    footage and there is no video in the clone for an id to point at."""
     async def scenario():
         async with api_env(tmp_path) as env:
             src = await env.create_dataset("src")
@@ -283,13 +354,103 @@ def test_duplicate_dataset_from_disk_nulls_the_video_id_and_keeps_the_rest(tmp_p
             assert copy.source_video_id is None
             assert copy.source_timestamp_ms == 4321
             assert copy.source_shot_index == 7
-            # duplicate_dataset copies Image rows only, so the new dataset has
-            # no videos for an id to point at in the first place.
+            # Without the toggle the clone holds no videos, so there is nothing
+            # for an id to point at in the first place.
             async with env.Session() as db:
                 videos = (await db.execute(
                     select(Video).where(Video.dataset_id == new_ds_id)
                 )).scalars().all()
             assert videos == []
+
+    run(scenario())
+
+
+@needs_cv2
+def test_duplicate_with_videos_remaps_the_video_id_onto_the_clones_own_video(tmp_path):
+    """The toggle-on twin, and the whole point of the remap: the copied frame
+    must name the *clone's* video. `None` would be a dropped lineage and the
+    source's id would be a pointer across a dataset boundary — a raw copy passes
+    neither."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            video = await upload_video(env, src["id"], "clip.mp4")
+            await _make_frame(env, src["id"], video_id=video["id"])
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate",
+                json={"new_name": "copy", "include_videos": True},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                new_ds_id = (await db.execute(
+                    select(Image.dataset_id).where(Image.dataset_id != src["id"])
+                )).scalars().first()
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id == new_ds_id)
+                )).scalar_one()
+                new_video = (await db.execute(
+                    select(Video).where(Video.dataset_id == new_ds_id)
+                )).scalar_one()
+
+            assert copy.source_video_id == new_video.id
+            assert copy.source_video_id is not None
+            assert copy.source_video_id != video["id"]
+            assert copy.source_timestamp_ms == 4321
+            assert copy.source_shot_index == 7
+
+    run(scenario())
+
+
+@needs_cv2
+def test_a_video_that_fails_to_copy_leaves_its_frames_unlinked_not_dangling(tmp_path):
+    """A copy failure is skip-and-report, like the image loop — so the job still
+    completes, the other video lands, and the failed video's frames fall back to
+    NULL rather than keeping an id no row in the clone answers to."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("src")
+            good = await upload_video(env, ds["id"], "good.mp4")
+            gone = await upload_video(env, ds["id"], "gone.mp4")
+            await _make_frame(env, ds["id"], video_id=good["id"], name="from_good.png")
+            await _make_frame(env, ds["id"], video_id=gone["id"], name="from_gone.png")
+
+            # The row survives; its file does not. (VideoOut carries no path, so
+            # the row is the only place to read it from.)
+            async with env.Session() as db:
+                Path((await db.get(Video, gone["id"])).file_path).unlink()
+
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/duplicate",
+                json={"new_name": "copy", "include_videos": True},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"]["videos_added"] == 1
+            assert job["result_data"]["videos_failed"] == 1
+
+            async with env.Session() as db:
+                new_ds_id = (await db.execute(
+                    select(Image.dataset_id).where(Image.dataset_id != ds["id"])
+                )).scalars().first()
+                videos = (await db.execute(
+                    select(Video).where(Video.dataset_id == new_ds_id)
+                )).scalars().all()
+                frames = {
+                    i.filename: i for i in (await db.execute(
+                        select(Image).where(Image.dataset_id == new_ds_id)
+                    )).scalars().all()
+                }
+
+            assert [v.filename for v in videos] == ["good.mp4"]
+            assert frames["from_good.png"].source_video_id == videos[0].id
+            assert frames["from_gone.png"].source_video_id is None
+            # The timestamp is a fact about the frame and survives either way.
+            assert frames["from_gone.png"].source_timestamp_ms == 4321
 
     run(scenario())
 

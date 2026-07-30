@@ -190,10 +190,10 @@ def test_videos_are_counted_separately_from_images(tmp_path):
     run(scenario())
 
 
-def test_a_duplicated_dataset_carries_no_videos(tmp_path):
-    """`duplicate_dataset` copies `Image` rows only. That is deliberate — a
-    duplicate is for branching a *curation*, and re-copying gigabytes of source
-    footage to do it would be the wrong trade — but nothing says the consequence
+def test_a_duplicated_dataset_carries_no_videos_by_default(tmp_path):
+    """`include_videos` is off by default. That is deliberate — a duplicate is
+    usually for branching a *curation*, and re-copying gigabytes of source
+    footage to do it is the wrong default — but nothing says the consequence
     anywhere, so it is one refactor away from being "fixed" into a surprise.
 
     The lineage suite already pins the row side of this. What it does not pin is
@@ -226,6 +226,100 @@ def test_a_duplicated_dataset_carries_no_videos(tmp_path):
 
             videos_dir = Path(clone["folder_path"]) / "videos"
             assert not videos_dir.exists() or not list(videos_dir.glob("*.mp4"))
+
+    run(scenario())
+
+
+def test_a_duplicate_with_include_videos_carries_the_files_and_the_counters(tmp_path):
+    """The toggle-on twin. The clone gets its own copy of the footage and its
+    own poster, its counters are refreshed to say so, and the source is left
+    exactly as it was — a duplicate must never be a move."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            await upload_image(env, src["id"], "a.png")
+            video = await upload_video(env, src["id"], "clip.mp4")
+            assert video["has_poster"], "the fixture should decode to a poster"
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate",
+                json={"new_name": "copy", "include_videos": True},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"] == {
+                "dataset_id": job["result_data"]["dataset_id"],
+                "images_added": 1,
+                "videos_added": 1,
+                "videos_failed": 0,
+            }
+
+            listing = (await env.client.get(f"{API}/datasets/")).json()
+            clone = next(d for d in listing if d["name"] == "copy")
+            source = next(d for d in listing if d["name"] == "src")
+            assert clone["image_count"] == 1
+            assert clone["video_count"] == 1
+            assert clone["video_size_bytes"] == source["video_size_bytes"] > 0
+
+            # Posters live in videos/thumbnails/, never in the images thumbnail
+            # folder — the clone has to reproduce that layout, not just the file.
+            videos_dir = Path(clone["folder_path"]) / "videos"
+            assert (videos_dir / "clip.mp4").is_file()
+            assert list((videos_dir / "thumbnails").glob("*.webp"))
+
+            async with env.Session() as db:
+                copied = (await db.execute(
+                    select(Video).where(Video.dataset_id == clone["id"])
+                )).scalar_one()
+            assert copied.poster_path is not None
+            assert Path(copied.poster_path).is_file()
+            assert Path(copied.poster_path).parent == videos_dir / "thumbnails"
+
+            # The source keeps its own row, file and poster.
+            assert source["video_count"] == 1
+            async with env.Session() as db:
+                original = (await db.execute(
+                    select(Video).where(Video.dataset_id == src["id"])
+                )).scalar_one()
+            assert Path(original.file_path).is_file()
+            assert original.id != copied.id
+
+    run(scenario())
+
+
+def test_include_videos_is_refused_for_a_snapshot_source(tmp_path):
+    """A version snapshots images only, so there is no historical video state to
+    duplicate; carrying the live ones would pair a historical image set with
+    present-day sources. The UI disables the box instead, so this 400 is the
+    backstop for anything hitting the endpoint directly."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("src")
+            await upload_image(env, ds["id"], "a.png")
+            await upload_video(env, ds["id"], "clip.mp4")
+
+            await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "manual"})
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/versions", json={"name": "v1"})
+            if "job_id" in r.json():
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+            version_id = (await env.client.get(f"{API}/datasets/{ds['id']}/versions")).json()[0]["id"]
+
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/duplicate",
+                json={"new_name": "copy", "source_version_id": version_id, "include_videos": True},
+            )
+            assert r.status_code == 400, r.text
+            assert "napshot" in r.json()["detail"]
+
+            # And the same snapshot duplicates fine with the toggle off.
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/duplicate",
+                json={"new_name": "copy", "source_version_id": version_id},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
 
     run(scenario())
 

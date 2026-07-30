@@ -260,7 +260,9 @@ re-attach hook are in `docs/dev/video-extract-ui.md`, with its `CropOverlay`/`Tr
   That has a useful consequence: restoring a pre-extraction snapshot deletes the frames but
   leaves the video and its saved decode parameters intact, so re-running extraction
   reproduces them exactly.
-- `duplicate_dataset` copies only `Image` rows, so a duplicate has no videos.
+- `duplicate_dataset` carries videos only under `include_videos` (default off, preflighted,
+  refused for a snapshot), remapping each copied frame's `source_video_id` onto the clone's
+  own video — see `docs/dev/datasets-page.md` § Dataset duplicate.
 - The file browser (`docs/dev/file-browser.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That

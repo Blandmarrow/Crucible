@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import functools
+import logging
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -10,14 +11,17 @@ from pathlib import Path
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
-from backend.utils import chunked, normalize_subfolder
+from backend.utils import chunked, contained_path, normalize_subfolder
 from backend.workers.job_queue import job_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quality", tags=["quality"])
 
@@ -593,12 +597,22 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
             ensure_not_busy(did)
         files_to_delete: list[Path] = []
         for r in rows:
-            p = Path(r.file_path)
-            await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
-            files_to_delete.append(p)
-            files_to_delete.append(p.with_suffix(".txt"))
-            if r.thumbnail_path:
-                files_to_delete.append(Path(r.thumbnail_path))
+            # Same shape as `images.batch_delete`: gate per row, unlink the
+            # *resolved* path, and gate the versioning hook with it — it copies the
+            # bytes into `{ds}/.versions/objects/`, so an out-of-tree `file_path`
+            # is a read primitive even with the unlink skipped. The row delete
+            # below is unconditional.
+            p = contained_path(
+                r.file_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
+            )
+            if p is not None:
+                await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
+                files_to_delete.extend([p, p.with_suffix(".txt")])
+            t = contained_path(
+                r.thumbnail_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
+            )
+            if t is not None:
+                files_to_delete.append(t)
 
         await db.execute(delete(Image).where(Image.id.in_(body.delete_ids)))
         await db.commit()

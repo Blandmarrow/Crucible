@@ -135,7 +135,11 @@ The delete is scoped to `source_video_id == video.id` *within* the target subfol
 subfolder the user also hand-filled does not lose the hand-filled part, and it goes through
 the normal path — `mark_image_deleted_in_versions`, then the row, then the file, its `.txt`
 sidecar and its thumbnail — never a raw unlink. That is what lets a pre-existing snapshot
-restore the frames, and it is what makes step 5 acceptable at all. The row delete goes through
+restore the frames, and it is what makes step 5 acceptable at all. Each row's `file_path` and
+`thumbnail_path` go through `utils.contained_path` first (V-83), per row so one escaped path does
+not spare its neighbours — and the versioning hook is gated with the unlink, not after it, since
+it copies the bytes into `{ds}/.versions/objects/` and would otherwise make an out-of-tree
+`file_path` a read primitive. The row deletes stay unconditional either way. The row delete goes through
 `utils.chunked` — a triage subfolder is exactly the id list that runs past SQLite's
 `SQLITE_MAX_VARIABLE_NUMBER` on the stock Windows build — and its test pins the *call*, not
 the crash: the limit is a compile-time option this container raises out of reach.

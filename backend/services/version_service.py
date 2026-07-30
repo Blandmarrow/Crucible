@@ -31,10 +31,14 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# `settings as app_settings`: several functions here bind `settings = await
+# get_thresholds(db)` as a local, so the plain name is a shadowing trap.
+from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.services.threshold_service import get_thresholds
+from backend.utils import contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -93,20 +97,29 @@ def _remove_stale_files(file_path: str | None, sidecar: bool, thumbnail_path: st
     Used by restore when an image was renamed/moved after the snapshot: the file left
     behind at its old on-disk location is an orphan and must be cleaned up.
     Sync — always call via ``loop.run_in_executor``.
+
+    Containment is gated **here** rather than at the five call sites (V-83): each
+    path resolves through `contained_path` and only the resolved form is unlinked,
+    so a hand-edited `file_path` cannot make a restore delete outside
+    `settings.datasets_dir`. The riskiest caller is
+    ``handle_extra_images="remove"``, which passes an arbitrary row's stored
+    columns straight through. `contained_path` never raises, which matters: the
+    bare ``except Exception: pass`` below would swallow it silently.
     """
     try:
-        if file_path:
-            p = Path(file_path)
+        p = contained_path(file_path, app_settings.datasets_dir, context="_remove_stale_files")
+        if p is not None:
             if p.exists():
                 p.unlink()
             if sidecar:
                 txt = p.with_suffix(".txt")
                 if txt.exists():
                     txt.unlink()
-        if thumbnail_path:
-            thumb = Path(thumbnail_path)
-            if thumb.exists():
-                thumb.unlink()
+        thumb = contained_path(
+            thumbnail_path, app_settings.datasets_dir, context="_remove_stale_files"
+        )
+        if thumb is not None and thumb.exists():
+            thumb.unlink()
     except Exception:
         pass
 

@@ -15,6 +15,9 @@ Covered failure classes (all previously reproduced live):
   collision; their content was never backed up
 - a failed pre-restore snapshot was warning-and-continue, silently making the
   restore non-undoable
+- restore's stale-file cleanup unlinked a raw stored `file_path`, so a
+  hand-edited column made `handle_extra_images="remove"` delete outside the
+  datasets tree (V-83)
 """
 import asyncio
 from pathlib import Path
@@ -23,6 +26,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from backend.config import settings as app_settings
 from backend.database import Base
 import backend.models  # noqa: F401 — register all models on Base
 from backend.models.dataset import Dataset
@@ -36,6 +40,23 @@ def run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _datasets_root(tmp_path, monkeypatch):
+    """Point `settings.datasets_dir` at this test's scratch root.
+
+    `dataset_service` only ever creates a folder at `settings.datasets_dir /
+    slug`, so *every* real dataset is inside that tree — and
+    `_remove_stale_files` gates each path against it (V-83). Without this fixture
+    the module's dataset folders sit outside the app's real datasets dir, the
+    guard refuses all of them, and the removals these tests exercise silently
+    become no-ops that still pass.
+    """
+    root = tmp_path / "datasets"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app_settings, "datasets_dir", root)
+    return root
+
+
 async def make_env(tmp_path: Path, names_contents: dict[str, bytes], mode: str = "auto"):
     """Engine + session factory + one dataset with the given image files."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
@@ -43,7 +64,7 @@ async def make_env(tmp_path: Path, names_contents: dict[str, bytes], mode: str =
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
-    ds_dir = tmp_path / "ds"
+    ds_dir = tmp_path / "datasets" / "ds"
     (ds_dir / "images").mkdir(parents=True)
     (ds_dir / "thumbnails").mkdir(parents=True)
 
@@ -178,6 +199,61 @@ def test_restore_name_reuse_remove_deletes_extra(tmp_path):
     run(scenario())
 
 
+def test_restore_remove_skips_an_extra_image_whose_path_escaped(tmp_path):
+    """V-83's third site: `_remove_stale_files` gates each path itself.
+
+    `handle_extra_images="remove"` is its riskiest caller — it hands the helper an
+    arbitrary row's stored `file_path`/`thumbnail_path` straight through — so a
+    hand-edited column used to make a restore unlink outside the datasets tree.
+    The escaped file survives, the extra row still goes, and the neighbour extra's
+    file is unlinked normally. The sibling-directory name is deliberate: the guard
+    is containment, not a string `startswith`, so `{root}_backup` must not pass a
+    `{root}` base. See `test_path_containment_http.py` for the request-level half
+    of this contract — this one is service-level because restore has no job
+    endpoint of its own.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"OLD!"})
+        imgdir = ds_dir / "images"
+        outside = tmp_path / "datasets_backup"
+        outside.mkdir(parents=True)
+        escaped = outside / "keep-me.png"
+        escaped.write_bytes(b"NOT OURS")
+        assert str(escaped).startswith(str(app_settings.datasets_dir)), (
+            "the fixture must share the datasets dir's string prefix or it does "
+            "not test anything"
+        )
+
+        async with Session() as db:
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+            ds = await db.get(Dataset, ds_id)
+            # Two images added since the snapshot: both are "extra" and both get
+            # removed. One's row has been pointed outside the tree.
+            db.add(_image_row(ds, ds_dir, "bad.png", b"BAD!"))
+            db.add(_image_row(ds, ds_dir, "good.png", b"GOOD"))
+            await db.commit()
+            bad = await _get_by_filename(db, ds_id, "bad.png")
+            bad.file_path = str(escaped)
+            await db.commit()
+            good_file = imgdir / "good.png"
+
+            result = await version_service.restore_snapshot(
+                db, ds_id, snap.id, handle_extra_images="remove",
+                pre_restore_snapshot=False)
+            assert result["images_removed"] == 2
+
+            rows = (await db.execute(
+                select(Image).where(Image.dataset_id == ds_id))).scalars().all()
+            assert [r.filename for r in rows] == ["1.png"], \
+                "the rows go regardless — an undeletable row is the worse failure"
+
+        assert escaped.read_bytes() == b"NOT OURS", "an out-of-tree path must never be unlinked"
+        assert not good_file.exists(), "the neighbour extra must still be cleaned up"
+        await engine.dispose()
+
+    run(scenario())
+
+
 def test_pre_restore_snapshot_lands_on_active_branch(tmp_path):
     async def scenario():
         engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
@@ -209,7 +285,7 @@ def test_restore_after_cross_dataset_move(tmp_path):
     async def scenario():
         engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
         imgdir = ds_dir / "images"
-        ds2_dir = tmp_path / "ds2"
+        ds2_dir = tmp_path / "datasets" / "ds2"
         (ds2_dir / "images").mkdir(parents=True)
         (ds2_dir / "thumbnails").mkdir(parents=True)
         async with Session() as db:

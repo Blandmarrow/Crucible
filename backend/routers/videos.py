@@ -43,6 +43,7 @@ from backend.services.video_service import claimed_poster_stems, generate_poster
 from backend.utils import (
     InsufficientDiskSpaceError,
     chunked,
+    contained_path,
     normalize_subfolder,
     poster_path_for,
     require_free_space,
@@ -845,7 +846,8 @@ async def _delete_previous_frames(
     Deletes go through the normal path — `mark_image_deleted_in_versions`, then
     the row, then the file, its `.txt` sidecar and its thumbnail — never a raw
     unlink. That is what lets a pre-existing snapshot restore them, and it is
-    what makes running this step at all acceptable.
+    what makes running this step at all acceptable. Each row's paths go through
+    `contained_path` first (V-83), the versioning hook included.
     """
     rows = (await session.execute(
         select(Image.id, Image.file_path, Image.thumbnail_path).where(
@@ -865,11 +867,24 @@ async def _delete_previous_frames(
     with busy(dataset_id, "Replacing extracted frames"):
         files: list[Path] = []
         for r in rows:
-            await version_service.mark_image_deleted_in_versions(r.id, r.file_path, session)
-            p = Path(r.file_path)
-            files.extend([p, p.with_suffix(".txt")])
-            if r.thumbnail_path:
-                files.append(Path(r.thumbnail_path))
+            # Per row, so one escaped path does not stop its neighbours. The
+            # versioning hook is gated with the unlink, not after it: it copies the
+            # bytes into `{ds}/.versions/objects/`, so an out-of-tree `file_path`
+            # is a read primitive even with the unlink skipped. Row deletes below
+            # stay unconditional — an undeletable row is the worse failure.
+            p = contained_path(
+                r.file_path, settings.datasets_dir,
+                context="_delete_previous_frames", ident=r.id,
+            )
+            if p is not None:
+                await version_service.mark_image_deleted_in_versions(r.id, str(p), session)
+                files.extend([p, p.with_suffix(".txt")])
+            t = contained_path(
+                r.thumbnail_path, settings.datasets_dir,
+                context="_delete_previous_frames", ident=r.id,
+            )
+            if t is not None:
+                files.append(t)
         # Chunked, like every other id list in this file: a long-running triage
         # subfolder is exactly where a single `IN (...)` exceeds SQLite's
         # SQLITE_MAX_VARIABLE_NUMBER and raises `OperationalError: too many SQL

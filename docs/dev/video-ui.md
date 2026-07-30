@@ -3,8 +3,9 @@
 Covers every screen that shows or acts on a video: the gallery's `VideoStrip` and its
 selection, `VideoDetailPage`, the extraction history panel, and the frame-lineage line on
 `ImageDetailPage` with the gallery filter it deep-links into. The two-step
-`ExtractFramesModal` those screens open — with `CropOverlay`, `TrimBar` and the
-`useVideoExtractJobs` re-attach hook — is in `docs/dev/video-extract-ui.md`. The backend
+`ExtractFramesModal` those screens open — with the `useVideoExtractJobs` re-attach hook —
+is in `docs/dev/video-extract-ui.md`, and its `CropOverlay`/`TrimBar` controls are in
+`docs/dev/video-extract-controls.md`. The backend
 behind all of it is in `docs/dev/video.md` (model, storage, `/videos` endpoints) and
 `docs/dev/video-extract.md` (the probe/extract endpoints and the `video_extract` job).
 

@@ -228,9 +228,10 @@ fresh one on the next view). `test_path_containment_http.py` pins both direction
 
 Every video screen — `VideoStrip` and its selection, `VideoDetailPage`, the extraction
 history and the frame lineage line — is in `docs/dev/video-ui.md`; the two-step
-`ExtractFramesModal` with `CropOverlay`/`TrimBar` and the job re-attach hook is in
-`docs/dev/video-extract-ui.md`. Split out of this file when the extraction frontend
-landed; the three are read together but sized apart.
+`ExtractFramesModal` and the job re-attach hook are in `docs/dev/video-extract-ui.md`, with
+its `CropOverlay`/`TrimBar`/`NumberField` controls in
+`docs/dev/video-extract-controls.md`. Split out of this file when the extraction frontend
+landed; they are read together but sized apart.
 
 ## What is free, and what is not
 

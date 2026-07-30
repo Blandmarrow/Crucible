@@ -137,21 +137,3 @@ sections' own; the file total is larger by its intro and heading lines.
   here, `docs/dev/video-extract-ui.md` and `docs/dev/persistence.md`. Whichever half keeps
   it, the other two must point at the new path. `docs/video.md`'s re-extraction section is
   the user-facing mirror.
-
-## docs/dev/video-extract-ui.md
-
-- **Moves:** § CropOverlay and TrimBar (1,172 w)
-- **New file:** docs/dev/video-extract-controls.md
-- **Why here:** the two are self-contained pointer/geometry widgets — normalized rects,
-  handle hit-testing, the tab-through, `NumberField`'s no-clamp-per-keystroke rule. They are
-  read when a control misbehaves, never when the modal's step flow is the question, and they
-  are the only part of the file that is not about `ExtractFramesModal`'s lifecycle.
-- **Leaves:** 3,496 total → ~2,320 / ~1,180. § ExtractFramesModal (1,643) is the section
-  that will need the *next* seam; if it has to happen at once, its step-1 probe half and its
-  step-2 sampling half are the visible boundary.
-- **Watch for:** `NumberField`'s full contract lives in this section, and both CLAUDE.md's
-  shared-components paragraph and `docs/dev/frontend-core.md` point a reader here for it by
-  `§ CropOverlay and TrimBar` — a `§` reference the checker cannot see, so both need
-  redirecting in the same change.
-  § Re-attaching to the job (547) must stay with the modal half: it is `useVideoExtractJobs`,
-  which `docs/dev/persistence.md` and `docs/dev/video-reextract.md` both link to by this path.

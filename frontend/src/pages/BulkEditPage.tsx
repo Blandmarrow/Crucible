@@ -15,12 +15,13 @@ import DetectionRunForm from "../components/detection/DetectionRunForm";
 import LutForm from "../components/lut/LutForm";
 import BulkRenameForm from "../components/image/BulkRenameForm";
 import BulkDeleteForm from "../components/image/BulkDeleteForm";
+import RegenerateThumbnailsForm from "../components/image/RegenerateThumbnailsForm";
 import { BULK_EDIT_WORKFLOW_KEY, BULK_EDIT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Scope = "all" | "flags" | "selected";
-type Tab = "captions" | "upscale" | "crop" | "detections" | "lut" | "rename" | "delete";
+type Tab = "captions" | "upscale" | "crop" | "detections" | "lut" | "rename" | "thumbnails" | "delete";
 
 interface BulkEditWorkflow {
   tab: Tab;
@@ -163,6 +164,9 @@ export default function BulkEditPage() {
           </button>
           <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
             Rename
+          </button>
+          <button className={`tab${tab === "thumbnails" ? " active" : ""}`} onClick={() => setTab("thumbnails")}>
+            Thumbnails
           </button>
           <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
             Delete
@@ -350,6 +354,25 @@ export default function BulkEditPage() {
           <div className="panel-h">Rename Images</div>
           <div className="panel-b">
             <BulkRenameForm
+              key={`${scope}-${resetKey}`}
+              datasetId={datasetId}
+              imageIds={imageIds}
+              qualityFlags={qualityFlags}
+              subfolder={subfolder}
+              disabled={formDisabled}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* The surface that matters for the repair: a failing thumbnails/ is
+          deterministic, so the affected scope is "the whole dataset" — and
+          SelectionToolbar only exists when there is a selection. */}
+      {tab === "thumbnails" && (
+        <div className="panel">
+          <div className="panel-h">Rebuild Thumbnails</div>
+          <div className="panel-b">
+            <RegenerateThumbnailsForm
               key={`${scope}-${resetKey}`}
               datasetId={datasetId}
               imageIds={imageIds}

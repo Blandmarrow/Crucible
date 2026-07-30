@@ -48,6 +48,10 @@ export type BulkDeleteParams = BulkFilterParams;
 export interface BulkCountParams extends BulkFilterParams {
   includeFlagged?: boolean;
 }
+export interface BulkThumbnailParams extends BulkFilterParams {
+  includeFlagged?: boolean;
+  label?: string;
+}
 
 export interface ImageListParams {
   dataset_id: string;
@@ -213,6 +217,18 @@ export const imagesApi = {
       source_url: params.source_url ?? null,
       license: params.license ?? null,
       attribution: params.attribution ?? null,
+    }).then((r) => r.data),
+  /** Re-cut the thumbnails for a scope — the repair for a run that reported
+   *  `thumbnails_stale`. Returns a `regenerate_thumbnails` job; 507 when the
+   *  volume is too full to write them. */
+  bulkThumbnails: (datasetId: string, params: BulkThumbnailParams) =>
+    client.post<{ job_id: string; total: number }>("/images/bulk-thumbnails", {
+      dataset_id: datasetId,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+      include_flagged: params.includeFlagged ?? false,
+      label: params.label ?? null,
     }).then((r) => r.data),
   bulkCount: (datasetId: string, params: BulkCountParams) =>
     client.post<{ count: number }>("/images/bulk-count", {

@@ -310,13 +310,18 @@ buffer, hence the temp file.
 ### cv2 in CI, and the skip convention
 
 `backend-tests.yml` installs opencv **and** scenedetect, in a step of its own after the
-main install. Before that it installed neither, so the ~250 tests above had never once run
-in CI: three modules errored at *collection* and the rest failed rather than skipped. Two
-rules keep both halves working.
+main install (which is `pip install -r backend/requirements-ci.txt -r backend/requirements-dev.txt`
+— the pinned base file all three CI jobs share; cv2 stays out of it because e2e-smoke.yml
+wants opencv *without* scenedetect, and nothing else wants either). Before that step
+existed it installed neither, so the ~250 tests above had never once run in CI: three
+modules errored at *collection* and the rest failed rather than skipped. Two rules keep
+both halves working.
 
-**Order and flags are load-bearing.** `pip install opencv-python-headless`, then
-`pip install --no-deps scenedetect`, then its three remaining runtime deps (`click`,
-`platformdirs`, `tqdm`). scenedetect hard-requires `opencv-python` — the GUI wheel, ~90 MB,
+**Order and flags are load-bearing.** `pip install "opencv-python-headless>=4.9"`, then
+`pip install --no-deps "scenedetect>=0.7.1"`, then its three remaining runtime deps
+(`"click!=8.3.0,~=8.0"`, `platformdirs`, `tqdm` — the last two unpinned because scenedetect
+itself declares them with no constraint, so a floor here would be invented).
+scenedetect hard-requires `opencv-python` — the GUI wheel, ~90 MB,
 linking `libGL.so.1`, which a headless runner does not have — and both wheels provide the
 same `cv2` package, so this is the only combination that gets shot detection without the
 GL-linked one. This is a **deliberate divergence** from `backend/requirements.txt`, which

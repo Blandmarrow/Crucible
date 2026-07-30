@@ -32,13 +32,19 @@ alembic revision --autogenerate -m "msg" # generate new migration
 cd frontend
 npm run dev      # Vite dev server on :5173 (proxies /api to :8000)
 npm run build    # TypeScript check + Vite production build → frontend/dist/
+npm run typecheck:e2e  # tsc over frontend/e2e/ — outside the build, see below
 npm run lint     # ESLint
 ```
 
-**`npm run build` is the only real typecheck.** The root `tsconfig.json` is a solution-style
-config (`"files": []` + project references), so a bare `npx tsc --noEmit` type-checks
-**nothing** and exits 0 on code that does not compile. Verify frontend changes with
-`npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
+**`npm run build` is the only real typecheck for `src/`.** The root `tsconfig.json` is a
+solution-style config (`"files": []` + project references), so a bare `npx tsc --noEmit`
+type-checks **nothing** and exits 0 on code that does not compile. Verify frontend changes
+with `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
+
+**`frontend/e2e/` is deliberately outside that build** — its specs must never enter
+`vite build` — and Playwright only transpiles, so `npm run typecheck:e2e`
+(`tsc -p e2e/tsconfig.json --noEmit`, ~2 s) is the only thing that checks them. It is a
+blocking CI step and part of the `qa-smoke` skill; run it after touching a spec.
 
 ### Tests
 
@@ -53,7 +59,10 @@ source venv/bin/activate && python -m pytest backend/tests/ -q
 Request-level tests drive `backend.main.app` over httpx (see
 `backend/tests/conftest.py`); everything else is service-level. Anything needing a
 decodable video is gated on cv2 — see `docs/dev/video.md` (§ cv2 in CI, and the skip
-convention) before adding a test or a CI dependency there. Coverage is opt-in:
+convention) before adding a test or a CI dependency there. **CI installs
+`backend/requirements-ci.txt`** — the pinned, torch-free base set all three CI jobs share
+(each adding only its own alembic/uvicorn/cv2 on top); a new import in the app or the
+suite's collection path goes there, not into a workflow's install line. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
@@ -64,12 +73,13 @@ Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
 ```bash
 cd frontend
 npm run build                     # refresh dist first — e2e serves it (stale dist = stale test)
+npm run typecheck:e2e             # the specs' only typecheck (see above)
 npx playwright install chromium   # first run only
 npx playwright test               # spins up its own backend on :8199 vs a throwaway DB
 ```
 
-The full pre-merge sweep (backend pytest → frontend build+lint → e2e) is the
-`qa-smoke` skill.
+The full pre-merge sweep (backend pytest → frontend build + e2e typecheck + lint → e2e) is
+the `qa-smoke` skill.
 
 ## Architecture
 
@@ -163,7 +173,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2070 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns) | ~1190 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~955 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~1585 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~1765 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, or any modal dialog — CSS variable tokens, `@layer components` classes, `CrucibleMark` drift checks, `ConfirmDialog`, `useModalBehavior` | ~1610 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation — production frontend serving, the shutdown/restart loop, DB indexes and deferred columns, the SSE broadcaster | ~2670 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~2395 |

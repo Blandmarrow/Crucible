@@ -31,4 +31,3 @@ alembic/__pycache__/
 .coverage
 frontend/playwright-report/
 frontend/test-results/
-CODE_REVIEW-experimental-video-support.md

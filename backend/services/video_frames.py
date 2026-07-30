@@ -217,9 +217,14 @@ def clamp_crop(rect: CropRect | None, width: int, height: int) -> CropRect | Non
     """Clamp a rect into a `width`×`height` frame, or None if nothing survives.
 
     Called twice on the way to a pixel: once against the *header* dimensions
-    before the rect reaches scenedetect (which raises on an out-of-range crop),
-    and once per frame against `frame.shape`, which is the real authority —
-    headers lie, and container rotation swaps the axes.
+    before the rect reaches scenedetect, and once per frame against
+    `frame.shape`, which is the real authority — headers lie, and container
+    rotation swaps the axes.
+
+    The first call is the only guard there is: scenedetect 0.7.1 only logs
+    "Warning: crop ends outside of video boundary." and carries on, and its
+    `crop` setter raises solely for negative or non-int coordinates. See
+    `docs/dev/video-shots.md` § Cost, honestly.
     """
     if rect is None or width <= 0 or height <= 0:
         return None

@@ -1640,7 +1640,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.quality_flags, Image.aesthetic_score, Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
         Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
-        Image.generation_metadata, Image.sort_order, Image.created_at,
+        Image.generation_metadata, Image.processing_history, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
         # Frame lineage. Deliberately no `Image.source_video_id`: the copy lands
@@ -1762,6 +1762,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             style_similarity_score=row.style_similarity_score,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
+            processing_history=row.processing_history,
             sort_order=assigned_order,
             source_video_id=None,
             source_timestamp_ms=row.source_timestamp_ms,

@@ -52,7 +52,7 @@ const QUALITY_FILTERS_DEFAULTS: QualityFilters = {
 
 const SCORING_OPTIONS = [
   { key: "aesthetic", label: "Aesthetic score · LAION", desc: "CLIP-based aesthetic predictor (1–10). Trained on human ratings.", vram: "GPU · 2.1 GB" },
-  { key: "technical", label: "Technical · OpenCV", desc: "Blur, noise, near-uniform, color richness, pHash duplicates.", vram: "CPU only" },
+  { key: "technical", label: "Technical · OpenCV", desc: "Blur, noise, near-uniform, color, saturation, brightness, pHash duplicates.", vram: "CPU only" },
   { key: "watermark", label: "Watermark detection", desc: "CLIP zero-shot classification for text overlays and logos.", vram: "GPU · 2.1 GB" },
   { key: "embeddings", label: "Style embeddings · CLIP", desc: "Required for the style-similarity workflow below.", vram: "GPU · 2.1 GB" },
   { key: "dino", label: "DINOv2 embeddings", desc: "Object-aware embedding. Can be used alone or alongside CLIP for style similarity.", vram: "GPU · 1.2 GB" },

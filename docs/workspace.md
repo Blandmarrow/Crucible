@@ -17,7 +17,7 @@ The centre of the top bar shows what is happening:
 - **Running job** — a progress pill with the job's label, a progress bar, and a `done / total` count. Two things can be missing, independently. A job that cannot report progress at all shows an indeterminate bar. A job that *can* show a percentage but is in a phase that finishes no items — frame extraction while it is still finding cuts, say — shows the bar and **no count**, rather than a misleading `0 / 0`. The **×** cancels the running job.
 - **Queued jobs** — an `N queued` badge followed by a chip per waiting job, each with its own **×** to drop just that one. Beyond three, the rest collapse into **+N more**; hover it to see their names.
 - **Cancel all** — cancels every queued job *and* the one currently running.
-- **Uploading images** — drag-and-drop uploads get their own pill with a file count; it turns amber if any file failed. It persists here if you navigate away mid-upload.
+- **Uploading files** — drag-and-drop uploads get their own pill with a file count; it turns amber if any file failed. It persists here if you navigate away mid-upload.
 - When nothing is running the bar reads **Ready**.
 
 Jobs run one at a time, in submission order, so queueing several runs back to back is the normal way to work.

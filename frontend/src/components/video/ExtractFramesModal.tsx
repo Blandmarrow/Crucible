@@ -683,7 +683,11 @@ interface ProgressRow {
 function mergeRows(prev: Map<string, ProgressRow>, incoming: ProgressRow[]) {
   let next: Map<string, ProgressRow> | null = null;
   for (const r of incoming) {
-    const old = prev.get(r.videoId);
+    // `next` first, or the guard is blind within a single call: `incomingRows`
+    // pushes the richer `result.jobs` row ahead of the derived one for the same
+    // video, and on the first pass that sees that video `prev` has neither — so a
+    // `prev`-only lookup let the second `set` overwrite the `subfolder`.
+    const old = next?.get(r.videoId) ?? prev.get(r.videoId);
     if (old && (old.subfolder !== undefined || r.subfolder === undefined)) continue;
     next ??= new Map(prev);
     next.set(r.videoId, r);

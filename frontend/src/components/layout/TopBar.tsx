@@ -332,11 +332,11 @@ export default function TopBar() {
         {uploadProgress && (
           <div className="progress-pill">
             <span className="pp-dot" />
-            <span className="pp-label">Uploading images</span>
+            <span className="pp-label">Uploading files</span>
             <div className="pp-bar">
               <div className="pp-fill" style={{ width: `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%`, background: uploadProgress.errors > 0 ? "var(--warn)" : undefined }} />
             </div>
-            <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total}</span>
+            <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total} files</span>
           </div>
         )}
         {runningJob && (

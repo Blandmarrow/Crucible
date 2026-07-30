@@ -173,7 +173,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting, or `threshold_service.py` — the `ThresholdSettings` singleton row and every tab it backs | ~1060 |
 | `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search and its TTL cache | ~1095 |
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the eight endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~2820 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2070 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2175 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns) | ~1490 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~955 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~1860 |

@@ -771,7 +771,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               </label>
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runTechnical} onChange={e => setRunTechnical(e.target.checked)} />
-                Technical (blur, noise, duplicates)
+                Technical (blur, noise, brightness, duplicates)
               </label>
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runWatermark} onChange={e => setRunWatermark(e.target.checked)} />

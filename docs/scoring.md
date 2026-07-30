@@ -11,7 +11,7 @@ Tick the scorers you want and start the run — they execute together in one bac
 | Scorer | Cost |
 |---|---|
 | **Aesthetic score · LAION** — CLIP-based aesthetic predictor (1–10), trained on human ratings | GPU · 2.1 GB |
-| **Technical · OpenCV** — blur, noise, near-uniform, color richness, brightness, duplicates | CPU only |
+| **Technical · OpenCV** — blur, noise, near-uniform, color richness, saturation, brightness, duplicates | CPU only |
 | **Watermark detection** — CLIP zero-shot classification for text overlays and logos | GPU · 2.1 GB |
 | **Style embeddings · CLIP** — required for the style-similarity workflow below | GPU · 2.1 GB |
 | **DINOv2 embeddings** — object-aware embedding; usable alone or alongside CLIP | GPU · 1.2 GB |

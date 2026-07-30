@@ -1,8 +1,9 @@
 """Request-level tests for `luminance_score` — the parts that do not need pixels.
 
-The formula itself is deliberately untested: it lives in `score_technical_sync`,
-which imports cv2, and CI has no OpenCV. That matches the coverage shape of every
-other technical score. What *is* testable from the outside is the wiring, and the
+The formula itself is deliberately untested, matching the coverage shape of every
+other technical score: none of the six is pinned by a numeric assertion, because
+the expected value for a given picture can only be baked out of the very pixel
+math under test. What *is* testable from the outside is the wiring, and the
 wiring is where a new score field actually breaks: a column that no filter
 whitelist admits, a histogram key the frontend reads and the backend never sends,
 or a `score-values` array that silently stays absent.

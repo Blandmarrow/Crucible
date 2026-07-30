@@ -79,6 +79,22 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             images = result.scalars().all()
             loop = asyncio.get_running_loop()
 
+            # The whole outcome of the run, written to `result_data` at the end —
+            # the LUT twin, seeded and incremented identically. `skipped` starts
+            # at the rows that no longer exist (deleted between enqueue and run);
+            # the loop's two `continue` branches are invisible without it.
+            #
+            # `thumbnails_stale` counts upscaled images whose *preview* could not
+            # be recut. The image itself is correct and committed, but the
+            # gallery keeps rendering the old tile, and the realistic trigger (a
+            # full volume, a read-only thumbnails/) hits every image in the run.
+            counts = {
+                "processed": 0,
+                "skipped": len(image_ids) - len(images),
+                "failed": 0,
+                "thumbnails_stale": 0,
+            }
+
             model_path = cfg["model_path"]
             replace = cfg["replace"]
             target_w = cfg["target_width"]
@@ -162,6 +178,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                             "current_item": img.filename,
                             "message": f"Skipped: {Path(planned_out).name} already exists on disk",
                         })
+                        counts["skipped"] += 1
                         continue
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
@@ -180,6 +197,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         "current_item": img.filename,
                         "message": f"Failed: {exc}",
                     })
+                    counts["failed"] += 1
                     continue
 
                 # upscale_image_sync may change out_path if format conversion occurred
@@ -236,7 +254,10 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                             )
                         except Exception as exc:
                             # A stale thumbnail is cosmetic; the upscaled image is
-                            # committed and serves.
+                            # committed and serves. Counted rather than merely
+                            # logged so the run can say so: TopBar reads this
+                            # count and points at Bulk Edit → Thumbnails.
+                            counts["thumbnails_stale"] += 1
                             logger.warning(
                                 "Upscale: thumbnail for %s could not be regenerated: %s",
                                 img.filename, exc,
@@ -273,7 +294,13 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     "current_item": img.filename,
                     "image_id": last_image_id,
                 })
+                counts["processed"] += 1
 
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
+            # everything it did manage — including any stale thumbnail.
             await session.commit()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)

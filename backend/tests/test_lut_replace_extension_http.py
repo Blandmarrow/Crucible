@@ -149,6 +149,67 @@ def test_lut_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_path, m
             r = await env.client.get(f"{API}/images/{img['id']}/file")
             assert r.status_code == 200, r.text
 
+            # The user is never told by the log. The count in `result_data` is
+            # the only signal that the gallery tile is now lying, so the run has
+            # to carry it — `completed` with a silently stale preview is the
+            # whole defect.
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["processed"] == 1, job["result_data"]
+
+    run(scenario())
+
+
+def test_lut_reports_all_zero_counts_on_a_clean_run(tmp_path):
+    """The counter has to be honest in both directions: a run where nothing went
+    wrong reports four zeros beside its `processed`, so a non-zero
+    `thumbnails_stale` means something and cannot be a hardcoded constant."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "plain.png")
+            lut = _identity_cube(tmp_path / "identity.cube")
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "lut_path": str(lut), "intensity": 1.0, "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            assert job["result_data"] == {
+                "processed": 1, "skipped": 0, "failed": 0, "thumbnails_stale": 0,
+            }
+
+    run(scenario())
+
+
+def test_lut_counts_a_disk_collision_as_skipped_not_processed(tmp_path):
+    """The collision `continue` is invisible without the counter — a run that
+    graded nothing at all used to end `completed` with an empty `result_data`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+            lut = _identity_cube(tmp_path / "identity.cube")
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+            bmp_path.with_suffix(".png").write_bytes(b"unregistered squatter")
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "lut_path": str(lut), "intensity": 1.0, "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            assert job["result_data"] == {
+                "processed": 0, "skipped": 1, "failed": 0, "thumbnails_stale": 0,
+            }
+
     run(scenario())
 
 

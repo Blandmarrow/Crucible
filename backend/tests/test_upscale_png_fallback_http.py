@@ -203,6 +203,53 @@ def test_upscale_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_pat
             r = await env.client.get(f"{API}/images/{img['id']}/file")
             assert r.status_code == 200, r.text
 
+            # The log line is not a user-visible signal. The count in
+            # `result_data` is, and without it the run ends `completed` with a
+            # gallery tile that silently disagrees with the file.
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["processed"] == 1, job["result_data"]
+
+    run(scenario())
+
+
+def test_upscale_reports_all_zero_counts_on_a_clean_run(tmp_path, monkeypatch):
+    """What proves the counter is honest rather than hardcoded: a run where
+    nothing went wrong reports zeros for all three failure kinds."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "plain.png")
+
+            job = await _run_upscale(env, ds["id"], img["id"], replace=True)
+            assert job["status"] == "completed", job
+            assert job["result_data"] == {
+                "processed": 1, "skipped": 0, "failed": 0, "thumbnails_stale": 0,
+            }
+
+    run(scenario())
+
+
+def test_upscale_counts_a_disk_collision_as_skipped_not_processed(tmp_path, monkeypatch):
+    """The collision `continue` is invisible without the counter — a run that
+    upscaled nothing at all used to end `completed` with an empty `result_data`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+            bmp_path.with_suffix(".png").write_bytes(b"unregistered squatter")
+
+            job = await _run_upscale(env, ds["id"], img["id"], replace=True)
+            assert job["status"] == "completed", job
+            assert job["result_data"] == {
+                "processed": 0, "skipped": 1, "failed": 0, "thumbnails_stale": 0,
+            }
+
     run(scenario())
 
 

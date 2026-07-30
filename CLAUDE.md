@@ -148,7 +148,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 |---|---|---|
 | `docs/dev/ml-models.md` | Working on captioning models, upscaling, LUT grading, or `backend/ml/` loading — the model manager (VRAM/unload), model ID registry, device abstraction, TorchDynamo | ~2425 |
 | `docs/dev/detection.md` | Working on object detection, masks, or `DetectionsPanel` — the `/detection` router, its scope/model/task matrix, SAM2/SAM3/Florence-2/NudeNet inference, `mask_area` | ~2890 |
-| `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, or thresholds — the scorers and the columns they write, duplicate detection, style similarity, DINOv2 per-layer scoring | ~1730 |
+| `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, or thresholds — the scorers and the columns they write, duplicate detection, style similarity, DINOv2 per-layer scoring | ~1935 |
 | `docs/dev/gallery.md` | Working on `GalleryPage` or gallery drag & drop — selection and shift-click ranges, subfolder sidebar, filters, manual ordering, dnd-kit droppables and collision detection | ~2925 |
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage` or generation-metadata display — gallery/nav persisted keys, `injectNavId`/`paneGo`, crop tool, selection toggle, caption panel | ~1865 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — naming and collisions, cross-dataset move and copy, folder import, rescan/sync, drag-`.txt`-onto-image | ~2120 |
@@ -157,7 +157,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — kohya/ai-toolkit/plain, stem uniquification, license/commercial/no-derivatives filters, resize, loss masks, CREDITS.md | ~3185 |
 | `docs/dev/bulk-ops.md` | Working on `BulkEditPage`, `CropToDetectionForm`, or a `bulk-*` endpoint — caption find/replace/regex, image rename/delete/reorder, `detection_crop_rect` and the crop remap | ~2480 |
 | `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
-| `docs/dev/video.md` | Working on videos, video ingest, the `/videos` endpoints, any file-extension allowlist, or a cv2-gated test — the `Video` model and `videos/` layout, poster stems and collisions, range serving | ~3255 |
+| `docs/dev/video.md` | Working on videos, video ingest, the `/videos` endpoints, any file-extension allowlist, or a cv2-gated test — the `Video` model and `videos/` layout, poster stems and collisions, range serving | ~3545 |
 | `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~1780 |
 | `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, the touched-flag guards, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2325 |
 | `docs/dev/video-extract-controls.md` | Working on the crop/trim controls or any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract | ~1310 |
@@ -165,7 +165,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/video-shots.md` | Working on probe sampling, shot detection, or frame rendering — the pass 1 pipeline in `video_extract.py`: the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` | ~1815 |
 | `docs/dev/video-extract.md` | Working on the extract/probe endpoints or the `video_extract` job — Pass 1's router half: crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage | ~2360 |
 | `docs/dev/video-reextract.md` | Working on re-extraction, `POST /videos/reextract`, or a replace-mode extension change — Pass 2 full-res: seek-by-timestamp, the `processing_history` skip rule, `render_at_timestamps` | ~2585 |
-| `docs/dev/video-reextract-ui.md` | Working on the re-extract dialog or what a finished `video_reextract` refreshes — `ReextractFramesForm`/`ReextractFramesModal`, the three entry points, the `jobStore` adoption re-attach, the `TopBar` invalidations | ~1015 |
+| `docs/dev/video-reextract-ui.md` | Working on the re-extract dialog or what a finished `video_reextract` refreshes — `ReextractFramesForm`/`ReextractFramesModal`, the three entry points, the `jobStore` adoption re-attach, the `TopBar` invalidations | ~1075 |
 | `docs/dev/video-heuristics.md` | Tuning cropdetect, interlace/telecine detection, or which frame a shot yields — the pure-numpy `video_frames.py` judgement calls, sharpness, `pick_index` candidate rejection | ~1280 |
 | `docs/dev/versioning.md` | Working on `VersionsPage`, `dataset_busy`, or any path that overwrites image files in place — snapshots, branches, the copy-on-write object store, diff, restore, prune/GC | ~3165 |
 | `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, or the folder picker — preview strip, license badge, sort/density/grouping, category rail, `ImportFolderModal`/`DirPickerModal` | ~2545 |
@@ -174,7 +174,7 @@ these files anywhere — `@path` auto-loads the target into every conversation, 
 | `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search and its TTL cache | ~1095 |
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the seven endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~2820 |
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2070 |
-| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns) | ~1190 |
+| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns) | ~1355 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~955 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~1765 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, or any modal dialog — CSS variable tokens, `@layer components` classes, `CrucibleMark` drift checks, `ConfirmDialog`, `useModalBehavior` | ~1610 |

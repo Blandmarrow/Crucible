@@ -146,11 +146,18 @@ invariants).
 
 ## Endpoints
 
-`backend/routers/videos.py`, prefix `/videos`: `GET /` (by `dataset_id`), `GET /{id}`,
+`backend/routers/videos.py`, prefix `/videos`, all twelve registered routes: `GET /` (by
+`dataset_id`), `GET /capabilities`, `GET /{id}`,
 `GET /{id}/file`, `GET /{id}/poster` (the lazy backfill and its retry backoff are in
-`docs/dev/video-decode.md` § Poster frames), `POST /{id}/probe` and `POST /extract` (both
-in `docs/dev/video-extract.md` § The endpoints), `GET /{id}/frames-summary`,
+`docs/dev/video-decode.md` § Poster frames), `GET /{id}/frames-summary`,
+`POST /{id}/probe` and `POST /extract` (both
+in `docs/dev/video-extract.md` § The endpoints),
+`POST /reextract/preview` and `POST /reextract` (pass 2 — `docs/dev/video-reextract.md`),
 `PATCH /{id}/rename`, `DELETE /{id}`.
+`GET /capabilities` reports what this install can decode independently of any one video, and
+is **declared above `GET /{video_id}`** on purpose: FastAPI matches in declaration order, so
+below it the literal segment would be read as a video id and 404 (`docs/dev/video-extract.md`
+§ The endpoints, where the route and its `["extract-capabilities"]` consumer are documented).
 Both file responses go through `utils.safe_dataset_path`, promoted out of
 `routers/images.py` so the video routes are not importing a private helper from another
 router. `GET /{id}/file` and `PATCH /{id}/rename` both answer 404 "File not found on disk"
@@ -286,6 +293,14 @@ drives both endpoints end to end. `test_video_lineage_mirrors.py` holds the stru
 mirror guard described in CLAUDE.md § Key invariants plus behavioural round-trips through
 snapshot/restore, both `duplicate_dataset` branches, cross-dataset copy and move, and video
 delete.
+
+`test_frames_from_video_filter.py` pins the `GET /images/?source_video_id=` gallery filter
+(`docs/dev/video-ui.md` § the lineage row) on the two properties that are its reason to
+exist: the filter survives a frame **moved out of its extraction subfolder**, because the
+subfolder stops being a handle the moment curation moves a file while the lineage column does
+not, and the FK's `ondelete="SET NULL"` drops a deleted video's frames from the filter
+**without destroying the rows** — a frame outlives its video, it just stops being addressable
+this way. Both are cv2- and `scenedetect`-gated.
 
 Two fixtures join `mp4_bytes` in `conftest.py`. `mp4_shots_bytes` writes hard cuts between
 distinctly-coloured shots and must stay at **320×240 with ≥24 frames per shot**:

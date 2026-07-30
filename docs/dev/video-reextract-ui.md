@@ -94,9 +94,14 @@ machinery pass 2 does without, per the asymmetry above. `TopBar` carries `video_
 both `LIVE_IMAGE_JOB_TYPES` and `IMAGE_MODIFYING_JOB_TYPES`, and on a terminal event
 invalidates the singular `["image"]` key — otherwise an open detail pane keeps showing the
 triage dimensions and thumbnail — plus `["video-frames", video_id]`, because the dialog can be
-closed mid-run and nothing else would refresh `VideoDetailPage`'s extraction-history panel.
-Still no subfolder or `["video", id]` invalidation: pass 2 creates no subfolder and touches no
-`Video` row, it only rewrites the frames that row lists.
+closed mid-run and nothing else would refresh `VideoDetailPage`'s extraction-history panel,
+plus `["duplicates", dataset_id]`, because the job re-derives `phash` from the
+full-resolution frame and a stale duplicate grouping is the one thing pass 2 *does* change
+about a curation decision the user already made. Still no subfolder or `["video", id]`
+invalidation: pass 2 creates no subfolder and touches no `Video` row, it only rewrites the
+frames that row lists. The membership in `LIVE_IMAGE_JOB_TYPES` fills `["images", ds]`
+mid-run; unlike `video_extract` it adds no `["subfolders", id]` there, for the same reason.
+The full invalidation table is in `docs/dev/frontend-jobs.md`.
 
 `TERMINAL_JOB_STATUSES` comes from `constants/jobs.ts`, shared with `TopBar` and
 `useVideoExtractJobs` — three call sites is past the threshold for a local copy, and a copy

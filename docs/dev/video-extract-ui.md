@@ -121,7 +121,13 @@ still holds the old path, which is strictly worse than the bug.
   otherwise liveJobs" breaks a mixed batch: submit A+B+C with A already busy and A's live bar
   vanishes the instant the response lands, leaving only an amber `skipped` line for the video
   working hardest. A `skipped` entry that produced a row is suppressed.
-- **A row persists once seen**, accumulated in a `useRef` Map. `useVideoExtractJobs` filters
+- **A row persists once seen**, accumulated in a `useState` Map (`seenRows`) that is
+  **adjusted during render**: `mergeRows(seenRows, incomingRows)` returns the *same* Map when
+  nothing changed, so the `setSeenRows` beside it is a no-op unless a new row arrived. A ref
+  cannot serve here — the accumulated Map is what the list renders from, and a ref written
+  during render schedules no re-render, which the code's own comment says. It is the same
+  render-time-adjust idiom the file uses for `lastProbe` and `effectiveSubSelect`.
+  `useVideoExtractJobs` filters
   terminal statuses, so a row derived from it has no other source and would disappear at the
   exact moment the user is watching for an outcome — while a `result` row, whose array is
   terminal-stable, settled into "Finished or no longer reporting" correctly. The asymmetry was

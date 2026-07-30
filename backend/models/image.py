@@ -121,6 +121,8 @@ class Image(Base):
         Index("ix_images_dataset_subfolder", "dataset_id", "subfolder"),
         Index("ix_images_dataset_sort_order", "dataset_id", "sort_order"),
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),
+        Index("ix_images_dataset_created_at", "dataset_id", "created_at"),
+        Index("ix_images_dataset_caption", "dataset_id", "caption_text"),
         # No index on (dataset_id, license): every license filter runs on the
         # *effective* license, COALESCE(images.license, datasets.license), which is
         # not sargable against one. See migration b5e8d2a7c9f4.

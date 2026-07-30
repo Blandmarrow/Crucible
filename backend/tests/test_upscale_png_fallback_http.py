@@ -394,6 +394,55 @@ def test_crop_replace_upscale_still_serves_the_image_when_the_thumbnail_fails(tm
             r = await env.client.get(f"{API}/images/{img['id']}/file")
             assert r.status_code == 200, r.text
 
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["processed"] == 1, job["result_data"]
+
+    run(scenario())
+
+
+def test_crop_upscale_commits_result_data_before_its_own_completed_event(tmp_path, monkeypatch):
+    """`_run_crop_upscale_replace` emits its own `status: "completed"` event, and
+    it does so *before* `job_queue` marks the row. TopBar's completion branch
+    fires on that first event and immediately fetches the job row, so the
+    counts have to be committed above the emit or the fetch reads `{}` and the
+    stale-thumbnail warning is lost to a race.
+
+    A deterministic handshake rather than a sleep: the spy snapshots the row from
+    a **fresh** session — one that cannot see the worker's uncommitted state — at
+    the exact moment the event goes out. Bite: move the `result_data` write below
+    the `async with` block and the snapshot is `{}`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+
+            import backend.routers.images as images_router
+            from backend.models import BackgroundJob
+            from backend.workers.progress import broadcaster
+
+            _break_thumbnails(monkeypatch, images_router)
+
+            snapshots: list[dict] = []
+            real_emit = broadcaster.emit
+
+            async def spy(job_id, event):
+                if event.get("job_type") == "crop_upscale" and event.get("status") == "completed":
+                    async with env.Session() as fresh:
+                        row = await fresh.get(BackgroundJob, job_id)
+                        snapshots.append(dict(row.result_data or {}) if row else {})
+                await real_emit(job_id, event)
+
+            monkeypatch.setattr(broadcaster, "emit", spy)
+
+            r = await _crop(env, img["id"], replace=True)
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            assert snapshots, "the crop_upscale completed event never fired"
+            assert snapshots[0] == {"processed": 1, "thumbnails_stale": 1}, snapshots
+
     run(scenario())
 
 

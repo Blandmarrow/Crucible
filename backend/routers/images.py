@@ -1052,6 +1052,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             # row describing a file that is gone (PM-013).
             actual_out_path = info.get("out_path", replace_cfg["dest_path"])
             superseded: Path | None = None
+            stale = 0
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
@@ -1107,11 +1108,29 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         )
                     except Exception as exc:
                         # A stale thumbnail is cosmetic; the image is committed
-                        # and serves.
+                        # and serves. Counted rather than merely logged so the
+                        # run can say so: TopBar reads this count and points at
+                        # Bulk Edit → Thumbnails.
+                        stale = 1
                         logger.warning(
                             "Crop+upscale: thumbnail for %s could not be regenerated: %s",
                             Path(actual_out_path).name, exc,
                         )
+
+                # Written and committed **inside** this `async with`, and
+                # deliberately dedented out of `if updated:` so a vanished row
+                # still reports. The emit below is this job's own terminal
+                # `completed` event — TopBar's completion branch fires on it and
+                # immediately fetches the job row, so anything a completion
+                # handler will read has to be durable before the emit runs.
+                # `job_queue` marks the row later, from its own session.
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row:
+                    job_row.result_data = {
+                        "processed": 1 if updated else 0,
+                        "thumbnails_stale": stale,
+                    }
+                await session.commit()
 
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "crop_upscale",

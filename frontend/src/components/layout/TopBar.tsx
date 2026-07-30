@@ -27,6 +27,16 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
+// The four jobs that re-cut an image thumbnail as a best-effort post-commit
+// epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
+// place that turns it into something the user sees. It lives here rather than in
+// the five forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
+// SelectionToolbar, ImageDetailPage's three handlers, ReextractFramesForm)
+// because TopBar is always mounted — and a 400-frame re-extraction is exactly
+// the job you walk away from.
+const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
+  "batch_lut", "batch_upscale", "crop_upscale", "video_reextract",
+]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -164,6 +174,43 @@ export default function TopBar() {
       ) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);
+        // A stale thumbnail is the one outcome of these four jobs that leaves no
+        // trace in the UI: the image is correct and committed, but the gallery
+        // keeps drawing the old tile. Read after the `processedJobsRef` add, so
+        // crop_upscale's two terminal events (its own, then job_queue's) toast
+        // once. Transport is a fetch, not the SSE payload: `broadcaster.emit`
+        // silently drops events when a subscriber's 200-slot queue fills, so a
+        // piggybacked count would under-report.
+        //
+        // `cancelled` is included — every one of these workers commits its
+        // counts above `raise_if_cancelled`. `failed` is not: `job_queue` fails a
+        // raising job from a *separate* session and never persists the worker's
+        // dict, so there is nothing to read.
+        if (
+          THUMBNAIL_EPILOGUE_JOB_TYPES.has(progress.job_type) &&
+          progress.status !== "failed"
+        ) {
+          jobsApi.get(jobId).then((job) => {
+            const stale = Number(job.result_data?.thumbnails_stale ?? 0);
+            if (stale <= 0) return;
+            toast(
+              `${stale} preview${stale !== 1 ? "s are" : " is"} out of date — the image${stale !== 1 ? "s were" : " was"} ` +
+              "written correctly, but the thumbnail could not be rebuilt. " +
+              "Bulk Edit → Thumbnails repairs them.",
+              { icon: "⚠️", duration: 10000 },
+            );
+          }).catch(() => { /* the outcome of the job itself is reported elsewhere */ });
+        }
+        // Deliberately not in IMAGE_MODIFYING_JOB_TYPES: the repair rewrites
+        // thumbnails and bumps `updated_at`, so the rows carrying the `?v=`
+        // cache-buster must refetch — but no count, size or score changed, and
+        // the four stats queries would all come back identical.
+        if (progress.job_type === "regenerate_thumbnails") {
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          }
+          qc.invalidateQueries({ queryKey: ["image"] });
+        }
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
           // Dataset summary counts (image_count / captioned_count) live on the

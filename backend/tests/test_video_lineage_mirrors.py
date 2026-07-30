@@ -47,6 +47,10 @@ from backend.tests.conftest import (
 
 LINEAGE = ("source_video_id", "source_timestamp_ms", "source_shot_index")
 
+# Every `*_score` column on `Image`, derived rather than listed so the *eleventh*
+# score is covered the moment it is added.
+SCORE_COLUMNS = {c.key for c in Image.__table__.columns if c.key.endswith("_score")}
+
 # Columns that live on `Image` and deliberately have no `VersionImageState`
 # counterpart. Every entry needs a reason, because the default answer for a new
 # column is "mirror it" — a snapshot restore writes back exactly what the mirror
@@ -200,6 +204,88 @@ def test_images_source_video_id_is_set_null_on_delete():
     )
     assert fk.column.table.name == "videos"
     assert fk.ondelete == "SET NULL"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural round-trips — scores across a dataset boundary
+#
+# No video and no `@needs_cv2`: a score is an ordinary column, and routing these
+# through a decode would only make them skippable.
+# ---------------------------------------------------------------------------
+
+
+def _distinct_scores() -> dict[str, float]:
+    """A different value in every score column.
+
+    Equal values would let `nsfw_score=row.saturation_score` — a copy from the
+    wrong source attribute, the exact typo T3 guards structurally — pass a
+    behavioural round-trip.
+    """
+    return {name: 0.1 + i / 100 for i, name in enumerate(sorted(SCORE_COLUMNS))}
+
+
+async def _seed_scores(env, image_id: str) -> dict[str, float]:
+    scores = _distinct_scores()
+    async with env.Session() as db:
+        row = await db.get(Image, image_id)
+        for name, value in scores.items():
+            setattr(row, name, value)
+        await db.commit()
+    return scores
+
+
+def _read_scores(img: Image) -> dict[str, float | None]:
+    return {name: getattr(img, name) for name in SCORE_COLUMNS}
+
+
+def test_a_cross_dataset_copy_carries_every_score(tmp_path):
+    """`batch_copy_dataset` rebuilds the `Image` field by field, so a score
+    missing from its column tuple is dropped with no error anywhere."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            dest = await env.create_dataset("dest")
+            img = await upload_image(env, src["id"], "a.png")
+            scores = await _seed_scores(env, img["id"])
+
+            r = await env.client.post(
+                f"{API}/images/batch/copy-dataset",
+                json={"image_ids": [img["id"]], "target_dataset_id": dest["id"], "subfolder": ""},
+            )
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id == dest["id"])
+                )).scalar_one()
+            assert _read_scores(copy) == scores
+
+    run(scenario())
+
+
+def test_a_duplicate_carries_every_score(tmp_path):
+    """`duplicate_dataset`'s on-disk branch — a second field-by-field rebuild
+    with its own column tuple, which the copy test above does not reach."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            img = await upload_image(env, src["id"], "a.png")
+            scores = await _seed_scores(env, img["id"])
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate", json={"new_name": "copy"}
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id != src["id"])
+                )).scalars().one()
+            assert _read_scores(copy) == scores
+
+    run(scenario())
 
 
 # ---------------------------------------------------------------------------

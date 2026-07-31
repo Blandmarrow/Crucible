@@ -12,7 +12,7 @@ Snapshot-based version control for datasets. Users can create named snapshots, r
 
 | Mode | Snapshot behaviour | COW overwrite hook |
 |---|---|---|
-| `"off"` | Disabled — all versioning endpoints return 400 | No-op |
+| `"off"` | Disabled — every *write* route 400s via `_require_versioning_enabled` (snapshot, prune, branch create/delete/checkout, version update/delete, restore). The four read routes still answer, deliberately: `Sidebar` and `DatasetsPage` list branches and versions whatever the mode is | No-op |
 | `"manual"` | Snapshot copies every file to the object store eagerly (full point-in-time backup). Always runs as a background job. | No-op |
 | `"auto"` | Snapshot records metadata + `file_hash=NULL`; object store copies are made lazily on first overwrite (copy-on-write). | Fires before in-place resize/upscale/LUT replace |
 

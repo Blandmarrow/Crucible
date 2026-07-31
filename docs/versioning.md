@@ -8,7 +8,7 @@ Configured in Settings:
 
 | Mode | Behaviour |
 |---|---|
-| **Off** | Versioning disabled; all versioning endpoints return an error |
+| **Off** | Versioning disabled; the Versions page is hidden and anything that would write a snapshot, branch or restore is refused |
 | **Manual** | Every snapshot eagerly copies all image files to a content-addressable object store (full point-in-time backup) |
 | **Auto** | Snapshot records metadata only; files are copied lazily on first overwrite (copy-on-write) — storage only grows when you actually change an image |
 

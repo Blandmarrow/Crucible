@@ -14,12 +14,16 @@ into a JSON flags dict where None is not expressible; an unmeasured image is
 simply not flagged.
 
 No model weights needed: each `*_sync` scorer is replaced by one that raises
-before it would load anything.
+before it would load anything. The scorer *modules* still `import torch` at the
+top, though, which CI never has — hence `needs_torch` on the four that import one.
+The fifth asserts on the ORM alone and is the only part of this contract CI
+enforces; the rest run on any machine with the real venv.
 """
 
-from backend.tests.conftest import run
+from backend.tests.conftest import needs_torch, run
 
 
+@needs_torch
 def test_an_aesthetic_failure_records_no_score(monkeypatch):
     import backend.ml.aesthetic_scorer as aes
 
@@ -35,6 +39,7 @@ def test_an_aesthetic_failure_records_no_score(monkeypatch):
     assert scores == [None, None], "0.0 is outside the column's 1-10 range"
 
 
+@needs_torch
 def test_a_watermark_failure_records_no_score_and_no_flag(monkeypatch):
     import backend.ml.aesthetic_scorer as aes
 
@@ -51,6 +56,7 @@ def test_a_watermark_failure_records_no_score_and_no_flag(monkeypatch):
     assert results == [{"watermark_score": None, "has_watermark": False}]
 
 
+@needs_torch
 def test_a_watermark_failure_is_logged(monkeypatch, caplog):
     """This branch was silent — the one property that made the defect invisible
     in the field rather than merely wrong."""
@@ -72,6 +78,7 @@ def test_a_watermark_failure_is_logged(monkeypatch, caplog):
     assert any("/nope/a.png" in r.getMessage() for r in caplog.records)
 
 
+@needs_torch
 def test_an_nsfw_failure_records_no_score_and_is_not_flagged(monkeypatch):
     import backend.ml.nsfw_scorer as nsfw
 

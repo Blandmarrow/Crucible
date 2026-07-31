@@ -55,6 +55,17 @@ needs_cv2 = pytest.mark.skipif(
     importlib.util.find_spec("cv2") is None, reason="opencv is not installed"
 )
 
+# The same guard for torch, which — unlike cv2 — CI will never have: every job
+# installs `backend/requirements-ci.txt`, whose header explains why a torch-sized
+# wheel stays out of it. A test that imports anything under `backend/ml/` past the
+# pure-numpy modules therefore *errors* on the runner rather than skipping, and
+# `find_spec` is the only way to ask without triggering the import. Applied
+# per-test, not per-module: the files that need it (`test_scorer_failure_contract.py`)
+# also hold cases that only touch the ORM, and those must keep running in CI.
+needs_torch = pytest.mark.skipif(
+    importlib.util.find_spec("torch") is None, reason="torch is not installed"
+)
+
 
 def run(coro):
     """Run one async scenario. Mirrors the helper the other test modules use."""

@@ -62,7 +62,10 @@ decodable video is gated on cv2 — see `docs/dev/video-tests.md` (§ cv2 in CI,
 convention) before adding a test or a CI dependency there. **CI installs
 `backend/requirements-ci.txt`** — the floor-pinned, torch-free base set all three CI jobs share
 (each adding only its own alembic/uvicorn/cv2 on top); a new import in the app or the
-suite's collection path goes there, not into a workflow's install line. Coverage is opt-in:
+suite's collection path goes there, not into a workflow's install line. Torch is the one
+dependency that will never arrive, so a test importing anything under `backend/ml/` past the
+pure-numpy modules carries `conftest.needs_torch` (the sibling of `needs_cv2`) — without it
+the module *errors* on the runner rather than skipping. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`

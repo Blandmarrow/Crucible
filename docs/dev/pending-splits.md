@@ -46,10 +46,32 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-Empty. The five entries recorded here were executed on 2026-07-31: `bulk-ops.md` →
+## docs/dev/backend-infrastructure.md
+
+- **Moves:** § Database (1,142 words — the largest section by a factor of two), plus its
+  two neighbours that are really about the same thing, § Startup database backup and
+  § Migration drift check
+- **New file:** docs/dev/database.md
+- **Why here:** the file is two subjects wearing one title. One is the *schema and the
+  SQLite engine* — per-connection pragmas, FK enforcement and every `ondelete`, the index
+  inventories, deferred blob columns, the backup rotation, the drift check. The other is
+  the *running process* — the lifespan hook, production frontend serving, the server
+  control endpoints and the restart loop, SSE, job cancellation, the retention sweep, and
+  the open `JobQueue.stop()` hang. A reader arrives for exactly one of the two and there
+  is no overlap between them. Splitting there leaves ~1,785 and ~1,720 words, both close
+  to the 60% target, which is why the seam is here and not between § Database and
+  everything else.
+- **Watch for:** the § Database prose is cited from several directions and every one of
+  these is a `§`-level pointer the checker cannot verify — `docs/dev/video.md` and
+  `docs/dev/video-extract.md` (the frame-lineage FK and `ix_images_source_video_id`),
+  `docs/dev/versioning.md` (the versioning tables' cascades and the two decorative
+  model-level FKs), `docs/dev/provenance.md` (the dropped `ix_images_dataset_license`),
+  and CLAUDE.md's Documentation Map row and § Tests line. The migration-drift paragraph
+  is also referenced from `scripts/check_migrations.py`'s own module docstring. The new
+  file mirrors no user doc, so the naming convention gives no name for free — `database.md`
+  is a proposal, not a constraint.
+
+The five entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
 `export-licensing.md`, `detection.md` → `detection-inference.md`, and `statistics.md`'s
 misfiled `GET /images/` filter table → `image-filters.md`.
-
-Add an entry with the format above the next time a file trips the budget or turns into a
-dumping ground.

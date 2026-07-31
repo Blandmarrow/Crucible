@@ -268,7 +268,10 @@ covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
   `plan.pinned_params`, and `plan.output_node_ids` (see CLAUDE.md Key invariants).
 - `/interrupt` only affects the currently executing prompt — sufficient here because rows are
   submitted one at a time, so nothing of ours ever waits in ComfyUI's queue.
-- A mock ComfyUI server for end-to-end testing (system_stats/prompt/history/view with
-  PNG-embedded workflow chunks, FAIL400/FAILEXEC trigger prompts) exists in the session
-  scratchpad pattern; recreate from this description if needed.
+- **No mock ComfyUI server is checked in**, so the `comfy_generate` run body has no
+  end-to-end coverage. The shape one would need: `system_stats`, `prompt`, `history` and
+  `view` endpoints, PNG responses carrying an embedded workflow chunk, and two trigger
+  prompts that make the server answer 400 and fail mid-execution respectively. Checking one
+  in under `backend/tests/` is the only way to exercise that body; until then, treat this as
+  a description of the gap rather than of an artifact.
 - Workflow sync (bridge extension, sync button, history-pull): `docs/dev/comfyui-sync.md`.

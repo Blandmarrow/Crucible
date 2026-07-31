@@ -148,7 +148,8 @@ async def seed(
                 "uniformity_score": round(rng.random() * 30, 4),
                 "watermark_score": round(rng.random(), 4),
                 "color_score": round(rng.random() * 100, 4),
-                "saturation_score": round(rng.random() * 100, 4),
+                # mean HSV S, 0–1 — not the 0–100 range color_score uses
+                "saturation_score": round(rng.random(), 4),
                 "quality_flags": {
                     "is_blurry": rng.random() < 0.10,
                     "is_noisy": rng.random() < 0.05,

@@ -45,7 +45,8 @@ All five subfolder-aware stat endpoints accept `subfolder: str | None = Query(No
 | `noise_distribution` | 6-bucket smooth-region std dev |
 | `uniformity_distribution` | 5-bucket grayscale std dev |
 | `watermark_distribution` | 10 equal bins, 0–1 |
-| `color_distribution` / `saturation_distribution` | Hasler-Süsstrunk buckets |
+| `color_distribution` | 5-bucket Hasler-Süsstrunk colorfulness, 0–100, edges `10, 20, 40, 60` |
+| `saturation_distribution` | 5-bucket mean HSV S, **0–1**, edges `0.1, 0.2, 0.4, 0.6`. The two are not one row: saturation shipped with `color_distribution`'s 0–100 edges and rendered a single bar (`docs/dev/postmortems/PM-020-saturation-histogram-scale.md`). The edges must stay numerically identical to `SAT_EDGES` in `StatsPage.tsx`, which rebuckets client-side once a user edits them |
 | `luminance_distribution` | 5-bucket mean grayscale, edges `0.15, 0.3, 0.5, 0.7`. Panel title **Brightness**, in the *Technical Quality* category (a fifth panel in a fixed `repeat(2, 1fr)` grid — it wraps). The edges must stay numerically identical to `DEFAULT_EDGES.luminance` in `StatsPage.tsx`, or the histogram jumps the first time a user edits them |
 | `megapixel_distribution` | 7-bucket width×height/1M |
 | `file_size_distribution` | 6-bucket MB ranges |

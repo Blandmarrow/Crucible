@@ -1196,8 +1196,13 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     uni_labels =       ["0–5", "5–10", "10–20", "20–40", "40+"]
     color_edges =      [10, 20, 40, 60]
     color_labels =     ["0–10", "10–20", "20–40", "40–60", "60+"]
-    sat_edges =        [10, 20, 40, 60]
-    sat_labels =       ["0–10", "10–20", "20–40", "40–60", "60+"]
+    # Saturation is mean HSV S normalised to 0–1, *not* the 0–100 Hasler-Süsstrunk
+    # range `color_score` uses — these edges were copied from it and collapsed every
+    # image into the first bucket. Same rule as `lum_edges` below: must stay
+    # numerically identical to SAT_EDGES in StatsPage, which rebuckets client-side
+    # after an edit.
+    sat_edges =        [0.1, 0.2, 0.4, 0.6]
+    sat_labels =       ["<0.1", "0.1–0.2", "0.2–0.4", "0.4–0.6", "0.6+"]
     # Brightness is the 0–1 mean grayscale, so its edges are fractions. They must
     # stay numerically identical to DEFAULT_EDGES.luminance on the frontend, which
     # rebuckets client-side from the raw score-values array once a user edits them.

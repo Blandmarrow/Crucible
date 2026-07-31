@@ -567,11 +567,17 @@ async def _run_export_loop(
     manifest_dir: Path | None = None,
 ) -> dict:
     """
-    Shared export loop. Returns a dict with 'exported', 'output_dir', and optionally
-    'jsonl_entries' and 'csv_rows' when accumulate_plain=True. When mask_dir is set
-    (and captions_only is not), a grayscale loss-mask PNG is written per exported
-    image and the mask counters are included in the result. CREDITS.md and
-    licenses.csv are written into manifest_dir (defaulting to dest_dir).
+    Shared export loop. Always returns 'exported', 'jsonl_entries',
+    'unlicensed_count' and 'manifest_files' — the last being the names actually
+    written, since a supersede or a numbered alternate produces something other
+    than CREDITS.md/licenses.csv. When mask_dir is set (and captions_only is not),
+    a grayscale loss-mask PNG is written per exported image and 'masks_written'
+    and 'masks_full_white' join the result, plus 'excluded_no_mask' under
+    mask_missing="skip". CREDITS.md and licenses.csv are written into
+    manifest_dir (defaulting to dest_dir).
+
+    `accumulate_plain` fills the caller's plain-format accumulators; it does not
+    add a key here. There is no 'csv_rows' and never was.
     """
     from backend.workers.progress import broadcaster
 

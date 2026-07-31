@@ -30,7 +30,7 @@ const PROMPT_JOB_TYPE = "comfy_prompts";
 // The five jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
-// the five forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
+// the six forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
 // SelectionToolbar, ImageDetailPage's three handlers, ReextractFramesForm)
 // because TopBar is always mounted — and a 400-frame re-extraction is exactly
 // the job you walk away from.

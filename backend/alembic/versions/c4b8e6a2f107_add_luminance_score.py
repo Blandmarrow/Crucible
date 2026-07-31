@@ -12,6 +12,16 @@ backend/tests/test_video_lineage_mirrors.py).
 
 No backfill is possible — the value needs pixels. Existing rows stay NULL until
 re-scored, exactly as `color_score`/`saturation_score` did.
+
+**Superseded, 2026-07-31 — do not act on the "no mirror" sentence above.** A
+migration is history and is not rewritten, so the correction lives here: revision
+`d1c7b4e9f0a3`, later on this same branch, added the `version_image_states`
+mirror for `luminance_score` (with `nsfw_score` and `saturation_score`). A
+`*_score` column is authored data as far as a snapshot is concerned — nothing
+recomputes one on restore — so all ten are mirrored *and* diffed, and
+`NOT_MIRRORED` holds no score. CLAUDE.md, `docs/dev/scoring.md`,
+`docs/dev/versioning-service.md` and `test_video_lineage_mirrors.py` all agree on
+that; only this docstring predates it.
 """
 from typing import Sequence, Union
 

@@ -821,114 +821,6 @@ async def create_manual_detection(
     return {"job_id": job.id}
 
 
-@router.patch("/{detection_id}", response_model=DetectionOut)
-async def update_detection(
-    detection_id: int, body: DetectionUpdate, db: AsyncSession = Depends(get_db)
-):
-    det = await db.get(Detection, detection_id)
-    if not det:
-        raise HTTPException(404, "Detection not found")
-    det.label = body.label
-    await db.commit()
-    await db.refresh(det)
-    return det
-
-
-@router.delete("/{detection_id}", status_code=204)
-async def delete_detection(detection_id: int, db: AsyncSession = Depends(get_db)):
-    det = await db.get(Detection, detection_id)
-    if not det:
-        raise HTTPException(404, "Detection not found")
-    await db.delete(det)
-    await db.commit()
-
-
-@router.post("/{detection_id}/refine")
-async def refine_detection(
-    detection_id: int, body: DetectionRefineRequest, db: AsyncSession = Depends(get_db)
-):
-    """Refine an existing mask with point prompts (SAM2), in place.
-
-    Enqueues a detection job seeded by the detection's current mask logits. On
-    success the row is updated in place (``model="manual"``, ``task="refine"``);
-    if the row was deleted meanwhile the worker no-ops gracefully. Returns
-    ``{job_id}``. 400 when the detection has no mask to refine.
-    """
-    det = await db.get(Detection, detection_id)
-    if not det:
-        raise HTTPException(404, "Detection not found")
-    if det.mask is None:
-        raise HTTPException(400, "Detection has no mask to refine")
-
-    image = await db.get(Image, det.image_id)
-    if not image:
-        raise HTTPException(404, "Image not found")
-
-    # Capture into locals before the worker closure.
-    mask_json = det.mask
-    bbox = det.bbox
-    file_path = image.file_path
-    filename = image.filename
-    dataset_id = image.dataset_id
-    point_prompts = body.point_prompts
-    point_labels = body.point_labels
-
-    job = BackgroundJob(
-        job_type="detection",
-        label=f"Refine mask — {filename}",
-        dataset_id=dataset_id,
-        total_items=1,
-        config=body.model_dump(),
-    )
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        import functools
-
-        from backend.database import AsyncSessionLocal
-        from backend.ml.sam2_predictor import refine_sync
-        from backend.workers.progress import broadcaster
-
-        loop = asyncio.get_running_loop()
-        sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
-
-        result: dict | None = None
-        try:
-            fn = functools.partial(
-                refine_sync, file_path, sam2_entry.model, mask_json, bbox,
-                point_prompts, point_labels,
-            )
-            result = await loop.run_in_executor(None, fn)
-        except Exception:
-            logger.error("Mask refine failed for %s", file_path, exc_info=True)
-
-        async with AsyncSessionLocal() as session:
-            row = await session.get(Detection, detection_id)
-            if row is None:
-                message = "Detection was removed before refine completed"
-            elif result is None:
-                message = "Refine produced no mask — unchanged"
-            else:
-                row.mask = result["mask"]
-                row.bbox = result["bbox"]
-                row.score = result.get("score")
-                row.model = "manual"
-                row.task = "refine"
-                row.detected_at = datetime.utcnow()
-                await session.commit()
-                message = "Mask refined"
-
-        await broadcaster.emit(job_id, {
-            "type": "progress", "job_id": job_id, "job_type": "detection",
-            "status": "running", "done": 1, "total": 1, "percent": 100.0,
-            "current_item": filename, "message": message,
-        })
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
-
-
 async def _fetch_bboxes_by_image(
     db: AsyncSession, image_ids: list[str], labels: list[str] | None
 ) -> dict[str, list[list[float]]]:
@@ -1194,3 +1086,120 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": total, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# Every route below takes `{detection_id}`; keep new literal-segment routes above
+# this line. FastAPI matches in declaration order, so a literal route declared
+# after a parameterized one is shadowed the moment their methods collide — the
+# PM-018 shape. `POST /crop` was declared down here and was safe only
+# incidentally: there is no `POST /{detection_id}` today, and `detection_id: int`
+# would have 422'd on the segment "crop" rather than routing it correctly.
+# ---------------------------------------------------------------------------
+
+@router.patch("/{detection_id}", response_model=DetectionOut)
+async def update_detection(
+    detection_id: int, body: DetectionUpdate, db: AsyncSession = Depends(get_db)
+):
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    det.label = body.label
+    await db.commit()
+    await db.refresh(det)
+    return det
+
+
+@router.delete("/{detection_id}", status_code=204)
+async def delete_detection(detection_id: int, db: AsyncSession = Depends(get_db)):
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    await db.delete(det)
+    await db.commit()
+
+
+@router.post("/{detection_id}/refine")
+async def refine_detection(
+    detection_id: int, body: DetectionRefineRequest, db: AsyncSession = Depends(get_db)
+):
+    """Refine an existing mask with point prompts (SAM2), in place.
+
+    Enqueues a detection job seeded by the detection's current mask logits. On
+    success the row is updated in place (``model="manual"``, ``task="refine"``);
+    if the row was deleted meanwhile the worker no-ops gracefully. Returns
+    ``{job_id}``. 400 when the detection has no mask to refine.
+    """
+    det = await db.get(Detection, detection_id)
+    if not det:
+        raise HTTPException(404, "Detection not found")
+    if det.mask is None:
+        raise HTTPException(400, "Detection has no mask to refine")
+
+    image = await db.get(Image, det.image_id)
+    if not image:
+        raise HTTPException(404, "Image not found")
+
+    # Capture into locals before the worker closure.
+    mask_json = det.mask
+    bbox = det.bbox
+    file_path = image.file_path
+    filename = image.filename
+    dataset_id = image.dataset_id
+    point_prompts = body.point_prompts
+    point_labels = body.point_labels
+
+    job = BackgroundJob(
+        job_type="detection",
+        label=f"Refine mask — {filename}",
+        dataset_id=dataset_id,
+        total_items=1,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        import functools
+
+        from backend.database import AsyncSessionLocal
+        from backend.ml.sam2_predictor import refine_sync
+        from backend.workers.progress import broadcaster
+
+        loop = asyncio.get_running_loop()
+        sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
+
+        result: dict | None = None
+        try:
+            fn = functools.partial(
+                refine_sync, file_path, sam2_entry.model, mask_json, bbox,
+                point_prompts, point_labels,
+            )
+            result = await loop.run_in_executor(None, fn)
+        except Exception:
+            logger.error("Mask refine failed for %s", file_path, exc_info=True)
+
+        async with AsyncSessionLocal() as session:
+            row = await session.get(Detection, detection_id)
+            if row is None:
+                message = "Detection was removed before refine completed"
+            elif result is None:
+                message = "Refine produced no mask — unchanged"
+            else:
+                row.mask = result["mask"]
+                row.bbox = result["bbox"]
+                row.score = result.get("score")
+                row.model = "manual"
+                row.task = "refine"
+                row.detected_at = datetime.utcnow()
+                await session.commit()
+                message = "Mask refined"
+
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "detection",
+            "status": "running", "done": 1, "total": 1, "percent": 100.0,
+            "current_item": filename, "message": message,
+        })
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}

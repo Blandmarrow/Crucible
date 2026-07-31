@@ -91,10 +91,12 @@ def luma(frame: np.ndarray) -> np.ndarray:
     mutates the plane: treat the result as read-only.
 
     The `einsum` form rather than `0.114*b + 0.587*g + 0.299*r` is about the
-    transient, not the arithmetic — it sums in the same order and is bit-identical
-    on a real frame, but the three-term expression materialises three full-size
-    float32 temporaries. At 4K that is 166 MB peak against 33 MB, and half the
-    wall clock.
+    transient, not the arithmetic — it is numerically equivalent to within
+    float32 tolerance, which is what the tests pin (`allclose`, atol 1e-4), not
+    bit-identity: numpy does not guarantee einsum's accumulation order. What it
+    buys is that the three-term expression materialises three full-size float32
+    temporaries. At 4K that is 166 MB peak against 33 MB, and half the wall
+    clock.
     """
     a = np.asarray(frame)
     if a.ndim == 2:

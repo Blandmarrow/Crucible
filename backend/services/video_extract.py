@@ -138,11 +138,13 @@ def capabilities() -> dict:
     """What this install can actually do. Rides on the probe response, and is
     also served on its own by `GET /videos/capabilities` — a video that will not
     probe still extracts, so the modal needs an answer that does not depend on
-    one. Pure and cheap enough to be a request-path call either way. Both entries
-    are False on a fresh checkout until
-    `manage.sh update` installs the two optional dependencies, and that is
-    useful — the degraded branches run for real in CI rather than only in
-    theory.
+    one. Pure and cheap enough to be a request-path call either way. Both
+    dependencies ship in `backend/requirements.txt`, so a normal `setup`/`update`
+    install answers True to both. They go False where the install is deliberately
+    narrower — CI builds from `requirements-ci.txt` and adds only what a job
+    needs, so `deinterlace` is False in every job and `shot_detection` is False
+    in all but the video one. That is useful rather than incidental: it means the
+    degraded branches run for real rather than only in theory.
     """
     caps: dict = {
         "shot_detection": False,

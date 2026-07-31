@@ -281,8 +281,14 @@ def generate_poster(
 
     Returns True when a poster was written, False when nothing decodable came
     back. A poster is a nicety: a video whose frames will not decode must still
-    list, play, rename and delete, so every failure path here returns False and
+    list, play, rename and delete, so every *decode* failure returns False and
     leaves `poster_path` NULL for the caller. The UI draws a film glyph instead.
+
+    The encode tail at the bottom is the exception and does **raise** — a PIL or
+    WebP failure, a full disk, a failing `os.replace` — after removing its temp.
+    Callers are what make the guarantee above hold end to end: `probe_and_poster`
+    catches `Exception`, and so does the poster endpoint in `routers/videos.py`.
+    A new caller has to do the same.
 
     OpenCV rather than ffmpeg because it is already a dependency and this is one
     seek plus one read — no filter chain. Only the `bwdif` deinterlace path in

@@ -19,6 +19,11 @@ migration and never on the model — this fixes the asymmetry in the correct
 direction rather than copying the drift. Folding `Image.file_path` onto its
 model is the follow-up; it would mean deleting an allowlist line in a change
 about videos.
+
+**That follow-up shipped, 2026-07-31.** `Image.file_path` now carries
+`index=True` on the model and `ix_images_file_path` is no longer allowlisted in
+`scripts/check_migrations.py`. Left recorded here rather than edited out above: a
+migration is history.
 """
 from typing import Sequence, Union
 

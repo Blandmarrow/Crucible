@@ -504,7 +504,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
           <Crop size={14} /> Crop
         </button>
-        {/* Rendered unconditionally like the other thirteen actions rather than
+        {/* Rendered unconditionally like the other fourteen actions rather than
             gated on lineage: the store holds ids only, and a selection can span
             pages and datasets, so any client-side gate would be wrong for exactly
             the selections that matter. The preview endpoint does the honest

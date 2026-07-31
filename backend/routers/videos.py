@@ -593,11 +593,14 @@ async def extract_frames(body: VideoExtractRequest, db: AsyncSession = Depends(g
                     f"Crop {rect} does not fit inside {v.filename} ({v.width}x{v.height})",
                 )
         width, height = next(iter(dims))
-        # `clamp_crop` is the single source of truth for the even-snap and the
-        # no-op rule; a None result means the rect covers the whole frame, which
-        # is stored as no crop rather than treated as an error. An unprobed batch
-        # has nothing to normalize against — the per-frame clamp inside
-        # `render_shot` is the real authority anyway.
+        # `clamp_crop` is the guard every *stored or applied* rect passes
+        # through, not the sole implementation: `crop_rect_from_profiles` snaps
+        # its own edges with `_even_down` and applies its own no-op rule before
+        # `clamp_crop` is ever reached, so a change to either rule has two sites.
+        # A None result means the rect covers the whole frame, which is stored as
+        # no crop rather than treated as an error. An unprobed batch has nothing
+        # to normalize against — the per-frame clamp inside `render_shot` is the
+        # real authority anyway.
         normalized_crop = clamp_crop(rect, width, height) if width and height else rect
 
     # Trims that leave no window are refused here, and on the *effective* value

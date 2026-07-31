@@ -13,7 +13,7 @@ with `create_all` and never gets the `PRAGMA foreign_keys=ON` that
 `backend/database.py` installs, so the FK's behaviour is untestable there.
 
 **Why batch_alter_table**, despite `images` being the largest table in the schema
-(seven indexes plus `uq_dataset_filename`) and batch mode being a copy-and-rebuild:
+(eleven indexes plus `uq_dataset_filename`) and batch mode being a copy-and-rebuild:
 the cheap form, `op.add_column(..., inline_references=True)`, emits exactly the
 right DDL — one `ALTER TABLE ADD COLUMN` with `REFERENCES videos (id) ON DELETE
 SET NULL`, and `PRAGMA foreign_key_list` confirms SQLite enforces it. But

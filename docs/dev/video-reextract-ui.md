@@ -45,9 +45,9 @@ before anything is started. Two shapes here are load-bearing:
   adds non-terminal ones.
 - **No persisted key**, unlike pass 1's `` `video-extract-job-${videoId}` ``. Pass 2 emits per
   frame, so a reconnected SSE stream repopulates `jobStore` within a frame; pass 1 needed a
-  stored id because its `detecting`/`replacing` phases are long and silent. The "four
-  sanctioned exceptions" framing in `docs/dev/persistence.md` therefore stands unchanged —
-  pass 2 adding no key is precisely what leaves it at four.
+  stored id because its `detecting`/`replacing` phases are long and silent. The sanctioned
+  exception list in `docs/dev/persistence.md` therefore stands unchanged at **six** — pass 2
+  adding no key is precisely what keeps its component-local group at four bullets, not five.
 
 Two accepted consequences, noted in the code rather than engineered away: adoption waits one
 preview round trip (the pill appears a moment after open), and an adopted job completing fires

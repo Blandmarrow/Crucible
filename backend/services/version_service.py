@@ -31,10 +31,15 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# `settings as app_settings`: several functions here bind `settings = await
+# get_thresholds(db)` as a local, so the plain name is a shadowing trap.
+from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
+from backend.models.video import Video
 from backend.services.threshold_service import get_thresholds
+from backend.utils import chunked, contained_path, within_datasets_dir
 
 logger = logging.getLogger(__name__)
 
@@ -93,20 +98,29 @@ def _remove_stale_files(file_path: str | None, sidecar: bool, thumbnail_path: st
     Used by restore when an image was renamed/moved after the snapshot: the file left
     behind at its old on-disk location is an orphan and must be cleaned up.
     Sync — always call via ``loop.run_in_executor``.
+
+    Containment is gated **here** rather than at the five call sites (V-83): each
+    path resolves through `contained_path` and only the resolved form is unlinked,
+    so a hand-edited `file_path` cannot make a restore delete outside
+    `settings.datasets_dir`. The riskiest caller is
+    ``handle_extra_images="remove"``, which passes an arbitrary row's stored
+    columns straight through. `contained_path` never raises, which matters: the
+    bare ``except Exception: pass`` below would swallow it silently.
     """
     try:
-        if file_path:
-            p = Path(file_path)
+        p = contained_path(file_path, app_settings.datasets_dir, context="_remove_stale_files")
+        if p is not None:
             if p.exists():
                 p.unlink()
             if sidecar:
                 txt = p.with_suffix(".txt")
                 if txt.exists():
                     txt.unlink()
-        if thumbnail_path:
-            thumb = Path(thumbnail_path)
-            if thumb.exists():
-                thumb.unlink()
+        thumb = contained_path(
+            thumbnail_path, app_settings.datasets_dir, context="_remove_stale_files"
+        )
+        if thumb is not None and thumb.exists():
+            thumb.unlink()
     except Exception:
         pass
 
@@ -145,6 +159,20 @@ async def _backup_and_record_hash(
     Otherwise the file is re-stored via ``_store_object`` and the backfilled hash is
     the hash of the bytes actually stored, so a file mutating between the caller's
     hash and the copy can never poison the store or the state rows.
+
+    The containment gate here is the *whole* COW surface: this is the only function
+    that copies a row's bytes into ``{ds}/.versions/objects/``, and both hooks
+    (``protect_file_before_overwrite``, ``mark_image_deleted_in_versions``) route
+    through it, so one guard covers every call site of either. Since a stored object
+    is retrievable through a snapshot restore, an out-of-tree ``file_path`` would be
+    an arbitrary-file **read** primitive even where no unlink follows. The base is
+    the row's own ``dataset_folder`` rather than ``settings.datasets_dir`` — stricter,
+    and it also catches a row pointing into a *different* dataset. Skip-and-log, per
+    CLAUDE.md's destructive-site rule: an out-of-tree row still completes its
+    overwrite or deletion instead of failing the whole job. ``within_datasets_dir``
+    resolves, so this catches the one live vector — a symlink placed in
+    ``{ds}/images/`` that rescan registers under its in-tree path while ``open()``
+    follows it out of tree.
     """
     null_check = await db.execute(
         select(VersionImageState.id).where(
@@ -153,6 +181,12 @@ async def _backup_and_record_hash(
         ).limit(1)
     )
     if null_check.first() is None or not Path(file_path).exists():
+        return None
+    if within_datasets_dir(file_path, Path(dataset_folder)) is None:
+        logger.warning(
+            "_backup_and_record_hash: refusing out-of-tree path for image %s: %s",
+            image_id, file_path,
+        )
         return None
     loop = asyncio.get_running_loop()
     sha256 = precomputed_sha256
@@ -387,12 +421,15 @@ async def create_snapshot(
             format=img.format,
             caption_text=img.caption_text or "",
             quality_flags=img.quality_flags,
+            nsfw_score=img.nsfw_score,
             aesthetic_score=img.aesthetic_score,
             blur_score=img.blur_score,
             noise_score=img.noise_score,
             uniformity_score=img.uniformity_score,
             watermark_score=img.watermark_score,
             color_score=img.color_score,
+            saturation_score=img.saturation_score,
+            luminance_score=img.luminance_score,
             style_similarity_score=img.style_similarity_score,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
@@ -403,6 +440,9 @@ async def create_snapshot(
             source_meta=img.source_meta,
             processing_history=img.processing_history,
             sort_order=img.sort_order,
+            source_video_id=img.source_video_id,
+            source_timestamp_ms=img.source_timestamp_ms,
+            source_shot_index=img.source_shot_index,
             is_present=True,
         ))
 
@@ -452,12 +492,15 @@ _DIFF_COLS = (
     VersionImageState.file_hash,
     VersionImageState.caption_text,
     VersionImageState.quality_flags,
+    VersionImageState.nsfw_score,
     VersionImageState.aesthetic_score,
     VersionImageState.blur_score,
     VersionImageState.noise_score,
     VersionImageState.uniformity_score,
     VersionImageState.watermark_score,
     VersionImageState.color_score,
+    VersionImageState.saturation_score,
+    VersionImageState.luminance_score,
     VersionImageState.style_similarity_score,
     VersionImageState.dino_layer_scores,
     VersionImageState.generation_metadata,
@@ -468,6 +511,12 @@ _DIFF_COLS = (
     VersionImageState.source_meta,
     VersionImageState.sort_order,
     VersionImageState.processing_history,
+    # Deliberately absent: source_video_id / source_timestamp_ms /
+    # source_shot_index. Frame lineage is immutable for the life of an image —
+    # extraction writes it once and nothing else ever changes it — so it can
+    # never differ between two snapshots of the same image, and diffing it would
+    # only add three columns to every state query for a guaranteed "unchanged".
+    # It is still snapshotted and restored; it is just not *compared*.
 )
 
 # Diffed but reported only as {"changed": true} — the values can be tens of KB
@@ -481,8 +530,9 @@ _HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata", "sou
 # and a test asserts this one is a subset of the columns above.
 _DIFF_COMPARE_FIELDS = (
     "caption_text", "quality_flags", "subfolder",
-    "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-    "watermark_score", "color_score", "style_similarity_score",
+    "nsfw_score", "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
     "source_meta", "sort_order",
@@ -750,13 +800,24 @@ async def restore_snapshot(
     # up first. In "remove" mode every extra is deleted anyway, so fire the
     # deletion hook for all of them here (before any FS write), making the
     # removal undoable via the pre-restore snapshot.
-    if handle_extra_images == "remove":
-        for extra_img in extra_imgs:
-            await mark_image_deleted_in_versions(extra_img.id, extra_img.file_path, db)
-    else:
-        for extra_img in extra_imgs:
-            if extra_img.file_path in all_targets:
-                await protect_file_before_overwrite(extra_img.id, extra_img.file_path, db)
+    #
+    # The containment gate covers the **whole** loop, not just the "remove"
+    # branch: both hooks end at `_store_object`, which copies the named file's
+    # bytes into `{ds}/.versions/objects/` where a restore hands them back, so an
+    # out-of-tree `file_path` is the same arbitrary-file read primitive either
+    # way. Gated per row, and the restore carries on without the extra — the row
+    # itself is still removed or renamed by Pass 2.
+    for extra_img in extra_imgs:
+        safe_extra = contained_path(
+            extra_img.file_path, app_settings.datasets_dir,
+            context="restore_snapshot extras", ident=extra_img.id,
+        )
+        if safe_extra is None:
+            continue
+        if handle_extra_images == "remove":
+            await mark_image_deleted_in_versions(extra_img.id, str(safe_extra), db)
+        elif extra_img.file_path in all_targets:
+            await protect_file_before_overwrite(extra_img.id, str(safe_extra), db)
 
     # ── Pass 2: all DB updates, then commit (DB is authoritative before FS) ──
     # Filename moves need DB-level staging too: SQLite checks uq_dataset_filename
@@ -806,6 +867,30 @@ async def restore_snapshot(
             )
         await db.flush()
 
+    # A snapshot outlives its video on purpose: `VersionImageState` carries no
+    # FK, so deleting a video (which NULLs the live frames' lineage rather than
+    # destroying curated data) leaves the stored id naming a row that is gone.
+    # `Image.source_video_id` *is* a real FK, and `ondelete="SET NULL"` covers
+    # only deleting the parent — an UPDATE to a missing parent key still raises
+    # `FOREIGN KEY constraint failed`, aborting the whole restore permanently.
+    # So resolve the ids that still exist and NULL the rest, the same fallback
+    # `duplicate_dataset` uses when its old→new video map misses.
+    snapshot_video_ids = {
+        p.state.source_video_id for p in plans if p.state.source_video_id
+    }
+    live_video_ids: set[str] = set()
+    for chunk in chunked(sorted(snapshot_video_ids)):
+        rows = await db.execute(select(Video.id).where(Video.id.in_(chunk)))
+        live_video_ids.update(rows.scalars().all())
+    missing_video_ids = snapshot_video_ids - live_video_ids
+    if missing_video_ids:
+        logger.warning(
+            "restore: %d snapshotted frame(s) name %d video(s) that no longer "
+            "exist; restoring their lineage as NULL",
+            sum(1 for p in plans if p.state.source_video_id in missing_video_ids),
+            len(missing_video_ids),
+        )
+
     # Pass 2c: final values; re-creation INSERTs are now collision-free.
     for p in plans:
         img = p.img
@@ -842,12 +927,15 @@ async def restore_snapshot(
         img.original_filename = state.original_filename
         img.file_path = p.target_path
         img.subfolder = state.subfolder
+        img.nsfw_score = state.nsfw_score
         img.aesthetic_score = state.aesthetic_score
         img.blur_score = state.blur_score
         img.noise_score = state.noise_score
         img.uniformity_score = state.uniformity_score
         img.watermark_score = state.watermark_score
         img.color_score = state.color_score
+        img.saturation_score = state.saturation_score
+        img.luminance_score = state.luminance_score
         img.style_similarity_score = state.style_similarity_score
         img.dino_layer_scores = state.dino_layer_scores
         img.generation_metadata = state.generation_metadata
@@ -858,6 +946,11 @@ async def restore_snapshot(
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.sort_order = state.sort_order
+        img.source_video_id = (
+            state.source_video_id if state.source_video_id in live_video_ids else None
+        )
+        img.source_timestamp_ms = state.source_timestamp_ms
+        img.source_shot_index = state.source_shot_index
         if state.width:
             img.width = state.width
         if state.height:

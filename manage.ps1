@@ -57,19 +57,34 @@ function Install-Deps {
                 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
                 # Use py -3.12 to resolve the exact executable that was just installed,
                 # bypassing any pre-release Python that may be first in PATH.
-                $pyExe = $null
-                if (Get-Command py -ErrorAction SilentlyContinue) {
-                    $pyPath = & py -3.12 -c "import sys; print(sys.executable)" 2>&1
-                    if ($LASTEXITCODE -eq 0 -and (Test-Path "$pyPath")) { $pyExe = "$pyPath" }
-                }
-                if (-not $pyExe) {
-                    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
-                    $pyPath = if ($pyCmd) { $pyCmd.Source } else { $null }
-                    if ($pyPath) { $pyExe = $pyPath }
+                # Both 2>&1 calls below run with $ErrorActionPreference dropped: PS5.1
+                # wraps a native command's REDIRECTED stderr in a NativeCommandError that
+                # the file-scope "Stop" makes terminating (PM-019). `py -3.12` prints
+                # "Python 3.12 not found!" there whenever the launcher has not yet picked
+                # up the install winget just made - which is precisely the case the
+                # $LASTEXITCODE check and the Get-Command fallback below exist to handle,
+                # so an abort here would defeat its own recovery path.
+                $prevEap = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                try {
+                    $pyExe = $null
+                    if (Get-Command py -ErrorAction SilentlyContinue) {
+                        $pyPath = & py -3.12 -c "import sys; print(sys.executable)" 2>&1
+                        if ($LASTEXITCODE -eq 0 -and (Test-Path "$pyPath")) { $pyExe = "$pyPath" }
+                    }
+                    if (-not $pyExe) {
+                        $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+                        $pyPath = if ($pyCmd) { $pyCmd.Source } else { $null }
+                        if ($pyPath) { $pyExe = $pyPath }
+                    }
+                    if ($pyExe) {
+                        $script:PythonExe = $pyExe
+                        $ver = & $pyExe --version 2>&1
+                    }
+                } finally {
+                    $ErrorActionPreference = $prevEap
                 }
                 if ($pyExe) {
-                    $script:PythonExe = $pyExe
-                    $ver = & $pyExe --version 2>&1
                     Write-Host "  Installed: $ver" -ForegroundColor Green
                 } else {
                     Write-Host "  Python installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
@@ -281,8 +296,26 @@ function Install-TorchIfNeeded {
             # message, and stays on CPU. Uninstall first so the install is real.
             # torchvision goes too: a +cpu torchvision against a CUDA torch fails
             # at runtime, and sam3/spandrel/timm all pull it in.
-            & "$ROOT\venv\Scripts\pip.exe" uninstall -y torch torchvision --quiet 2>$null
-            & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.7" torchvision --index-url $indexUrl --quiet
+            #
+            # On a FRESH venv the uninstall always writes to stderr - "WARNING:
+            # Skipping torch as it is not installed", because torch is not there
+            # yet by definition - and that killed setup outright. Redirecting
+            # stderr is what makes PowerShell 5.1 wrap those lines in a
+            # NativeCommandError ErrorRecord, and the file-scope "Stop" then makes
+            # it terminating before the redirection can discard it, so the old
+            # `2>$null` CAUSED the abort rather than suppressing it (nor does one
+            # --quiet: it suppresses INFO, not WARNING). Hence no redirect plus
+            # the same $ErrorActionPreference drop Reset-Lockfile uses. The
+            # install shares the block because a routine pip warning there would
+            # abort the same way - and its real outcome is checked below anyway.
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & "$ROOT\venv\Scripts\pip.exe" uninstall -y torch torchvision --quiet
+                & "$ROOT\venv\Scripts\pip.exe" install "torch>=2.7" torchvision --index-url $indexUrl --quiet
+            } finally {
+                $ErrorActionPreference = $prevEap
+            }
             # Verify against the interpreter, not $LASTEXITCODE: pip exits 0 in
             # several cases where no usable CUDA build ended up installed.
             $cudaNow = $null
@@ -470,7 +503,18 @@ function Cmd-Setup {
     Write-Host "[3/7] Creating Python virtual environment..." -ForegroundColor Yellow
     if (Test-Path "$ROOT\venv") {
         # Validate existing venv before reusing - recreate if Python is wrong version or pre-release.
-        $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+        # Preference dropped for the probe (PM-019): a venv whose interpreter is broken
+        # rather than merely outdated - a relocated repo, a partly-deleted Scripts\ - fails
+        # this call on stderr, and under the file-scope "Stop" that abort would pre-empt the
+        # recreate branch below that exists to repair exactly that venv. A null $venvVer
+        # matches no version and lands on the same branch, which is the right answer.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
         $venvOk = $false
         if ("$venvVer" -match "Python (\d+)\.(\d+)") {
             $vMaj = [int]$Matches[1]; $vMin = [int]$Matches[2]
@@ -704,7 +748,17 @@ function Cmd-Update {
     Activate-Venv
 
     # Verify the venv Python meets the 3.12+ requirement before continuing.
-    $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+    # Preference dropped for the probe, as in Cmd-Setup (PM-019). An interpreter broken
+    # rather than outdated writes to stderr here, and aborting on a NativeCommandError is
+    # a worse report than what follows: $venvPyVer matches no version, the block below is
+    # skipped, and the requirements.txt step fails with its own "pip install failed".
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($venvPyVer -match "Python (\d+)\.(\d+)") {
         $pvMaj = [int]$Matches[1]; $pvMin = [int]$Matches[2]
         $pvPreRelease = "$venvPyVer" -match "(a|b|rc)\d+"

@@ -14,13 +14,13 @@ _INPUT_SIZE = 384
 
 def score_image_sync(image_path: str, model_entry: dict) -> float:
     """Return NSFW probability (0–1) for the image at image_path."""
-    from PIL import Image
+    from backend.ml.image_utils import open_rgb
 
     processor = model_entry["processor"]
     model = model_entry["model"]
     nsfw_idx = model_entry["nsfw_idx"]
 
-    img = Image.open(image_path).convert("RGB")
+    img = open_rgb(image_path)
     inputs = processor(images=img, return_tensors="pt")
     img.close()
 
@@ -41,7 +41,9 @@ async def score_images_nsfw_batch(
 ) -> list[dict]:
     """Score a batch of images for NSFW content, emitting SSE progress.
 
-    Returns a list of dicts with keys: nsfw_score (float), is_nsfw (bool).
+    Returns a list of dicts with keys: nsfw_score (float | None), is_nsfw (bool).
+    `nsfw_score` is None for an image that could not be scored — see the failure
+    contract in the except branch below.
     """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -57,9 +59,20 @@ async def score_images_nsfw_batch(
             fn = functools.partial(score_image_sync, path, model_entry)
             score = await loop.run_in_executor(None, fn)
         except Exception:
+            # NULL, not 0.0 — the technical scorer's failure contract
+            # (docs/dev/scoring.md § The failure contract). A 0.0 asserted the
+            # image was confidently safe about a file no decoder ever read, which
+            # is the wrong direction to guess in, and it counted toward
+            # `score_coverage` so nothing flagged the gap.
             logger.warning("NSFW scoring failed for %s", path, exc_info=True)
-            score = 0.0
-        results.append({"nsfw_score": score, "is_nsfw": score >= threshold})
+            score = None
+        results.append({
+            "nsfw_score": score,
+            # False rather than None: routers/quality.py folds this into a JSON
+            # flags dict where None is not expressible. An unmeasured image is
+            # simply not flagged.
+            "is_nsfw": score is not None and score >= threshold,
+        })
 
         if job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {

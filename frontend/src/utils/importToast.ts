@@ -11,13 +11,17 @@ export function showImportSummaryToast(jobId: string): void {
   jobsApi
     .get(jobId)
     .then((job) => {
-      const r = job.result_data as { added?: number; failed_count?: number };
+      const r = job.result_data as { added?: number; videos_added?: number; failed_count?: number };
       const added = r.added ?? 0;
+      const videos = r.videos_added ?? 0;
       const failed = r.failed_count ?? 0;
+      const what =
+        `${added} image${added !== 1 ? "s" : ""}` +
+        (videos ? ` and ${videos} video${videos !== 1 ? "s" : ""}` : "");
       if (failed > 0) {
-        toast(`Imported ${added} · ${failed} failed (see server log)`);
+        toast(`Imported ${what} · ${failed} failed (see server log)`);
       } else {
-        toast.success(`Imported ${added} image${added !== 1 ? "s" : ""}`);
+        toast.success(`Imported ${what}`);
       }
     })
     .catch(() => toast.success("Import complete"));

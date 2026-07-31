@@ -6,7 +6,9 @@ export interface FsEntry {
   type: "dir" | "file";
   size_bytes: number | null;
   modified_at: string;
-  is_image: boolean;
+  /** null for a directory or a file Crucible will not ingest. Replaces the
+   *  older `is_image` flag — see backend/media_types.py::media_kind_for. */
+  media_kind: "image" | "video" | null;
   extension: string | null;
 }
 

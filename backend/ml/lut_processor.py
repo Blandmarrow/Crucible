@@ -198,7 +198,12 @@ def apply_lut_sync(
     replace=True  → overwrites src in place; dest is ignored.
     replace=False → writes to dest.
     intensity     → 0.0 = no change, 1.0 = full LUT.
-    Returns {width, height, file_size_bytes, format}.
+    Returns {width, height, file_size_bytes, format, out_path}.
+
+    `out_path` is the path actually written, which is **not** the one asked for
+    when `normalize_image_format` falls back to PNG (.bmp/.gif/.tiff/.avif).
+    Every caller has to follow it (PM-009); `upscale_image_sync` returns the
+    same key for the same reason.
     """
     from PIL import Image, ImageOps
 

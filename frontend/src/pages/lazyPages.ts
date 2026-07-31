@@ -13,6 +13,7 @@ import { lazy } from "react";
 export const DatasetsPage = lazy(() => import("./DatasetsPage"));
 export const GalleryPage = lazy(() => import("./GalleryPage"));
 export const ImageDetailPage = lazy(() => import("./ImageDetailPage"));
+export const VideoDetailPage = lazy(() => import("./VideoDetailPage"));
 export const CaptioningPage = lazy(() => import("./CaptioningPage"));
 export const QualityPage = lazy(() => import("./QualityPage"));
 export const StatsPage = lazy(() => import("./StatsPage"));

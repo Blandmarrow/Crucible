@@ -3,7 +3,7 @@ import logging
 import threading
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +77,9 @@ def _load_model(variant_id: str) -> tuple:
 
 
 def _preprocess(image_path: str, size: int = 448) -> np.ndarray:
-    img = Image.open(image_path).convert("RGB")
-    img = ImageOps.exif_transpose(img)
+    from backend.ml.image_utils import open_rgb
+
+    img = open_rgb(image_path)
 
     # Pad to square then resize
     w, h = img.size

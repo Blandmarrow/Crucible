@@ -26,6 +26,7 @@ class ImageOut(BaseModel):
     nsfw_score: float | None = None
     color_score: float | None = None
     saturation_score: float | None = None
+    luminance_score: float | None = None
     style_similarity_score: float | None = None
     dino_layer_scores: dict | None = None
     has_dino_layer_embeddings: bool = False
@@ -54,6 +55,13 @@ class ImageOut(BaseModel):
     # backend.licenses.resolve_provenance. Populated by the router.
     provenance: dict | None = None
 
+    # Frame lineage. Set only on images produced by video frame extraction;
+    # `source_video_id` goes NULL when the source video is deleted, while the
+    # timestamp and shot index survive it.
+    source_video_id: str | None = None
+    source_timestamp_ms: int | None = None
+    source_shot_index: int | None = None
+
     model_config = {"from_attributes": True}
 
 
@@ -72,6 +80,7 @@ class ImageListItem(BaseModel):
     watermark_score: float | None = None
     color_score: float | None = None
     saturation_score: float | None = None
+    luminance_score: float | None = None
     style_similarity_score: float | None = None
     dino_layer_scores: dict | None = None
     quality_flags: dict[str, Any]
@@ -86,6 +95,9 @@ class ImageListItem(BaseModel):
     # which is NULL whenever the image inherits; the router overwrites it with
     # the resolved value before responding. "" when neither level records one.
     license: str | None = ""
+    # Lineage marker only — the gallery card needs no timestamp or shot index,
+    # and this payload is paid per row on every page.
+    source_video_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -121,12 +133,14 @@ class BatchResizeRequest(BaseModel):
     height: int | None = None
     scale: float | None = None
     maintain_ar: bool = True
+    label: str | None = None
 
 
 class BatchCropRequest(BaseModel):
     image_ids: list[str]
     target_ar: float
     strategy: str = "center"
+    label: str | None = None
 
 
 class BatchMoveSubfolderRequest(BaseModel):
@@ -176,6 +190,20 @@ class BulkDeleteRequest(BulkFilterBase):
 
 class BulkCountRequest(BulkFilterBase):
     include_flagged: bool = False
+
+
+class BulkThumbnailRequest(BulkFilterBase):
+    """Re-cut the thumbnails of a scope whose previews have gone stale.
+
+    The repair for the four jobs that regenerate a thumbnail as a best-effort
+    post-commit epilogue (batch LUT, batch upscale, crop+upscale, video
+    re-extract): each reports a `thumbnails_stale` count, and this rebuilds them.
+    A **scope**, never the affected id list — the trigger (a full volume, a
+    read-only `thumbnails/`) is deterministic, so "the affected images" is
+    "everything the run touched", and over-scoping costs one re-encode per image.
+    """
+    include_flagged: bool = False
+    label: str | None = None
 
 
 class ProvenanceEdit(BaseModel):

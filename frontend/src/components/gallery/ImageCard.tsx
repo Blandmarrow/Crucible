@@ -146,6 +146,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
             extends the click target past the visual box; the matching negative
             offset keeps the box itself pinned at the card's 8px corner inset. */}
         <div
+          data-testid={`select-${image.filename}`}
           style={{ position: "absolute", top: 8 - CB_PAD, left: 8 - CB_PAD, padding: CB_PAD, zIndex: 3 }}
           onClick={(e) => { e.stopPropagation(); onSelect ? onSelect(image.id, e.shiftKey, true) : toggle(image.id, datasetId ?? ""); }}
         >

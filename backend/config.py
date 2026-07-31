@@ -1,10 +1,22 @@
 import logging
+import os
 from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+# Silence libavformat's own stderr chatter (AV_LOG_QUIET). Rejecting an
+# undecodable upload is a normal, expected outcome of the ingest gate in
+# services/video_service.py, but every rejection makes OpenCV's ffmpeg backend
+# print lines like "[mov,mp4,…] moov atom not found" straight to stderr.
+# cv2.utils.logging.setLogLevel does NOT suppress those — they come from libav,
+# not from OpenCV's logger — and the variable is read when the ffmpeg backend
+# initialises, so setting it after the first VideoCapture is too late. config.py
+# is the earliest module reliably imported before any cv2 use. setdefault keeps
+# an operator's override intact.
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 
 
 class Settings(BaseSettings):

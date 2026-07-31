@@ -9,6 +9,7 @@ export interface ScoreValues {
   watermark_score: number[];
   color_score: number[];
   saturation_score: number[];
+  luminance_score: number[];
   style_similarity_score: number[];
   megapixels: number[];
   file_size_mb: number[];
@@ -41,19 +42,26 @@ export const datasetsApi = {
     data: { name?: string; description?: string; category?: string } & Partial<DatasetProvenance>,
   ) => client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
-  duplicate: (id: string, newName: string, sourceVersionId?: string) =>
+  // includeVideos is opt-in for the same reason as importFolder's: the footage
+  // dwarfs the images beside it. The backend 400s it alongside a
+  // sourceVersionId — snapshots never capture videos.
+  duplicate: (id: string, newName: string, sourceVersionId?: string, includeVideos = false) =>
     client
       .post<{ job_id: string }>(`/datasets/${id}/duplicate`, {
         new_name: newName,
         source_version_id: sourceVersionId ?? null,
+        include_videos: includeVideos,
       })
       .then((r) => r.data),
+  // include_videos is opt-in: a video is orders of magnitude larger than the
+  // images beside it, so a mixed folder must not silently pull gigabytes in.
+  // Videos land flat in videos/, ignoring subfolder and preserve_structure.
   importFolder: (
     id: string, folder_path: string, subfolder = "", preserve_structure = false,
-    import_captions = true, provenance?: DatasetProvenance,
+    import_captions = true, provenance?: DatasetProvenance, include_videos = false,
   ) =>
     client.post<{ job_id: string }>(`/datasets/${id}/import`, {
-      folder_path, subfolder, preserve_structure, import_captions, ...provenance,
+      folder_path, subfolder, preserve_structure, import_captions, include_videos, ...provenance,
     }).then((r) => r.data),
   rescan: (id: string, import_captions = true) =>
     client.post<{ job_id: string }>(`/datasets/${id}/rescan`, { import_captions }).then((r) => r.data),

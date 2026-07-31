@@ -7,9 +7,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
-import { apiErrorDetail } from "../utils/apiError";
+import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { imagesApi } from "../api/images";
+import { videosApi } from "../api/videos";
 import { captionsApi } from "../api/captions";
+import { formatDuration } from "../utils/duration";
 import { tagConsolidationApi } from "../api/tagConsolidation";
 import { captioningApi, type DelimiterMode } from "../api/captioning";
 import DelimiterControls from "../components/caption/DelimiterControls";
@@ -31,6 +33,7 @@ import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
+import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
@@ -178,6 +181,7 @@ export default function ImageDetailPage() {
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
   const [showDetectModal, setShowDetectModal] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showReextract, setShowReextract] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
   const [detectPrompt, setDetectPrompt] = useState("");
@@ -343,12 +347,17 @@ export default function ImageDetailPage() {
     setCropInitialArea(null);
   }, [imageId]);
 
+  // The two form dialogs this page opens over the image. Both are scoped to
+  // `imageId`, so letting the arrow keys through would re-query the preview for a
+  // *different* image while the dialog still names the old one.
+  const formModalOpen = showCropDetect || showReextract;
+
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
   // or this pane is not the active pane in split-pane mode.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (showDeleteConfirm) return;
+      if (showDeleteConfirm || formModalOpen) return;
       const target = e.target as HTMLElement;
       const inTextField =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -372,10 +381,10 @@ export default function ImageDetailPage() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   useEffect(() => {
-    const anyModalOpen = showDetectModal || showDeleteConfirm;
+    const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Delete") return;
       const target = e.target as HTMLElement;
@@ -386,7 +395,7 @@ export default function ImageDetailPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showDetectModal, showDeleteConfirm]);
+  }, [showDetectModal, showDeleteConfirm, formModalOpen]);
 
   const { data: image, isLoading: imageLoading, isError: imageError } = useQuery({
     queryKey: ["image", imageId],
@@ -396,14 +405,25 @@ export default function ImageDetailPage() {
     // A 404 (deleted/moved image) is terminal — don't burn retries on it. Anything
     // else keeps the app-wide budget from App.tsx (retry: 1); this override exists
     // only to add the 404 short-circuit, not to retry more.
-    retry: (failureCount, err) =>
-      (err as { response?: { status?: number } })?.response?.status === 404 ? false : failureCount < 1,
+    retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
 
   const { data: captionData } = useQuery({
     queryKey: ["caption", imageId],
     queryFn: () => captionsApi.get(imageId!),
     enabled: !!imageId,
+  });
+
+  // The video this frame was extracted from, for the lineage line below. Same
+  // `["video", id]` key VideoDetailPage uses, so navigating there is a cache hit.
+  // A frame keeps its timestamp and shot index after the video is deleted, but
+  // `source_video_id` goes NULL — so this query simply stops running.
+  const sourceVideoId = image?.source_video_id ?? null;
+  const { data: sourceVideo } = useQuery({
+    queryKey: ["video", sourceVideoId],
+    queryFn: () => videosApi.get(sourceVideoId!),
+    enabled: !!sourceVideoId,
+    retry: false,
   });
 
   const { data: modelsData } = useQuery({
@@ -752,7 +772,9 @@ export default function ImageDetailPage() {
         );
       }
     },
-    onError: () => toast.error("Crop failed"),
+    // The 409 from a crop+upscale whose PNG-fallback path is occupied names the
+    // file in the way, which is the whole point of refusing rather than skipping.
+    onError: (err) => toast.error(apiErrorDetail(err, "Crop failed")),
   });
 
   const upscaleMutation = useMutation({
@@ -1561,6 +1583,12 @@ export default function ImageDetailPage() {
                 <span>{(image.saturation_score * 100).toFixed(0)}%</span>
               </>
             )}
+            {image.luminance_score !== null && image.luminance_score !== undefined && (
+              <>
+                <span className="text-gray-500">Brightness</span>
+                <span>{(image.luminance_score * 100).toFixed(0)}%</span>
+              </>
+            )}
             {image.style_similarity_score !== null && image.style_similarity_score !== undefined && (
               <>
                 <span className="text-gray-500">Style match</span>
@@ -1568,6 +1596,58 @@ export default function ImageDetailPage() {
               </>
             )}
           </div>
+
+          {/* Frame lineage. Without it, a frame moved out of its extraction
+              subfolder can no longer say where it came from. */}
+          {image.source_video_id && (
+            <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap mt-1">
+              <span>From</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() =>
+                  paneGo(`/datasets/${datasetId}/video/${image.source_video_id}`, {
+                    page: "video-detail", datasetId, videoId: image.source_video_id!,
+                  })
+                }
+              >
+                <span className="font-mono">{sourceVideo?.filename ?? "source video"}</span>
+              </button>
+              {image.source_timestamp_ms !== null && image.source_timestamp_ms !== undefined && (
+                <span>· {formatDuration(image.source_timestamp_ms)}</span>
+              )}
+              {image.source_shot_index !== null && image.source_shot_index !== undefined && (
+                <span>· shot {image.source_shot_index}</span>
+              )}
+              {/* The reverse-direction affordance: from one frame to every sibling
+                  this video produced, wherever curation has since filed them. */}
+              <span>·</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() =>
+                  paneGo(`/datasets/${datasetId}/gallery?source_video_id=${image.source_video_id}`, {
+                    page: "gallery", datasetId, sourceVideoId: image.source_video_id!,
+                  })
+                }
+              >
+                all frames
+              </button>
+              {/* Pass 2, from the one place that already knows this image is a
+                  frame. The form still asks the server what it can do — the row
+                  proves lineage, not that the video is still on disk or that the
+                  pixels have not since been edited in place. */}
+              <span>·</span>
+              <button
+                className="btn-ghost btn-sm"
+                style={{ padding: "0 4px", fontSize: 11 }}
+                onClick={() => setShowReextract(true)}
+                title="Re-cut this frame from the source video at full resolution"
+              >
+                re-extract
+              </button>
+            </div>
+          )}
 
           {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 ? (
             <DinoLayerBreakdown scores={image.dino_layer_scores} />
@@ -2114,6 +2194,20 @@ export default function ImageDetailPage() {
             />
           </div>
         </div>
+      )}
+
+      {/* Re-extract at full res modal */}
+      {showReextract && datasetId && imageId && (
+        <ReextractFramesModal
+          datasetId={datasetId}
+          imageIds={[imageId]}
+          title="Re-extract at Full Resolution"
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["image", imageId] });
+            setShowReextract(false);
+          }}
+          onClose={() => setShowReextract(false)}
+        />
       )}
     </div>
   );

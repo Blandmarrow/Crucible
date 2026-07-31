@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import functools
+import logging
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -10,14 +11,17 @@ from pathlib import Path
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
-from backend.utils import normalize_subfolder
+from backend.utils import chunked, contained_path, normalize_subfolder
 from backend.workers.job_queue import job_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/quality", tags=["quality"])
 
@@ -184,6 +188,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     img.uniformity_score = t.get("uniformity_score")
                     img.color_score = t.get("color_score")
                     img.saturation_score = t.get("saturation_score")
+                    img.luminance_score = t.get("luminance_score")
                     flags = dict(img.quality_flags or {})
                     flags["is_blurry"] = t.get("is_blurry", False)
                     flags["is_noisy"] = t.get("is_noisy", False)
@@ -246,9 +251,7 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
         async with AsyncSessionLocal() as session:
             affected_ids = list(dup_of.keys())
-            # Chunk the in_() to stay well under SQLite's ~32k bound-parameter limit.
-            for start in range(0, len(affected_ids), 10000):
-                chunk = affected_ids[start : start + 10000]
+            for chunk in chunked(affected_ids):
                 result = await session.execute(select(Image).where(Image.id.in_(chunk)))
                 for img in result.scalars().all():
                     flags = dict(img.quality_flags or {})
@@ -562,22 +565,61 @@ async def compute_style_similarity(
 
 @router.get("/duplicates/{dataset_id}")
 async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Image).where(
-            Image.dataset_id == dataset_id,
-            Image.quality_flags["is_duplicate"].as_boolean() == True,
-        )
-    )
-    duplicates = result.scalars().all()
-    groups: dict[str, list] = {}
-    for img in duplicates:
-        key = img.quality_flags.get("duplicate_of", img.id)
-        groups.setdefault(key, []).append({
+    """Duplicate clusters, each led by the image the scan decided to **keep**.
+
+    `_flag_duplicates` flags only `group[1:]`, so the root — the image every other
+    member's `duplicate_of` points at — carries no `is_duplicate` flag and the
+    query below cannot see it. Returning the flagged rows alone rendered a 2-image
+    pair as a "group" of one and made *Keep best* / *Keep first* unable to reduce a
+    cluster to a single image: the one they were meant to keep was never in the
+    payload, so resolving deleted every copy the scan had found.
+
+    The root is fetched separately and prepended, marked `kept` so the UI can
+    render it distinctly and so `group[0]` — what *Keep first* keeps — is the one
+    the scan chose. The flag itself deliberately stays **off** the root: bulk
+    filters, the Stats "flagged" counts and export exclusions all read
+    `is_duplicate` and must keep seeing only the removable copies.
+
+    Ordered by `created_at`, which is also in the payload, so member order is the
+    dataset's own history rather than whatever order SQLite happened to scan in.
+    """
+    def _row(img: Image, *, kept: bool) -> dict:
+        return {
             "id": img.id,
             "filename": img.filename,
             "aesthetic_score": img.aesthetic_score,
             "updated_at": img.updated_at,
-        })
+            "created_at": img.created_at,
+            "kept": kept,
+        }
+
+    result = await db.execute(
+        select(Image).where(
+            Image.dataset_id == dataset_id,
+            Image.quality_flags["is_duplicate"].as_boolean() == True,
+        ).order_by(Image.created_at)
+    )
+    duplicates = result.scalars().all()
+    flagged_ids = {img.id for img in duplicates}
+    groups: dict[str, list] = {}
+    for img in duplicates:
+        key = img.quality_flags.get("duplicate_of", img.id)
+        groups.setdefault(key, []).append(_row(img, kept=False))
+
+    # A root that is itself flagged belongs to some other group and is already
+    # rendered there; only unflagged roots are missing from the payload.
+    root_ids = [k for k in groups if k not in flagged_ids]
+    if root_ids:
+        roots: dict[str, Image] = {}
+        for chunk in chunked(root_ids):
+            res = await db.execute(select(Image).where(Image.id.in_(chunk)))
+            roots.update({img.id: img for img in res.scalars().all()})
+        for key, members in groups.items():
+            root = roots.get(key)
+            # A root deleted since the scan simply has no row to prepend; its
+            # group stays a group of the surviving copies.
+            if root is not None:
+                members.insert(0, _row(root, kept=True))
     return {"groups": list(groups.values())}
 
 
@@ -594,12 +636,22 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
             ensure_not_busy(did)
         files_to_delete: list[Path] = []
         for r in rows:
-            p = Path(r.file_path)
-            await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
-            files_to_delete.append(p)
-            files_to_delete.append(p.with_suffix(".txt"))
-            if r.thumbnail_path:
-                files_to_delete.append(Path(r.thumbnail_path))
+            # Same shape as `images.batch_delete`: gate per row, unlink the
+            # *resolved* path, and gate the versioning hook with it — it copies the
+            # bytes into `{ds}/.versions/objects/`, so an out-of-tree `file_path`
+            # is a read primitive even with the unlink skipped. The row delete
+            # below is unconditional.
+            p = contained_path(
+                r.file_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
+            )
+            if p is not None:
+                await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
+                files_to_delete.extend([p, p.with_suffix(".txt")])
+            t = contained_path(
+                r.thumbnail_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
+            )
+            if t is not None:
+                files_to_delete.append(t)
 
         await db.execute(delete(Image).where(Image.id.in_(body.delete_ids)))
         await db.commit()

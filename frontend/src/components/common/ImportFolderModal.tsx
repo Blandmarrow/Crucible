@@ -25,6 +25,9 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const [subfolder, setSubfolder] = useState("");
   const [preserveStructure, setPreserveStructure] = useState(false);
   const [importCaptions, setImportCaptions] = useState(true);
+  // Off by default: a mixed folder imported into an image dataset must not
+  // silently copy gigabytes of video.
+  const [includeVideos, setIncludeVideos] = useState(false);
   const [provenance, setProvenance] = useState<DatasetProvenance>(EMPTY_PROVENANCE);
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
   const [showSubfolders, setShowSubfolders] = useState(false);
@@ -49,7 +52,7 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
 
   const importMutation = useMutation({
     mutationFn: () =>
-      datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions, provenance),
+      datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions, provenance, includeVideos),
     onSuccess: (data) => {
       toast.success("Import started");
       onStarted(data.job_id);
@@ -162,6 +165,21 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
             />
             <span style={{ fontSize: 13 }}>Import captions (.txt sidecars)</span>
           </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: includeVideos ? 4 : 18, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              className="checkbox"
+              checked={includeVideos}
+              onChange={(e) => setIncludeVideos(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>Include videos</span>
+          </label>
+          {includeVideos && (
+            <p style={{ fontSize: 11.5, color: "var(--fg-mute)", marginBottom: 18, paddingLeft: 22 }}>
+              Videos are imported as sources, not gallery images, and always land flat —
+              subfolder and folder structure apply to images only.
+            </p>
+          )}
           <div style={{ marginBottom: 18 }}>
             <ProvenanceFields
               value={provenance}

@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
-from backend.models import Dataset, Image
+from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from backend.models import Dataset, Image, Video
 from backend.services.caption_service import _write_txt_sidecar
 from backend.services.image_service import (
     extract_generation_metadata,
@@ -22,11 +23,18 @@ from backend.services.image_service import (
     get_image_info,
     read_provenance_sidecar,
 )
-from backend.utils import copy_with_sidecar, read_caption_sidecar, require_free_space, thumbnail_path_for
+from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
+from backend.utils import (
+    copy_with_sidecar,
+    poster_path_for,
+    read_caption_sidecar,
+    require_free_space,
+    thumbnail_path_for,
+    unique_filename_with_thumb,
+    unique_poster_path,
+)
 
 logger = logging.getLogger(__name__)
-
-SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
 
 # Cap on how many per-file error details we retain in a job summary (failed_count keeps the full tally).
 _MAX_FAILED_DETAILS = 50
@@ -224,6 +232,17 @@ def _copy_image_sync(old_path: Path, new_path: Path, old_thumb: Path, new_thumb:
         shutil.copy2(old_thumb, new_thumb)
 
 
+def _copy_video_sync(old_path: Path, new_path: Path, old_poster: Path | None, new_poster: Path | None) -> None:
+    """Copy a video and its poster. Runs in an executor.
+
+    No sidecar (a video has no `.txt`) and no re-probe: every probe column is
+    copied from the source row, so a slow decode is not repeated per video.
+    """
+    shutil.copy2(old_path, new_path)
+    if old_poster is not None and new_poster is not None and old_poster.exists():
+        shutil.copy2(old_poster, new_poster)
+
+
 def _copy_snapshot_image_sync(src_file: Path, new_path: Path, new_thumb: Path, caption_text: str) -> None:
     """Copy a snapshot object into a new dataset, writing its sidecar + regenerating a thumbnail."""
     shutil.copy2(src_file, new_path)
@@ -321,6 +340,23 @@ async def rename_dataset(
     new_name: str,
     new_description: str | None = None,
 ) -> Dataset:
+    """Rename the dataset, carrying its folder and **every** stored path in it.
+
+    Videos as well as images: `Video.file_path`/`poster_path` used to be left
+    behind, and the damage was invisible rather than loud — `_rescan_videos`
+    keys `by_filename` on the row's `filename`, and the files in the *new*
+    folder carry those same names, so each hits `continue` and `videos_missing`
+    comes back empty while every `file_path` names a folder that no longer
+    exists. `GET /videos/{id}/file` then 404s on a row nothing reports as broken.
+
+    Both row sets are loaded **before** `old_folder.rename(...)` (PM-013): the
+    query is fallible and the rename is not, so running it afterwards meant a
+    failed `SELECT` left the folder moved with nothing committed to describe it.
+
+    `.versions` needs nothing — `version_service._object_store_path` derives the
+    object store from `dataset.folder_path` at read time, so it travels as soon
+    as that column is updated.
+    """
     old_folder = Path(ds.folder_path)
     new_slug = _name_to_slug(new_name)
     new_folder = settings.datasets_dir / new_slug
@@ -328,17 +364,35 @@ async def rename_dataset(
     if old_folder.exists() and old_folder.resolve() != new_folder.resolve():
         if new_folder.exists():
             new_folder = settings.datasets_dir / f"{new_slug}_{ds.id[:8]}"
+
+        images = (
+            await db.execute(select(Image).where(Image.dataset_id == ds.id))
+        ).scalars().all()
+        videos = (
+            await db.execute(select(Video).where(Video.dataset_id == ds.id))
+        ).scalars().all()
+
         old_folder.rename(new_folder)
 
-        old_str = str(old_folder)
-        new_str = str(new_folder)
-        result = await db.execute(select(Image).where(Image.dataset_id == ds.id))
-        for img in result.scalars().all():
-            if img.file_path and img.file_path.startswith(old_str):
-                img.file_path = new_str + img.file_path[len(old_str):]
-            if img.thumbnail_path and img.thumbnail_path.startswith(old_str):
-                img.thumbnail_path = new_str + img.thumbnail_path[len(old_str):]
-        ds.folder_path = new_str
+        def _rebase(value: str | None) -> str | None:
+            # `/move`'s house shape (routers/filesystem.py) rather than a bare
+            # `startswith(old_str)`: one place for every column either model
+            # keeps a path in, and no dependence on the query's dataset scoping
+            # to keep a prefix from over-matching a sibling folder.
+            if not value:
+                return value
+            p = Path(value)
+            if not p.is_relative_to(old_folder):
+                return value
+            return str(new_folder / p.relative_to(old_folder))
+
+        for img in images:
+            img.file_path = _rebase(img.file_path)
+            img.thumbnail_path = _rebase(img.thumbnail_path)
+        for vid in videos:
+            vid.file_path = _rebase(vid.file_path)
+            vid.poster_path = _rebase(vid.poster_path)
+        ds.folder_path = str(new_folder)
 
     ds.name = new_name
     if new_description is not None:
@@ -415,15 +469,56 @@ def _file_size(path: Path) -> int:
         return 0
 
 
-def _scan_source_files(src: Path, preserve_structure: bool) -> tuple[list[Path], int]:
-    """Importable files under `src` and their total size. Blocking — call in an executor.
+def _scan_source_files(
+    src: Path, preserve_structure: bool, include_videos: bool = False
+) -> tuple[list[Path], list[Path], int]:
+    """Importable files under `src`, split by kind, plus their combined size.
 
-    One traversal for both: `is_file()` already stats every entry, so summing sizes in
-    the same pass costs nothing beyond the stat the filter performs anyway.
+    Blocking — call in an executor. One traversal for all three: `is_file()`
+    already stats every entry, so summing sizes in the same pass costs nothing
+    beyond the stat the filter performs anyway. The combined size is what feeds
+    `require_free_space`, so video bytes are covered automatically whenever
+    they are being imported.
     """
     it = src.rglob("*") if preserve_structure else src.iterdir()
-    files = [f for f in it if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
-    return files, sum(_file_size(f) for f in files)
+    images: list[Path] = []
+    videos: list[Path] = []
+    for f in it:
+        if not f.is_file():
+            continue
+        suffix = f.suffix.lower()
+        if suffix in IMAGE_EXTENSIONS:
+            images.append(f)
+        elif include_videos and suffix in VIDEO_EXTENSIONS:
+            videos.append(f)
+    return images, videos, sum(_file_size(f) for f in images + videos)
+
+
+def _ingest_video_sync(src_file: Path, dest_file: Path, poster_file: Path) -> tuple[dict, str | None]:
+    """Copy one video into the dataset, read its header and cut its poster. Blocking.
+
+    `shutil.copy2` rather than `copy_with_sidecar`: a video carries no `.txt`
+    caption companion — captions belong to the frames extracted from it.
+
+    A file that fails the probe is removed again. The copy has to happen first
+    (probing the destination is what proves the copy itself is readable), so
+    without this an undecodable source would leave an orphan in videos/ that no
+    DB row points at — and rescan would then try to register it on every run.
+    A failed *poster* is not a failed import; it just leaves the path NULL.
+
+    `except BaseException`, matching upload's `_ingest_upload_sync`: this used to
+    catch `UnreadableVideoError` alone, but `probe_and_poster` shields
+    `generate_poster` only, so `probe_video` still raises cv2's lazy `ImportError`
+    (a headless host with no libGL), a raw `cv2.error` or a `MemoryError` straight
+    through — every one of which left behind exactly the orphan the narrow catch
+    was written to prevent.
+    """
+    shutil.copy2(src_file, dest_file)
+    try:
+        return probe_and_poster(dest_file, poster_file)
+    except BaseException:
+        dest_file.unlink(missing_ok=True)
+        raise
 
 
 async def import_images_from_folder(
@@ -435,6 +530,7 @@ async def import_images_from_folder(
     preserve_structure: bool = False,
     import_captions: bool = True,
     provenance: dict | None = None,
+    include_videos: bool = False,
 ) -> dict:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -446,20 +542,22 @@ async def import_images_from_folder(
     # Walking the tree and stat-ing every file is unbounded blocking I/O — slow enough
     # on a large or network-mounted folder to stall SSE progress and every other
     # request. It is also self-contained, so the whole scan goes to a thread at once.
-    image_files, source_bytes = await asyncio.get_running_loop().run_in_executor(
-        None, _scan_source_files, src, preserve_structure
+    image_files, video_files, source_bytes = await asyncio.get_running_loop().run_in_executor(
+        None, _scan_source_files, src, preserve_structure, include_videos
     )
-    total = len(image_files)
+    total = len(image_files) + len(video_files)
 
     # Every one of these files is copied into the dataset, plus a thumbnail each.
     # Check before the first copy so a too-small disk fails the job with a readable
-    # message rather than leaving a partially imported folder behind.
+    # message rather than leaving a partially imported folder behind. `source_bytes`
+    # spans both kinds, so an import that includes videos is preflighted for them.
     require_free_space(dataset.folder_path, source_bytes)
     added = 0
+    videos_added = 0
     failed_count = 0
     failed: list[dict] = []
 
-    from backend.utils import slugify_filename, unique_filename_with_thumb
+    from backend.utils import slugify_filename
 
     dest_images = Path(dataset.folder_path) / "images"
     dest_thumbs = Path(dataset.folder_path) / "thumbnails"
@@ -539,11 +637,194 @@ async def import_images_from_folder(
                 "message": f"Importing {src_file.name}",
             })
 
+    # Videos, after the images. They land flat in videos/ regardless of
+    # preserve_structure — subfolders are an image-side concept, and a video's
+    # extracted frames get their own subfolder at extraction time instead.
+    if video_files and not (job_id and job_queue.cancel_requested(job_id)):
+        # Created lazily, so an image-only dataset never grows an empty videos/.
+        dest_videos = Path(dataset.folder_path) / "videos"
+        dest_posters = dest_videos / "thumbnails"
+        dest_videos.mkdir(parents=True, exist_ok=True)
+
+        existing_videos = await db.execute(
+            select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == dataset.id)
+        )
+        existing_video_rows = existing_videos.all()
+        video_db_names: set[str] = {r.filename for r in existing_video_rows}
+        occupied_poster_stems = claimed_poster_stems(
+            [(r.id, r.filename, r.poster_path) for r in existing_video_rows], dest_posters
+        )
+        planned_poster_stems: set[str] = set()
+
+        for j, src_file in enumerate(video_files):
+            if job_id and job_queue.cancel_requested(job_id):
+                break
+            try:
+                slug = slugify_filename(src_file.stem) or "video"
+                new_name = unique_filename_with_thumb(
+                    dest_videos, slug, src_file.suffix.lower(), video_db_names,
+                    occupied_poster_stems, planned_poster_stems,
+                )
+                dest_file = dest_videos / new_name
+                info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                    None, _ingest_video_sync, src_file, dest_file, Path(poster_path_for(dest_file))
+                )
+                db.add(Video(
+                    dataset_id=dataset.id,
+                    filename=new_name,
+                    original_filename=src_file.name,
+                    file_path=str(dest_file),
+                    poster_path=poster_path,
+                    # PROVENANCE_FIELDS, not the Image set: Video has no source_meta.
+                    **merge_provenance(provenance, fields=PROVENANCE_FIELDS),
+                    **info,
+                ))
+                videos_added += 1
+            except Exception as exc:  # skip broken files, continue import
+                failed_count += 1
+                if len(failed) < _MAX_FAILED_DETAILS:
+                    failed.append({"file": src_file.name, "error": str(exc)})
+                logger.warning("import: failed for %s", src_file, exc_info=True)
+
+            if (j + 1) % 200 == 0:
+                await db.commit()
+
+            if job_id and j % 10 == 0:
+                done = len(image_files) + j + 1
+                await broadcaster.emit(job_id, {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "job_type": "import",
+                    "status": "running",
+                    "done": done,
+                    "total": total,
+                    "percent": round(done / total * 100, 1),
+                    "current_item": src_file.name,
+                    "message": f"Importing {src_file.name}",
+                })
+
     await db.commit()
     await refresh_stats(db, dataset.id)
     if job_id:
         job_queue.raise_if_cancelled(job_id)
-    return {"added": added, "failed_count": failed_count, "failed": failed}
+    return {"added": added, "videos_added": videos_added, "failed_count": failed_count, "failed": failed}
+
+
+def _fold_video_failures(vids: dict, failed: list[dict], failed_count: int) -> int:
+    """Merge `_rescan_videos`' failure tally into the image pass's shared one.
+
+    `_rescan_videos` reports under `videos_failed`/`videos_failed_count` because
+    `rescan_dataset` splats its result into a dict that already carries
+    `failed`/`failed_count` from the image loop — same names would silently
+    discard one pass's tally. The two become one number here, and
+    `_MAX_FAILED_DETAILS` stays a cap on the *combined* detail list, so the
+    public response shape never grows a video-specific key.
+    """
+    failed.extend(vids.pop("videos_failed")[: max(0, _MAX_FAILED_DETAILS - len(failed))])
+    return failed_count + vids.pop("videos_failed_count")
+
+
+async def _rescan_videos(db: AsyncSession, dataset: Dataset, job_id: str | None = None) -> dict:
+    """Reconcile videos/ with the `videos` table.
+
+    Returns {videos_added, videos_missing, videos_failed, videos_failed_count};
+    callers fold the last two into their own tally via `_fold_video_failures`.
+
+    `job_id` makes the pass cancellable. It is not decoration: a video that is
+    already registered costs an early `continue`, but a *new* one costs a decode
+    plus a poster write, so a folder that just received a few hundred clips keeps
+    this loop busy for minutes with the progress pill frozen on the image loop's
+    last emit. Without the poll the cancel button did nothing here, and — worse —
+    the caller's `cancelled` flag is set only by the image loop, so a cancel
+    arriving during this pass was never observed at all and the job reported
+    *success*.
+
+    Its own pass because the image rescan walks `images_dir.rglob("*")`, which
+    cannot see videos/ at all. The walk here is a **flat** glob: videos are never
+    nested, and flat conveniently skips the videos/thumbnails/ child directory
+    that would otherwise be scanned for video files on every run.
+
+    Callers commit and refresh stats — this only stages rows.
+    """
+    from backend.workers.job_queue import job_queue
+
+    videos_dir = Path(dataset.folder_path) / "videos"
+    if not videos_dir.exists():
+        return {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
+
+    disk_videos = [f for f in videos_dir.glob("*") if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS]
+
+    existing = await db.execute(select(Video).where(Video.dataset_id == dataset.id))
+    rows = existing.scalars().all()
+    by_filename: dict[str, Video] = {v.filename: v for v in rows}
+
+    # Rescan *adopts* the filenames it finds — it cannot rename a file the user
+    # dropped in here — so unlike upload/import/rename it cannot dodge a stem
+    # collision by picking a different name. `clip.mp4` and `clip.mkv` are two
+    # legitimate videos that would both want `thumbnails/clip.webp`, and the
+    # second poster written would clobber the first, leaving two rows pointing at
+    # one file. So the *poster* moves instead: the second gets `clip_001.webp`.
+    #
+    # This is the opposite choice from the image walk below, which does rename
+    # the file. The asymmetry is deliberate: eleven sites re-derive an image's
+    # thumbnail path from its filename, so an image's thumbnail stem must stay
+    # equal to its own; nothing re-derives a poster path — every consumer reads
+    # `Video.poster_path`.
+    poster_dir = videos_dir / "thumbnails"
+    claimed = claimed_poster_stems([(v.id, v.filename, v.poster_path) for v in rows], poster_dir)
+
+    seen: set[str] = set()
+    videos_added = 0
+    videos_failed_count = 0
+    videos_failed: list[dict] = []
+    for f in disk_videos:
+        seen.add(f.name)
+        if f.name in by_filename:
+            continue
+        if job_id and job_queue.cancel_requested(job_id):
+            # Stop staging new rows, but keep walking so `seen` stays complete —
+            # a half-filled `seen` would report every unvisited row as missing.
+            continue
+        poster_target = unique_poster_path(poster_dir, f.stem, claimed)
+        claimed.add(poster_target.stem)  # keep the set honest across this run
+        try:
+            info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                None, probe_and_poster, f, poster_target
+            )
+        except UnreadableVideoError:
+            # Not a failure worth reporting: an undecodable file in videos/ is
+            # simply not a video we can register. Leave it on disk untouched.
+            logger.info("rescan: skipping undecodable video %s", f)
+            continue
+        except Exception as exc:
+            # Everything the probe can raise that *isn't* the ingest gate: an
+            # ImportError from cv2's lazy import, a raw cv2.error, a MemoryError
+            # on a huge frame. Without this arm one such file aborts the whole
+            # rescan — and the image pass's collision renames and thumbnails are
+            # already permanent on disk by then. Mirrors the image loop's
+            # handler, including its detail cap.
+            videos_failed_count += 1
+            if len(videos_failed) < _MAX_FAILED_DETAILS:
+                videos_failed.append({"file": f.name, "error": str(exc)})
+            logger.warning("rescan: video failed for %s", f, exc_info=True)
+            continue
+        db.add(Video(
+            dataset_id=dataset.id,
+            filename=f.name,
+            original_filename=f.name,
+            file_path=str(f),
+            poster_path=poster_path,
+            **info,
+        ))
+        videos_added += 1
+
+    videos_missing = [fn for fn in by_filename if fn not in seen]
+    return {
+        "videos_added": videos_added,
+        "videos_missing": videos_missing,
+        "videos_failed": videos_failed,
+        "videos_failed_count": videos_failed_count,
+    }
 
 
 async def rescan_dataset(
@@ -552,23 +833,34 @@ async def rescan_dataset(
     job_id: str | None = None,
     import_captions: bool = True,
 ) -> dict:
-    """Reconcile a dataset's DB records with the files on disk under images/.
+    """Reconcile a dataset's DB records with the files on disk under images/ and videos/.
 
     - Files on disk not in the DB are registered (thumbnail + sidecar caption).
     - DB records whose file is missing on disk are reported (never removed).
     - Existing records pick up changed/added .txt sidecars when import_captions is set.
-    Returns {added, captions_updated, missing, total_on_disk}.
+    Returns {added, videos_added, captions_updated, missing, videos_missing, total_on_disk}.
     """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
     images_dir = Path(dataset.folder_path) / "images"
     if not images_dir.exists():
-        return {"added": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0}
+        # videos/ can exist without images/ — reconcile it either way.
+        vids = await _rescan_videos(db, dataset, job_id)
+        failed: list[dict] = []
+        failed_count = _fold_video_failures(vids, failed, 0)
+        # Explicit, rather than relying on `refresh_stats` to commit the staged
+        # Video rows on this branch's behalf.
+        await db.commit()
+        await refresh_stats(db, dataset.id)
+        return {
+            "added": 0, "renamed": 0, "captions_updated": 0, "missing": [], "total_on_disk": 0,
+            "failed_count": failed_count, "failed": failed, **vids,
+        }
 
     disk_files = [
         f for f in images_dir.rglob("*")
-        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
     ]
     total = len(disk_files)
 
@@ -580,8 +872,43 @@ async def rescan_dataset(
     for img in existing.scalars().all():
         by_filename[img.filename] = img
 
+    # Thumbnails are .webp keyed by stem, so `a.png` and `a.jpg` dropped into
+    # images/ by hand both resolve to `thumbnails/a.webp` — the second written
+    # clobbers the first and two rows end up sharing one picture. Every other
+    # creation path in the app avoids this by picking a free name through
+    # `unique_filename_with_thumb`; rescan is one of only two that adopt a name
+    # off disk instead, so it has to disambiguate here.
+    #
+    # It resolves the clash by renaming the *file*, where video rescan renames
+    # the *poster*. The asymmetry is deliberate: eleven sites re-derive an
+    # image's thumbnail path from its filename (rename, move, copy, crop,
+    # extension change, captioning's rename-on-caption, duplicate_dataset and
+    # four versioning paths), so an image whose thumbnail stem drifted from its
+    # own would have that thumbnail silently orphaned by the next such
+    # operation. Nothing re-derives a poster path — every consumer reads
+    # `Video.poster_path`.
+    #
+    # Two terms, for the same reason `claimed_poster_stems` carries three (read
+    # its docstring — it is the model for this):
+    #
+    # - **registered rows' filename stems** — the conservative reservation for a
+    #   thumbnail that is not on disk. Delete `{ds}/thumbnails/` from the file
+    #   browser and the Image rows survive (their `file_path` is not under that
+    #   prefix), so a glob alone sees nothing occupied and hands a hand-dropped
+    #   `a.jpg` the very path registered `a.png` will regenerate into. PM-007,
+    #   silently.
+    # - **on-disk `*.webp`** — covers a thumbnail whose row is gone, and the
+    #   stem drift a row's own filename cannot express.
+    thumbs_dir = Path(dataset.folder_path) / "thumbnails"
+    occupied_thumb_stems: set[str] = {Path(fn).stem for fn in by_filename}
+    if thumbs_dir.exists():
+        occupied_thumb_stems |= {p.stem for p in thumbs_dir.glob("*.webp")}
+    planned_thumb_stems: set[str] = set()
+    db_names: set[str] = set(by_filename)
+
     seen_filenames: set[str] = set()
     added = 0
+    renamed = 0
     captions_updated = 0
     failed_count = 0
     failed: list[dict] = []
@@ -592,6 +919,11 @@ async def rescan_dataset(
             cancelled = True
             break
         try:
+            # Before the collision rename below rebinds `f`. This is the name the
+            # user gave the file, and `original_filename` is what
+            # `import_captions_from_folder` matches a later `a.txt` against — so
+            # recording the *new* name would lose both the record and the pairing.
+            original_name = f.name
             seen_filenames.add(f.name)
             caption = (
                 await asyncio.get_running_loop().run_in_executor(None, read_caption_sidecar, f)
@@ -600,6 +932,38 @@ async def rescan_dataset(
 
             existing_img = by_filename.get(f.name)
             if existing_img is None:
+                # Flat images/ only. A nested file carries two separate defects
+                # that predate this guard — the reconcile key above is the bare
+                # filename, so images/sub/a.png is treated as already-existing
+                # whenever images/a.png is registered, and thumbnail_path_for
+                # resolves it to images/thumbnails/ rather than the dataset's
+                # own, with subfolder="" hardcoded below. Disambiguating against
+                # the wrong thumbnail directory would not help, so nested files
+                # keep behaving exactly as they did.
+                if f.parent == images_dir:
+                    # disk_exclude is what keeps this from renaming *every* file
+                    # it finds: unlike an import, the file is already sitting in
+                    # images/, so without it `unique_filename` sees its own name
+                    # occupied and steps straight to `_001`. Its own stem is
+                    # likewise absent from occupied_thumb_stems: nothing has
+                    # generated its thumbnail yet, and this arm only runs when
+                    # the file has no row, so the set's row term cannot hold it
+                    # either.
+                    new_name = unique_filename_with_thumb(
+                        images_dir, f.stem, f.suffix.lower(),
+                        db_names, occupied_thumb_stems, planned_thumb_stems,
+                        disk_exclude={f.name},
+                    )
+                    if new_name != f.name:
+                        # The file only, not its .txt sidecar — the deliberate
+                        # exception to the rename_with_sidecar rule. The two
+                        # files share a stem, so a single `a.txt` belongs to
+                        # both equally and moving it would take it away from the
+                        # image that kept the name. `caption` above was read
+                        # before this, so nothing is lost either way.
+                        f = f.rename(images_dir / new_name)
+                        seen_filenames.add(f.name)
+                        renamed += 1
                 thumb_path = thumbnail_path_for(f)
                 reg = await asyncio.get_running_loop().run_in_executor(
                     None, _register_file_sync, f, thumb_path
@@ -607,7 +971,7 @@ async def rescan_dataset(
                 img = Image(
                     dataset_id=dataset.id,
                     filename=f.name,
-                    original_filename=f.name,
+                    original_filename=original_name,
                     subfolder="",
                     file_path=str(f),
                     thumbnail_path=thumb_path,
@@ -654,17 +1018,46 @@ async def rescan_dataset(
         if fn not in seen_filenames
     ]
 
+    # Commit the image pass *before* the video pass runs. Everything the image
+    # loop did to the filesystem — collision renames, thumbnails — is already
+    # permanent, so a video-pass failure that reached the caller would discard
+    # only the rows describing it, leaving renamed files with nothing pointing at
+    # them. The per-file guard in `_rescan_videos` is not enough on its own: its
+    # pre-loop `select(Video)` and `videos_dir.glob` can still raise. Safe with
+    # `AsyncSessionLocal`'s `expire_on_commit=False` — the `by_filename` Image
+    # instances stay usable below, and the trailing commit still lands the Video
+    # rows.
+    await db.commit()
+
+    # Videos are reported under their own keys rather than folded into `missing`,
+    # whose entries are image-shaped ({subfolder, filename}).
+    vids = (
+        {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
+        if cancelled else await _rescan_videos(db, dataset, job_id)
+    )
+    failed_count = _fold_video_failures(vids, failed, failed_count)
+
     await db.commit()
     await refresh_stats(db, dataset.id)
-    if cancelled:
+    # Re-read the flag rather than trusting the image loop's: the video pass runs
+    # after it and can take minutes, so a cancel pressed during that window left
+    # `cancelled` False and the job reported "completed" for a run the user
+    # stopped. Committing first is deliberate — whatever both passes did stage is
+    # real and should survive, exactly as it does for a cancel during the images.
+    if cancelled or (job_id and job_queue.cancel_requested(job_id)):
         job_queue.raise_if_cancelled(job_id)
     return {
         "added": added,
+        # Files rescan had to rename because another image already owned their
+        # stem. Reported rather than silent: rescan otherwise never touches a
+        # file, so a name changing under the user needs to say so.
+        "renamed": renamed,
         "captions_updated": captions_updated,
         "missing": missing,
         "total_on_disk": total,
         "failed_count": failed_count,
         "failed": failed,
+        **vids,
     }
 
 
@@ -763,11 +1156,25 @@ async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:
     )
     captioned_count = captioned.scalar() or 0
 
+    # Videos are counted into their own columns, never folded into image_count
+    # or total_size_bytes: a video is ~100x the size of the frames it yields, so
+    # folding it in would make every dataset card read as bloated, and
+    # image_count is what a user compares against an export manifest. Extracted
+    # frames need no special-casing — they arrive as ordinary Image rows above.
+    vid = await db.execute(
+        select(func.count(Video.id), func.sum(Video.file_size_bytes)).where(
+            Video.dataset_id == dataset_id
+        )
+    )
+    vid_row = vid.one()
+
     ds = await db.get(Dataset, dataset_id)
     if ds:
         ds.image_count = image_count
         ds.captioned_count = captioned_count
         ds.total_size_bytes = total_size
+        ds.video_count = vid_row[0] or 0
+        ds.video_size_bytes = vid_row[1] or 0
         ds.updated_at = datetime.utcnow()
         await db.commit()
 
@@ -791,6 +1198,11 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     color_labels =     ["0–10", "10–20", "20–40", "40–60", "60+"]
     sat_edges =        [10, 20, 40, 60]
     sat_labels =       ["0–10", "10–20", "20–40", "40–60", "60+"]
+    # Brightness is the 0–1 mean grayscale, so its edges are fractions. They must
+    # stay numerically identical to DEFAULT_EDGES.luminance on the frontend, which
+    # rebuckets client-side from the raw score-values array once a user edits them.
+    lum_edges =        [0.15, 0.3, 0.5, 0.7]
+    lum_labels =       ["<0.15", "0.15–0.3", "0.3–0.5", "0.5–0.7", "0.7+"]
     mp_edges =         [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
     mp_labels =        ["<0.25", "0.25–0.5", "0.5–1", "1–2", "2–4", "4–8", "8+"]
     fs_edges =         [0.1, 0.5, 1.0, 2.0, 5.0]
@@ -814,6 +1226,7 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     wm_dist: dict[str, int] = {}
     color_dist: dict[str, int] = {}
     sat_dist: dict[str, int] = {}
+    lum_dist: dict[str, int] = {}
     mp_dist: dict[str, int] = {}
     fs_dist: dict[str, int] = {}
     wc_dist: dict[str, int] = {}
@@ -882,6 +1295,9 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         if r.saturation_score is not None:
             b = _bucket(r.saturation_score, sat_edges, sat_labels)
             sat_dist[b] = sat_dist.get(b, 0) + 1
+        if r.luminance_score is not None:
+            b = _bucket(r.luminance_score, lum_edges, lum_labels)
+            lum_dist[b] = lum_dist.get(b, 0) + 1
 
         # Watermark
         if r.watermark_score is not None:
@@ -944,6 +1360,7 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         "watermark_distribution": dict(sorted(wm_dist.items())),
         "color_distribution": _ordered(color_dist, color_labels),
         "saturation_distribution": _ordered(sat_dist, sat_labels),
+        "luminance_distribution": _ordered(lum_dist, lum_labels),
         "megapixel_distribution": _ordered(mp_dist, mp_labels),
         "file_size_distribution": _ordered(fs_dist, fs_labels),
         "file_size_summary": fs_summary,
@@ -972,6 +1389,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
         Image.blur_score, Image.noise_score, Image.uniformity_score,
         Image.watermark_score, Image.color_score, Image.saturation_score,
+        Image.luminance_score,
         Image.file_size_bytes,
         Image.style_similarity_score,
     ).where(Image.dataset_id == dataset_id)
@@ -1124,6 +1542,7 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
         Image.watermark_score,
         Image.color_score,
         Image.saturation_score,
+        Image.luminance_score,
         Image.style_similarity_score,
         Image.width,
         Image.height,
@@ -1141,7 +1560,8 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
     def _collect() -> dict:
         score_fields = [
             "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-            "watermark_score", "color_score", "saturation_score", "style_similarity_score",
+            "watermark_score", "color_score", "saturation_score", "luminance_score",
+            "style_similarity_score",
         ]
         out: dict[str, list[float]] = {f: [] for f in score_fields}
         out["megapixels"] = []
@@ -1174,14 +1594,33 @@ async def duplicate_dataset(
     new_name: str,
     job_id: str,
     source_version_id: str | None = None,
-) -> str:
-    """Deep-clone a dataset into a new one.  Returns the new dataset's id."""
+    include_videos: bool = False,
+) -> dict:
+    """Deep-clone a dataset into a new one.
+
+    Returns a summary dict — `{dataset_id, images_added, videos_added,
+    videos_failed}` — which the router (its only caller) writes to the job's
+    `result_data` so the completion toast can report what was carried.
+
+    `include_videos` copies the source's `Video` rows, files and posters too,
+    and *remaps* each copied frame's `source_video_id` onto the clone's own
+    video. It is off by default: the footage dwarfs the images beside it, so
+    doubling it is a costed choice at the moment of duplication. It cannot apply
+    to a snapshot — versions never capture videos, so carrying live videos would
+    pair a historical image set with present-day sources; the router answers 400
+    and this forces it back off defensively.
+    """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
     log = logger
     cancelled = False
     loop = asyncio.get_running_loop()
+    if source_version_id is not None:
+        include_videos = False
+    videos_added = 0
+    videos_failed = 0
+    images_added = 0
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
@@ -1202,16 +1641,130 @@ async def duplicate_dataset(
             Image.original_filename, Image.subfolder, Image.is_auto_named,
             Image.width, Image.height, Image.file_size_bytes, Image.format,
             Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
-            Image.quality_flags, Image.aesthetic_score, Image.blur_score,
+            Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
-            Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
+            Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
             Image.generation_metadata, Image.processing_history, Image.sort_order,
             Image.source_name, Image.source_url, Image.license, Image.attribution,
             Image.source_meta,
+            Image.source_video_id, Image.source_timestamp_ms, Image.source_shot_index,
         )
         result = await db.execute(select(*cols).where(Image.dataset_id == source_dataset.id))
         rows = result.all()
         total = len(rows)
+
+        # --- Step 2A-pre: carry the videos, building the id map the image loop
+        # remaps lineage through. It has to run first: the map must exist before
+        # the first Image row is built.
+        video_id_map: dict[str, str] = {}
+        video_rows = []
+        if include_videos:
+            video_rows = list((await db.execute(
+                # A plain entity load — Video has no deferred columns, so no undefer.
+                select(Video).where(Video.dataset_id == source_dataset.id)
+            )).scalars().all())
+
+        # `done` has to stay non-decreasing across the two loops (PM-008), so the
+        # image loop continues the count where the video loop stopped.
+        grand_total = total + len(video_rows)
+
+        if video_rows:
+            dest_videos = Path(new_ds.folder_path) / "videos"
+            dest_posters = dest_videos / "thumbnails"
+            # Created lazily, only when there is a video to put in them, so an
+            # image-only clone never grows an empty videos/ (same rule as upload).
+            dest_posters.mkdir(parents=True, exist_ok=True)
+
+        for i, vid in enumerate(video_rows):
+            if job_queue.cancel_requested(job_id):
+                cancelled = True
+                break
+            old_path = Path(vid.file_path)
+            new_path = dest_videos / vid.filename
+            old_poster = Path(vid.poster_path) if vid.poster_path else None
+            # No uniquifier, deliberately. The destination folders are fresh and
+            # the source's names are already mutually unique (uq_dataset_video_
+            # filename, plus whatever poster-stem disambiguation the source
+            # resolved), so copying both basenames verbatim reproduces the
+            # source's resolution exactly — the same reasoning as the image
+            # branch's `dest_images / row.filename`. Do not "fix" this into a
+            # claimed_poster_stems / unique_poster_path call.
+            new_poster = dest_posters / old_poster.name if old_poster else None
+            try:
+                await loop.run_in_executor(
+                    None, _copy_video_sync, old_path, new_path, old_poster, new_poster
+                )
+                new_id = str(uuid4())
+                db.add(Video(
+                    id=new_id,
+                    dataset_id=new_ds.id,
+                    filename=vid.filename,
+                    original_filename=vid.original_filename,
+                    file_path=str(new_path),
+                    # A poster is a nicety, never a gate: a source without one,
+                    # or one whose file has gone missing, copies as NULL and
+                    # heals on first view.
+                    poster_path=str(new_poster) if new_poster and new_poster.exists() else None,
+                    file_size_bytes=vid.file_size_bytes,
+                    duration_ms=vid.duration_ms,
+                    fps=vid.fps,
+                    codec=vid.codec,
+                    width=vid.width,
+                    height=vid.height,
+                    # Raw, not resolved — same rationale as copy_provenance on
+                    # the image side: the clone carries the same dataset
+                    # defaults, so inheritance stays equivalent. Video has no
+                    # source_meta.
+                    source_name=vid.source_name,
+                    source_url=vid.source_url,
+                    license=vid.license,
+                    attribution=vid.attribution,
+                    # The user's saved decode fixups: a re-extraction in the
+                    # clone must reproduce the source's geometry exactly.
+                    crop_x=vid.crop_x,
+                    crop_y=vid.crop_y,
+                    crop_w=vid.crop_w,
+                    crop_h=vid.crop_h,
+                    deinterlace=vid.deinterlace,
+                    trim_start_ms=vid.trim_start_ms,
+                    trim_end_ms=vid.trim_end_ms,
+                ))
+                video_id_map[vid.id] = new_id
+                videos_added += 1
+            except Exception as exc:
+                # Skip and report, like the image loop. No map entry, which makes
+                # this video's frames fall back to NULL lineage for free.
+                log.warning("duplicate_dataset: failed to copy video %s: %s", old_path, exc)
+                videos_failed += 1
+
+            await broadcaster.emit(job_id, {
+                "type": "progress",
+                "job_id": job_id,
+                "job_type": "duplicate",
+                "dataset_id": source_dataset.id,
+                "status": "running",
+                "done": i + 1,
+                "total": grand_total,
+                "percent": round((i + 1) / grand_total * 100, 1) if grand_total else 100.0,
+                "message": f"Copying {vid.filename}",
+            })
+
+        if video_id_map:
+            # The copied frames carry `source_video_id` as a real FK to videos.id,
+            # so the video rows have to be **in the database** before the first
+            # Image is inserted — not merely in the session. One flush ordered
+            # here rather than trusting the unit of work to sort the two INSERTs,
+            # because getting it wrong fails the whole job with an IntegrityError
+            # and the test harness cannot see it: it builds its schema with
+            # `create_all` on its own engine and so never gets the
+            # `PRAGMA foreign_keys=ON` that backend/database.py installs on the
+            # app engine (the same blind spot as the delete cascade — see
+            # docs/dev/video.md § What is free, and what is not).
+            await db.flush()
+
+        # Items actually processed, which is what the last emit reported — so a
+        # cancelled video loop still hands the image loop a matching offset.
+        videos_done = videos_added + videos_failed
 
         # Build copy plan (path mappings)
         plan: list = []
@@ -1250,6 +1803,7 @@ async def duplicate_dataset(
                     captioned_by=row.captioned_by,
                     captioned_at=row.captioned_at,
                     quality_flags=row.quality_flags,
+                    nsfw_score=row.nsfw_score,
                     aesthetic_score=row.aesthetic_score,
                     blur_score=row.blur_score,
                     noise_score=row.noise_score,
@@ -1257,28 +1811,43 @@ async def duplicate_dataset(
                     watermark_score=row.watermark_score,
                     color_score=row.color_score,
                     saturation_score=row.saturation_score,
+                    luminance_score=row.luminance_score,
                     style_similarity_score=row.style_similarity_score,
                     dino_layer_scores=row.dino_layer_scores,
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
                     sort_order=row.sort_order,
+                    # Frame lineage: the timestamp and shot index travel, and
+                    # source_video_id is **remapped** — never copied. A raw copy
+                    # would point across a dataset boundary at a source the
+                    # duplicate does not contain. With include_videos the clone
+                    # has its own video, so the map turns the id into that one;
+                    # a miss (videos not carried, or this video's copy failed)
+                    # falls back to NULL, the same answer a cross-dataset copy
+                    # gives. Not part of copy_provenance, which is exactly the
+                    # five provenance keys.
+                    source_video_id=video_id_map.get(row.source_video_id),
+                    source_timestamp_ms=row.source_timestamp_ms,
+                    source_shot_index=row.source_shot_index,
                     # Raw, not resolved: the new dataset carries the same
                     # provenance defaults, so inheritance stays equivalent.
                     **copy_provenance(row),
                 ))
+                images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
 
             if i % 10 == 0:
-                pct = round((i + 1) / total * 100, 1) if total else 100.0
+                done = videos_done + i + 1
+                pct = round(done / grand_total * 100, 1) if grand_total else 100.0
                 await broadcaster.emit(job_id, {
                     "type": "progress",
                     "job_id": job_id,
                     "job_type": "duplicate",
                     "dataset_id": source_dataset.id,
                     "status": "running",
-                    "done": i + 1,
-                    "total": total,
+                    "done": done,
+                    "total": grand_total,
                     "percent": pct,
                     "message": f"Copying {row.filename}",
                 })
@@ -1339,19 +1908,31 @@ async def duplicate_dataset(
                     height=state.height,
                     file_size_bytes=state.file_size_bytes,
                     format=state.format,
+                    nsfw_score=state.nsfw_score,
                     aesthetic_score=state.aesthetic_score,
                     blur_score=state.blur_score,
                     noise_score=state.noise_score,
                     uniformity_score=state.uniformity_score,
                     watermark_score=state.watermark_score,
                     color_score=state.color_score,
+                    saturation_score=state.saturation_score,
+                    luminance_score=state.luminance_score,
                     style_similarity_score=state.style_similarity_score,
                     dino_layer_scores=state.dino_layer_scores,
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,
                     sort_order=state.sort_order,
+                    # Lineage timestamps travel; the video id is NULL. The
+                    # remap the on-disk branch does cannot apply here: a version
+                    # snapshots images only, so include_videos is refused for a
+                    # snapshot source (400) and forced off above — there is no
+                    # copied video for an id to point at.
+                    source_video_id=None,
+                    source_timestamp_ms=state.source_timestamp_ms,
+                    source_shot_index=state.source_shot_index,
                     **copy_provenance(state),
                 ))
+                images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)
                 skipped += 1
@@ -1375,10 +1956,17 @@ async def duplicate_dataset(
 
     # --- Step 3: commit and refresh stats ---
     await db.commit()
+    # refresh_stats already aggregates Video rows into video_count /
+    # video_size_bytes, so the clone's columns land with no change here.
     await refresh_stats(db, new_ds.id)
     if cancelled:
         job_queue.raise_if_cancelled(job_id)
-    return new_ds.id
+    return {
+        "dataset_id": new_ds.id,
+        "images_added": images_added,
+        "videos_added": videos_added,
+        "videos_failed": videos_failed,
+    }
 
 
 async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 15, subfolder: str | None = None) -> dict:

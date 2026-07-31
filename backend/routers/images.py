@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -11,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, copy_with_sidecar, normalize_subfolder, parse_license_filter_param, rename_with_sidecar, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
+from backend.media_types import media_kind_for
 from backend.licenses import (
     PROVENANCE_FIELDS,
     copy_provenance,
@@ -20,7 +23,7 @@ from backend.licenses import (
     merge_provenance,
     resolve_provenance,
 )
-from backend.models import BackgroundJob, Dataset, Image
+from backend.models import BackgroundJob, Dataset, Image, Video
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
@@ -35,6 +38,7 @@ from backend.schemas.image import (
     BulkProvenanceRequest,
     BulkProvenanceResult,
     BulkRenameRequest,
+    BulkThumbnailRequest,
     ImageCropRequest,
     ImageListItem,
     ImageOut,
@@ -55,11 +59,12 @@ from backend.services.image_service import (
     get_image_info,
     resize_image,
 )
+from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.workers.job_queue import job_queue
 
-router = APIRouter(prefix="/images", tags=["images"])
+logger = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
+router = APIRouter(prefix="/images", tags=["images"])
 
 
 def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, dict | None, dict]:
@@ -75,17 +80,33 @@ def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, 
     generate_thumbnail(str(dest), thumb_path)
     return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
 
+
+def _write_video_upload_sync(src_fileobj, dest: Path, poster_path: Path) -> tuple[dict, str | None]:
+    """Persist one uploaded video, read its header and cut its poster off the event loop.
+
+    The probe doubles as the ingest gate — cv2 cannot open a truncated or
+    zero-byte file — so a rejected upload is removed again rather than left as
+    an orphan in videos/ that no row points at. The poster is not a gate: a
+    video whose frames will not decode still ingests with `poster_path` NULL.
+    """
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(src_fileobj, f)
+    try:
+        return probe_and_poster(dest, poster_path)
+    except BaseException:
+        # Every failure removes the bytes, not just the gate's. `probe_and_poster`
+        # shields `generate_poster` alone, so `probe_video` still raises cv2's
+        # lazy `ImportError` (a headless host with no libGL), a raw `cv2.error`
+        # or a `MemoryError` straight through — and those left the file behind in
+        # videos/ with no row for the next folder sync to adopt.
+        dest.unlink(missing_ok=True)
+        raise
+
 _ALLOWED_SCORE_FIELDS = frozenset({
     "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-    "watermark_score", "color_score", "saturation_score", "style_similarity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
 })
-
-def _safe_path(path_str: str, base_dir: Path) -> Path:
-    resolved = Path(path_str).resolve()
-    if not str(resolved).startswith(str(base_dir.resolve())):
-        raise HTTPException(403, "Access denied")
-    return resolved
-
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -126,6 +147,7 @@ async def list_images(
     format_filter: str | None = None,
     score_filters: str | None = Query(None),
     subfolder: str | None = Query(None),
+    source_video_id: str | None = Query(None),
     detection_label: str | None = Query(None),
     detection_label_exact: str | None = Query(None),
     detection_score_min: float | None = Query(None),
@@ -196,6 +218,14 @@ async def list_images(
             (Image.subfolder == subfolder)
             | Image.subfolder.like(escaped_subfolder + "/%", escape="\\")
         )
+
+    # Frame lineage — every frame this video produced, wherever curation has since
+    # filed it. The column is indexed, so this is a plain equality: no join, no
+    # EXISTS. Truthiness rather than `is not None` (unlike `subfolder`, "" carries
+    # no meaning here), and no allowlist — the value is an opaque uuid and an
+    # unknown one correctly returns zero rows.
+    if source_video_id:
+        q = q.where(Image.source_video_id == source_video_id)
 
     if detection_label:
         q = q.where(
@@ -370,13 +400,31 @@ async def upload_images(
 
     dest_images = Path(ds.folder_path) / "images"
     dest_thumbs = Path(ds.folder_path) / "thumbnails"
+    dest_videos = Path(ds.folder_path) / "videos"
+    dest_posters = dest_videos / "thumbnails"
     added = []
+    videos_added: list[str] = []
+    # Files we would not or could not ingest. Reported rather than silently
+    # dropped: before this the loop just `continue`d and the response counted
+    # only successes, so a rejected upload looked exactly like a successful one.
+    skipped: list[dict] = []
     norm_subfolder = normalize_subfolder(subfolder)
 
     existing_result = await db.execute(select(Image.filename).where(Image.dataset_id == dataset_id))
     db_names: set[str] = {r[0] for r in existing_result.all()}
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
     planned_thumb_stems: set[str] = set()
+
+    existing_videos = await db.execute(
+        select(Video.id, Video.filename, Video.poster_path).where(Video.dataset_id == dataset_id)
+    )
+    existing_video_rows = [(r.id, r.filename, r.poster_path) for r in existing_videos.all()]
+    video_db_names: set[str] = {fn for _, fn, _ in existing_video_rows}
+    # Seeded from the *rows*, not only from posters on disk: a row whose poster
+    # could not be cut, or one whose stem was disambiguated by rescan, is not
+    # findable by globbing alone. See video_service.claimed_poster_stems.
+    occupied_poster_stems = claimed_poster_stems(existing_video_rows, dest_posters)
+    planned_poster_stems: set[str] = set()
 
     # Append new uploads at the end of the custom order only when EVERY existing image in this
     # subfolder already has a sort_order assigned. A partial assignment (some NULLs) means the
@@ -392,16 +440,87 @@ async def upload_images(
 
     for upload in files:
         suffix = Path(upload.filename or "").suffix.lower()
-        if suffix not in SUPPORTED_EXTENSIONS:
+        kind = media_kind_for(suffix)
+        if kind is None:
+            skipped.append({"file": upload.filename or "", "reason": f"Unsupported file type: {suffix or 'no extension'}"})
             continue
+        if kind == "video":
+            # Videos are sources, not gallery images — they get a Video row and
+            # live flat in videos/. videos/ is created lazily so an image-only
+            # dataset never grows an empty directory.
+            dest_videos.mkdir(parents=True, exist_ok=True)
+            slug = slugify_filename(Path(upload.filename or "").stem) or "video"
+            # Poster thumbnails are .webp keyed by stem, exactly like image
+            # thumbnails, so `a.mp4` and `a.mkv` would collide on one poster
+            # path. Same helper, different directory pair.
+            filename = unique_filename_with_thumb(
+                dest_videos, slug, suffix, video_db_names, occupied_poster_stems, planned_poster_stems
+            )
+            dest = dest_videos / filename
+            try:
+                info, poster_path = await asyncio.get_running_loop().run_in_executor(
+                    None, _write_video_upload_sync, upload.file, dest, Path(poster_path_for(dest))
+                )
+            except UnreadableVideoError as exc:
+                skipped.append({"file": upload.filename or "", "reason": str(exc)})
+                video_db_names.discard(filename)
+                planned_poster_stems.discard(dest.stem)
+                continue
+            except Exception as exc:
+                # One bad file must not take the request down. The only commit is
+                # after this loop, so an escaping exception discards the rows for
+                # every file already copied in this request while leaving those
+                # files (and their thumbnails) on disk — the user sees "nothing
+                # uploaded", re-uploads into `_001` duplicates, and a later folder
+                # sync adopts the orphans at `subfolder=""` as a second copy of
+                # everything. The other two ingest paths (`import_images_from_folder`
+                # and `_rescan_videos`) both guard per file for exactly this.
+                logger.exception("upload: probing %s failed", upload.filename)
+                skipped.append({
+                    "file": upload.filename or "",
+                    "reason": f"Could not read video: {exc.__class__.__name__}",
+                })
+                video_db_names.discard(filename)
+                planned_poster_stems.discard(dest.stem)
+                continue
+            db.add(Video(
+                dataset_id=dataset_id,
+                filename=filename,
+                original_filename=upload.filename or filename,
+                file_path=str(dest),
+                poster_path=poster_path,
+                # A browser upload carries no provenance for a video (no EXIF
+                # equivalent we read), so everything inherits the dataset default.
+                **info,
+            ))
+            videos_added.append(filename)
+            continue
+
         raw_stem = Path(upload.filename or "").stem
         slug = slugify_filename(raw_stem) or "image"
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
         thumb_path = str(dest_thumbs / (dest.stem + ".webp"))
-        info, gen_meta, captured = await asyncio.get_running_loop().run_in_executor(
-            None, _write_upload_sync, upload.file, dest, thumb_path
-        )
+        try:
+            info, gen_meta, captured = await asyncio.get_running_loop().run_in_executor(
+                None, _write_upload_sync, upload.file, dest, thumb_path
+            )
+        except Exception as exc:
+            # Same per-file containment as the video branch above, and for the
+            # same reason: `_write_upload_sync` copies the file *first*, then runs
+            # `get_image_info`, `extract_generation_metadata` and
+            # `generate_thumbnail`, any of which can raise on a corrupt or
+            # truncated image — and the single commit sits after this loop.
+            logger.exception("upload: processing %s failed", upload.filename)
+            dest.unlink(missing_ok=True)
+            Path(thumb_path).unlink(missing_ok=True)
+            skipped.append({
+                "file": upload.filename or "",
+                "reason": f"Could not read image: {exc.__class__.__name__}",
+            })
+            db_names.discard(filename)
+            planned_thumb_stems.discard(dest.stem)
+            continue
 
         img = Image(
             dataset_id=dataset_id,
@@ -424,7 +543,13 @@ async def upload_images(
 
     await db.commit()
     await refresh_stats(db, dataset_id)
-    return {"added": len(added), "files": added}
+    return {
+        "added": len(added),
+        "files": added,
+        "videos_added": len(videos_added),
+        "videos": videos_added,
+        "skipped": skipped,
+    }
 
 
 @router.get("/{image_id}", response_model=ImageOut)
@@ -460,10 +585,15 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Image not found")
     dataset_id = img.dataset_id
     ensure_not_busy(dataset_id)
-    p = Path(img.file_path)
-    t = Path(img.thumbnail_path) if img.thumbnail_path else None
-    txt = p.with_suffix(".txt")
-    await version_service.mark_image_deleted_in_versions(img.id, img.file_path, db)
+    # The *resolved* paths the guard hands back are what gets unlinked — validating
+    # one path and deleting another would defeat the check entirely.
+    p = contained_path(img.file_path, settings.datasets_dir, context="delete_image", ident=img.id)
+    t = contained_path(
+        img.thumbnail_path, settings.datasets_dir, context="delete_image", ident=img.id
+    )
+    txt = p.with_suffix(".txt") if p is not None else None
+    if p is not None:
+        await version_service.mark_image_deleted_in_versions(img.id, str(p), db)
     await db.delete(img)
     await db.commit()
     for f in [p, t, txt]:
@@ -487,11 +617,17 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
         ensure_not_busy(did)
     files_to_delete: list[Path] = []
     for r in rows:
-        p = Path(r.file_path)
-        await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
-        files_to_delete.extend([p, p.with_suffix(".txt")])
-        if r.thumbnail_path:
-            files_to_delete.append(Path(r.thumbnail_path))
+        # Per row, not per request: one escaped path must not stop its neighbours
+        # from being deleted properly.
+        p = contained_path(r.file_path, settings.datasets_dir, context="batch_delete", ident=r.id)
+        if p is not None:
+            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
+            files_to_delete.extend([p, p.with_suffix(".txt")])
+        t = contained_path(
+            r.thumbnail_path, settings.datasets_dir, context="batch_delete", ident=r.id
+        )
+        if t is not None:
+            files_to_delete.append(t)
 
     await db.execute(delete(Image).where(Image.id.in_(image_ids)))
     await db.commit()
@@ -557,7 +693,7 @@ async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depend
 
     ids = [r.id for r in rows]
     updated = 0
-    # Chunked so the bind-parameter count stays under SQLite's 999 limit.
+    # Chunked so the bind-parameter count stays under SQLite's ceiling (utils.chunked).
     for batch in chunked(ids):
         result = await db.execute(
             sa_update(Image).where(Image.id.in_(list(batch))).values(**values)
@@ -637,15 +773,24 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         )
     )
     db_names: set[str] = {r[0] for r in existing.all()}
-    # Exclude batch files from both the thumbnail and disk-existence checks during planning.
-    # Without these exclusions, a second renumber sees image_001.webp (thumbnail) and
-    # image_001.jpg (on disk) as already occupied and skips past them, making new images
-    # start at image_008 instead of restarting from 001.
+    # The **sanctioned exception** to `unique_filename_with_thumb`'s "never exclude
+    # the stems of images being renamed" contract: the batch's own thumbnails and
+    # image files are excluded from the occupancy checks, because without that a
+    # second Renumber of image.jpg … image_007.jpg sees all eight .webp stems and
+    # all eight files as occupied and starts the counter at image_008 instead of
+    # restarting at 001. What pays for it is the two-phase rename below, which
+    # defers any rename whose target collides with a batch member's *current*
+    # image, thumbnail or sidecar path (PM-017).
     batch_thumb_stems: set[str] = {Path(thumbnail_path_for(r.file_path)).stem for r in rows}
     occupied_thumb_stems: set[str] = (
         {p.stem for p in thumb_dir.glob("*.webp") if p.stem not in batch_thumb_stems}
         if thumb_dir.exists() else set()
     )
+    # A non-batch row whose .webp is missing (never generated, or hand-deleted)
+    # still owns its stem — the thumbnail this rename creates for it would be
+    # regenerated onto that row's path by `serve_thumbnail`. Occupancy is the union
+    # of the two, exactly as `file-browser.md` defines it.
+    occupied_thumb_stems |= {Path(n).stem for n in db_names}
     # Image files currently on disk that belong to this batch — they will be renamed away,
     # so the counter should not treat them as occupied during planning.
     batch_current_filenames: set[str] = {Path(r.file_path).name for r in rows}
@@ -692,15 +837,32 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     # Phase 1: rename everything whose target is still occupied to a unique temp name;
     #          rename the rest directly.
     # Phase 2: move temp files to their final names.
+    # A rename moves three things, and the deferral has to cover all three. The
+    # image path alone is not enough: the thumbnail ({stem}.webp) and the caption
+    # sidecar ({stem}.txt) are keyed on the **stem**, so a cross-extension
+    # collision — shot.png taking shot.jpg's stem — is invisible to a path test,
+    # takes the direct branch, and `replace`s a live sibling's thumbnail while
+    # `rename_with_sidecar` overwrites its caption. Nothing repairs either: the
+    # filenames are all correct, so `serve_thumbnail` regenerates only when the
+    # file is *missing*, never when it is another image (PM-017).
     batch_old_paths: set[str] = {str(e[0]) for e in plan}
+    batch_old_thumbs: set[str] = {str(e[2]) for e in plan}
+    batch_old_sidecars: set[str] = {str(e[0].with_suffix(".txt")) for e in plan}
     deferred: list[tuple[Path, Path, Path, Path]] = []
 
-    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
+    for old_path, new_path, old_thumb, new_thumb, img_id, _ in plan:
         if new_path == old_path:
             continue
-        if str(new_path) in batch_old_paths:
-            tmp_path = old_path.with_name("__renaming__" + old_path.name)
-            tmp_thumb = old_thumb.parent / ("__renaming__" + old_thumb.name)
+        if (
+            str(new_path) in batch_old_paths
+            or str(new_thumb) in batch_old_thumbs
+            or str(new_path.with_suffix(".txt")) in batch_old_sidecars
+        ):
+            # Keyed on the row id, like the DB half's temp names two blocks above:
+            # a user renaming to the stem "__renaming__image" would otherwise pick
+            # a name that collides with a live temp file.
+            tmp_path = old_path.with_name(f"__renaming__{img_id}{old_path.suffix}")
+            tmp_thumb = old_thumb.parent / f"__renaming__{img_id}{old_thumb.suffix}"
             rename_with_sidecar(old_path, tmp_path)
             if old_thumb.exists():
                 old_thumb.replace(tmp_thumb)
@@ -755,11 +917,17 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
     image_ids = [r.id for r in rows]
     files_to_delete: list[Path] = []
     for r in rows:
-        p = Path(r.file_path)
-        await version_service.mark_image_deleted_in_versions(r.id, r.file_path, db)
-        files_to_delete.extend([p, p.with_suffix(".txt")])
-        if r.thumbnail_path:
-            files_to_delete.append(Path(r.thumbnail_path))
+        p = contained_path(
+            r.file_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
+        )
+        if p is not None:
+            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
+            files_to_delete.extend([p, p.with_suffix(".txt")])
+        t = contained_path(
+            r.thumbnail_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
+        )
+        if t is not None:
+            files_to_delete.append(t)
 
     await db.execute(delete(Image).where(Image.id.in_(image_ids)))
     await db.commit()
@@ -771,12 +939,162 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
     return {"deleted": len(image_ids)}
 
 
+@router.post("/bulk-thumbnails")
+async def bulk_thumbnails(body: BulkThumbnailRequest, db: AsyncSession = Depends(get_db)):
+    """Re-cut the thumbnails for a scope — the repair for a stale-preview run.
+
+    Four jobs regenerate an image thumbnail as a best-effort post-commit epilogue
+    (`batch_lut`, `batch_upscale`, `crop_upscale`, `video_reextract`): the image
+    is correct and committed, but the tile the gallery renders is the old one and
+    nothing self-heals it — `GET /images/{id}/thumbnail` only regenerates when the
+    file is *missing*, and a stale file exists.
+    """
+    query = _apply_bulk_filters(
+        select(Image.id, Image.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
+    )
+    # An explicit image_ids selection can span datasets — SelectionToolbar shows a
+    # per-dataset breakdown precisely because of that — so scope by dataset_id
+    # only when the selection is a whole-dataset/subfolder one, as bulk_provenance
+    # does, and guard every dataset actually touched.
+    if not body.image_ids:
+        query = query.where(Image.dataset_id == body.dataset_id)
+    rows = (await db.execute(query)).all()
+    for ds_id in {r.dataset_id for r in rows} or {body.dataset_id}:
+        ensure_not_busy(ds_id)
+
+    image_ids = [r.id for r in rows]
+    total = len(image_ids)
+
+    # This is the repair you run *because* the volume filled up, so a 507 is the
+    # right answer rather than 400 more "no space left on device" log lines.
+    # Request-path, before the job row exists: an HTTPException raised inside the
+    # job coroutine would fail the job instead of reaching the client.
+    try:
+        require_free_space(settings.datasets_dir)
+    except InsufficientDiskSpaceError as e:
+        raise HTTPException(507, str(e)) from None
+
+    auto_label = f"Regenerate thumbnails — {total} image{'s' if total != 1 else ''}"
+    job = BackgroundJob(
+        job_type="regenerate_thumbnails",
+        label=body.label or auto_label,
+        dataset_id=body.dataset_id,
+        total_items=total,
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+
+        counts = {"regenerated": 0, "failed": 0, "skipped": 0}
+        async with AsyncSessionLocal() as session:
+            # Chunked so the bind-parameter count stays under SQLite's ceiling
+            # (utils.chunked) — `_apply_bulk_filters` above builds one query and
+            # does not chunk, but it never binds the ids: only this loader does.
+            image_rows: list[Image] = []
+            for chunk in chunked(image_ids):
+                image_rows.extend(
+                    (await session.execute(select(Image).where(Image.id.in_(chunk)))).scalars().all()
+                )
+            loop = asyncio.get_running_loop()
+            cancelled = False
+            uncommitted = 0
+
+            for i, img in enumerate(image_rows):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "regenerate_thumbnails",
+                    "status": "running", "done": i, "total": len(image_rows),
+                    "percent": round(i / max(len(image_rows), 1) * 100, 1),
+                    "current_item": img.filename,
+                    "message": f"Re-cutting thumbnail for {img.filename}…",
+                })
+
+                # Both stored paths are gated, and the *resolved* paths are what
+                # get read and written. `generate_thumbnail` mkdir(parents=True)s
+                # its destination's parent, so an ungated `thumbnail_path` is an
+                # arbitrary-file-write primitive, not merely a stale tile.
+                src = contained_path(
+                    img.file_path, settings.datasets_dir, context="bulk_thumbnails", ident=img.id
+                )
+                if src is None or not src.exists():
+                    counts["skipped"] += 1
+                    continue
+                if img.thumbnail_path:
+                    dest = contained_path(
+                        img.thumbnail_path, settings.datasets_dir,
+                        context="bulk_thumbnails", ident=img.id,
+                    )
+                    stored = img.thumbnail_path
+                else:
+                    # Derived from the already-guarded source, so it is inside the
+                    # tree by construction. A row with no thumbnail at all is
+                    # exactly what this repair should give one.
+                    dest = Path(thumbnail_path_for(str(src)))
+                    # The *stored* form is derived from the stored file_path, not
+                    # from the resolved one the write uses: `contained_path`
+                    # hands back a `.resolve()`d path, and writing one of those
+                    # into the column changes the stored-path form mid-table
+                    # (visible on a symlinked temp dir such as macOS /private/var).
+                    stored = thumbnail_path_for(img.file_path)
+                if dest is None:
+                    counts["skipped"] += 1
+                    continue
+
+                try:
+                    await loop.run_in_executor(None, generate_thumbnail, str(src), str(dest))
+                except Exception as exc:
+                    # Per row, so the repair does not inherit the failure mode it
+                    # exists to fix: one unreadable source must not cost the other
+                    # 4,999 images their working previews.
+                    counts["failed"] += 1
+                    logger.warning(
+                        "regenerate_thumbnails: %s could not be re-cut: %s", img.filename, exc
+                    )
+                    continue
+
+                img.thumbnail_path = stored
+                # Mandatory, not bookkeeping: `imagesApi.thumbnailUrlVersioned`
+                # builds `?v=${Date.parse(updated_at)}`, so a repair that rewrites
+                # the .webp without moving the row leaves the <img src> unchanged
+                # and the browser serves the stale tile straight from cache — the
+                # repair would visibly do nothing.
+                img.updated_at = datetime.now(timezone.utc)
+                counts["regenerated"] += 1
+                uncommitted += 1
+                if uncommitted >= 50:
+                    uncommitted = 0
+                    await session.commit()
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
+            # the thumbnails it did repair.
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+            # No refresh_stats: a thumbnail is not counted in `total_size_bytes`
+            # (dataset_service builds it from Image.file_size_bytes), and nothing
+            # else this job writes appears in a dataset rollup.
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": total}
+
+
 @router.get("/{image_id}/file")
 async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    p = _safe_path(img.file_path, settings.datasets_dir)
+    p = safe_dataset_path(img.file_path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "File not found on disk")
     return FileResponse(str(p))
@@ -787,15 +1105,264 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    if img.thumbnail_path and Path(img.thumbnail_path).exists():
-        return FileResponse(img.thumbnail_path)
+    if img.thumbnail_path:
+        # Guarded like the file route above, and like the video poster twin: a
+        # thumbnail_path is as much a stored path as file_path is.
+        t = safe_dataset_path(img.thumbnail_path, settings.datasets_dir)
+        if t.exists():
+            return FileResponse(str(t))
     # Fallback: generate on demand
-    p = _safe_path(img.file_path, settings.datasets_dir)
-    thumb = str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
+    p = safe_dataset_path(img.file_path, settings.datasets_dir)
+    thumb = thumbnail_path_for(p)
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)
     img.thumbnail_path = thumb
     await db.commit()
     return FileResponse(thumb)
+
+
+def _record_in_place(img: Image, op: str, **params) -> None:
+    """Append a `processing_history` entry for an operation that overwrote the file.
+
+    Every in-place overwrite must record one. `Image.processing_history` is the
+    only durable signal that a row's pixels are no longer what produced it, and
+    video re-extraction reads it as its skip guard: a frame carrying any op other
+    than `reextract` is left alone, because re-cutting it from the source would
+    silently discard the edit (`docs/dev/video-reextract.md`).
+
+    List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
+    by equality, so mutating the loaded list in place looks unchanged and the
+    UPDATE is skipped (CLAUDE.md § Key invariants).
+    """
+    now = datetime.now(timezone.utc)
+    img.processing_history = (img.processing_history or []) + [
+        {"op": op, **params, "at": now.isoformat()}
+    ]
+    img.updated_at = now
+
+
+async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
+    """`ensure_not_busy` every dataset a bare id list touches; return the set.
+
+    The two `/batch/*` overwrite endpoints below take `image_ids` with no dataset
+    constraint, so one selection can span datasets — each needs its own guard,
+    the way `batch_move_dataset` and `bulk_provenance` do it. Chunked so the bind
+    parameter count stays under SQLite's ceiling (`utils.chunked`).
+
+    The returned set also names the job: `BackgroundJob.dataset_id` is a single
+    column, so it is only meaningful when the selection resolved to one dataset.
+    """
+    dataset_ids: set[str] = set()
+    for batch in chunked(image_ids):
+        rows = await db.execute(
+            select(Image.dataset_id).where(Image.id.in_(list(batch))).distinct()
+        )
+        dataset_ids.update(r[0] for r in rows.all())
+    for ds_id in dataset_ids:
+        ensure_not_busy(ds_id)
+    return dataset_ids
+
+
+# ── Batch geometry ────────────────────────────────────────────────────────────
+# Declaration order *is* the routing table. FastAPI matches routes in the order
+# they are declared and `image_id: str` accepts the literal segment "batch", so
+# these two have to stay **above** `/{image_id}/resize` and `/{image_id}/crop`.
+# Declared after them they were simply unreachable — a POST to /batch/resize was
+# answered by the single-image handler, which 404'd out of `db.get(Image,
+# "batch")`, and /batch/crop 422'd on the single-crop body model (PM-018). Any
+# future `/batch/*` route on this router belongs in this block too.
+
+
+@router.post("/batch/resize")
+async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
+    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    auto_label = f"Batch resize — {len(body.image_ids)} images"
+    job = BackgroundJob(
+        job_type="batch_resize",
+        label=body.label or auto_label,
+        dataset_id=next(iter(dataset_ids)) if len(dataset_ids) == 1 else None,
+        total_items=len(body.image_ids),
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
+            images = result.scalars().all()
+            loop = asyncio.get_running_loop()
+
+            # The whole outcome of the run, seeded like the LUT/upscale twins.
+            # `skipped` starts at the rows that no longer exist (deleted between
+            # enqueue and run); `thumbnails_stale` counts resized images whose
+            # *preview* could not be recut — the image itself is correct and
+            # committed, the gallery just keeps rendering the old tile.
+            counts = {
+                "processed": 0,
+                "skipped": len(body.image_ids) - len(images),
+                "failed": 0,
+                "thumbnails_stale": 0,
+            }
+
+            cancelled = False
+            for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
+                try:
+                    new_w, new_h = await loop.run_in_executor(
+                        None, resize_image, img.file_path, body.width, body.height,
+                        body.scale, body.maintain_ar,
+                    )
+                except Exception as exc:
+                    logger.error("Batch resize failed for %s: %s", img.filename, exc)
+                    counts["failed"] += 1
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_resize",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {exc}",
+                    })
+                    continue
+                img.width, img.height = new_w, new_h
+                _record_in_place(img, "resize", width=new_w, height=new_h)
+                # Per image, with nothing fallible between the (already-done)
+                # overwrite and it. The commit used to sit outside the loop, so a
+                # raise on image N rolled back the geometry and processing_history
+                # of images 1..N — every one of them already rewritten on disk
+                # (PM-013).
+                await session.commit()
+
+                # --- epilogue: best-effort, cannot undo the resize ---
+                # `expire_on_commit=False` (backend/database.py) keeps `img`
+                # readable after the commit without a refresh.
+                if img.thumbnail_path:
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                        )
+                    except Exception as exc:
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Batch resize: thumbnail for %s could not be regenerated: %s",
+                            img.filename, exc,
+                        )
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_resize",
+                    "status": "running", "done": i + 1, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename,
+                })
+                counts["processed"] += 1
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
+            # everything it did manage — including any stale thumbnail.
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.post("/batch/crop")
+async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
+    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    auto_label = f"Batch crop — {body.target_ar:g} AR, {len(body.image_ids)} images"
+    job = BackgroundJob(
+        job_type="batch_crop",
+        label=body.label or auto_label,
+        dataset_id=next(iter(dataset_ids)) if len(dataset_ids) == 1 else None,
+        total_items=len(body.image_ids),
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
+            images = result.scalars().all()
+            loop = asyncio.get_running_loop()
+
+            # Seeded and incremented exactly like the resize twin above.
+            counts = {
+                "processed": 0,
+                "skipped": len(body.image_ids) - len(images),
+                "failed": 0,
+                "thumbnails_stale": 0,
+            }
+
+            cancelled = False
+            for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
+                try:
+                    new_w, new_h, rect, old_size = await loop.run_in_executor(
+                        None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
+                    )
+                except Exception as exc:
+                    logger.error("Batch crop failed for %s: %s", img.filename, exc)
+                    counts["failed"] += 1
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_crop",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {exc}",
+                    })
+                    continue
+                img.width, img.height = new_w, new_h
+                _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
+                # Aspect crop changed geometry: remap this image's detections.
+                # DB-only work, so it stays *above* the commit — the same place
+                # `_run_crop_upscale_replace` puts it. Below this line the row and
+                # the file on disk agree, durably.
+                await remap_detections_for_crop(session, img.id, rect, old_size)
+                await session.commit()
+
+                # --- epilogue: best-effort, cannot undo the crop ---
+                if img.thumbnail_path:
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                        )
+                    except Exception as exc:
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Batch crop: thumbnail for %s could not be regenerated: %s",
+                            img.filename, exc,
+                        )
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_crop",
+                    "status": "running", "done": i + 1, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename,
+                })
+                counts["processed"] += 1
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
 
 
 @router.post("/{image_id}/resize")
@@ -810,6 +1377,7 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
         None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
     )
     img.width, img.height = new_w, new_h
+    _record_in_place(img, "resize", width=new_w, height=new_h)
     # Regenerate thumbnail
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
     await db.commit()
@@ -832,6 +1400,20 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
     # --- Replace mode: overwrite the original image ---
     if body.replace:
+        if body.upscale_model:
+            # The upscaler writes through `normalize_image_format`, which falls
+            # back to PNG for .bmp/.gif/.tiff/.avif — so a replace of one of
+            # those lands at a *different* path, and an unregistered file already
+            # sitting there has no DB row guarding it. Unlike the LUT and upscale
+            # batch jobs, which skip the image and keep going, this endpoint
+            # handles exactly one image and can refuse before touching anything.
+            _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+            if planned_out != str(src_path) and Path(planned_out).exists():
+                raise HTTPException(
+                    409,
+                    f"Upscaling {src_path.name} writes {Path(planned_out).name}, "
+                    "which already exists on disk. Rename or remove it first.",
+                )
         await version_service.protect_file_before_overwrite(img.id, img.file_path, db)
         await db.commit()  # persist the COW hash backfill before the overwrite
         tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
@@ -853,6 +1435,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             img.file_size_bytes = info["file_size_bytes"]
             img.format = info["format"]
             img.phash = info["phash"]
+            _record_in_place(img, "crop", rect=[body.x, body.y, body.width, body.height])
             # Replace crop changed geometry: remap this image's detections.
             await remap_detections_for_crop(
                 db, img.id, (body.x, body.y, body.width, body.height), old_size
@@ -903,7 +1486,14 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 except OSError:
                     pass
 
-            await loop2.run_in_executor(None, generate_thumbnail, replace_cfg["dest_path"], replace_cfg["thumb_path"])
+            # The PNG fallback may have written a different path than the one
+            # asked for; the thumbnail has to be cut from the file that exists.
+            # It is cut in the epilogue, after the row is committed: the crop has
+            # already overwritten the original, so a raise here would leave the
+            # row describing a file that is gone (PM-013).
+            actual_out_path = info.get("out_path", replace_cfg["dest_path"])
+            superseded: Path | None = None
+            stale = 0
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
@@ -911,6 +1501,23 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     updated.width = info["width"]
                     updated.height = info["height"]
                     updated.file_size_bytes = info["file_size_bytes"]
+                    if actual_out_path != replace_cfg["dest_path"]:
+                        # A .bmp read back as .png: the row has to follow the
+                        # written file and the original has to go, or the dataset
+                        # ends up with two files and one row (PM-009). The COW
+                        # copy already exists — `protect_file_before_overwrite`
+                        # ran before the crop — so the unlink is safe. The stem is
+                        # unchanged, so the thumbnail and sidecar stay put. It
+                        # happens after the commit, since `unlink` is fallible.
+                        superseded = Path(replace_cfg["dest_path"])
+                        updated.filename = Path(actual_out_path).name
+                        updated.file_path = actual_out_path
+                        updated.format = info["format"]
+                    _record_in_place(
+                        updated, "crop_upscale",
+                        rect=replace_cfg["crop_rect"],
+                        model=Path(replace_cfg["upscale_model"]).name,
+                    )
                     # Remap detections only now that the upscale succeeded (a
                     # failed upscale raises above and never reaches here). The
                     # crop rect is in the OLD (pre-crop) transposed frame.
@@ -921,7 +1528,50 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         (rect[0], rect[1], rect[2], rect[3]),
                         (old_dims[0], old_dims[1]),
                     )
+                    # DB-only work above may still roll back safely; below this
+                    # line the row and the file on disk agree, durably.
                     await session.commit()
+
+                    # --- epilogue: best-effort, cannot undo the crop+upscale ---
+                    # `expire_on_commit=False` (backend/database.py) keeps
+                    # `updated` readable after the commit without a refresh.
+                    if superseded is not None:
+                        try:
+                            superseded.unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning(
+                                "Crop+upscale: could not remove superseded %s: %s",
+                                superseded.name, exc,
+                            )
+                    try:
+                        await loop2.run_in_executor(
+                            None, generate_thumbnail, actual_out_path, replace_cfg["thumb_path"]
+                        )
+                    except Exception as exc:
+                        # A stale thumbnail is cosmetic; the image is committed
+                        # and serves. Counted rather than merely logged so the
+                        # run can say so: TopBar reads this count and points at
+                        # Bulk Edit → Thumbnails.
+                        stale = 1
+                        logger.warning(
+                            "Crop+upscale: thumbnail for %s could not be regenerated: %s",
+                            Path(actual_out_path).name, exc,
+                        )
+
+                # Written and committed **inside** this `async with`, and
+                # deliberately dedented out of `if updated:` so a vanished row
+                # still reports. The emit below is this job's own terminal
+                # `completed` event — TopBar's completion branch fires on it and
+                # immediately fetches the job row, so anything a completion
+                # handler will read has to be durable before the emit runs.
+                # `job_queue` marks the row later, from its own session.
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row:
+                    job_row.result_data = {
+                        "processed": 1 if updated else 0,
+                        "thumbnails_stale": stale,
+                    }
+                await session.commit()
 
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "crop_upscale",
@@ -942,8 +1592,17 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     )
     db_names: set[str] = {r[0] for r in existing.all()}
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
+    # A plain crop keeps the source extension — `crop_image_to_dest` saves by the
+    # destination suffix and never falls back — but a crop+upscale is written by
+    # `upscale_image_sync`, whose PNG fallback changes it. Reserve the name under
+    # the extension that will actually be written, so both the db_names and the
+    # on-disk check apply to the real path.
+    dest_suffix = src_path.suffix
+    if body.upscale_model:
+        _fmt, planned_out = normalize_image_format(src_path.suffix, str(src_path))
+        dest_suffix = Path(planned_out).suffix
     new_filename = unique_filename_with_thumb(
-        dest_images, crop_stem, src_path.suffix, db_names, occupied_thumb_stems, set()
+        dest_images, crop_stem, dest_suffix, db_names, occupied_thumb_stems, set()
     )
     dest_path = dest_images / new_filename
 
@@ -998,16 +1657,20 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 except OSError:
                     pass
 
-            thumb_path = str(Path(cfg["dest_thumbs"]) / (Path(cfg["new_filename"]).stem + ".webp"))
-            await loop2.run_in_executor(None, generate_thumbnail, dst, thumb_path)
+            # Everything downstream names the file that was written, not the one
+            # requested: `generate_thumbnail` on a path the PNG fallback moved
+            # would raise and fail the job, leaving an orphan and no row.
+            actual_out_path = info.get("out_path", dst)
+            thumb_path = str(Path(cfg["dest_thumbs"]) / (Path(actual_out_path).stem + ".webp"))
+            await loop2.run_in_executor(None, generate_thumbnail, actual_out_path, thumb_path)
 
             async with AsyncSessionLocal() as session:
                 new_img = Image(
                     dataset_id=cfg["dataset_id"],
-                    filename=cfg["new_filename"],
+                    filename=Path(actual_out_path).name,
                     original_filename=cfg["original_filename"],
                     subfolder=cfg["subfolder"],
-                    file_path=dst,
+                    file_path=actual_out_path,
                     thumbnail_path=thumb_path,
                     width=info["width"],
                     height=info["height"],
@@ -1054,76 +1717,6 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     return {"id": new_img.id, "filename": new_img.filename, "width": new_img.width, "height": new_img.height}
 
 
-@router.post("/batch/resize")
-async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_resize", label="Batch resize", total_items=len(body.image_ids), config=body.model_dump())
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        from backend.workers.progress import broadcaster
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
-            for i, img in enumerate(images):
-                loop = asyncio.get_running_loop()
-                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-                await session.commit()  # persist the COW hash backfill before the overwrite
-                new_w, new_h = await loop.run_in_executor(
-                    None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar
-                )
-                img.width, img.height = new_w, new_h
-                if img.thumbnail_path:
-                    await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
-                await broadcaster.emit(job_id, {
-                    "type": "progress", "job_id": job_id, "job_type": "batch_resize",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
-                    "current_item": img.filename,
-                })
-            await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
-
-
-@router.post("/batch/crop")
-async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_crop", label="Batch crop", total_items=len(body.image_ids), config=body.model_dump())
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        from backend.workers.progress import broadcaster
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
-            for i, img in enumerate(images):
-                loop = asyncio.get_running_loop()
-                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-                await session.commit()  # persist the COW hash backfill before the overwrite
-                new_w, new_h, rect, old_size = await loop.run_in_executor(
-                    None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
-                )
-                img.width, img.height = new_w, new_h
-                # Aspect crop changed geometry: remap this image's detections.
-                await remap_detections_for_crop(session, img.id, rect, old_size)
-                if img.thumbnail_path:
-                    await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
-                await broadcaster.emit(job_id, {
-                    "type": "progress", "job_id": job_id, "job_type": "batch_crop",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
-                    "current_item": img.filename,
-                })
-            await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
-
-
 @router.patch("/{image_id}/rename")
 async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession = Depends(get_db)):
     img = await db.get(Image, image_id)
@@ -1139,6 +1732,11 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
         raise HTTPException(400, "Stem produces empty slug")
 
     old_path = Path(img.file_path)
+    # A row whose file was deleted underneath it used to run all the way to
+    # `rename_with_sidecar`, which surfaced FileNotFoundError as a 500 with the
+    # row already carrying the new name. Same answer `rename_video` gives.
+    if not old_path.exists():
+        raise HTTPException(404, "File not found on disk")
     existing = await db.execute(
         select(Image.filename).where(Image.dataset_id == img.dataset_id, Image.id != image_id)
     )
@@ -1163,10 +1761,28 @@ async def rename_image(image_id: str, body: RenameImageRequest, db: AsyncSession
     img.file_path = str(new_path)
     img.thumbnail_path = str(new_thumb)
     img.is_auto_named = False
-    rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
-    if old_thumb.exists() and old_thumb != new_thumb:
-        old_thumb.replace(new_thumb)
+    try:
+        rename_with_sidecar(old_path, new_path)  # FS last — if this raises, commit never runs
+    except FileNotFoundError:
+        # Lost the TOCTOU race against the check above. Same answer either way.
+        raise HTTPException(404, "File not found on disk") from None
     await db.commit()
+
+    # Post-commit epilogue, per CLAUDE.md § *Nothing fallible between an
+    # irreversible filesystem mutation and the `commit()`*. The thumbnail move
+    # used to sit between the rename and the commit, so an OSError there threw
+    # away a rename that had already happened on disk. `img.thumbnail_path` still
+    # names `new_thumb` even when this fails — `serve_thumbnail` regenerates a
+    # missing one, so the row states intent and the next view heals it.
+    if old_thumb != new_thumb:
+        try:
+            if old_thumb.exists():  # inside the try — an lstat can raise too
+                old_thumb.replace(new_thumb)
+        except OSError:
+            logger.warning(
+                "rename_image %s: thumbnail move failed; it will be regenerated", image_id,
+                exc_info=True,
+            )
     return {"filename": new_filename}
 
 
@@ -1359,6 +1975,12 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 thumbnail_path=str(new_thumb),
                 is_auto_named=True,
                 sort_order=assigned_order,
+                # A move is an UPDATE in place, so lineage survives unless it is
+                # explicitly cleared: the row would land in the target dataset
+                # still pointing at a video the target does not contain. The
+                # timestamp and shot index stay — they are facts about the frame,
+                # not about which dataset holds it.
+                source_video_id=None,
                 **materialized[img_id],
             )
         )
@@ -1388,12 +2010,17 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
         Image.original_filename, Image.width, Image.height, Image.file_size_bytes, Image.format,
         Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
-        Image.quality_flags, Image.aesthetic_score, Image.blur_score,
+        Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
-        Image.saturation_score, Image.style_similarity_score, Image.dino_layer_scores,
-        Image.generation_metadata, Image.sort_order, Image.created_at,
+        Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
+        Image.generation_metadata, Image.processing_history, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
+        # Frame lineage. Deliberately no `Image.source_video_id`: the copy lands
+        # in another dataset, where that id would point at a video the target
+        # does not contain — the copies get NULL. The timestamp and shot index
+        # are facts about the frame and travel with it.
+        Image.source_timestamp_ms, Image.source_shot_index,
     )
 
     if body.image_ids:
@@ -1497,6 +2124,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             captioned_by=row.captioned_by,
             captioned_at=row.captioned_at,
             quality_flags=row.quality_flags,
+            nsfw_score=row.nsfw_score,
             aesthetic_score=row.aesthetic_score,
             blur_score=row.blur_score,
             noise_score=row.noise_score,
@@ -1504,10 +2132,15 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             watermark_score=row.watermark_score,
             color_score=row.color_score,
             saturation_score=row.saturation_score,
+            luminance_score=row.luminance_score,
             style_similarity_score=row.style_similarity_score,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
+            processing_history=row.processing_history,
             sort_order=assigned_order,
+            source_video_id=None,
+            source_timestamp_ms=row.source_timestamp_ms,
+            source_shot_index=row.source_shot_index,
             **materialized[row.id],
         ))
 

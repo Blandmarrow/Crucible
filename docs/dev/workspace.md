@@ -1,6 +1,6 @@
-# Workspace tools: hardware stats, file browser, Logs & Booru lookup
+# Workspace tools: hardware stats, Logs & Booru lookup
 
-This file covers the smaller workspace surfaces: the sidebar hardware meters and their `/system` endpoints, the file browser page and its `/filesystem` router, the Logs page (job history + JS error console), and the Booru tag lookup page.
+This file covers the smaller workspace surfaces: the sidebar hardware meters and their `/system` endpoints, the Logs page (job history + JS error console), and the Booru tag lookup page. The file browser page and its `/filesystem` router — the fourth surface this file used to carry — are now in `docs/dev/file-browser.md`.
 
 ## System hardware stats
 
@@ -13,31 +13,6 @@ The MPS probe is the one link in that chain that imports torch, and it runs on e
 **`GET /system/cpu-ram`** returns `{ cpu_pct, ram_used_mb, ram_total_mb }` via `psutil` (`psutil>=5.9` in `requirements.txt`). Both `psutil.cpu_percent(interval=0.1)` and `psutil.virtual_memory()` are run together inside `asyncio.get_running_loop().run_in_executor()` to avoid blocking the event loop (both calls perform blocking I/O — `/proc/meminfo` on Linux, `GetPerformanceInfo` on Windows). Wrapped in `try/except`; returns `{ cpu_pct: 0.0, ram_used_mb: 0, ram_total_mb: 0 }` on any failure.
 
 **Frontend**: The Sidebar footer (`frontend/src/components/layout/Sidebar.tsx`) renders three stacked hardware meters — CPU, RAM, and GPU — using a shared `MeterRow` helper component (defined in the same file). CPU and RAM are driven by `useCpuRamStats` (`frontend/src/hooks/useCpuRamStats.ts`); GPU is driven by `useGpuStats` (`frontend/src/hooks/useGpuStats.ts`). Both hooks poll every 5 s via TanStack Query with `retry: false`. In-loop SSE progress emitters (captioning, detection) use `_device.memory_reserved_mb()` from `backend/ml/device.py` — subprocess overhead is unacceptable inside the per-image inference loop, and those emitters only cover PyTorch-loaded models anyway.
-
-## File browser
-
-Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered in `main.py`.
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /roots` | Windows drive roots (`C:\`, `D:\`, …) |
-| `GET /list?path=` | Directory listing — dirs first, then files, both alphabetical; `is_image` flag for image extensions |
-| `GET /preview?path=` | Serve image file directly (`FileResponse`) |
-| `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB |
-| `POST /move` | Move file/dir; syncs `Image.file_path`, `Image.filename`, `Image.dataset_id` when path is inside a dataset folder |
-| `POST /rename` | Rename in place; same DB sync |
-| `POST /delete` | Delete file or directory (recursive); deletes files from filesystem first, then removes `Image` DB records — so a failed FS deletion leaves DB records intact |
-| `POST /mkdir` | Create directory |
-
-**DB sync**: `_find_dataset_for_path(path, session)` checks if `path` is inside any dataset's `folder_path` and returns the dataset. Move/rename/delete use this to keep `Image` records consistent without a separate import step.
-
-**Path safety**: `sanitize_abs_path()` (from `backend/utils.py`) rejects null bytes and requires an absolute path. No further sandbox — this is a local desktop app with intentional full-filesystem access.
-
-**Name collisions** are 409s, checked before the filesystem is touched: `POST /move` onto an existing name at the destination, `POST /rename` onto an existing sibling, `POST /mkdir` where the name already exists (as a directory *or* a file — the guard is `exists()`, not `is_dir()`). `backend/tests/test_conflict_paths_http.py` asserts each one leaves both sides on disk untouched.
-
-Frontend page: `FileBrowserPage.tsx`, route `/file-browser`, sidebar nav item "File Browser". Three-panel layout (`200px | 1fr | 280px`): left = drive roots + quick-access links, middle = breadcrumb + file list + context menu (rename/delete/import), right = image preview + `<GenerationMetadata>` panel.
-
-API client: `frontend/src/api/filesystem.ts` — thin wrappers over all endpoints; `previewUrl(path)` returns a URL string for use in `<img src>`.
 
 ## Logs page
 

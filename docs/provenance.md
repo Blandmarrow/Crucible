@@ -150,11 +150,30 @@ URL, set the URL per image or keep the two kinds in separate datasets.
 
 Derived images — crops, upscales, LUT-graded copies, detection crops — carry
 their parent's source and license. A derivative of a CC BY-SA image is still
-CC BY-SA.
+CC BY-SA. So do **frames extracted from a video**, which carry the video's
+four fields; that is how a video's licence reaches anything you train on.
 
 Provenance is part of a dataset's version history: snapshots capture all four
-fields per image, so a restore reverts them and a diff shows what changed. See
-[Dataset Versioning](versioning.md).
+fields per image, so a restore reverts them and a diff shows what changed. A
+video's own four fields are outside version history, along with the rest of the
+video. See [Dataset Versioning](versioning.md).
+
+## Videos
+
+A video carries the same four fields as an image, inherits them from the dataset
+default the same way, and shows them on its detail page. Three differences are
+worth knowing, all deliberate:
+
+- **They are set at import and not editable afterwards.** Folder import's
+  source/license fields apply to the videos it brings in; a video added by upload
+  or picked up by a rescan simply inherits. There is no per-video editor and
+  **Set source/license** covers images only, so changing a video's values after
+  ingest means changing the dataset default.
+- **Nothing is read off the file.** Videos have no sidecar and no embedded
+  attribution read, so the import dialog is the only place a value can come from.
+- **The gallery filter, the Statistics licence breakdown and every export count
+  images only.** A video is never exported; its licence reaches an export through
+  the frames extracted from it, which do carry it.
 
 ## Labeling images you already have
 

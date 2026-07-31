@@ -1,0 +1,744 @@
+import { test, expect } from '@playwright/test'
+import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi, mp4Buffer } from './helpers'
+
+// The frame-extraction surface, GPU-free: the video strip and its selection, the
+// two-step modal, the controls each step owns, and one journey that actually
+// runs an extraction end to end.
+//
+// **Extract really is clicked**, in `an extraction runs end to end…` only. The
+// earlier reading — that a real run needs scenedetect, which CI lacks — was
+// wrong: without scenedetect `detect_shots` falls back to `_uniform_shots`,
+// which is pure arithmetic over the clip's span and needs nothing but opencv.
+// `mp4Buffer()` is 2 s, so that fallback yields a single window and the whole
+// run is over in about a second. Nothing below asserts a shot *count*: with
+// scenedetect installed (a dev machine after `manage.sh update`) the detector
+// runs for real and may find more, and pinning the number would be pinning the
+// fallback rather than the feature.
+//
+// CI runs with `capabilities: { shot_detection: false, deinterlace: false }`
+// (only opencv is installed), and a dev machine after `manage.sh update` runs
+// with both true. Every assertion below therefore checks that a control is
+// *present*, never that it is enabled — the disabled-deinterlace and
+// fixed-interval-sampling branches are real behaviour in one of those two worlds.
+test('a video can be driven through the extraction modal', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+  // One ordinary image too, so the strip is demonstrably separate from the grid.
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+
+  // The strip: header, count, and a checkbox per card.
+  await expect(page.getByRole('button', { name: /^Videos/ })).toBeVisible()
+  const checkbox = page.getByRole('checkbox', { name: 'Select clip.mp4' })
+  await expect(checkbox).toBeVisible()
+  await expect(checkbox).toHaveAttribute('aria-checked', 'false')
+
+  // Selecting reveals the batch action row without navigating away.
+  await checkbox.click()
+  await expect(checkbox).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByText('1 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Clear' }).click()
+  await expect(page.getByText('1 selected')).toHaveCount(0)
+
+  // Into the detail view via the card body.
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await expect(page.getByRole('heading', { name: 'Video Info' })).toBeVisible()
+
+  // Step 1. The probe is a request, not a job — wait for it rather than for a
+  // spinner to disappear.
+  const probe = page.waitForResponse(
+    (res) => res.url().includes(`/api/v1/videos/${video.id}/probe`) && res.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await expect(dialog).toBeVisible()
+  expect((await probe).status()).toBe(200)
+
+  // The filmstrip, the crop rect's keyboard path, the deinterlace toggle and the
+  // trim track — the four things step 1 exists to offer.
+  await expect(dialog.getByTestId('probe-filmstrip').getByRole('button')).not.toHaveCount(0)
+  for (const field of ['x', 'y', 'w', 'h']) {
+    await expect(dialog.getByRole('spinbutton', { name: `Crop ${field}` })).toBeVisible()
+  }
+  await expect(dialog.getByRole('button', { name: 'Use detected' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Clear crop' })).toBeVisible()
+  await expect(dialog.getByRole('checkbox', { name: /Deinterlace/ })).toBeVisible()
+  await expect(dialog.getByTestId('trim-bar')).toBeVisible()
+  // The handles render only when the duration is known, and the spec below
+  // drives one. Asserted here so a fixture that ever stopped reporting a
+  // duration fails loudly instead of leaving that test vacuous.
+  await expect(dialog.getByTestId('trim-handle-start')).toBeVisible()
+
+  // Step 2 — the three re-extraction modes, with New subfolder the default.
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  const mode = (name: RegExp) => dialog.getByRole('radio', { name })
+  await expect(mode(/^New subfolder/)).toBeChecked()
+  await expect(mode(/^Add to/)).toBeVisible()
+  await expect(mode(/^Replace/)).toBeVisible()
+  // Nothing has been extracted yet, so Replace says so instead of naming a count.
+  await expect(dialog.getByText('Replace (nothing to replace yet)')).toBeVisible()
+  await expect(dialog.getByRole('spinbutton', { name: /Frames per shot/ })).toBeVisible()
+
+  // Close without submitting — the expensive button is never pressed.
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  // No frames were produced, so the history panel stays hidden entirely.
+  await expect(page.getByRole('heading', { name: 'Extracted frames' })).toHaveCount(0)
+})
+
+// The modal's controls, on the claim that they report what you actually did.
+// Three of them at once, because all three are read off one submitted body:
+//
+//   - a numeric field must not rewrite the prefix you are still typing (every
+//     one of them re-clamped `Number(e.target.value)` per keystroke, so `2048`
+//     into Long edge arrived as `8192`);
+//   - a typed value must survive the step swap, which fires no blur;
+//   - a plain **click** on a trim handle must not count as setting a trim —
+//     that flag hands the previewed video's trim to every video in the batch.
+//
+// `fill()` cannot see the first bug: it dispatches one input event carrying the
+// whole string, so it passes against the broken code. Every value below is typed
+// a character at a time on purpose. Extraction itself is stubbed — the point is
+// the request body, and a real run is already covered end to end further down.
+test('the modal reports what was typed and what was clicked', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-controls-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // A click with no drag. `pointerdown` used to move the handle to wherever
+  // inside its 10 px hit box the press landed, which set the trim.
+  //
+  // The position is not decoration. The handle is 10 px wide with `marginLeft:
+  // -5`, so at `startMs === 0` it straddles the track's left edge and a default
+  // centred click lands at exactly 0 ms — a no-op the modal's own guard would
+  // absorb, leaving this assertion passing against the unfixed component. The
+  // near-right edge of the hit box is a few px *into* the track, which is the
+  // press this is actually about.
+  const startHandle = dialog.getByTestId('trim-handle-start')
+  await expect(startHandle).toBeVisible()
+  await startHandle.click({ position: { x: 9, y: 11 } })
+
+  // The fixture is 128×96, so `99` is in range but odd: the even-snap that
+  // mirrors `clamp_crop` would rewrite it, which is exactly the case the field
+  // holds as an uncommitted draft rather than rewriting under the caret.
+  const cropW = dialog.getByRole('spinbutton', { name: 'Crop w' })
+  await cropW.fill('')
+  await cropW.pressSequentially('99')
+  await expect(cropW).toHaveValue('99')
+
+  // **Next** without blurring first — React fires no blur for a focused element
+  // it removes, so the draft only survives because the field commits on unmount.
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Back' }).click()
+  await expect(dialog.getByRole('spinbutton', { name: 'Crop w' })).toHaveValue('100')
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  const longEdge = dialog.getByRole('spinbutton', { name: /Long edge/ })
+  await longEdge.press('Control+a')
+  await longEdge.pressSequentially('2048')
+  await expect(longEdge).toHaveValue('2048')
+
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  // Which also pins the ordering: the click blurs the field before the submit.
+  expect(body!.long_edge).toBe(2048)
+  // Key *presence*, not value: an untouched trim is sent as `undefined`, which
+  // serialization drops, so this is the exact assertion that the click on the
+  // handle did not flip `trimTouched` and write a trim across the batch.
+  expect(body).not.toHaveProperty('trim_start_ms')
+  expect(body).not.toHaveProperty('trim_end_ms')
+})
+
+// The same guard from the other side, and the one with real data consequences.
+// `cropTouched` decides whether `crop` is sent at all; the modal shows the *full
+// frame* when no crop is set, and the endpoint maps a full-frame rect to `None`
+// and writes `crop_* = NULL` to **every** video in the batch. So merely tabbing
+// through the crop fields — the documented keyboard path — used to wipe every
+// other video's stored rect. Key presence in the body is the whole assertion.
+test('tabbing through the crop fields sends no crop', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-tab-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  await dialog.getByRole('spinbutton', { name: 'Crop x' }).focus()
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Tab')
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  expect(body).not.toHaveProperty('crop')
+  expect(body).not.toHaveProperty('clear_crop')
+})
+
+// The arrow key that grows the head trim, floored at 0. This looked
+// unreachable — the component's own pointer path caps the tail so the remaining
+// span never drops under `MIN_SPAN_MS` — but the *endpoint* is looser than the
+// component: it refuses only `start + end >= duration`, so `trim_end_ms: 1900`
+// on a 2 s clip is accepted and stored. Reopening on that row leaves the start
+// handle with `endPos - MIN_SPAN_MS` negative, and one press used to take
+// `trimStart` to -400 and the next submit to a raw 422 on the schema's `ge=0`.
+//
+// (Its sibling, the crossed-trim render, really is unreachable this way: the
+// same endpoint check is exactly what makes `startMs > endPos` impossible to
+// store, so it needs a duration corrected downward after the fact.)
+test('growing the head trim past the tail stops at zero', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-trimfloor-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  const res = await request.post('/api/v1/videos/extract', {
+    data: { video_ids: [video.id], trim_start_ms: 0, trim_end_ms: 1900, mode: 'new_subfolder' },
+  })
+  expect(res.status(), await res.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // The precondition, asserted so this cannot quietly go vacuous: the tail trim
+  // stored above leaves the end handle 100 ms in, well under `MIN_SPAN_MS`.
+  const start = dialog.getByTestId('trim-handle-start')
+  await expect(start).toHaveAttribute('aria-valuenow', '0')
+  await expect(dialog.getByTestId('trim-handle-end')).toHaveAttribute('aria-valuenow', '100')
+
+  await start.focus()
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight')
+  await expect(start).toHaveAttribute('aria-valuenow', '0')
+})
+
+// The two modes resolve a subfolder differently — `new_subfolder` steps whatever
+// name it is given through `_step_subfolder`, so offering an existing folder
+// there would silently produce `{name}_2`. The control has to differ, and this is
+// the only automated check that it does.
+test('existing subfolders are offered in Add mode only', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-sub-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+  // A subfolder that actually holds an image, or the dropdown lists nothing in
+  // either mode and the assertion below passes for the wrong reason.
+  await uploadViaApi(request, ds.id, 'still.png', 'existing')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+
+  const options = () => dialog.getByTestId('extract-subfolder').locator('option').allTextContents()
+
+  // New subfolder (the default): Automatic + Name it…, nothing else.
+  expect(await options()).toHaveLength(2)
+  expect((await options()).join(' | ')).toContain('a new subfolder named after the video')
+
+  await dialog.getByRole('radio', { name: /^Add to/ }).check()
+  const added = await options()
+  expect(added).toHaveLength(3)
+  // The label changes too: an empty subfolder means something different here.
+  expect(added.join(' | ')).toContain("this video's previous subfolder")
+  expect(added.join(' | ')).toContain('existing')
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+})
+
+// Extraction needs no probe — only step 1's previews do — so a video whose probe
+// fails must still be extractable. It was not: `Next` was gated on the probe.
+test('a failed probe still reaches step 2, and says what is missing', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-noprobe-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.route('**/api/v1/videos/*/probe', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe failed"}' }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  await expect(dialog.getByText(/could not be sampled/)).toBeVisible()
+  const next = dialog.getByRole('button', { name: 'Next' })
+  await expect(next).toBeEnabled()
+  await next.click()
+  await expect(dialog.getByRole('radio', { name: /^New subfolder/ })).toBeChecked()
+
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+})
+
+// Pass 2 — the gallery entry point. The button is deliberately ungated: the
+// selection store holds ids only and a selection can span pages and datasets, so
+// the *preview endpoint* is what says what will actually run. CI has no
+// scenedetect, so no lineage-carrying frame can exist here — which makes this the
+// honest test of the accounting, and the reason it is never submitted.
+test('the re-extract form reports what it can and cannot do', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  // The gallery checkbox is an overlay div on the card, not an <input>.
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const preview = page.waitForResponse(
+    (res) => res.url().includes('/api/v1/videos/reextract/preview') && res.request().method() === 'POST',
+  )
+  const opener = page.getByRole('button', { name: 'Re-extract' })
+  await opener.click()
+  // A real dialog, not a bare overlay: `ReextractFramesModal` spreads
+  // `useModalBehavior`, so this is `role="dialog"` and Escape closes it.
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
+  await expect(modal).toBeVisible()
+  expect((await preview).status()).toBe(200)
+
+  // The accounting, straight from the endpoint that would do the work.
+  await expect(modal.getByText('0 frames from 0 videos will be re-extracted')).toBeVisible()
+  await expect(modal.getByText('1 skipped (not extracted from a video)')).toBeVisible()
+
+  // The controls, and the note that pass 2 does not re-score.
+  await expect(modal.getByRole('radio', { name: 'JPEG' })).toBeChecked()
+  await expect(modal.getByRole('radio', { name: /PNG/ })).toBeVisible()
+  await expect(modal.getByRole('spinbutton')).toHaveAttribute('placeholder', 'native')
+  await expect(modal.getByText(/Quality scores were measured on the triage frames/)).toBeVisible()
+
+  // Long edge is bounded client-side. `min="64"` on the input enforces nothing on
+  // a typed value, so without this `30` reached the API and came back a raw 422.
+  await modal.getByRole('spinbutton').fill('30')
+  await expect(modal.getByText(/whole number between 64 and 16384/)).toBeVisible()
+  await modal.getByRole('spinbutton').fill('')
+  await expect(modal.getByText(/whole number between 64 and 16384/)).toHaveCount(0)
+
+  // Nothing is eligible, so the expensive button is not even offered.
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+
+  // Escape closes and focus returns to the button that opened it.
+  await page.keyboard.press('Escape')
+  await expect(modal).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})
+
+// The one journey that runs a real extraction. Four surfaces are folded into it
+// rather than split across four specs, because none of them can exist without
+// one: the progress block, the extraction-history panel, the `?source_video_id=`
+// gallery deep link, and the frame's lineage line. Four specs would be four
+// extractions for the coverage of one.
+test('an extraction runs end to end and its frame appears with lineage', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-run-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  // The dataset-card video badge — two lines here rather than a spec of its own.
+  // Scoped to this dataset's card: the suite shares one DB, so earlier specs
+  // leave datasets carrying videos of their own.
+  await page.goto('/datasets')
+  await expect(
+    page.getByTestId(`dataset-card-${ds.id}`).getByText('1 video', { exact: true }),
+  ).toBeVisible()
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+
+  // `extract-running` appears as soon as the 200 lands. The settled text is the
+  // legal wait target for "terminal": `useVideoExtractJobs` filters terminal
+  // statuses out, so the row falls back to this label the moment the job stops
+  // being live, and it persists until the modal closes.
+  await expect(dialog.getByTestId('extract-running')).toBeVisible()
+  await expect(dialog.getByText('Finished or no longer reporting')).toBeVisible({ timeout: 30_000 })
+
+  // That label renders for a *failed* job too, so the outcome is cross-checked
+  // through the API rather than inferred from the page.
+  const summary = await (await request.get(`/api/v1/videos/${video.id}/frames-summary`)).json()
+  expect(summary.total).toBeGreaterThan(0)
+  // `limit` is explicit: `GET /images/` defaults to 50, so a fixture that ever
+  // yields more frames would silently truncate the list and fail this length
+  // check for a reason that has nothing to do with extraction.
+  const frames = await (
+    await request.get('/api/v1/images/', {
+      params: { dataset_id: ds.id, source_video_id: video.id, limit: 500 },
+    })
+  ).json()
+  expect(frames).toHaveLength(summary.total)
+
+  // Closing invalidates `video-frames`, so the history panel appears — hidden
+  // entirely until an extraction exists, which is why it has never been covered.
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByRole('heading', { name: 'Extracted frames' })).toBeVisible()
+  const showAll = page.getByRole('button', { name: `Show all ${summary.total} frames` })
+  await expect(showAll).toBeVisible()
+
+  // The lineage deep link: `?source_video_id=` lands on a filtered gallery.
+  await showAll.click()
+  await expect(page).toHaveURL(new RegExp(`source_video_id=${video.id}`))
+  const tiles = page.getByTestId(/^select-/)
+  await expect(tiles).toHaveCount(summary.total)
+
+  // And from a frame back to its source — the line only a frame renders.
+  await page.getByRole('button', { name: frames[0].filename }).first().click()
+  const lineage = page.getByText('From', { exact: true })
+  await expect(lineage).toBeVisible()
+  await expect(page.getByRole('button', { name: 'clip.mp4' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'all frames' })).toBeVisible()
+})
+
+// Re-attachment after a reload, fully stubbed — no job is ever started. The hook
+// re-seeds `jobStore` from a persisted id and matches everything after that by
+// `video_id`, and that seeding is exactly what a reload destroys and what no
+// other test can reach: a real job finishes far too fast to reload into.
+test('a running extraction is re-attached after a reload', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-reattach-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+  const jobId = 'stub-job-running'
+
+  const jobRow = (status: string) => ({
+    id: jobId, job_type: 'video_extract', label: 'Extract - clip.mp4',
+    status, dataset_id: ds.id, total_items: 3, done_items: 1,
+    error_msg: null, result_data: {}, config: {},
+    created_at: new Date().toISOString(), started_at: new Date().toISOString(),
+    finished_at: null,
+  })
+
+  // `videoExtractJobKey(videoId)`, holding `persistentState`'s envelope.
+  await page.addInitScript(
+    ([key, id]) => localStorage.setItem(key, JSON.stringify({ jobId: id })),
+    [`video-extract-job-${video.id}`, jobId],
+  )
+  await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobRow('running')) }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+
+  // The synthetic event the recovery effect writes carries no phase and no
+  // message, so `extractPhaseLabel` falls through to its default.
+  await expect(page.getByText('Starting…')).toBeVisible()
+  // Only true if the hook matched the seeded job to *this* video by `video_id`.
+  await expect(page.getByRole('button', { name: 'Extract frames' }))
+    .toHaveAttribute('title', 'Show the running extraction')
+
+  // The twin: a persisted id whose job has since gone terminal shows no bar, and
+  // the key is *removed* — not rewritten as `{jobId: null}`, which reads the same
+  // to every consumer but leaves one dead entry per video ever extracted.
+  await page.unroute(`**/api/v1/jobs/${jobId}`)
+  await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(jobRow('completed')) }),
+  )
+  await page.reload()
+
+  await expect(page.getByRole('button', { name: 'Extract frames' }))
+    .toHaveAttribute('title', 'Turn this video into frames')
+  await expect(page.getByText('Starting…')).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), `video-extract-job-${video.id}`))
+    .toBeNull()
+})
+
+// The state that used to crash: TanStack v5's default `networkMode: "online"`
+// leaves a query started offline `pending` *and* `paused` — `isLoading` false,
+// `error` null, `data` undefined — so an `isLoading ? … : content` chain fell
+// into the content branch and dereferenced `preview!`, taking out the pane's
+// ErrorBoundary. `setOffline` flips `navigator.onLine`, which is exactly the
+// signal that mode reads, so this is the real state and not an approximation.
+test('the re-extract dialog waits rather than crashing on an offline tab', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-offline-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  // Offline only now: the preview must be the *first* fetch of this key, or the
+  // cache would answer it and the paused branch would never be reached.
+  await page.context().setOffline(true)
+  await page.getByRole('button', { name: 'Re-extract' }).click()
+
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
+  await expect(modal.getByText('Checking which frames can be re-extracted…')).toBeVisible()
+  // The controls still render, and the submit stays gated on `eligible === 0`.
+  await expect(modal.getByRole('radio', { name: 'JPEG' })).toBeChecked()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+
+  await page.context().setOffline(false)
+})
+
+// Pass 2's re-attachment, fully stubbed — no job is ever started. Pass 2 needs no
+// persisted key (it emits per frame, so a reconnected stream repopulates
+// `jobStore` immediately); it re-attaches by adopting any live `video_reextract`
+// job whose `video_id` is one of the *preview's* groups. That is what makes
+// closing the dialog mid-run safe, and it is why both exits are now offered.
+test('the re-extract dialog re-attaches to a job it did not start', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-reextract-reattach-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+  const stubVideoId = 'stub-video-id'
+
+  // The preview names the scope's videos without writing anything — the whole
+  // reason a reopened dialog knows what to adopt.
+  await page.route('**/api/v1/videos/reextract/preview', (route) =>
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        groups: [{ video_id: stubVideoId, filename: 'clip.mp4', frames: 2, job_id: null }],
+        skipped: [], eligible: 2, total: 2,
+      }),
+    }),
+  )
+
+  // The live job, delivered the way the app really receives one: the global SSE
+  // stream `TopBar` holds open. One frame is enough — `jobStore` merges by id.
+  const frame = JSON.stringify({
+    type: 'progress', job_id: 'stub-reextract-job', job_type: 'video_reextract',
+    label: 'Re-extract - clip.mp4', status: 'running', dataset_id: ds.id,
+    video_id: stubVideoId, done: 1, total: 2, percent: 50, message: 'Frame 1 of 2',
+  })
+  await page.route('**/api/v1/jobs/stream/all/events', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: `data: ${frame}\n\n` }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-still.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const opener = page.getByRole('button', { name: 'Re-extract' })
+  await opener.click()
+  const modal = page.getByRole('dialog', { name: 'Re-extract at full resolution' })
+  await expect(modal).toBeVisible()
+
+  // Adopted: the pill this dialog never started, and the submit guard that
+  // follows from `running`.
+  await expect(modal.getByText('Frame 1 of 2')).toBeVisible()
+  await expect(modal.getByText('1/2')).toBeVisible()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+  // Both exits are live mid-run, and the note says why that is safe.
+  await expect(modal.getByRole('button', { name: 'Close', exact: true })).toBeEnabled()
+  await expect(modal.getByRole('button', { name: '×' })).toBeVisible()
+  await expect(modal.getByText(/Closing this window is safe/)).toBeVisible()
+
+  // Close and reopen — the claim itself. The ids lived only in component state
+  // before this, so Escape used to destroy the only tracking that existed.
+  await page.keyboard.press('Escape')
+  await expect(modal).toHaveCount(0)
+  await opener.click()
+  await expect(modal.getByText('Frame 1 of 2')).toBeVisible()
+  await expect(modal.getByRole('button', { name: 'Re-extract' })).toBeDisabled()
+})
+
+// Rename and delete from the detail page. Neither has any coverage, and both are
+// destructive enough that "the button exists" is not the interesting claim — the
+// row afterwards is.
+test('a video can be renamed and deleted from its detail page', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-video-crud-${Date.now()}`)
+  const video = await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.goto(`/datasets/${ds.id}/video/${video.id}`)
+  await page.getByTitle('Rename (the extension is kept)').click()
+
+  // Enter, not the Save icon: the input has its own Enter handler, so the
+  // unlabelled icon button never needs a selector of its own.
+  const patch = page.waitForResponse(
+    (res) => res.url().includes(`/videos/${video.id}/rename`) && res.request().method() === 'PATCH',
+  )
+  await page.getByRole('textbox').fill('renamed')
+  await page.keyboard.press('Enter')
+  expect((await patch).status()).toBe(200)
+
+  // The info grid, not the toast — toasts auto-dismiss, and the grid is what a
+  // user reads afterwards. `.nth(1)` because the page header carries the name too;
+  // both updating is the point, so a `.first()` here would pass on a stale grid.
+  await expect(page.getByText('renamed.mp4')).toHaveCount(2)
+  await expect(page.getByText('renamed.mp4').nth(1)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Delete video' }).click()
+  const confirm = page.getByRole('dialog', { name: 'Delete video?' })
+  await expect(confirm).toBeVisible()
+  await expect(confirm.getByText(/Extracted frames are not deleted/)).toBeVisible()
+  await confirm.getByRole('button', { name: 'Delete' }).click()
+
+  // A one-video dataset, so the post-delete navigation takes the deterministic
+  // `paneGo` branch back to the gallery rather than stepping to a sibling.
+  await expect(page).toHaveURL(new RegExp(`/datasets/${ds.id}/gallery`))
+  await expect(page.getByRole('button', { name: 'renamed.mp4' })).toHaveCount(0)
+})
+
+// The `Include videos` toggle. Its backend behaviour is covered three times over
+// in test_video_import_rescan_http.py; the only untested claim is the *wiring*,
+// so the import POST is stubbed and the request body is the assertion. A real
+// folder import here would drag in three interacting subsystems for one checkbox.
+test('the import modal sends include_videos when the box is ticked', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-import-videos-${Date.now()}`)
+
+  let body: Record<string, unknown> | null = null
+  let target: string | null = null
+  await page.route('**/api/v1/datasets/*/import', (route) => {
+    body = route.request().postDataJSON()
+    target = new URL(route.request().url()).pathname.split('/').at(-2) ?? null
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"job_id":"stub"}' })
+  })
+
+  await page.goto('/datasets')
+  await page.getByTitle('Import folder').first().click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  // Picked explicitly: which card is first depends on the page's sort and on
+  // every dataset the earlier specs left behind.
+  await dialog.getByRole('combobox').first().selectOption(ds.id)
+
+  const include = dialog.getByRole('checkbox', { name: 'Include videos' })
+  await expect(dialog.getByText(/land flat/)).toHaveCount(0)
+  await include.check()
+  // The explanatory paragraph is the only visible consequence of ticking it.
+  await expect(dialog.getByText(/land flat/)).toBeVisible()
+
+  await dialog.getByRole('textbox').first().fill('/tmp/e2e-import-source')
+  await dialog.getByRole('button', { name: 'Import' }).click()
+
+  await expect.poll(() => body).not.toBeNull()
+  expect(target).toBe(ds.id)
+  expect(body!.include_videos).toBe(true)
+})
+
+// The same `cropTouched` guard, from the side that actually destroys data.
+//
+// `CropOverlay` renders no crop as the *full frame* and calls `onChange` on
+// every pointer move, so narrowing the crop and putting it back latched the flag
+// on the first intermediate frame and left `crop = {0,0,W,H}` in state. That
+// rect is not `null`, so it was sent; `clamp_crop` maps it to `None`; and the
+// endpoint writes `crop_* = NULL` to **every** video in the batch. A user who
+// tried a crop, changed their mind and dragged it back wiped the stored
+// letterbox rect off every other episode they had selected — with the overlay
+// looking exactly as it did on open.
+//
+// The numeric fields are the deterministic way to drive that round trip; the
+// pointer path reaches the identical state through `clampRect`.
+test('narrowing the crop and putting it back sends no crop', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-roundtrip-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // With no stored crop the overlay seeds the full frame, so W opens at frameW.
+  const wField = dialog.getByRole('spinbutton', { name: 'Crop w' })
+  const fullW = await wField.inputValue()
+  expect(Number(fullW)).toBeGreaterThan(0)
+
+  // Narrow it — this is the gesture that used to latch the flag …
+  await wField.fill(String(Number(fullW) - 10))
+  await wField.blur()
+  // … and put it back.
+  await wField.fill(fullW)
+  await wField.blur()
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  expect(body).not.toHaveProperty('crop')
+  expect(body).not.toHaveProperty('clear_crop')
+})
+
+// The replace radio is the most destructive control in this feature, and its
+// number has to be the number of frames it will actually delete.
+//
+// A video extracted twice lands in two subfolders (`clip`, then `clip_2` — the
+// default mode is "new subfolder"). Replace resolves its target to the most
+// recent one and `_delete_previous_frames` scopes the delete to it, so the other
+// subfolder's frames survive. The label used to read `framesSummary.total`, the
+// sum over *every* group: on 50 + 50 it promised "deletes 100 previous frames"
+// and removed 50, leaving the user with a stale extraction they believed was
+// gone. Replace mode hides the subfolder control, so the count is the only thing
+// on screen describing the blast radius.
+//
+// The summary is stubbed rather than built by running two extractions: the
+// number under test is the label's arithmetic, not the router's grouping (which
+// backend tests already cover), and a canned response pins the two-group shape
+// that makes total and groups[0] differ.
+test('the replace label counts only the subfolder it will delete', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-replace-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.route('**/frames-summary', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 100,
+        groups: [
+          { subfolder: 'clip_2', count: 50, last_extracted_at: null },
+          { subfolder: 'clip', count: 50, last_extracted_at: null },
+        ],
+      }),
+    }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+
+  // 50, the count of `clip_2` — not 100, the sum across both subfolders.
+  await expect(dialog.getByText('Replace (deletes 50 previous frames)')).toBeVisible()
+  await expect(dialog.getByText('Replace (deletes 100 previous frames)')).toHaveCount(0)
+})
+
+// The rescan wiring, from the cache side.
+//
+// This branch taught rescan to adopt clips out of `videos/`, and the toast
+// reports the count — but the completion handler invalidated everything *except*
+// `["videos", datasetId]`. The header badge reads `dataset.video_count` off a key
+// that *was* invalidated, so the page updated itself to say "1 video" above a
+// `VideoStrip` still rendering its pre-rescan empty array, for the full 30 s
+// staleTime. Extract frames is reachable only through that strip.
+//
+// A real rescan, not a stub: the assertion is precisely that the refetch happens,
+// which a stubbed job cannot demonstrate.
+test('a rescan that adopts a clip shows the video strip without a reload', async ({ page, request }) => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  const ds = await createDatasetViaApi(request, `e2e-rescan-videos-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByRole('button', { name: 'still.png' }).first()).toBeVisible()
+  // Nothing in videos/ yet, so the strip is absent.
+  await expect(page.getByRole('button', { name: 'dropped.mp4' })).toHaveCount(0)
+
+  // Drop a clip into the dataset folder behind the app's back — the case the
+  // "Rescan folder from disk" control exists for.
+  const videosDir = path.join(ds.folder_path, 'videos')
+  fs.mkdirSync(videosDir, { recursive: true })
+  fs.writeFileSync(path.join(videosDir, 'dropped.mp4'), mp4Buffer())
+
+  await page.getByTitle(/Rescan folder from disk/).click()
+
+  // Before the fix this never appeared without a refocus or a navigation.
+  await expect(page.getByRole('button', { name: 'dropped.mp4' })).toBeVisible({ timeout: 20_000 })
+})

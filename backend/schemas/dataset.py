@@ -47,6 +47,10 @@ class DatasetImportWithOptions(ProvenanceDefaults):
     subfolder: str = ""
     preserve_structure: bool = False
     import_captions: bool = True
+    # Opt-in: a video is orders of magnitude larger than the images beside it,
+    # so a mixed folder imported into an image dataset must not silently pull
+    # gigabytes in. Videos land flat in videos/, ignoring subfolder/preserve_structure.
+    include_videos: bool = False
 
 
 class DatasetRescanRequest(BaseModel):
@@ -75,6 +79,11 @@ class LicenseUsage(BaseModel):
 class DatasetDuplicateRequest(BaseModel):
     new_name: str = Field(..., min_length=1, max_length=255)
     source_version_id: str | None = None  # None = duplicate current on-disk state
+    # Opt-in for the same reason as DatasetImportWithOptions.include_videos: the
+    # footage dwarfs the images beside it, so doubling it is a visible, costed
+    # choice rather than a default. Rejected (400) alongside source_version_id —
+    # snapshots never capture videos.
+    include_videos: bool = False
 
 
 class DatasetOut(BaseModel):
@@ -88,6 +97,10 @@ class DatasetOut(BaseModel):
     image_count: int
     captioned_count: int
     total_size_bytes: int
+    # Videos are counted apart from image_count/total_size_bytes on purpose —
+    # see backend/models/dataset.py and docs/dev/video.md.
+    video_count: int = 0
+    video_size_bytes: int = 0
     preview_image_ids: list[str] = []
     current_branch_id: str | None = None
     source_name: str = ""
@@ -118,6 +131,7 @@ class DatasetStats(BaseModel):
     watermark_distribution: dict[str, int] = {}
     color_distribution: dict[str, int] = {}
     saturation_distribution: dict[str, int] = {}
+    luminance_distribution: dict[str, int] = {}
     megapixel_distribution: dict[str, int] = {}
     file_size_distribution: dict[str, int] = {}
     file_size_summary: dict[str, float] = {}

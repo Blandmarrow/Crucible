@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
+import RegenerateThumbnailsForm from "../image/RegenerateThumbnailsForm";
+import ReextractFramesModal from "../video/ReextractFramesModal";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -95,6 +97,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showReextract, setShowReextract] = useState(false);
+  const [showThumbnails, setShowThumbnails] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -434,7 +438,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showMoveSubfolder || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showReextract || showThumbnails || showMoveSubfolder || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -499,6 +503,25 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
           <Crop size={14} /> Crop
+        </button>
+        {/* Rendered unconditionally like the other fourteen actions rather than
+            gated on lineage: the store holds ids only, and a selection can span
+            pages and datasets, so any client-side gate would be wrong for exactly
+            the selections that matter. The preview endpoint does the honest
+            accounting instead. */}
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowReextract(true)}
+          title="Re-cut video frames from their source at full resolution"
+        >
+          <Scissors size={14} /> Re-extract
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowThumbnails(true)}
+          title="Re-cut the preview thumbnails for the selected images"
+        >
+          <RefreshCw size={14} /> Thumbnails
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
@@ -757,7 +780,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               </label>
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runTechnical} onChange={e => setRunTechnical(e.target.checked)} />
-                Technical (blur, noise, duplicates)
+                Technical (blur, noise, brightness, duplicates)
               </label>
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={runWatermark} onChange={e => setRunWatermark(e.target.checked)} />
@@ -1056,6 +1079,36 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               imageIds={ids}
               onSuccess={() => setShowCropDetect(false)}
               onCancel={() => setShowCropDetect(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Re-extract at full res modal */}
+      {showReextract && (
+        <ReextractFramesModal
+          datasetId={datasetId}
+          imageIds={ids}
+          title={`Re-extract at Full Resolution — ${count} Selected`}
+          headerExtra={datasetBreakdown}
+          onSuccess={() => setShowReextract(false)}
+          onClose={() => setShowReextract(false)}
+        />
+      )}
+
+      {/* Rebuild thumbnails modal */}
+      {showThumbnails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <RefreshCw size={15} /> Rebuild Thumbnails — {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+            {datasetBreakdown}
+            <RegenerateThumbnailsForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => setShowThumbnails(false)}
+              onCancel={() => setShowThumbnails(false)}
             />
           </div>
         </div>

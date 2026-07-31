@@ -79,13 +79,20 @@ class VersionImageState(Base):
     caption_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     quality_flags: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Quality scores
+    # Quality scores — same rule as the provenance and lineage blocks below: a
+    # score column added to `Image` without a mirror here is silently blanked by
+    # the next restore. Nothing recomputes a technical score (quality scoring is
+    # a manual job, and `score_coverage["technical"]` counts `blur_score` alone),
+    # so a snapshot is the only record of an old one. All ten are mirrored.
+    nsfw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     uniformity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     watermark_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     color_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    saturation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    luminance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     style_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -100,6 +107,15 @@ class VersionImageState(Base):
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Frame lineage mirror — same rule as the provenance block above: a column
+    # added to `Image` without a mirror here is silently wiped by a restore.
+    # No FK on source_video_id, matching `image_id`: a restore can target a
+    # different dataset, and a snapshot must survive its source video's deletion
+    # (which is exactly when the lineage record is worth the most).
+    source_video_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_timestamp_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_shot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     is_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

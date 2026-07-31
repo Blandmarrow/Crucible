@@ -10,6 +10,7 @@ import { useAllJobsSSE } from "../../hooks/useSSE";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../store/paneStore";
+import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { Columns2, RefreshCw } from "lucide-react";
 
@@ -19,14 +20,23 @@ import { Columns2, RefreshCw } from "lucide-react";
 // server is still polled after this — it only changes what the overlay says.
 const RESTART_SLOW_MS = 25_000;
 
-const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate"]);
+const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+// The five jobs that re-cut an image thumbnail as a best-effort post-commit
+// epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
+// place that turns it into something the user sees. It lives here rather than in
+// the six forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
+// SelectionToolbar, ImageDetailPage's three handlers, ReextractFramesForm)
+// because TopBar is always mounted — and a 400-frame re-extraction is exactly
+// the job you walk away from.
+const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
+  "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "video_reextract",
+]);
 
 const PAGE_LABELS: Record<string, string> = {
   gallery: "Gallery",
@@ -164,6 +174,43 @@ export default function TopBar() {
       ) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);
+        // A stale thumbnail is the one outcome of these four jobs that leaves no
+        // trace in the UI: the image is correct and committed, but the gallery
+        // keeps drawing the old tile. Read after the `processedJobsRef` add, so
+        // crop_upscale's two terminal events (its own, then job_queue's) toast
+        // once. Transport is a fetch, not the SSE payload: `broadcaster.emit`
+        // silently drops events when a subscriber's 200-slot queue fills, so a
+        // piggybacked count would under-report.
+        //
+        // `cancelled` is included — every one of these workers commits its
+        // counts above `raise_if_cancelled`. `failed` is not: `job_queue` fails a
+        // raising job from a *separate* session and never persists the worker's
+        // dict, so there is nothing to read.
+        if (
+          THUMBNAIL_EPILOGUE_JOB_TYPES.has(progress.job_type) &&
+          progress.status !== "failed"
+        ) {
+          jobsApi.get(jobId).then((job) => {
+            const stale = Number(job.result_data?.thumbnails_stale ?? 0);
+            if (stale <= 0) return;
+            toast(
+              `${stale} preview${stale !== 1 ? "s are" : " is"} out of date — the image${stale !== 1 ? "s were" : " was"} ` +
+              "written correctly, but the thumbnail could not be rebuilt. " +
+              "Bulk Edit → Thumbnails repairs them.",
+              { icon: "⚠️", duration: 10000 },
+            );
+          }).catch(() => { /* the outcome of the job itself is reported elsewhere */ });
+        }
+        // Deliberately not in IMAGE_MODIFYING_JOB_TYPES: the repair rewrites
+        // thumbnails and bumps `updated_at`, so the rows carrying the `?v=`
+        // cache-buster must refetch — but no count, size or score changed, and
+        // the four stats queries would all come back identical.
+        if (progress.job_type === "regenerate_thumbnails") {
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          }
+          qc.invalidateQueries({ queryKey: ["image"] });
+        }
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
           // Dataset summary counts (image_count / captioned_count) live on the
@@ -188,6 +235,11 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
+            // An import under `include_videos` creates Video rows. This is the
+            // always-mounted net, so it is what covers the user who started the
+            // import from DatasetsPage or the file browser and then walked into
+            // the gallery — the page-local handler there never ran.
+            qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
           }
         }
         // Detection jobs (run / manual box+SAM / mask refine) change per-image
@@ -199,6 +251,36 @@ export default function TopBar() {
         if (progress.job_type === "detection" || progress.job_type === "crop_to_detection") {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
+        }
+        // video_extract writes three things the generic image invalidations above
+        // do not cover: a subfolder (all three modes can create one), the Video
+        // row itself (the endpoint commits the confirmed crop/deinterlace/trims),
+        // and this video's extraction history.
+        if (progress.job_type === "video_extract") {
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
+          }
+          if (progress.video_id) {
+            qc.invalidateQueries({ queryKey: ["video", progress.video_id] });
+            qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          }
+        }
+        // Pass 2 rewrites frames in place, changing width/height/phash and the
+        // file itself. The singular ["image"] key is otherwise only invalidated
+        // for detection, so an open detail pane would keep showing the triage
+        // dimensions and thumbnail. No subfolder/video invalidation: it creates
+        // no subfolder and touches no Video row — but the frames that row *lists*
+        // are exactly what changed, and the re-extract dialog can be closed
+        // mid-run, so nothing else would refresh the extraction-history panel.
+        if (progress.job_type === "video_reextract") {
+          qc.invalidateQueries({ queryKey: ["image"] });
+          if (progress.dataset_id) {
+            qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
+          }
+          if (progress.video_id) {
+            qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          }
         }
       }
       // Live gallery updates while a captioning or ComfyUI-generate job runs — the
@@ -213,6 +295,14 @@ export default function TopBar() {
         if (currentDone > prevDone) {
           captionDoneRef.current.set(jobId, currentDone);
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          // Frames land in a subfolder that may not exist yet, so the sidebar
+          // needs it as the run fills. Deliberately NOT ["dataset", id]: that
+          // live invalidation is scoped to workers refreshing Dataset.image_count
+          // per row, and video_extract's refresh_stats is terminal-only — it
+          // would be one refetch per shot returning an unchanged number.
+          if (progress.job_type === "video_extract") {
+            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+          }
           if (progress.job_type === "comfy_generate") {
             qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
             // Sidebar/gallery image counters, so they climb with the run instead of
@@ -294,11 +384,11 @@ export default function TopBar() {
         {uploadProgress && (
           <div className="progress-pill">
             <span className="pp-dot" />
-            <span className="pp-label">Uploading images</span>
+            <span className="pp-label">Uploading files</span>
             <div className="pp-bar">
               <div className="pp-fill" style={{ width: `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%`, background: uploadProgress.errors > 0 ? "var(--warn)" : undefined }} />
             </div>
-            <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total}</span>
+            <span className="pp-num mono">{uploadProgress.done} / {uploadProgress.total} files</span>
           </div>
         )}
         {runningJob && (
@@ -311,7 +401,16 @@ export default function TopBar() {
                 : <div className="pp-fill" style={{ width: `${runningJob.percent ?? 0}%` }} />
               }
             </div>
-            {(runningJob.percent ?? 0) >= 0 && (
+            {/* `total > 0` and not merely `percent >= 0`: a job whose phase
+                counts nothing reports a real percent beside a meaningless
+                `0 / 0`. Two cases today — `video_extract`'s detection phase,
+                which pins both counters to zero because it writes nothing, and
+                `ml/download_progress.py`'s `emit_sync`, which hardcodes
+                `done: 0, total: 0` while supplying a real percent. Safe for
+                everything else: the only jobs created with `total_items=0`
+                (import, rescan, duplicate, the three exports, video_extract)
+                all set a real total in their own first worker emit. */}
+            {(runningJob.percent ?? 0) >= 0 && (runningJob.total ?? 0) > 0 && (
               <span className="pp-num mono">{runningJob.done ?? 0} / {runningJob.total ?? 0}</span>
             )}
             <button

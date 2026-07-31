@@ -23,7 +23,7 @@ only resolves once `env.py` has put the repo root on `sys.path`. Running alembic
 any directory but `backend/` crashes before that happens.
 
 Why ACCEPTED_DRIFT is a list of exact fingerprints and not a filter by diff *kind*:
-this repo starts from 14 pre-existing differences, none of them SQLite reflection
+this repo starts from 11 pre-existing differences, none of them SQLite reflection
 noise — they are real, deliberate decisions recorded in the migrations (see the
 grouped comments below). A category filter ("ignore modify_nullable") would also
 swallow the next one, which is the whole point of the check. Every entry is one
@@ -66,12 +66,16 @@ ACCEPTED_DRIFT = {
     # and a use_alter cycle is not expressible in one CREATE TABLE pass.
     "add_fk:dataset_branches:head_version_id",
     "add_fk:dataset_versions:parent_id",
-    # Indexes created by migration and never mirrored onto the model's
-    # __table_args__. Dropping them would cost query performance; they stay.
-    "remove_index:dataset_versions:uq_version_branch_name",   # d6e7f8a9b0c1 (per-branch name uniqueness)
-    "remove_index:images:ix_images_dataset_caption",          # a1b2c3d4e5f6 (performance indexes)
-    "remove_index:images:ix_images_dataset_created_at",       # a1b2c3d4e5f6
-    "remove_index:images:ix_images_file_path",                # a1b2c3d4e5f6
+    # One partial unique index, created by raw SQL in d6e7f8a9b0c1:
+    #   ... ON dataset_versions (dataset_id, branch_id, name)
+    #   WHERE name IS NOT NULL AND branch_id IS NOT NULL
+    # It is allowlisted rather than mirrored onto DatasetVersion.__table_args__
+    # because autogenerate compares an index's name and columns but NOT its
+    # predicate — verified: a model-side Index(sqlite_where=...) with a
+    # deliberately wrong WHERE still reports clean. Mirroring it would look
+    # guarded and would not be, on the one index here whose loss is a
+    # correctness failure (per-branch version-name uniqueness), not a slow query.
+    "remove_index:dataset_versions:uq_version_branch_name",
 }
 
 

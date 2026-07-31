@@ -17,6 +17,7 @@ import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
 import { apiErrorDetail } from "../utils/apiError";
 import { showImportSummaryToast } from "../utils/importToast";
+import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
 import type { Dataset } from "../types";
@@ -248,6 +249,9 @@ export default function DatasetsPage() {
   const [duplicateVersionId, setDuplicateVersionId] = useState<string | undefined>(undefined);
   const [duplicateJobId, setDuplicateJobId] = useState<string | null>(null);
   const [dupBranchId, setDupBranchId] = useState<string | undefined>(undefined);
+  // Off by default, matching the backend: doubling the footage is a costed
+  // choice, not something a duplicate does quietly.
+  const [duplicateIncludeVideos, setDuplicateIncludeVideos] = useState(false);
   const duplicateJobProgress = useJobStore((s) => s.activeJobs.get(duplicateJobId ?? ""));
 
   // ── Drag/drop ────────────────────────────────────────────────────────────
@@ -350,6 +354,10 @@ export default function DatasetsPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // Both callers (rescan and import) can add Video rows now, and the preview
+    // strip's counts come off `["dataset", id]` — so leaving this out desynced
+    // the card's video count from the video list any pane opened next.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
   }, [qc]);
 
   useEffect(() => {
@@ -358,12 +366,19 @@ export default function DatasetsPage() {
       const dsId = rescanJobProgress.dataset_id;
       if (dsId) invalidateDatasetCaches(dsId);
       jobsApi.get(rescanJobId).then((job) => {
-        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
+        const r = job.result_data as {
+          added?: number; renamed?: number; captions_updated?: number; missing?: unknown[];
+          videos_added?: number; videos_missing?: unknown[];
+        };
         const added = r.added ?? 0;
         const captions = r.captions_updated ?? 0;
-        const missing = (r.missing ?? []).length;
+        const missing = (r.missing ?? []).length + (r.videos_missing ?? []).length;
         toast.success(
           `Rescan complete — ${added} added, ${captions} caption(s) updated` +
+          (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
+          // Kept in step with GalleryPage's rescan toast: rescan otherwise never
+          // touches a file, so a rename has to be reported rather than inferred.
+          (r.renamed ? `, ${r.renamed} renamed to avoid a name clash` : "") +
           (missing ? `, ${missing} missing on disk` : "")
         );
       }).catch(() => toast.success("Rescan complete"));
@@ -400,8 +415,20 @@ export default function DatasetsPage() {
     if (!duplicateJobId || !duplicateJobProgress) return;
     if (duplicateJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      const jobId = duplicateJobId;
+      jobsApi.get(jobId).then((job) => {
+        const r = (job.result_data ?? {}) as {
+          images_added?: number; videos_added?: number; videos_failed?: number;
+        };
+        // The video clauses drop out at zero, so an image-only duplicate reads
+        // exactly as it did before the toggle existed.
+        toast.success(
+          `Dataset duplicated — ${r.images_added ?? 0} image(s)` +
+          (r.videos_added ? `, ${r.videos_added} video(s)` : "") +
+          (r.videos_failed ? `, ${r.videos_failed} video(s) failed to copy` : "")
+        );
+      }).catch(() => toast.success("Dataset duplicated"));
       setDuplicateJobId(null);
-      toast.success("Dataset duplicated");
     } else if (duplicateJobProgress.status === "failed") {
       setDuplicateJobId(null);
       toast.error("Duplicate failed");
@@ -518,7 +545,14 @@ export default function DatasetsPage() {
   });
 
   const duplicateMutation = useMutation({
-    mutationFn: () => datasetsApi.duplicate(duplicateTarget!.id, duplicateName, duplicateVersionId),
+    mutationFn: () =>
+      datasetsApi.duplicate(
+        duplicateTarget!.id, duplicateName, duplicateVersionId,
+        // Never send true alongside a snapshot: the backend 400s that pairing,
+        // and the checkbox is disabled rather than cleared, so the state can
+        // still read true while a version is picked.
+        duplicateVersionId ? false : duplicateIncludeVideos,
+      ),
     onSuccess: (data) => {
       setDuplicateTarget(null);
       setDuplicateJobId(data.job_id);
@@ -585,11 +619,16 @@ export default function DatasetsPage() {
   const handleCardDrop = useCallback(async (datasetId: string, files: FileList) => {
     if (!files.length) return;
     try {
-      await imagesApi.upload(datasetId, Array.from(files));
+      // The dropped files are not filtered client-side: unlike the gallery grid
+      // there is no competing per-card caption-drop gesture here, and sending
+      // everything is what lets the server name what it declined. Reporting
+      // files.length as images would call a rejected upload a successful one.
+      const res = await imagesApi.upload(datasetId, Array.from(files));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      toast.success(`Uploaded ${files.length} image(s)`);
+      qc.invalidateQueries({ queryKey: ["videos", datasetId] });
+      showUploadSummaryToast(tallyUpload([res]));
     } catch {
       toast.error("Upload failed");
     }
@@ -661,7 +700,7 @@ export default function DatasetsPage() {
   const datasetElementProps = (ds: Dataset): DatasetElementProps => ({
     "data-dataset-id": ds.id,
     draggable: hasAnyCategory,
-    // Pane-aware navigation: must stay go(), not useNavigate — see docs/dev/frontend-core.md
+    // Pane-aware navigation: must stay go(), not useNavigate — see docs/dev/panes-routing.md
     onClick: () => go(`/datasets/${ds.id}/gallery`, { page: "gallery", datasetId: ds.id }),
     onDragStart: (e) => {
       setDraggingDatasetId(ds.id);
@@ -714,6 +753,7 @@ export default function DatasetsPage() {
             setDuplicateName(`${ds.name} (copy)`);
             setDupBranchId(undefined);
             setDuplicateVersionId(undefined);
+            setDuplicateIncludeVideos(false);
           }}
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -772,6 +812,11 @@ export default function DatasetsPage() {
       <div
         key={ds.id}
         {...datasetElementProps(ds)}
+        // The card is a plain <div> with no role and no accessible name, and its
+        // contents (counts, badges) repeat across every card, so an e2e
+        // assertion about *this* dataset's card has nothing else to scope to.
+        // One of the ≤3 testids frontend/e2e/helpers.ts budgets for.
+        data-testid={`dataset-card-${ds.id}`}
         style={{
           background: "var(--surface-1)",
           border: `1px solid ${dragOverId === ds.id ? "var(--accent)" : "var(--line)"}`,
@@ -857,6 +902,15 @@ export default function DatasetsPage() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--fg-dim)", fontSize: 11.5 }}>
             <span className="mono">{ds.captioned_count}/{ds.image_count} captioned</span>
+            {/* Hidden at zero — a "0 videos" pill on every image-only dataset is
+                pure noise. Videos are counted apart from image_count, so this is
+                additional information, not a breakdown of the stat tiles above.
+                Kept in step with the compact row renderer below. */}
+            {ds.video_count > 0 && (
+              <span className="badge" title={`${formatSize(ds.video_size_bytes)} of video`}>
+                {ds.video_count} {ds.video_count === 1 ? "video" : "videos"}
+              </span>
+            )}
             {ds.source_name && (
               <span style={{
                 minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -938,6 +992,9 @@ export default function DatasetsPage() {
           color: "var(--fg-dim)", fontFeatureSettings: '"tnum"',
         }}>
           <span>{ds.image_count.toLocaleString()} img</span>
+          {/* Same hidden-at-zero rule as the card footer; both renderers change
+              together or the two views disagree about the same dataset. */}
+          {ds.video_count > 0 && <span>{ds.video_count.toLocaleString()} vid</span>}
           <span style={{ color: "var(--accent)" }}>{pct}%</span>
           <span>{formatSize(ds.total_size_bytes)}</span>
         </span>
@@ -1610,6 +1667,38 @@ export default function DatasetsPage() {
                         </select>
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Videos are counted apart from images and are not copied by
+                  default — so the cost is spelled out from the columns the card
+                  already shows, and the row only exists when there is footage
+                  to carry. */}
+              {duplicateTarget.video_count > 0 && (
+                <div>
+                  <label
+                    className="label"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, marginBottom: 0,
+                      cursor: duplicateVersionId ? "not-allowed" : "pointer",
+                      opacity: duplicateVersionId ? 0.5 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!duplicateVersionId && duplicateIncludeVideos}
+                      disabled={!!duplicateVersionId}
+                      onChange={(e) => setDuplicateIncludeVideos(e.target.checked)}
+                    />
+                    Copy {duplicateTarget.video_count}{" "}
+                    {duplicateTarget.video_count === 1 ? "video" : "videos"}{" "}
+                    ({formatSize(duplicateTarget.video_size_bytes)})
+                  </label>
+                  {duplicateVersionId && (
+                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0 0 24px" }}>
+                      Snapshots don't capture videos
+                    </p>
                   )}
                 </div>
               )}

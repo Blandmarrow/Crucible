@@ -1,0 +1,42 @@
+# The base dependency set every CI job installs — the packages `backend.models`,
+# `backend.main` and their import chains need in order to be *collected*. Shared
+# verbatim by all three jobs (.github/workflows/backend-tests.yml's two jobs and
+# e2e-smoke.yml); each adds only what is genuinely its own (alembic, uvicorn,
+# cv2, scenedetect) on top. It also keys the pip cache, which the old
+# hand-duplicated install lists could not do.
+#
+# What this file is NOT:
+#   - not requirements.txt — no torch, no ML, no cv2. No test imports torch or a
+#     model; if a new one needs torch-sized deps, reconsider the test design
+#     before growing this file.
+#   - not requirements-dev.txt — that stays pytest-only, and CI installs both.
+#   - never installed by manage setup/update, which install requirements.txt.
+#
+# Floor pins mirror backend/requirements.txt (house style: floors, no ceilings —
+# a ceiling would silently stop CI from testing new majors).
+
+numpy>=1.26
+Pillow>=11.3
+sqlalchemy[asyncio]>=2.0
+aiosqlite>=0.20
+# greenlet and pydantic arrive transitively (via sqlalchemy[asyncio] and fastapi
+# respectively) but are listed explicitly: a missing one fails at *collection*,
+# taking down the whole suite rather than one test. Their floors are
+# conservative — backend/requirements.txt declares neither directly.
+greenlet>=3.0
+pydantic>=2.0
+pydantic-settings>=2.0
+fastapi>=0.116
+regex>=2023.12.25
+# The second group is what importing the real app costs: tests/conftest.py drives
+# `backend.main.app` over httpx.ASGITransport, and that import pulls in every
+# router — python-multipart (FastAPI refuses `UploadFile` params without it),
+# sse-starlette (jobs), psutil (system), aiohttp (booru), imagehash and tiktoken
+# (image/caption services).
+httpx>=0.27
+python-multipart>=0.0.9
+aiohttp>=3.13.3
+sse-starlette>=3.4
+psutil>=5.9
+imagehash>=4.3
+tiktoken>=0.7

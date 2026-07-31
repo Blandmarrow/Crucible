@@ -11,7 +11,7 @@ Tick the scorers you want and start the run — they execute together in one bac
 | Scorer | Cost |
 |---|---|
 | **Aesthetic score · LAION** — CLIP-based aesthetic predictor (1–10), trained on human ratings | GPU · 2.1 GB |
-| **Technical · OpenCV** — blur, noise, near-uniform, color richness, duplicates | CPU only |
+| **Technical · OpenCV** — blur, noise, near-uniform, color richness, saturation, brightness, duplicates | CPU only |
 | **Watermark detection** — CLIP zero-shot classification for text overlays and logos | GPU · 2.1 GB |
 | **Style embeddings · CLIP** — required for the style-similarity workflow below | GPU · 2.1 GB |
 | **DINOv2 embeddings** — object-aware embedding; usable alone or alongside CLIP | GPU · 1.2 GB |
@@ -30,12 +30,36 @@ Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers wr
 
 | Scorer | Metrics |
 |---|---|
-| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation — then duplicate grouping across the dataset |
+| **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation, brightness (mean grayscale, 0–1) — then duplicate grouping across the dataset |
 | **Aesthetic** | Aesthetic score 1–10 (LAION improved aesthetic predictor, CLIP ViT-L/14) |
 | **Watermark** | Watermark score 0–1 (CLIP zero-shot), flag `has_watermark` |
 | **Style embeddings** | 768-dim CLIP ViT-L/14 embedding per image |
 | **DINOv2** | 768-dim final-layer embedding + all 12 transformer-layer CLS tokens for per-layer style analysis |
 | **NSFW** | NSFW score 0–1 (Marqo `nsfw-image-detection-384` ViT classifier), flag `is_nsfw` |
+
+The Technical scorer has gained metrics over time, and a score is only recorded by the
+run that computed it. A dataset scored before a metric existed keeps every other value
+but has nothing for that one, so its histogram on [Statistics](statistics.md) is empty
+and its gallery filter and sort return nothing — even though the page still reports the
+dataset as fully scored, because coverage is counted on blur alone. Brightness is the
+current case: it arrived with video frame extraction, so anything scored before that
+needs a Technical re-run. The Statistics panel says as much in place of a bare "No data".
+
+An image whose file cannot be read — corrupt, truncated, or a format the decoder does
+not handle — records **no** technical scores rather than zeros. It appears as unscored,
+which is what it is; previously it was stored as a pitch-black, perfectly uniform,
+out-of-focus image and counted toward the dataset's technical coverage. The same now holds
+for Aesthetic, Watermark and NSFW: an image one of them could not score is left blank
+instead of being recorded as a confident 0.
+
+**Photo datasets scored before this release may need re-scoring.** Until 2026-07-30 the
+GPU scorers — Aesthetic, Watermark, NSFW and the CLIP/DINOv2 embeddings — read the stored
+pixels without applying a photo's EXIF *rotation* tag, while the Technical scorer always
+applied it. On a library of camera or phone photos that means those scores and embeddings
+describe a sideways image, and disagree with the technical scores computed in the same run.
+Generated images (PNG/WebP out of ComfyUI) carry no rotation tag and are unaffected. If your
+dataset is photographs, re-run the affected scorers; the embeddings matter most, since style
+similarity compares them against each other.
 
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
@@ -81,7 +105,7 @@ The watermark score flags *that* an image has a watermark, not where it is — t
 
 ## Duplicate resolution
 
-After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids. Each group offers:
+After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids, oldest first, with a green outline and a **kept** label on the one the scan chose to keep. The group header names the distance threshold actually in force, from Settings → Thresholds. Each group offers:
 
 - **Keep best** — retains the image with the highest aesthetic score and deletes the rest
-- **Keep first** — retains the earliest-uploaded image and deletes the rest
+- **Keep first** — retains the image marked *kept*, which is always first in the group, and deletes the rest

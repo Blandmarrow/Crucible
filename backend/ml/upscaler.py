@@ -54,7 +54,12 @@ def upscale_image_sync(
 
     replace=True  → overwrites src in place; dest is ignored.
     replace=False → writes to dest (must be provided).
-    Returns {width, height, file_size_bytes, format}.
+    Returns {width, height, file_size_bytes, format, out_path}.
+
+    `out_path` is the path actually written, which is **not** the one asked for
+    when `normalize_image_format` falls back to PNG (.bmp/.gif/.tiff/.avif, all
+    of them ingestible). Every caller has to follow it — the row, the thumbnail
+    and the file on disk must all name the same picture (PM-009).
     """
     import torch
     import numpy as np
@@ -109,6 +114,7 @@ def upscale_image_sync(
         "height": h_out,
         "file_size_bytes": stat.st_size,
         "format": fmt,
+        "out_path": out_path,
     }
 
 

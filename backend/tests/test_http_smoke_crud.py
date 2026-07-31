@@ -12,7 +12,15 @@ per router, chosen so no monkeypatched fakes are needed.
 """
 import json
 
-from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
+from backend.tests.conftest import (
+    API,
+    api_env,
+    mp4_bytes,
+    needs_cv2,
+    png_bytes,
+    run,
+    upload_image,
+)
 
 
 # --- datasets ------------------------------------------------------------
@@ -239,6 +247,54 @@ def test_filesystem_roots_and_list(tmp_path):
 
             assert (await env.client.get(
                 f"{API}/filesystem/list", params={"path": str(tmp_path / "nope")})).status_code == 404
+
+    run(scenario())
+
+
+@needs_cv2
+def test_filesystem_preview_serves_images_and_videos_but_nothing_else(tmp_path):
+    """One route for both kinds. The video branch is what lets the browser's
+    preview panel play a clip: FileResponse supplies Range/206 on its own, and
+    the content type has to come from `video_mime` because mimetypes.guess_type
+    is unreliable for .mkv."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            img = tmp_path / "a.png"
+            img.write_bytes(png_bytes())
+            clip = tmp_path / "a.mkv"
+            clip.write_bytes(mp4_bytes())
+            note = tmp_path / "a.txt"
+            note.write_text("a caption, not media")
+
+            r = await env.client.get(f"{API}/filesystem/preview", params={"path": str(img)})
+            assert r.status_code == 200, r.text
+            assert r.headers["content-type"] == "image/png"
+
+            r = await env.client.get(f"{API}/filesystem/preview", params={"path": str(clip)})
+            assert r.status_code == 200, r.text
+            assert r.headers["content-type"] == "video/x-matroska"
+            assert r.headers["accept-ranges"] == "bytes"
+
+            r = await env.client.get(f"{API}/filesystem/preview", params={"path": str(note)})
+            assert r.status_code == 400
+
+            r = await env.client.get(f"{API}/filesystem/preview", params={"path": str(tmp_path / "nope.png")})
+            assert r.status_code == 404
+
+    run(scenario())
+
+
+@needs_cv2
+def test_filesystem_image_meta_stays_image_only(tmp_path):
+    """/preview widened to all media; /image-meta deliberately did not — there
+    is no generation metadata to read out of a container."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            clip = tmp_path / "a.mp4"
+            clip.write_bytes(mp4_bytes())
+
+            r = await env.client.get(f"{API}/filesystem/image-meta", params={"path": str(clip)})
+            assert r.status_code == 400
 
     run(scenario())
 

@@ -1,0 +1,112 @@
+# Video frame heuristics
+
+The judgement calls frame extraction stands on: where the black bars are, whether the source
+is interlaced or telecined, how sharp a frame is, and which of several candidates to keep.
+All of it lives in `services/video_frames.py` and is **pure numpy** — an `ndarray` in, a
+number or a rect out, no decoder — which is why it gets its own module and its own file here.
+That is the whole point of the boundary: every rule below is testable in milliseconds against
+synthetic arrays (`test_video_frames.py`), which is the only way heuristics like these get
+tested at all. Everything that needs cv2, PySceneDetect or ffmpeg — sampling, shot detection
+and rendering — is in `docs/dev/video-shots.md`, and the endpoints and job that drive it are
+in `docs/dev/video-extract.md`.
+
+A crop rect is `(x, y, w, h)`, matching the `Video.crop_*` column order — note that
+PySceneDetect's `SceneManager.crop` is *inclusive corners* `(x0, y0, x1, y1)` instead, and
+`video_extract` converts at that boundary. `clamp_crop` is the guard every *stored or applied* rect
+passes through, and it is called twice on the way to a pixel: once against the header
+dimensions, once per frame against `frame.shape` — see `docs/dev/video-shots.md`
+§ Rendering a shot. It is not the sole implementation of either rule, though: the detector
+applies the same even-snap and the same no-op rule itself in `crop_rect_from_profiles`,
+before `clamp_crop` is ever reached, so a tuning change to either rule has two sites.
+
+**Cropdetect.** `edge_profiles` takes the **95th percentile** luma per row and per column,
+not the max: one hot pixel or a stuck chroma sample inside an otherwise black bar pins that
+row as content, and one such pixel per bar defeats detection entirely on real files.
+`merge_profiles` accumulates across samples by **elementwise max**, so a dark shot can only
+grow the content rect, never shrink it — averaging would let one night scene crop away real
+picture in every other shot. `crop_rect_from_profiles` returns **None** rather than a rect
+whenever the evidence is weak: nothing clears the threshold (a fade-to-black sample set), or
+the surviving content is under half of either axis. Bars thinner than `min_bar_frac` (1.5% of
+the axis, measured as the two bars *combined*) are a third case but not a third None: that
+axis is reset to full instead, and None follows only if the reset leaves nothing to crop. A
+real matte on one axis and a hairline on the other still yields a rect. Each axis decides
+independently, so a pillarboxed 4:3 insert in a 16:9 frame is handled. All four edges snap
+to even coordinates: chroma subsampling wants it, and `bwdif` needs an even `y` or it
+deinterlaces with the field parity inverted.
+
+**Combing.** `combing_ratio` is `d1/d2`, where `d1 = mean|L[1:] − L[:-1]|` compares
+neighbouring rows — which in interlaced material come from two fields captured 1/50 s apart
+— and `d2 = mean|L[2:] − L[:-2]|` compares rows of the *same* field and so measures ordinary
+vertical detail. Progressive sits around 0.5–0.65; interlaced with motion exceeds ~0.9. It
+returns 0.0 when `d2` is essentially zero, and that is not a divide-by-zero guard: identical
+same-parity rows mean there is no second field for the first to disagree with, so a
+synthetic 1-pixel stripe pattern reads as *no evidence* rather than as an unbounded ratio.
+
+`interlace_from_series` needs **two** samples over threshold, not one — a single combed
+sample is far more often a pinstripe shirt or a picket fence than a source — and counts
+rather than averages, because a static interlaced shot has no field mismatch at all and
+would drag a mean below threshold on an obviously interlaced file. Frame height and fps
+corroborate in the **warning text only**: a 1080p25 file is not interlaced for being
+1080p25, and folding that into the verdict would flag a large class of progressive material.
+
+**Telecine** needs *consecutive* frames, so the probe runs it as a short second pass (20
+frames from one seek) — a period-5 pattern is invisible to samples taken seconds apart. It
+is gated on ~29.97 fps, binarizes the ratios, and requires a duty cycle in [0.3, 0.5] and a
+lag-5 autocorrelation over 0.6. An all-combed run has zero variance and so zero
+autocorrelation, which is the right answer: that is plain interlace, and reporting it as
+telecine would recommend the wrong fix. It drives a **warning string only** — `bwdif` is the
+one filter this phase ships.
+
+**The 13-sample floor is derived, not chosen**:
+`TELECINE_MIN_SAMPLES = ceil(TELECINE_LAG / (1 − TELECINE_MIN_AUTOCORR))`. The
+autocorrelation above is the *biased* estimator — its numerator sums n−LAG products against
+a denominator over all n — so a perfect 3:2 series scores about (n−LAG)/n and simply cannot
+clear 0.6 below n = 13. The old hand-picked 10 therefore admitted runs of 10 to 12 frames
+and then rejected every one of them, collecting the run for nothing. Measured across all
+five phases: n=12 peaks at 0.588, n=13 clears on four of five (0.551–0.623), n=14 on all
+five, and the 20-frame probe pass sits at 0.75. Retuning either input constant moves the
+floor, and a test pins the identity.
+
+Switching to the *normalized* estimator was rejected: it returns exactly 1.0 for a perfect
+series at every n ≥ 9, discarding the length information the threshold was tuned against.
+Measured, false positives on shuffled series inside the duty gate go 0.0003 → 0.0035 at
+n=20 (11.7×), and a single-glitch run at n=20 goes 0.553 (rejected) → 0.732 (accepted) —
+a live change to a warning users act on, for no gain.
+
+**Sharpness** is Laplacian variance of the luma plane measured at a fixed resolution, and
+**the downscale before the Laplacian is a correctness fix, not an optimization**. Raw
+variance on a full-resolution frame ranks *noise* as sharpness, so a grainy candidate
+outscores a crisp one — exactly backwards for a "pick the sharpest frame" policy. Averaging
+into a fixed grid first removes the per-pixel component and leaves real edges, and it makes
+scores comparable between a 4K source and a 480p one. `test_video_frames.py` pins the
+ordering with pure Gaussian noise; deleting that line fails a test.
+
+**One luma plane per frame.** `luma()` is public and every consumer here —
+`edge_profiles`, `combing_ratio`, `sharpness`, `is_degenerate` — takes *either* a BGR frame
+or a plane `luma()` already returned, because a 2-D input is handed straight back without a
+copy. The callers in `video_extract.py` compute it once and pass the plane, which is the
+whole of the fix: on a 4K frame, a candidate's `mean` + `sharpness` + `is_degenerate` went
+from 308 ms and 166 MB peak to **89 ms and 66 MB**, and a probe sample's `edge_profiles` +
+`combing_ratio` from 326 ms to 206 ms. The no-copy passthrough is only safe because nothing
+here mutates the plane — treat it as read-only. The `np.einsum` form of the Rec.601 sum
+exists for the same reason: it is numerically equivalent to `0.114*b + 0.587*g + 0.299*r`
+to within float32 tolerance but does not materialise three full-size float32 temporaries, so
+`luma()` alone went 81 ms / 166 MB → 40 ms / 33 MB. No verdict changed;
+`test_video_frames.py` § The luma plane holds the equivalence tests that keep it that way —
+they assert `allclose` at `atol=1e-4`, deliberately **not** bit-identity, because einsum's
+summation order is an implementation detail numpy does not guarantee.
+
+**`pick_index` rejects before it ranks.** First anything `is_degenerate` flagged (mean luma
+under 8 or over 247, or standard deviation under 3 — black and white flashes, fades, flat
+slates; a slate is often the *sharpest* thing in a shot, so without this the policy actively
+prefers it). Then any candidate whose brightness deviates more than 40% from the candidate
+set's median — that one is not about picture quality, it means the detector missed a cut
+*inside* the window and keeping the outlier would file a frame from the next scene under
+this shot's index. That median needs no zero guard — `eligible` only admits lumas at or
+above 8.0, so a non-empty set's median cannot be zero, and the guard that used to sit there
+was unreachable. The luma-outlier filter has an escape hatch the degeneracy pass does not:
+if applying it would empty the set, it is dropped rather than applied (`if kept: eligible =
+kept`), so two candidates at lumas 10 and 100 — both outside +/-40% of their own median —
+keep the unfiltered pair. If the *degeneracy* pass rejects everything it returns the middle
+rather than nothing: a shot that is entirely a fade still owes the caller one frame, and a
+"no pick" return grows a second, untested branch in every caller.

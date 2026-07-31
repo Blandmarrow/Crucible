@@ -9,6 +9,7 @@ import {
   DatasetsPage,
   GalleryPage,
   ImageDetailPage,
+  VideoDetailPage,
   CaptioningPage,
   QualityPage,
   StatsPage,
@@ -38,8 +39,12 @@ const queryClient = new QueryClient({
 });
 
 function routeToView(pathname: string): PaneView {
+  // Both of these must stay above dsPageMatch: /datasets/x/image/y also matches
+  // the generic pattern, which would yield an invalid `page: "image"`.
   const dsImageMatch = pathname.match(/^\/datasets\/([^/]+)\/image\/([^/]+)/);
   if (dsImageMatch) return { page: "image-detail", datasetId: dsImageMatch[1], imageId: dsImageMatch[2] };
+  const dsVideoMatch = pathname.match(/^\/datasets\/([^/]+)\/video\/([^/]+)/);
+  if (dsVideoMatch) return { page: "video-detail", datasetId: dsVideoMatch[1], videoId: dsVideoMatch[2] };
   const dsPageMatch = pathname.match(/^\/datasets\/([^/]+)\/([^/]+)/);
   if (dsPageMatch) {
     const seg = dsPageMatch[2] as PageType;
@@ -79,6 +84,7 @@ function MainContent() {
         <Route path="/booru" element={<ErrorBoundary><BooruPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/gallery" element={<ErrorBoundary><GalleryPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/image/:imageId" element={<ErrorBoundary><ImageDetailPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/video/:videoId" element={<ErrorBoundary><VideoDetailPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/captioning" element={<ErrorBoundary><CaptioningPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/quality" element={<ErrorBoundary><QualityPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/stats" element={<ErrorBoundary><StatsPage /></ErrorBoundary>} />

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Maximize2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { upscalingApi } from "../../api/upscaling";
+import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
 
 interface Props {
@@ -12,6 +13,21 @@ interface Props {
   qualityFlags?: string[];
   onSuccess?: () => void;
   onCancel?: () => void;
+}
+
+// Deliberately silent about `thumbnails_stale`: TopBar owns that warning, for
+// every one of these four job types and every screen that starts them, so
+// repeating it here would double-toast whoever happened to stay on this form.
+function resultToast(result: Record<string, unknown>) {
+  const done = Number(result.processed ?? 0);
+  const skipped = Number(result.skipped ?? 0);
+  const failed = Number(result.failed ?? 0);
+  const parts = [`Upscaled ${done} image${done !== 1 ? "s" : ""}`];
+  if (skipped > 0) parts.push(`${skipped} skipped`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  const msg = parts.join(", ");
+  if (failed > 0) toast(msg, { icon: "⚠️" });
+  else toast.success(msg);
 }
 
 export default function UpscaleForm({ datasetId, imageIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
@@ -36,8 +52,12 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, qualityFla
     if (!jobId || !jobProgress) return;
     if (jobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      const finishedId = jobId;
       setJobId(null);
-      toast.success("Upscaling complete");
+      jobsApi
+        .get(finishedId)
+        .then((job) => resultToast(job.result_data ?? {}))
+        .catch(() => toast.success("Upscaling complete"));
       onSuccess?.();
     } else if (jobProgress.status === "failed") {
       setJobId(null);

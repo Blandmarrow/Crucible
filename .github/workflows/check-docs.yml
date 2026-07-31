@@ -1,21 +1,28 @@
 name: check-docs
 
 # Runs the documentation drift check (scripts/check_docs.py). Fails the build on
-# broken repo-path references or the `@docs/`/`@CLAUDE` auto-load footgun; size and
+# broken repo-path references, bad markdown links/anchors, or the `@docs/`/`@CLAUDE`
+# auto-load footgun; word budgets, unrecorded split seams, paragraph length and
 # Documentation Map <-> file mismatches are warnings only. Stdlib-only, no deps.
+#
+# The path filters cover every file the check reads — `docs/**` (both the user docs and
+# docs/dev/) plus the two landing files. They were dev-only until user docs were brought
+# under the same word budgets, which left a user doc going over budget invisible here.
 
 on:
   pull_request:
     paths:
       - "CLAUDE.md"
-      - "docs/dev/**"
+      - "README.md"
+      - "docs/**"
       - "scripts/check_docs.py"
       - ".github/workflows/check-docs.yml"
   push:
     branches: [main]
     paths:
       - "CLAUDE.md"
-      - "docs/dev/**"
+      - "README.md"
+      - "docs/**"
       - "scripts/check_docs.py"
 
 # Every job here only reads the repo and runs tests; nothing writes back to

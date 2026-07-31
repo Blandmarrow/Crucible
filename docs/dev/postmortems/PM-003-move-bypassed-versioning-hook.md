@@ -41,4 +41,5 @@ foreign ID (adopt matching content or fork a fresh ID). Regression test:
 
 ### Status & date
 
-MITIGATED. Last reviewed for staleness: 2026-07-19.
+MITIGATED. See PM-014 for the recurrence at `/filesystem/delete`. Last reviewed for
+staleness: 2026-07-29.

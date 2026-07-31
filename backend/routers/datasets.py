@@ -2,10 +2,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from backend.utils import normalize_subfolder
+from backend.utils import InsufficientDiskSpaceError, normalize_subfolder, require_free_space
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.database import get_db
 from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
@@ -91,6 +92,12 @@ async def list_datasets(
             image_count=ds.image_count,
             captioned_count=ds.captioned_count,
             total_size_bytes=ds.total_size_bytes,
+            # Counted apart from image_count/total_size_bytes, and listed here
+            # explicitly because this response is hand-built field by field: both
+            # video columns default to 0 on DatasetOut, so omitting them reported
+            # every dataset as video-free rather than failing.
+            video_count=ds.video_count,
+            video_size_bytes=ds.video_size_bytes,
             preview_image_ids=previews[ds.id],
             current_branch_id=ds.current_branch_id,
             source_name=ds.source_name,
@@ -179,19 +186,45 @@ async def duplicate_dataset_endpoint(
         raise HTTPException(400, f"Dataset '{body.new_name}' already exists")
 
     if body.source_version_id is not None:
-        from backend.models.versioning import DatasetVersion
+        from backend.models.versioning import DatasetVersion, VersionImageState
         ver = await db.get(DatasetVersion, body.source_version_id)
         if not ver or ver.dataset_id != dataset_id:
             raise HTTPException(404, "Snapshot not found for this dataset")
+        if body.include_videos:
+            # A version snapshots images only, so there is no historical video
+            # state to duplicate — carrying the live ones would pair a
+            # historical image set with present-day sources.
+            raise HTTPException(400, "Snapshots do not capture videos; duplicate the current state to include them")
         total = ver.image_count
+        needed = (await db.execute(
+            select(func.sum(VersionImageState.file_size_bytes)).where(
+                VersionImageState.version_id == body.source_version_id,
+                VersionImageState.is_present.is_(True),
+            )
+        )).scalar() or 0
     else:
         total = ds.image_count
+        # Maintained by refresh_stats, so this costs no traversal. Videos are
+        # counted apart, hence the explicit add — and this is also the first
+        # preflight duplicate has ever had, which is why it covers the image
+        # bytes whether or not the toggle is on.
+        needed = ds.total_size_bytes + (ds.video_size_bytes if body.include_videos else 0)
+
+    # Request-path, so a full disk answers before a dataset row or a job id
+    # exists — the handler enqueues and returns, and an HTTPException raised in
+    # the job coroutine would fail the job instead of reaching the client.
+    try:
+        require_free_space(settings.datasets_dir, needed)
+    except InsufficientDiskSpaceError as e:
+        raise HTTPException(status_code=507, detail=str(e))
+
+    total_items = total + (ds.video_count if body.include_videos else 0)
 
     job = BackgroundJob(
         job_type="duplicate",
         label=f"Duplicate - {body.new_name}",
         dataset_id=dataset_id,
-        total_items=total,
+        total_items=total_items,
         config=body.model_dump(),
     )
     db.add(job)
@@ -203,10 +236,15 @@ async def duplicate_dataset_endpoint(
             src = await session.get(Dataset, dataset_id)
             if src is None:
                 return  # dataset deleted after job was enqueued
-            await duplicate_dataset(
+            summary = await duplicate_dataset(
                 session, src, body.new_name, job_id,
                 source_version_id=body.source_version_id,
+                include_videos=body.include_videos,
             )
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = summary
+                await session.commit()
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
@@ -239,6 +277,7 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
                 subfolder=body.subfolder,
                 preserve_structure=body.preserve_structure,
                 import_captions=body.import_captions,
+                include_videos=body.include_videos,
                 provenance={
                     "source_name": body.source_name,
                     "source_url": body.source_url,

@@ -1,5 +1,6 @@
-"""Request-level regression tests for cross-dataset move/copy file placement and
-the two DB-vs-filesystem ordering invariants (CLAUDE.md "Key invariants").
+"""Request-level regression tests for cross-dataset move/copy file placement, the
+two DB-vs-filesystem ordering invariants (CLAUDE.md "Key invariants"), and the
+metadata columns a copy has to carry across the boundary.
 
 `test_provenance_http.py` drives the same endpoints but asserts provenance columns
 only — never where the image file, its `.webp` thumbnail, or its `.txt` sidecar
@@ -11,6 +12,8 @@ landed, and never what survives a mid-batch filesystem fault. These pin all of t
   state with zero bytes destroyed — the documented degraded state where a file is
   stranded at its old path while its row points forward.
 - B4 (FS-before-commit): a fault mid-copy commits nothing; the source is untouched.
+- B15: a copy's destination row carries `processing_history`, the field-by-field
+  rebuild's one silent-drop class.
 
 Nothing keys on which id receives `image.png` vs `image_001.png` — that ties on
 `created_at`. Every assertion resolves per row via DB `file_path` + unique bytes,
@@ -158,6 +161,41 @@ def test_copy_dataset_places_files_thumbs_sidecars(tmp_path):
             # Thumbnails: dst gains 2, src still has 2.
             assert len(list(dst_thumbs.glob("*.webp"))) == 2
             assert len(list(src_thumbs.glob("*.webp"))) == 2
+
+    run(scenario())
+
+
+def test_copy_dataset_carries_processing_history(tmp_path):
+    """`batch_copy_dataset` rebuilds its destination `Image` field by field, so a
+    column missing from either the `cols` select or the constructor is dropped in
+    silence (CLAUDE.md § *A column added to `Image` must be mirrored…*). Nothing
+    else asserts this endpoint's metadata-carry contract; `processing_history`
+    stands in for the whole set because it was the one column it missed."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            dst = await env.create_dataset("dst")
+
+            a = await upload_image(env, src["id"], "a.png", png_bytes((1, 2, 3)))
+            history = [{"op": "upscale", "at": "2026-01-01T00:00:00"}]
+            async with env.Session() as db:
+                row = await db.get(Image, a["id"])
+                row.processing_history = history
+                await db.commit()
+
+            r = await env.client.post(f"{API}/images/batch/copy-dataset", json={
+                "image_ids": [a["id"]],
+                "target_dataset_id": dst["id"],
+            })
+            assert r.status_code == 200, r.text
+
+            dst_rows = await _rows(env, dst["id"])
+            assert len(dst_rows) == 1
+            assert dst_rows[0].id != a["id"]
+            assert dst_rows[0].processing_history == history
+            # The source row keeps its own copy — a copy is not a move.
+            src_rows = await _rows(env, src["id"])
+            assert [r.processing_history for r in src_rows] == [history]
 
     run(scenario())
 

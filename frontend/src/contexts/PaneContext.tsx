@@ -9,6 +9,7 @@ export type PageType =
   | "export"
   | "file-browser"
   | "image-detail"
+  | "video-detail"
   | "booru"
   | "bulk-edit"
   | "consolidate"
@@ -19,6 +20,16 @@ export interface PaneView {
   page: PageType;
   datasetId?: string;
   imageId?: string;
+  videoId?: string;
+  /** Gallery only: which subfolder to open at. A deep-link target, not a record
+   *  of what the user has since clicked — GalleryPage applies it once per change
+   *  and otherwise leaves its own state alone. "" is the dataset root. */
+  subfolder?: string;
+  /** Gallery only: show just the frames extracted from this video. Like
+   *  `subfolder`, a deep-link target rather than a record of what the user has
+   *  since chosen — GalleryPage applies it once per change and then leaves its
+   *  own state alone. Unlike `subfolder`, "" carries no meaning. */
+  sourceVideoId?: string;
 }
 
 interface PaneContextValue {

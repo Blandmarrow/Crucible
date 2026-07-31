@@ -6,7 +6,7 @@ The app shell: the top bar, background jobs, server control, hardware meters, sp
 
 Confirmation prompts and the app's main dialogs — the folder picker, folder import, move-to-dataset, set-provenance, and the ComfyUI and version dialogs — can be driven from the keyboard and are announced as dialogs by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import and ComfyUI dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**.
 
-Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**.
+Some smaller pop-ups opened from a page or the selection toolbar — the bulk caption, score and detect forms among them — do not yet have all of this. They always have a **Cancel** button; use it rather than **Esc**. The two video dialogs are not among them: **Extract frames** and **Re-extract at full resolution** have the full keyboard behaviour, and the re-extract one can be closed mid-run without stopping anything → [details](video.md).
 
 ## Background jobs & the top bar
 
@@ -14,10 +14,10 @@ Every long-running operation — captioning, scoring, import, export, detection,
 
 The centre of the top bar shows what is happening:
 
-- **Running job** — a progress pill with the job's label, a progress bar, and a `done / total` count. Jobs that cannot report a total (a few show no percentage) display an indeterminate bar instead. The **×** cancels the running job.
+- **Running job** — a progress pill with the job's label, a progress bar, and a `done / total` count. Two things can be missing, independently. A job that cannot report progress at all shows an indeterminate bar. A job that *can* show a percentage but is in a phase that finishes no items — frame extraction while it is still finding cuts, say — shows the bar and **no count**, rather than a misleading `0 / 0`. The **×** cancels the running job.
 - **Queued jobs** — an `N queued` badge followed by a chip per waiting job, each with its own **×** to drop just that one. Beyond three, the rest collapse into **+N more**; hover it to see their names.
 - **Cancel all** — cancels every queued job *and* the one currently running.
-- **Uploading images** — drag-and-drop uploads get their own pill with a file count; it turns amber if any file failed. It persists here if you navigate away mid-upload.
+- **Uploading files** — drag-and-drop uploads get their own pill with a file count; it turns amber if any file failed. It persists here if you navigate away mid-upload.
 - When nothing is running the bar reads **Ready**.
 
 Jobs run one at a time, in submission order, so queueing several runs back to back is the normal way to work.
@@ -92,10 +92,13 @@ A global **Logs** page (sidebar nav item) with two tabs:
 A three-panel filesystem explorer built into the app:
 
 - Left panel: drive roots + quick-access shortcut to the datasets folder
-- Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Images only** toggle to hide non-image files, context menu (rename / delete / import into dataset)
-- Right panel: image preview + dimensions/format/size metadata + generation metadata (A1111 / ComfyUI)
-- Create folders, rename files and directories, delete items (syncs DB records automatically)
-- Import any folder of images directly into an existing dataset without leaving the browser
+- Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Media only** toggle to hide anything that is neither an image nor a video, context menu (rename / delete / import into dataset)
+- Right panel: preview + size and modified date. For an image, also dimensions/format and generation metadata (A1111 / ComfyUI); for a video, a player you can scrub
+- Videos are listed with a film-strip icon and counted in the status bar
+- Create folders, rename files and directories, delete items (syncs DB records automatically — renaming or deleting an image or video that belongs to a dataset keeps its record in step). Deleting a dataset's file or folder also removes the thumbnail or poster that went with it and updates the dataset's image and video counts, and it is refused while that dataset is busy with another job
+- Some things cannot be renamed, and Crucible says which: a dataset's own folder (rename the dataset from the Datasets page instead, so its record follows), any folder *above* one, the `images` / `videos` / `thumbnails` / `.versions` folders a dataset is built from, and any folder holding images or videos that belong to a dataset — including one holding only their thumbnails or posters. Renaming a *file* is refused when the new name is already taken in that folder, or when it would claim the thumbnail name another image owns
+- Moving a file into a *different* dataset is not done here: use the gallery's **Move to dataset** action, which carries the caption, provenance and thumbnail with it. The same applies to a whole folder — moving one that holds images or videos belonging to a dataset is refused wherever you point it, *including* somewhere else inside that same dataset, because the app only ever looks for a dataset's media in the images and videos folders it created for it → [how that affects rescan](gallery.md#getting-images-in). A file that belongs to a dataset also has to stay directly in that dataset's own images or videos folder, so moving one into a subfolder is refused too. Folders of your own, and files no dataset has registered, still move anywhere
+- Import any folder of images directly into an existing dataset without leaving the browser; tick **Include videos** to bring video files in as well
 
 ## Booru Tag Lookup
 

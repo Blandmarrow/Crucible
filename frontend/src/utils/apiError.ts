@@ -8,6 +8,19 @@
  * produces. Rendering a fixed "Saving failed" toast for the second case hides the
  * one piece of information that tells the user which field to shorten.
  */
+/**
+ * Whether a rejected request came back `404`.
+ *
+ * The distinction that matters to callers is terminal-vs-transient: a 404 means
+ * the row is gone and no retry, re-attach or cached id will ever resolve, while
+ * a network blip or a 500 is worth trying again. The `response.status` cast is
+ * the same one the `retry` short-circuits on `ImageDetailPage`/`VideoDetailPage`
+ * hand-roll; this is the one place that spells it.
+ */
+export function isNotFound(err: unknown): boolean {
+  return (err as { response?: { status?: number } })?.response?.status === 404;
+}
+
 export function apiErrorDetail(err: unknown, fallback: string): string {
   const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;

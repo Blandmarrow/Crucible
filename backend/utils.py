@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import shutil
 import time
@@ -10,6 +11,8 @@ from typing import TypeVar
 import regex as _regex
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
+
 _T = TypeVar("_T")
 
 
@@ -17,8 +20,12 @@ def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
     """Yield successive ``size``-length slices of ``seq``.
 
     The single source of truth for chunking id lists before an SQL ``IN (...)``
-    so the number of bind parameters stays under SQLite's 999-variable limit.
-    ``size`` defaults to 10k. Empty ``seq`` yields nothing.
+    so the number of bind parameters stays under SQLite's ``SQLITE_MAX_VARIABLE_NUMBER``.
+    That ceiling is **32766** on any SQLite >= 3.32 (2020); the widely-quoted 999
+    is the pre-3.32 default and does not apply here — note the 10k default below
+    would already exceed it, so a comment citing 999 is describing the wrong limit,
+    not a tighter one. Empty ``seq`` yields nothing. Use this in every batched
+    ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
     """
     if size <= 0:
         raise ValueError("size must be positive")
@@ -60,7 +67,11 @@ def regex_sub_deadline(compiled, repl: str, text: str, deadline: float) -> str:
 
 @lru_cache(maxsize=None)
 def _get_enc():
-    """Cached GPT-2 BPE encoder (tiktoken imported lazily to keep import cheap)."""
+    """Cached GPT-2 BPE encoder (tiktoken imported lazily to keep import cheap).
+
+    The single tokenizer entry point: never call tiktoken.get_encoding("gpt2")
+    inline anywhere else.
+    """
     import tiktoken
     return tiktoken.get_encoding("gpt2")
 
@@ -72,6 +83,8 @@ def count_caption_tokens(text: str | None) -> int:
         return 0
     return len(_get_enc().encode_ordinary(trimmed))
 
+# The canonical set of valid quality flag names. Import this wherever flag names
+# must be validated or used in a SQL filter; never redefine the set locally.
 ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
 
 
@@ -90,8 +103,83 @@ def sanitize_abs_path(path: str) -> Path:
     return p
 
 
+def within_datasets_dir(path_str: str, base_dir: Path) -> Path | None:
+    """Resolve a stored file path, returning it only if it is inside `base_dir`.
+
+    The non-raising half of `safe_dataset_path`. A serve route wants the 403 and
+    uses the wrapper; a *destructive* route wants to still drop the row for a
+    path it refuses to touch, so it takes the `None` and skips the filesystem op
+    — an undeletable row the user can see is the worse failure.
+
+    `is_relative_to`, not a string prefix: `/data/datasets_backup/x.mp4`
+    startswith `/data/datasets` and is not inside it.
+    """
+    resolved = Path(path_str).resolve()
+    return resolved if resolved.is_relative_to(base_dir.resolve()) else None
+
+
+def safe_dataset_path(path_str: str, base_dir: Path) -> Path:
+    """Resolve a stored file path and refuse anything outside `base_dir` (HTTP 403).
+
+    The paths this guards come from the DB rather than a request body, but a row
+    can carry a path written by an earlier import, a rename, or a hand edit — so
+    every endpoint that turns a stored path into a FileResponse runs it through
+    here. Used by the image file/thumbnail routes and the video file/poster
+    routes; never re-inline the prefix check.
+    """
+    resolved = within_datasets_dir(path_str, base_dir)
+    if resolved is None:
+        raise HTTPException(403, "Access denied")
+    return resolved
+
+
+def contained_path(
+    path_str: str | None, base_dir: Path, *, context: str, ident: str = ""
+) -> Path | None:
+    """Resolve one of a row's stored paths, or None if it escaped `base_dir`.
+
+    The form every **destructive** site takes: the non-raising counterpart of the
+    403 the serve routes give, with the log line attached. A delete still drops
+    the row for a path it refuses to touch — an undeletable row the user can see
+    is the worse failure — and skips only the filesystem work. Callers unlink the
+    *resolved* path this hands back, never the raw string: validating one path and
+    deleting another would defeat the check entirely. Gate **per row**, so one
+    escaped path does not stop its neighbours.
+
+    The gate covers the versioning hook as much as the unlink:
+    `mark_image_deleted_in_versions` reaches `_store_object(dataset_folder,
+    file_path)` and copies those bytes into `{ds}/.versions/objects/`, so an
+    out-of-tree `file_path` is an arbitrary-file *read* primitive — retrievable
+    through a snapshot restore — even with the unlink skipped.
+
+    `base_dir` is explicit because `utils.py` deliberately imports no
+    `backend.config`; pass `settings.datasets_dir`. `context` names the site and
+    `ident` the row, for the warning. Never raises — one caller
+    (`version_service._remove_stale_files`) sits inside a bare
+    `except Exception: pass` that would swallow it.
+
+    Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
+    `videos._delete_previous_frames`, `quality.resolve_duplicates`,
+    `version_service._remove_stale_files`, plus the two sites that gate only the
+    versioning hook rather than an unlink — `filesystem.delete_path`'s row loop and
+    `version_service.restore_snapshot`'s extras loop. `filesystem._add_orphan`
+    hand-rolls the equivalent and stays that way: it carries an extra
+    `is_dir`/`old_prefix` responsibility this helper does not model.
+    """
+    if not path_str:
+        return None
+    safe = within_datasets_dir(path_str, base_dir)
+    if safe is None:
+        logger.warning("%s %s: refusing to touch out-of-tree path %s", context, ident, path_str)
+    return safe
+
+
 def normalize_subfolder(s: str) -> str:
-    """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments."""
+    """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments.
+
+    Rejects '..' with HTTP 400. Import this; never copy the logic inline and never
+    re-import it from a router.
+    """
     parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
@@ -229,6 +317,19 @@ def unique_filename_with_thumb(
 
     Mutates db_names (adds the chosen filename) and planned_thumb_stems (adds
     the chosen stem) so subsequent calls within the same batch stay consistent.
+
+    Call this instead of unique_filename in every code path that creates or
+    renames an image file and associates a thumbnail with it. Build
+    occupied_thumb_stems from thumb_dir.glob("*.webp") once before the loop; do
+    NOT exclude the stems of images being renamed/moved from that set — doing so
+    re-introduces the within-batch clobber bug where one image's new thumbnail
+    path matches another image's current one.
+
+    The one sanctioned exception is `images.bulk_rename`, which *must* exclude
+    them so a second Renumber restarts its counter at 001 instead of continuing
+    past the stems the first one left behind. It pays for the exclusion itself,
+    by deferring any rename whose target image, thumbnail **or** `.txt` sidecar
+    path is a batch member's current one through a temp name (PM-017).
     """
     candidate = unique_filename(images_dir, stem, suffix, db_names, disk_exclude)
     while True:
@@ -277,6 +378,9 @@ def require_free_space(
     request-path form. `target_dir` need not exist yet: the check walks up to the
     nearest existing ancestor, which is on the same volume. An unreadable path is
     never fatal on its own — the operation is allowed to proceed and fail for real.
+
+    Every run that writes many files (export, folder import) preflights through
+    here; never inline `shutil.disk_usage`. Routers map the error to HTTP 507.
     """
     probe = Path(target_dir).resolve()
     while not probe.exists() and probe.parent != probe:
@@ -296,7 +400,19 @@ def require_free_space(
 
 
 def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Rename a file and its .txt sidecar (if it exists) atomically."""
+    """Rename a file and its .txt sidecar (if it exists) atomically.
+
+    Use this everywhere a file is renamed; never copy the two-step pattern inline.
+
+    **The caller must have proved `new_path` free.** `Path.rename` silently
+    replaces an existing target on POSIX and raises `FileExistsError` on Windows,
+    so an unproven target either destroys a live file or aborts a batch halfway —
+    and the same is true of the sidecar, which is renamed onto `{new
+    stem}.txt` independently of whatever the image rename found there. Neither is
+    fixed here: `os.replace` would only make Windows destroy data as quietly as
+    POSIX does, and an `exists()` guard would add a TOCTOU race to a contract the
+    caller can satisfy exactly (see `bulk_rename`'s two-phase pass, PM-017).
+    """
     old_path.rename(new_path)
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
@@ -304,7 +420,11 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
 
 
 def copy_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Copy a file and its .txt sidecar (if it exists) to new_path."""
+    """Copy a file and its .txt sidecar (if it exists) to new_path.
+
+    Uses shutil.copy2 and leaves the source intact. Use this everywhere a file is
+    copied; never copy the two-step pattern inline.
+    """
     shutil.copy2(old_path, new_path)
     old_txt = old_path.with_suffix(".txt")
     if old_txt.exists():
@@ -350,9 +470,58 @@ def image_save_kwargs(fmt: str) -> dict:
 
 
 def thumbnail_path_for(image_path: Path | str) -> str:
-    """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder."""
+    """Derive the .webp thumbnail path for an image sitting in a dataset images/ folder.
+
+    `parent.parent/thumbnails/{stem}.webp`. Use this in any router that creates or
+    regenerates thumbnails; never reconstruct the path manually. (Its video sibling
+    `poster_path_for` is only a proposal — see there for why they differ.)
+    """
     p = Path(image_path)
     return str(p.parent.parent / "thumbnails" / (p.stem + ".webp"))
+
+
+def poster_path_for(video_path: Path | str) -> str:
+    """Derive the .webp poster path for a video sitting in a dataset videos/ folder.
+
+    `parent`, not thumbnail_path_for's `parent.parent`: videos live *flat* in
+    `{dataset}/videos/` and their posters in `{dataset}/videos/thumbnails/`, so
+    the poster directory is one level down from the video, not one level up.
+
+    This is only the *proposal*. Unlike an image thumbnail, a poster name is not
+    guaranteed to match its video's stem — rescan adopts filenames off disk and
+    can meet two containers sharing a stem, so it resolves this through
+    `unique_poster_path`. Read `Video.poster_path` for an existing row; never
+    re-derive it.
+    """
+    p = Path(video_path)
+    return str(p.parent / "thumbnails" / (p.stem + ".webp"))
+
+
+def unique_poster_path(poster_dir: Path, stem: str, claimed: set[str]) -> Path:
+    """Return a poster path whose stem is neither claimed nor already on disk.
+
+    Tries `{stem}.webp`, then `{stem}_001.webp`, `_002`, … — the same counter
+    convention as `unique_filename`, so a disambiguated poster reads like every
+    other disambiguated name in the app.
+
+    The counterpart to `unique_filename_with_thumb` for the paths that *adopt* a
+    filename instead of picking one (video rescan, the poster backfill). Those
+    cannot rename the user's file to dodge a stem collision, so they move the
+    poster instead. Build `claimed` with
+    `video_service.claimed_poster_stems`; this helper does not mutate it, so a
+    caller looping over several videos must add each chosen stem itself.
+    """
+    def _free(candidate_stem: str) -> bool:
+        return candidate_stem not in claimed and not (poster_dir / f"{candidate_stem}.webp").exists()
+
+    if _free(stem):
+        return poster_dir / f"{stem}.webp"
+    counter = 1
+    while True:
+        candidate = f"{stem}_{counter:03d}"
+        if _free(candidate):
+            return poster_dir / f"{candidate}.webp"
+        counter += 1
 
 
 def subsume_tags(tags: list[str]) -> list[str]:
@@ -362,7 +531,8 @@ def subsume_tags(tags: list[str]) -> list[str]:
     Exact case-insensitive duplicates collapse to the first occurrence. Order-stable:
     survivors keep their first-seen order. Matching is case-insensitive and whole-word
     (so "car" does not subsume "scar" or "carpet"). Used by captioning post-processing
-    and the bulk dedupe operation so the rule never diverges.
+    and the bulk dedupe operation so the rule never diverges — never reimplement it.
+    See docs/dev/tag-consolidation.md.
     """
     seen: set[str] = set()
     deduped: list[str] = []

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ArrowRightFromLine, Copy } from "lucide-react";
-import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
+import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
@@ -10,7 +10,7 @@ import {
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { imagesApi } from "../api/images";
+import { imagesApi, type UploadResult } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -19,17 +19,21 @@ import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
 import { showImportSummaryToast } from "../utils/importToast";
+import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
+import VideoStrip from "../components/gallery/VideoStrip";
+import { videosApi } from "../api/videos";
 import { useSelectionStore } from "../store/selectionStore";
 import { useUploadStore } from "../store/uploadStore";
 import { useJobStore } from "../store/jobStore";
 import { settingsApi } from "../api/settings";
-import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY } from "../constants/storage";
+import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY, PERSIST_DEBOUNCE_MS } from "../constants/storage";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
+import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -44,6 +48,7 @@ const SCORE_FIELDS = [
   { value: "uniformity_score",       label: "Uniformity",        short: "Uniformity" },
   { value: "color_score",            label: "Color",             short: "Color"      },
   { value: "saturation_score",       label: "Saturation",        short: "Saturation" },
+  { value: "luminance_score",        label: "Brightness (0–1)",  short: "Bright"     },
 ];
 
 interface SubfolderNode extends SubfolderInfo {
@@ -96,7 +101,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string };
   } catch {}
   return null;
 }
@@ -109,6 +114,21 @@ export default function GalleryPage() {
   const pageSize = useMemo(getGalleryPageSize, []);
 
   const saved = useMemo(() => (datasetId ? loadSavedState(datasetId) : null), [datasetId]);
+  // Declared up here, above the deep-link render-adjust blocks that call
+  // `dropScrollRestore`. Refs have no ordering dependencies.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hasRestoredScroll = useRef(false);
+  // A filter change or a deep link lands at the top of the *new* list. The saved
+  // offset in `gallery-state-*` belongs to the list the user left, so applying it
+  // here drops them into the middle of a different result set — or nowhere, if the
+  // new list is shorter. `pendingScrollTop` is consumed by the scroll effect once
+  // the new page has actually rendered; setting scrollTop here would be a DOM write
+  // during render, and would fire before the rows exist.
+  const pendingScrollTop = useRef(false);
+  const dropScrollRestore = () => {
+    hasRestoredScroll.current = true;
+    pendingScrollTop.current = true;
+  };
   const [page, setPage] = useState(saved?.page ?? 1);
   const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? getGalleryDefaultSort());
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
@@ -158,7 +178,49 @@ export default function GalleryPage() {
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
     saved?.activeSubfolder == null ? undefined : saved.activeSubfolder
   );
+  // A link that asked for a particular subfolder (video extraction history, and
+  // the Phase 3 lineage filter after it). Applied by the effect below rather than
+  // read directly: `activeSubfolder` is otherwise restored from localStorage and
+  // then owned by the sidebar, and a deep link must not take that ownership away.
+  const linkedSubfolder = usePaneGallerySubfolder();
+  const [appliedSubfolder, setAppliedSubfolder] = useState<string | undefined>(undefined);
   const [uploadSubfolder, setUploadSubfolder] = useState("");
+  // The lineage filter: every frame a video produced, wherever curation has since
+  // filed it. Declared above both render-adjust blocks because each clears the
+  // other's filter — see the comments in them.
+  const [frameVideoId, setFrameVideoId] = useState<string | undefined>(saved?.frameVideoId || undefined);
+  // Apply the deep link on arrival, and again whenever the incoming value
+  // *changes* — but never twice for the same value, or it would fight a user who
+  // arrived here and then clicked a different folder in the sidebar. `undefined`
+  // means "no link asked for anything", which is why this records the last
+  // applied value rather than a boolean: "" is a real target (the dataset root).
+  // Adjusted during render, not in an effect, so the previous subfolder's images
+  // are never fetched and painted first.
+  if (linkedSubfolder !== undefined && appliedSubfolder !== linkedSubfolder) {
+    setAppliedSubfolder(linkedSubfolder);
+    setActiveSubfolder(linkedSubfolder);
+    // The mirror of the lineage branch below: a `frameVideoId` restored from
+    // `gallery-state-${datasetId}` would intersect the linked subfolder and show an
+    // empty grid, right after the history panel named a frame count for it.
+    setFrameVideoId(undefined);
+    setPage(1);
+    dropScrollRestore();
+  }
+  // Same deep-link discipline as `appliedSubfolder` above — applied once per
+  // incoming *change*, so the "Frames from" select stays the user's afterwards.
+  const linkedVideo = usePaneGallerySourceVideo();
+  const [appliedVideo, setAppliedVideo] = useState<string | undefined>(undefined);
+  if (linkedVideo !== undefined && appliedVideo !== linkedVideo) {
+    setAppliedVideo(linkedVideo);
+    setFrameVideoId(linkedVideo);
+    // Load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder`
+    // undefined, so a subfolder restored from localStorage would silently
+    // intersect the lineage filter and show an empty grid. Lineage spans
+    // subfolders — that is the whole point of it.
+    setActiveSubfolder(undefined);
+    setPage(1);
+    dropScrollRestore();
+  }
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
@@ -170,10 +232,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const hasRestoredScroll = useRef(false);
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -209,36 +269,47 @@ export default function GalleryPage() {
     });
   }, []);
 
+  // Both debounce effects bail when the input already equals the committed value.
+  // That guard is what makes the page/scroll restore stick: without it the effect
+  // fires once on *mount* — 350ms after arriving back from the detail view — and
+  // resets `page` to 1, throwing away the page just restored from localStorage
+  // (which the persist effect then overwrites with 1, so the loss is permanent).
+  // It also covers typing a query and deleting it again before the timer: nothing
+  // changed, so the page must not jump.
   useEffect(() => {
+    if (searchInput === search) return;
     const t = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
-      hasRestoredScroll.current = false;
+      dropScrollRestore();
     }, 350);
     return () => clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, search]);
 
   useEffect(() => {
+    if (detectionLabelInput === detectionLabel) return;
     const t = setTimeout(() => {
       setDetectionLabel(detectionLabelInput);
       setPage(1);
-      hasRestoredScroll.current = false;
+      dropScrollRestore();
     }, 350);
     return () => clearTimeout(t);
-  }, [detectionLabelInput]);
+  }, [detectionLabelInput, detectionLabel]);
 
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
+  // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
+  // at flush time; the window is the same shared constant either way.
   useEffect(() => {
     if (!datasetId) return;
     const t = setTimeout(() => {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
       );
-    }, 350);
+    }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -246,11 +317,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
         );
       } catch {}
     };
@@ -276,6 +347,21 @@ export default function GalleryPage() {
   });
 
   const subfolderTree = useMemo(() => buildSubfolderTree(subfolders), [subfolders]);
+
+  // The dataset's videos, for the "Frames from" select. Same query key as
+  // `VideoStrip`, so this shares its cache entry rather than fetching again.
+  const { data: videos, isSuccess: videosLoaded } = useQuery({
+    queryKey: ["videos", datasetId],
+    queryFn: () => videosApi.list(datasetId!),
+    enabled: !!datasetId,
+  });
+  // Stale-id guard, derived during render like `appliedSubfolder` above. A video
+  // deleted (or a filter restored into a different dataset) would otherwise leave
+  // a permanently empty grid behind a `<select>` rendering blank — the same class
+  // of problem `licenseFilter`'s vocabulary bounds-check solves.
+  if (frameVideoId && videosLoaded && !videos?.some(v => v.id === frameVideoId)) {
+    setFrameVideoId(undefined);
+  }
 
   useEffect(() => {
     setUploadSubfolder(activeSubfolder ?? "");
@@ -319,13 +405,26 @@ export default function GalleryPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // A rescan adopts clips out of videos/ too, and its toast reports the count.
+    // Without this the header badge updates (it reads `dataset.video_count`) but
+    // `VideoStrip` keeps its pre-rescan list for the 30 s staleTime — the page
+    // says "12 videos" above a strip that renders nothing, and Extract frames is
+    // unreachable until the tab loses and regains focus.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
     if (rescanManualRef.current) {
       const jid = rescanJobId;
       jobsApi.get(jid).then((job) => {
-        const r = job.result_data as { added?: number; captions_updated?: number; missing?: unknown[] };
-        const missing = (r.missing ?? []).length;
+        const r = job.result_data as {
+          added?: number; renamed?: number; captions_updated?: number; missing?: unknown[];
+          videos_added?: number; videos_missing?: unknown[];
+        };
+        const missing = (r.missing ?? []).length + (r.videos_missing ?? []).length;
         toast.success(
           `Rescan complete — ${r.added ?? 0} added, ${r.captions_updated ?? 0} caption(s) updated` +
+          (r.videos_added ? `, ${r.videos_added} video(s) added` : "") +
+          // Called out because rescan otherwise never touches a file: a name
+          // changing under the user has to be visible, not inferred later.
+          (r.renamed ? `, ${r.renamed} renamed to avoid a name clash` : "") +
           (missing ? `, ${missing} missing on disk` : ""),
           { id: "gallery-rescan" }
         );
@@ -352,6 +451,8 @@ export default function GalleryPage() {
     // An import is a provenance writer: a scraper sidecar is the largest source
     // of new `other:` licenses, and they are unpickable until this refetches.
     qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });
+    // Same as the rescan handler above: `include_videos` creates Video rows.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
     showImportSummaryToast(importJobId);
     setImportJobId(null);
   }, [importProgress?.status, importJobId, datasetId, qc]);
@@ -365,8 +466,8 @@ export default function GalleryPage() {
     : undefined;
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
   );
 
   const { data: images = [], isLoading, refetch } = useQuery({
@@ -383,6 +484,7 @@ export default function GalleryPage() {
         quality_flag: qualityFilter || undefined,
         score_filters: scoreFiltersParam,
         subfolder: activeSubfolder,
+        source_video_id: frameVideoId || undefined,
         detection_label: detectionLabel || undefined,
         license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
         license_filter:
@@ -426,12 +528,23 @@ export default function GalleryPage() {
     }
   }, [images, datasetId, toggle, replaceRange]);
 
+  // Keyed on the `images` array *identity*, not its length: with `keepPreviousData`
+  // `isLoading` stays false across a filter change, so a new result set that happens
+  // to be the same length would not re-run this and a pending scroll-to-top would sit
+  // armed until some unrelated later load consumed it.
   useEffect(() => {
-    if (!isLoading && images.length > 0 && !hasRestoredScroll.current && scrollRef.current && saved?.scrollTop) {
-      hasRestoredScroll.current = true;
-      scrollRef.current.scrollTop = saved.scrollTop;
+    const el = scrollRef.current;
+    if (isLoading || !el) return;
+    if (pendingScrollTop.current) {
+      pendingScrollTop.current = false;
+      el.scrollTop = 0;
+      return;
     }
-  }, [isLoading, images.length, saved]);
+    if (images.length > 0 && !hasRestoredScroll.current && saved?.scrollTop) {
+      hasRestoredScroll.current = true;
+      el.scrollTop = saved.scrollTop;
+    }
+  }, [images, isLoading, saved]);
 
   useEffect(() => {
     if (images.length > 0 && datasetId) {
@@ -565,11 +678,18 @@ export default function GalleryPage() {
     if (!datasetId) return;
     const fileArray = Array.from(files);
     const subfolder = sf ?? uploadSubfolder;
-    setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0 });
+    setUploadProgress({ datasetId, done: 0, total: fileArray.length, errors: 0, skipped: 0 });
     let errors = 0;
+    // A file the server declined comes back 201 with a `skipped` entry, not an
+    // exception, so the responses are collected and tallied rather than assuming
+    // every file that did not throw was stored.
+    const results: UploadResult[] = [];
+    let skippedSoFar = 0;
     for (let i = 0; i < fileArray.length; i++) {
       try {
-        await imagesApi.uploadSingle(datasetId, fileArray[i], subfolder);
+        const res = await imagesApi.uploadSingle(datasetId, fileArray[i], subfolder);
+        results.push(res);
+        skippedSoFar += res.skipped.length;
         // Invalidate after each success so images appear in the gallery live.
         // cancelRefetch: false lets in-flight fetches finish instead of being
         // restarted on every file, coalescing rapid invalidations into fewer GETs.
@@ -577,16 +697,16 @@ export default function GalleryPage() {
       } catch {
         errors++;
       }
-      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors });
+      // Reported separately, never summed: a declined file is not a failure.
+      setUploadProgress({ datasetId, done: i + 1, total: fileArray.length, errors, skipped: skippedSoFar });
     }
     // Final refresh to ensure the gallery is fully up-to-date
     await refetch();
     qc.invalidateQueries({ queryKey: ["datasets"] });
     qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-    const succeeded = fileArray.length - errors;
-    if (succeeded > 0) toast.success(`Uploaded ${succeeded} image(s)`);
-    if (errors > 0) toast.error(`${errors} file(s) failed to upload`);
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
+    showUploadSummaryToast(tallyUpload(results, errors));
     setUploadProgress(null);
   }, [datasetId, refetch, qc, uploadSubfolder]); // setUploadProgress omitted — Zustand setters are stable references
 
@@ -668,17 +788,17 @@ export default function GalleryPage() {
     onError: () => toast.error("Copy to dataset failed"),
   });
 
-  // Only the image-upload overlay cares about *image* drags. A .txt caption drag is
+  // Only the upload overlay cares about *media* drags. A .txt caption drag is
   // consumed per-card (which stopPropagations, so the grid's drop never fires) — gating
-  // the overlay on image presence means a caption drag never turns it on, so it can't
+  // the overlay on media presence means a caption drag never turns it on, so it can't
   // get stuck. The depth counter keeps nested child enter/leave events balanced.
-  const dragHasImage = (dt: DataTransfer | null) =>
-    !!dt && Array.from(dt.items || []).some((it) => it.kind === "file" && it.type.startsWith("image/"));
+  const dragHasMedia = (dt: DataTransfer | null) =>
+    !!dt && Array.from(dt.items || []).some(isMediaDragItem);
 
   const handleDragEnter = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes("Files")) return;
     dragDepth.current += 1;
-    if (dragHasImage(e.dataTransfer)) {
+    if (dragHasMedia(e.dataTransfer)) {
       e.preventDefault();
       setIsDragOver(true);
     }
@@ -694,10 +814,12 @@ export default function GalleryPage() {
     e.preventDefault(); // always, so the browser never opens/navigates to a dropped file
     dragDepth.current = 0;
     setIsDragOver(false);
-    // Only upload images; a stray .txt dropped on the grid gap is ignored here (per-card
-    // caption drops are handled by ImageCard and never reach this handler).
-    const imageFiles = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
-    if (!uploading && imageFiles.length) handleUpload(imageFiles);
+    // Only upload images and videos; a stray .txt dropped on the grid gap is ignored here
+    // (per-card caption drops are handled by ImageCard and never reach this handler).
+    // isMediaFile falls back to the extension because browsers report an empty `type` for
+    // .mkv and often .avi — a MIME-only filter would drop them silently.
+    const mediaFiles = Array.from(e.dataTransfer.files).filter(isMediaFile);
+    if (!uploading && mediaFiles.length) handleUpload(mediaFiles);
   };
 
   // Safety net: if a drag ends anywhere (drop outside the grid, Esc-cancel, or a child
@@ -718,7 +840,7 @@ export default function GalleryPage() {
 
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
 
-  const resetPage = () => { setPage(1); hasRestoredScroll.current = false; };
+  const resetPage = () => { setPage(1); dropScrollRestore(); };
 
   const handleResetFilters = () => {
     if (datasetId) localStorage.removeItem(`gallery-state-${datasetId}`);
@@ -728,7 +850,10 @@ export default function GalleryPage() {
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
     setLicenseFilter("");
     setActiveSubfolder(undefined);
-    hasRestoredScroll.current = true;
+    setFrameVideoId(undefined);
+    dropScrollRestore();
+    // Immediate, unlike the deep-link paths: this is a direct gesture and wants
+    // feedback now, not once the new page renders.
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     toast.success("Gallery filters reset");
   };
@@ -912,6 +1037,11 @@ export default function GalleryPage() {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, paddingTop: 4 }}>
             <span className="badge dot good">{dataset?.image_count ?? 0} images</span>
+            {(dataset?.video_count ?? 0) > 0 && (
+              <span className="badge dot">
+                {dataset?.video_count} {dataset?.video_count === 1 ? "video" : "videos"}
+              </span>
+            )}
             <span className="badge dot info">{dataset?.captioned_count ?? 0} captioned</span>
             {flaggedCount > 0 && <span className="badge dot warn">{flaggedCount} uncaptioned</span>}
           </div>
@@ -978,6 +1108,22 @@ export default function GalleryPage() {
             </optgroup>
           )}
         </select>
+
+        {/* Frame lineage. Rendered only when the dataset actually has videos —
+            the same "look untouched for image-only datasets" rule VideoStrip
+            follows. Unlike the subfolder sidebar this survives curation: the
+            lineage column does not move when a frame is renamed or re-filed. */}
+        {videos && videos.length > 0 && (
+          <select className="select" style={{ width: "auto", maxWidth: 220 }} value={frameVideoId ?? ""}
+            aria-label="Filter by source video"
+            title={videos.find((v) => v.id === frameVideoId)?.filename ?? "All images"}
+            onChange={(e) => { setFrameVideoId(e.target.value || undefined); resetPage(); }}>
+            <option value="">All images</option>
+            {videos.map((v) => (
+              <option key={v.id} value={v.id}>Frames from {v.filename}</option>
+            ))}
+          </select>
+        )}
 
         <button
           className="btn ghost sm"
@@ -1164,7 +1310,7 @@ export default function GalleryPage() {
               <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
             </svg>
             {uploading ? "Uploading…" : "Upload"}
-            <input type="file" multiple accept="image/*" style={{ display: "none" }}
+            <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
               onChange={(e) => e.target.files && handleUpload(e.target.files)} />
           </label>
         </div>
@@ -1193,12 +1339,24 @@ export default function GalleryPage() {
               fontSize: 12, color: "var(--fg-mute)",
               whiteSpace: "nowrap", minWidth: 90, textAlign: "right",
             }}>
-              {uploadProgress.done} / {uploadProgress.total} images
+              {/* "files", not "images": videos upload through this bar too, and the
+                  split between them is not known until the responses land — which is
+                  what the summary toast reports. Same vocabulary as that toast. */}
+              {uploadProgress.done} / {uploadProgress.total} files
               {uploadProgress.errors > 0 && ` · ${uploadProgress.errors} failed`}
+              {uploadProgress.skipped > 0 && (
+                <span style={{ color: "var(--fg-mute)" }}> · {uploadProgress.skipped} skipped</span>
+              )}
             </span>
           </div>
         </div>
       )}
+
+      {/* Source videos. Outside the DndContext below on purpose: inside it the
+          cards would join the grid's collision detection and its subfolder drop
+          targets, and inside the grid's scroll container they would also sit
+          under the drag-to-upload handler. Renders nothing without videos. */}
+      <VideoStrip datasetId={datasetId} />
 
       {/* Grid area with subfolder sidebar. One DndContext spans both so image cards
           can be dragged from the grid onto a subfolder row. */}
@@ -1366,7 +1524,7 @@ export default function GalleryPage() {
             <p>No images found. Upload or adjust filters.</p>
             <label className="btn primary" style={{ cursor: "pointer" }}>
               Upload images
-              <input type="file" multiple accept="image/*" style={{ display: "none" }}
+              <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
                 onChange={(e) => e.target.files && handleUpload(e.target.files)} />
             </label>
           </div>

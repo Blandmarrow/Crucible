@@ -4,9 +4,20 @@ export const VERSIONS_BRANCH_KEY = "versions-branch"; // prefix; append `-${data
 export const GALLERY_PAGE_SIZE_KEY = "gallery-page-size"; // 25 | 50 | 100 | 200
 export const SUBFOLDER_RENAME_KEY = "subfolder-auto-rename"; // "on" | "off"
 export const GALLERY_CHECKBOX_SIZE_KEY = "gallery-checkbox-size"; // px, 14..32
+export const VIDEO_STRIP_COLLAPSED_KEY = "gallery-videos-collapsed"; // prefix; append `-${datasetId}` for the full key
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]
 
 import { SORT_OPTIONS } from "./galleryOptions";
+
+// The debounce window for every persisted-state write, in ms. Three consumers,
+// and they must agree: hooks/useDebouncedPersist.ts (its `delay` default),
+// pages/GalleryPage.tsx (a hand-rolled timer — it cannot use the hook, because
+// `scrollTop` has to be sampled at flush time), and e2e/gallery-restore.spec.ts,
+// which waits out this window before asserting the write landed. The spec used
+// to hard-code 1000 ms, so raising this past a second silently stopped it
+// guarding anything. It lives in this module because it is the one that the e2e
+// tsconfig can compile standalone (no DOM lib, no React).
+export const PERSIST_DEBOUNCE_MS = 350;
 
 // Gallery default filters (applied when no session state exists for a dataset)
 export const GALLERY_DEFAULT_SORT_KEY    = "gallery-default-sort";    // number (index into SORT_OPTIONS)

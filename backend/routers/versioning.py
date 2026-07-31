@@ -24,6 +24,26 @@ router = APIRouter(prefix="/datasets", tags=["versioning"])
 _SNAPSHOT_INLINE_LIMIT = 100
 
 
+async def _require_versioning_enabled(db: AsyncSession) -> str:
+    """Refuse a versioning *write* when the mode is "off", and return the mode.
+
+    Off mode no-ops both copy-on-write hooks — `protect_file_before_overwrite`
+    fires only in "auto", `mark_image_deleted_in_versions` returns immediately on
+    "off" — so a restore or a version delete run in this mode overwrites and
+    unlinks the current files with nothing kept in the object store. The UI hides
+    the page, which is not a guard: the routes are reachable directly.
+
+    The four read routes are deliberately *not* gated. `Sidebar` and
+    `DatasetsPage` call `listBranches`/`listVersions` whatever the mode is, so
+    gating them would turn a disabled feature into a wall of 400s.
+    """
+    from backend.services.threshold_service import get_thresholds
+    settings = await get_thresholds(db)
+    if settings.versioning_mode == "off":
+        raise HTTPException(400, "Versioning is disabled. Enable it in Settings first.")
+    return settings.versioning_mode
+
+
 # ---------------------------------------------------------------------------
 # Branches
 # ---------------------------------------------------------------------------
@@ -66,6 +86,7 @@ async def create_branch(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
+    await _require_versioning_enabled(db)
 
     # Count images to decide sync vs async
     from sqlalchemy import func
@@ -113,6 +134,7 @@ async def delete_branch(
     branch = await db.get(DatasetBranch, branch_id)
     if branch is None or branch.dataset_id != dataset_id:
         raise HTTPException(404, "Branch not found")
+    await _require_versioning_enabled(db)
 
     count_result = await db.execute(
         select(func.count(DatasetBranch.id)).where(DatasetBranch.dataset_id == dataset_id)
@@ -141,6 +163,7 @@ async def checkout_branch(
     branch = await db.get(DatasetBranch, branch_id)
     if branch is None or branch.dataset_id != dataset_id:
         raise HTTPException(404, "Branch not found")
+    await _require_versioning_enabled(db)
 
     job = BackgroundJob(job_type="checkout_branch", label=f"Checkout: {branch.name}", dataset_id=dataset_id, total_items=1)
     db.add(job)
@@ -218,12 +241,7 @@ async def create_snapshot(
     )
     image_count = count_result.scalar() or 0
 
-    from backend.services.threshold_service import get_thresholds
-    settings = await get_thresholds(db)
-    mode = settings.versioning_mode
-
-    if mode == "off":
-        raise HTTPException(400, "Versioning is disabled. Enable it in Settings first.")
+    mode = await _require_versioning_enabled(db)
 
     # Manual mode always runs as background job; auto mode inline if small
     if mode == "manual" or image_count > _SNAPSHOT_INLINE_LIMIT:
@@ -297,6 +315,7 @@ async def update_version(
     ver = await db.get(DatasetVersion, version_id)
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
+    await _require_versioning_enabled(db)
     if body.is_pinned is not None:
         ver.is_pinned = body.is_pinned
     await db.commit()
@@ -311,6 +330,7 @@ async def delete_version(
     ver = await db.get(DatasetVersion, version_id)
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
+    await _require_versioning_enabled(db)
 
     # Prevent deleting the only version on a branch; otherwise move the branch head to
     # the deleted version's PARENT when it lives on the same branch (git-like: head
@@ -357,6 +377,7 @@ async def restore_version(
     ver = await db.get(DatasetVersion, version_id)
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
+    await _require_versioning_enabled(db)
 
     if body.handle_extra_images not in ("keep", "remove"):
         raise HTTPException(400, "handle_extra_images must be 'keep' or 'remove'")
@@ -393,10 +414,7 @@ async def prune_versions(dataset_id: str, db: AsyncSession = Depends(get_db)):
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
 
-    from backend.services.threshold_service import get_thresholds
-    settings = await get_thresholds(db)
-    if settings.versioning_mode == "off":
-        raise HTTPException(400, "Versioning is disabled. Enable it in Settings first.")
+    await _require_versioning_enabled(db)
 
     job = BackgroundJob(
         job_type="prune_versions",

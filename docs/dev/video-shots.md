@@ -24,12 +24,19 @@ progressive path (the overwhelming majority of sources) never spawns a subproces
 express. It yields **RGB** where cv2 yields BGR, and that flip is normalised at one boundary
 (`_read_positions_ffmpeg`) so nothing downstream knows about it. Its `read_frames` generator
 owns a subprocess, so every use is wrapped in `contextlib.closing` — a `break` without a
-`close()` orphans the process. Both dependencies are optional: `capabilities()` reports what
-is installed, and the request 503s with actionable text rather than letting a job die with
-an `ImportError` five minutes later.
+`close()` orphans the process. Both dependencies are optional and `capabilities()` reports
+what is installed, but the two **degrade differently**: a missing `imageio-ffmpeg` 503s the
+request with actionable text (`require_deinterlace` raises `ExtractionUnavailable`, which
+two router sites map), while a missing `scenedetect` never 503s at all — `detect_shots`
+catches the import failure and returns the uniform sampler, so the job runs to completion
+with `method="uniform"` and says so over SSE (§ Then the useless-single-shot case).
 
-Every capture opened here goes through `video_service.apply_orientation` for the same
-reason the probe and the poster do — see `docs/dev/video-decode.md` § Container rotation.
+Every capture *this module opens* goes through `video_service.apply_orientation` for the
+same reason the probe and the poster do — see `docs/dev/video-decode.md` § Container
+rotation. The one it does not open is scenedetect's, via `open_video(..., backend="opencv")`;
+that capture is autorotated because scenedetect 0.7.1's own opencv backend sets
+`CAP_PROP_ORIENTATION_AUTO` in `VideoStreamCv2.__init__`. It is a dependency guarantee
+rather than one of ours, so re-check it on a scenedetect upgrade.
 
 ## Probe sampling
 
@@ -107,23 +114,37 @@ shots = manager.get_scene_list(start_in_scene=True)
 progress at all for the whole run, and `show_progress` is tqdm on stderr. Do **not** poll
 `video.frame_number` — that is a live `cv2.VideoCapture.get` on a handle scenedetect's
 decode thread is concurrently `grab()`ing, i.e. a data race on a C++ object. The decode
-thread's only contact with the stream is `read()`, so a `_CountingStream(VideoStream)` that
-increments a plain int (GIL-atomic) gives exact per-frame progress, and returning `False`
-from `read()` when cancelled gives a clean EOF. It returns False rather than raising:
+thread pulls frames only through `read()`, so wrapping it in a `_CountingStream(VideoStream)`
+that increments a plain int (GIL-atomic) counts every decoded frame exactly, and returning
+`False` from `read()` when cancelled gives a clean EOF. Note the decode thread does make its
+own `get` calls on that handle — it reads `video.position` once per frame, which resolves to
+`self._cap.get(...)` — which is precisely why a *second* thread polling the same capture is
+the race. It returns False rather than raising:
 `detect_scenes` has a `finally` that drains its queue and joins the decode thread, and an
 exception thrown through it can leave an orphaned daemon thread that crashes interpreter
 shutdown. `SceneManager.stop()` is published on the `Progress` object as belt-and-braces.
 
 **The empty-list trap.** `get_scene_list()` returns `[]` — not one scene — when no cuts were
 found. Code that believes it writes zero frames and reports success. `start_in_scene=True`
-is passed **and** a spanning shot is synthesized if the list is still empty.
+is passed **and**, if the list is still empty, the uniform sampler synthesizes the windows
+instead — several of them for any clip longer than one interval, and a single zero-width
+window when there is no duration (see two paragraphs down). Only a clip shorter than one
+interval yields the single spanning shot the name suggests.
 
 **Then the useless-single-shot case.** One two-hour shot with `frames_per_shot=1` yields one
 frame. When there is exactly one shot longer than `SINGLE_SHOT_FALLBACK_MS` (120 s),
 detection falls back to a uniform-interval sampler. That is the same code path as the
-"scenedetect is not installed" fallback and the "no cuts found" one, written once, and all
-three report `method="uniform"` in `result_data` **and say so over SSE** — a user who asked
-for shot detection and silently got time slicing has been handed a different feature.
+"scenedetect is not installed" fallback, the "no cuts found" one and a fourth route —
+`detect_scenes` raising mid-run — written once, and all **four** report `method="uniform"`
+in `result_data` **and say so over SSE**: a user who asked for shot detection and silently
+got time slicing has been handed a different feature. A fifth `method` value exists and is
+not a result at all — a cancelled detection returns `method="cancelled"`, which the job
+treats as a cancel.
+
+The SSE line those four share is fixed text ("No shot boundaries were found, so frames were
+sampled at fixed intervals (N windows)"), so for three of the four it states a reason that is
+not the reason. Carrying a `reason` out of `detect_shots` is the fix; the message itself is
+`docs/dev/video-extract.md`'s territory.
 
 **The no-duration variant of that fallback is one *zero-width* window**, so every pick in it
 resolves to the same position: `frames_per_shot > 1` would write N byte-identical files

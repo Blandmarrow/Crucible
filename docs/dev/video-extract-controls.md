@@ -19,8 +19,8 @@ shaded mattes outside the rect (not one outlined box: the matte is what shows ho
 being thrown away) and four draggable edge handles. Pointer events with
 `setPointerCapture`, never mouse events, so a drag that leaves the element keeps tracking
 and still ends. Handles move in **frame** coordinates (`scale = displayedWidth / frameW`,
-re-measured by a `ResizeObserver`), clamp to the frame and **snap to even numbers**,
-mirroring `video_frames.clamp_crop` so the rect shown is the rect stored. The handles are
+re-measured by a `ResizeObserver`), clamp to the frame and **snap to even numbers** so the
+rect shown is the rect stored. The handles are
 `aria-hidden`; the paired numeric x/y/w/h inputs beneath are the keyboard path, because
 there is no honest ARIA pattern for a 2-D rect — which is why they render `NumberField`
 (below) rather than a bare input: the naive per-keystroke clamp made *the* a11y path
@@ -33,9 +33,18 @@ and **Clear crop** sets it to null, which sends `clear_crop: true` — the disam
 `VideoExtractRequest` exists for. The rect sent is only a proposal: the server normalizes
 again and stores that, so a later re-extraction replays the stored value.
 
+It is not a byte-for-byte mirror of `video_frames.clamp_crop`, only an agreeing one. This
+snaps to the *nearest* even (`Math.round(n / 2) * 2`) where the server floors to even
+(`_even_down`), which is invisible only because the client never emits an odd value in the
+first place. It also enforces a client-side `MIN_SIDE = 16` per side, which has no server
+counterpart — `clamp_crop` merely returns `None` when a side collapses — and the
+full-frame-to-no-crop reduction lives on the server and in the modal, not here.
+
 ## TrimBar
 
-**`TrimBar`** — `{ durationMs, startMs, endMs, onChange, disabled }`. Note the backend's
+**`TrimBar`** — `{ durationMs, startMs, endMs, onChange, disabled, disabledNote }`. The
+modal passes `disabledNote="This container will not seek, so trimming is unavailable"`;
+without one the disabled label falls back to *"Trimming is unavailable for this container"*. Note the backend's
 semantics: `trim_end_ms` is **milliseconds cut off the tail**, not an end position
 (`end = duration_ms - trim_end_ms`), so a clip whose duration is corrected later keeps
 trimming the same amount of tail. This renders the right handle at `duration - trim_end_ms`
@@ -55,6 +64,11 @@ keys. Those keys `preventDefault` for `ArrowLeft`/`ArrowRight` **only**, so Tab 
 focus — that is the slider contract rather than a fix for an observed scroll: measured, it
 prevents nothing visible, because the arrows scroll horizontally and the modal body has no
 horizontal overflow at any tested viewport.
+
+**Step size is 500 ms per press, 5 s with Shift** (`MIN_SPAN_MS` is also 500), on both
+handles. Both are `role="slider"` with `aria-valuenow`/`aria-valuetext`, and the end handle
+reports the *position* (`duration - trim_end_ms`) rather than the trim amount — which is what
+the e2e assertion reads.
 
 **Both arrow *grow* directions are floored at `Math.max(0, …)`**, matching the pointer path.
 This looked unreachable and is not: the endpoint is **looser than the component**. The
@@ -79,15 +93,16 @@ without setting `trimTouched` it fixes the picture and leaves the submit still t
 ## NumberField
 
 **`components/common/NumberField.tsx`** — `{ value, clamp, onCommit, …inputProps }`, the
-shared number input both controls above are built from (ten call sites; step 2's six
-spinners take an `intClamp(lo, hi)` that also rounds, since the schema is `int` and a typed
-`1.5` used to reach the API). Every field here used to re-clamp `Number(e.target.value)` on
+shared number input both controls above are built from — ten *fields* across two components:
+step 2's six spinners, which take an `intClamp(lo, hi)` that also rounds since the schema is
+`int` and a typed `1.5` used to reach the API, plus the crop's x/y/w/h, which are one
+syntactic `<NumberField` inside a `map`. Nothing else in `src/` renders one. Every field here used to re-clamp `Number(e.target.value)` on
 each keystroke, which rewrites the prefix you are still typing: `2048` into **Long edge**
 arrived as `8192` — `"2"` clamps up to 64 and the remaining three digits append — and the
 crop's even-snap turned `150` into `250`. So the raw string is held in a `draft` and clamped
 on blur, with one refinement: **it commits live whenever clamping would be the identity**,
 so a consumer that paints from the value (the crop mattes) keeps moving for every keystroke
-that is not a lie. Four details are load-bearing:
+that is not a lie. Five details are load-bearing:
 
 - **Commit is a no-op when `draft === null`.** This is what stops a focus-and-tab with no
   typing from firing `onCommit` and tripping `cropTouched` into the batch-wide `NULL` wipe.
@@ -103,12 +118,20 @@ that is not a lie. Four details are load-bearing:
   unparseable reverts to the current `value` instead. Note `type="number"` reports `""` for
   anything it does not consider a valid float (`-`, `1e`, `1.2.3`), which lands in that same
   branch.
+- **Enter commits the draft in place**, via `onKeyDown` — part of the draft contract rather
+  than a nicety, since these live in a dialog with no form submit, so without it the only way
+  to commit is to move focus. Both `onBlur` and `onKeyDown` coming in through `…inputProps`
+  are still forwarded, and run after the internal handlers.
 
 ## End-to-end coverage
 
-`frontend/e2e/video-extract.spec.ts` covers the draft contract, the pointerdown fix, the
-`NULL` wipe and the arrow-key floor — the first three through the submitted request body,
-the last through `aria-valuenow`. Three things there are deliberate:
+`frontend/e2e/video-extract.spec.ts` covers six things: the draft contract, the pointerdown
+fix, the `NULL` wipe, the arrow-key floor, the derived-`cropTouched` round trip (*narrowing
+the crop and putting it back sends no crop* — narrow the rect, restore it, assert no `crop`
+key), and the replace label counting only the subfolder the job will delete
+(`docs/dev/video-extract-ui.md` § Step 2). All but the arrow-key floor read the submitted
+request body or the rendered label; the floor reads `aria-valuenow`. Three things there are
+deliberate:
 values are typed with `pressSequentially`, since `fill()` dispatches one input event
 carrying the whole string and passes against the broken code; the trim-handle click passes
 an off-centre `position`, because the handle straddles the track's left edge at 0 ms and a

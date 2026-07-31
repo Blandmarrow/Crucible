@@ -33,8 +33,8 @@ for a row whose file is gone.
 
 `PATCH /{id}/rename` takes `{new_stem}` and is a near-verbatim mirror of
 `routers/images.py::rename_image` — `ensure_not_busy`, the same stem validation and
-`slugify_filename`, sibling `Video.filename`s as `db_names`, the dual occupied-poster-stem
-set described in `docs/dev/video.md` § Poster stems and collisions,
+`slugify_filename`, sibling `Video.filename`s as `db_names`, the three-term
+occupied-poster-stem set described in `docs/dev/video.md` § Poster stems and collisions,
 `unique_filename_with_thumb`, then ORM fields → the file rename →
 `commit` → the poster move as a **post-commit epilogue**. A failed rename means no commit;
 a failed poster move is logged and cannot undo one, and `poster_path` names the new poster
@@ -65,7 +65,9 @@ wherever curation has since filed it (`docs/dev/video-ui.md`).
 ## Serving bytes, and the file browser preview
 
 The **file browser preview** widened with this phase: `GET /filesystem/preview` accepts
-anything in `MEDIA_EXTENSIONS` and serves the video branch with `video_mime`, so one route
+anything `media_kind_for` recognises — i.e. all of `MEDIA_EXTENSIONS`, though that name is
+what the router branches on and the set itself is never imported there; `None` is a 400 —
+and serves the video branch with `video_mime`, so one route
 covers both kinds and `FileResponse` supplies the Range/206 a `<video>` needs to seek. It
 serves an arbitrary absolute path, which is what that deliberately unsandboxed
 local-desktop router already did for images (`docs/dev/file-browser.md` § Path safety) — the

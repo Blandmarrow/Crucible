@@ -48,7 +48,11 @@ store is image-typed down to `datasetByImageId`, so mixing video ids into it wou
 `SelectionToolbar`'s cross-dataset breakdown and every bulk-op call site that reads it. The
 shift-click range algorithm is ported from `GalleryPage.handleSelect` — anchor plus
 last-range-end, so dragging the end backwards deselects what it passes — but resolved
-against the strip's own `videos` order and its own set. With a selection, the header grows
+against the strip's own `videos` order and its own set. The port also changed the *trigger*,
+deliberately: the strip has no `isCheckbox` distinction at all, so shift on the card body
+extends the range as well as shift on the checkbox. In the grid the card body is a plain
+toggle and only the checkbox ranges (`docs/dev/gallery.md`). `docs/video.md` documents the
+strip's behaviour for users. With a selection, the header grows
 `N selected · Extract frames · Clear`, and the selection is cleared when `datasetId`
 changes (adjusted during render, so a stale selection is never painted; the anchors are
 left alone because an id from the previous dataset simply misses `indexOf`).

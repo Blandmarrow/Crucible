@@ -12,10 +12,12 @@ in `docs/dev/video-extract.md`.
 
 A crop rect is `(x, y, w, h)`, matching the `Video.crop_*` column order — note that
 PySceneDetect's `SceneManager.crop` is *inclusive corners* `(x0, y0, x1, y1)` instead, and
-`video_extract` converts at that boundary. `clamp_crop` is the single source of truth for the
-even-snap and the no-op rule, and it is called twice on the way to a pixel: once against the
-header dimensions, once per frame against `frame.shape` — see `docs/dev/video-shots.md`
-§ Rendering a shot.
+`video_extract` converts at that boundary. `clamp_crop` is the guard every *stored or applied* rect
+passes through, and it is called twice on the way to a pixel: once against the header
+dimensions, once per frame against `frame.shape` — see `docs/dev/video-shots.md`
+§ Rendering a shot. It is not the sole implementation of either rule, though: the detector
+applies the same even-snap and the same no-op rule itself in `crop_rect_from_profiles`,
+before `clamp_crop` is ever reached, so a tuning change to either rule has two sites.
 
 **Cropdetect.** `edge_profiles` takes the **95th percentile** luma per row and per column,
 not the max: one hot pixel or a stuck chroma sample inside an otherwise black bar pins that
@@ -23,9 +25,11 @@ row as content, and one such pixel per bar defeats detection entirely on real fi
 `merge_profiles` accumulates across samples by **elementwise max**, so a dark shot can only
 grow the content rect, never shrink it — averaging would let one night scene crop away real
 picture in every other shot. `crop_rect_from_profiles` returns **None** rather than a rect
-whenever the evidence is weak: nothing clears the threshold (a fade-to-black sample set),
-the surviving content is under half of either axis, or the bars are thinner than
-`min_bar_frac` (1.5% of the axis, measured as the two bars *combined*). Each axis decides
+whenever the evidence is weak: nothing clears the threshold (a fade-to-black sample set), or
+the surviving content is under half of either axis. Bars thinner than `min_bar_frac` (1.5% of
+the axis, measured as the two bars *combined*) are a third case but not a third None: that
+axis is reset to full instead, and None follows only if the reset leaves nothing to crop. A
+real matte on one axis and a hairline on the other still yields a rect. Each axis decides
 independently, so a pillarboxed 4:3 insert in a 16:9 frame is handled. All four edges snap
 to even coordinates: chroma subsampling wants it, and `bwdif` needs an even `y` or it
 deinterlaces with the field parity inverted.
@@ -85,10 +89,12 @@ whole of the fix: on a 4K frame, a candidate's `mean` + `sharpness` + `is_degene
 from 308 ms and 166 MB peak to **89 ms and 66 MB**, and a probe sample's `edge_profiles` +
 `combing_ratio` from 326 ms to 206 ms. The no-copy passthrough is only safe because nothing
 here mutates the plane — treat it as read-only. The `np.einsum` form of the Rec.601 sum
-exists for the same reason: it is bit-identical to `0.114*b + 0.587*g + 0.299*r` (same
-summation order) but does not materialise three full-size float32 temporaries, so `luma()`
-alone went 81 ms / 166 MB → 40 ms / 33 MB. No verdict changed; `test_video_frames.py`
-§ The luma plane holds the equivalence tests that keep it that way.
+exists for the same reason: it is numerically equivalent to `0.114*b + 0.587*g + 0.299*r`
+to within float32 tolerance but does not materialise three full-size float32 temporaries, so
+`luma()` alone went 81 ms / 166 MB → 40 ms / 33 MB. No verdict changed;
+`test_video_frames.py` § The luma plane holds the equivalence tests that keep it that way —
+they assert `allclose` at `atol=1e-4`, deliberately **not** bit-identity, because einsum's
+summation order is an implementation detail numpy does not guarantee.
 
 **`pick_index` rejects before it ranks.** First anything `is_degenerate` flagged (mean luma
 under 8 or over 247, or standard deviation under 3 — black and white flashes, fades, flat
@@ -98,6 +104,9 @@ set's median — that one is not about picture quality, it means the detector mi
 *inside* the window and keeping the outlier would file a frame from the next scene under
 this shot's index. That median needs no zero guard — `eligible` only admits lumas at or
 above 8.0, so a non-empty set's median cannot be zero, and the guard that used to sit there
-was unreachable. If everything is rejected it returns the middle rather than nothing: a
-shot that is entirely a fade still owes the caller one frame, and a "no pick" return grows
-a second, untested branch in every caller.
+was unreachable. The luma-outlier filter has an escape hatch the degeneracy pass does not:
+if applying it would empty the set, it is dropped rather than applied (`if kept: eligible =
+kept`), so two candidates at lumas 10 and 100 — both outside +/-40% of their own median —
+keep the unfiltered pair. If the *degeneracy* pass rejects everything it returns the middle
+rather than nothing: a shot that is entirely a fade still owes the caller one frame, and a
+"no pick" return grows a second, untested branch in every caller.

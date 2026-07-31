@@ -45,8 +45,9 @@ before anything is started. Two shapes here are load-bearing:
   adds non-terminal ones.
 - **No persisted key**, unlike pass 1's `` `video-extract-job-${videoId}` ``. Pass 2 emits per
   frame, so a reconnected SSE stream repopulates `jobStore` within a frame; pass 1 needed a
-  stored id because its `detecting`/`replacing` phases are long and silent. The "three
-  sanctioned exceptions" framing in `docs/dev/persistence.md` therefore stands unchanged.
+  stored id because its `detecting`/`replacing` phases are long and silent. The "four
+  sanctioned exceptions" framing in `docs/dev/persistence.md` therefore stands unchanged —
+  pass 2 adding no key is precisely what leaves it at four.
 
 Two accepted consequences, noted in the code rather than engineered away: adoption waits one
 preview round trip (the pill appears a moment after open), and an adopted job completing fires
@@ -104,5 +105,7 @@ mid-run; unlike `video_extract` it adds no `["subfolders", id]` there, for the s
 The full invalidation table is in `docs/dev/frontend-jobs.md`.
 
 `TERMINAL_JOB_STATUSES` comes from `constants/jobs.ts`, shared with `TopBar` and
-`useVideoExtractJobs` — three call sites is past the threshold for a local copy, and a copy
-that misses a fourth status is how one of the three silently disagrees.
+`useVideoExtractJobs` — three call sites is past the threshold for a local copy. One local
+copy does remain: `store/jobStore.ts` keeps its own `TERMINAL_STATUSES` to drive the
+five-minute purge. That one gates a TTL rather than a UI decision, which is why it was left,
+but it is the fourth place a new status would have to be added.

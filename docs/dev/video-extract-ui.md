@@ -67,15 +67,27 @@ change it*.
 
 **A change that changes nothing marks nothing touched.** The crop's three writers — the
 overlay's `onChange`, **Use detected** and **Clear crop** — all route through one
-`applyCrop(r)`, which sets `cropTouched` only when a null-safe `sameRect` says the rect
-actually moved; the `TrimBar` `onChange` compares both values the same way. This is not
-defensive tidiness. `cropTouched` decides whether `crop` is sent at all, the modal shows the
-**full frame** when no crop is set (`active = rect ?? full`), and `clamp_crop` maps a
-full-frame rect to `None`, which `extract_frames` then writes as `crop_* = NULL` to every
-video in the batch. So a spurious touch — a tab through a crop field with no typing, a drag
-that jitters back to where it started, an arrow press on a handle already at 0 — wiped the
-whole batch's stored rects. The guard sits on the flag, not only on the control that would
-have tripped it.
+`applyCrop(r)`, which does two things before setting the flag. It **normalizes a full-frame
+rect to `null`**, since `CropOverlay` never hands back `null` and `clamp_crop` maps full-frame
+to `None` anyway, so the two spellings compare equal. Then it *derives* the flag rather than
+latching it: `setCropTouched(!sameRect(normalized, initialCrop.current))`, against a
+**mount-pinned ref** rather than the previous value. The `TrimBar` `onChange` compares both
+values the same way.
+
+Deriving against the session-initial rect is what makes a round trip free. `CropOverlay` fires
+`onChange` per pointer move, so a latch against the previous value is tripped by the first
+intermediate frame of a drag and cannot un-trip when the drag returns to where it started;
+the derived form clears the flag instead. The ref rather than a piece of state is so a
+background cache refresh of `primary` cannot flip it.
+
+This is not defensive tidiness. `cropTouched` decides whether `crop` is sent at all, the modal
+shows the **full frame** when no crop is set (`active = rect ?? full`), and a full-frame rect
+becomes `crop_* = NULL` on every video in the batch. So a spurious touch — a tab through a
+crop field with no typing, a drag that jitters back to where it started, an arrow press on a
+handle already at 0 — wiped the whole batch's stored rects. A real **Clear crop** still yields
+`crop === null` *with* `cropTouched`, which sends `clear_crop: true`. The round trip is pinned
+by `frontend/e2e/video-extract.spec.ts`'s *narrowing the crop and putting it back sends no
+crop*.
 
 **Step 2 — Extract.** Pick (`frames_per_shot`, `pick`, `candidates`), output (`long_edge`,
 mode, subfolder) and `sensitivity`, with `min_shot_ms` / `detector_frame_skip` / `max_shots`
@@ -83,7 +95,12 @@ inside a collapsed `<details>` — those are the cost-cliff levers, not first-ru
 The mode radio defaults to **new_subfolder**; when the summary reports previous frames the
 labels carry the numbers (*Add to `{last}`* / *New subfolder* / *Replace (deletes N previous
 frames)*, the last styled destructively, and reading *"deletes each video's previous
-frames"* for a batch, where one number would be wrong). `capabilities.shot_detection ===
+frames"* for a batch, where one number would be wrong). **N is `framesSummary.groups[0].count`
+— the most recent subfolder only, never `total`.** The job resolves its target through
+`_last_subfolder_for` and `_delete_previous_frames` scopes the delete to that one subfolder,
+so frames in older subfolders survive; `total` promised "deletes 100" and removed 50. Replace
+mode hides the subfolder control, so this count is the only blast-radius signal on screen.
+Pinned by *the replace label counts only the subfolder it will delete*. `capabilities.shot_detection ===
 false` shows a standing warning that frames will be sampled at fixed intervals — the
 uniform-fallback disclosure is a user-facing contract (`docs/dev/video-shots.md`), and the
 job announces it over SSE too. The *Add to…* label is batch-aware: `framesSummary` is the
@@ -117,15 +134,13 @@ still holds the old path, which is strictly worse than the bug.
 - **`rows` is a union keyed by `video_id`** — `result.jobs` first (it alone carries `filename`
   and the resolved `subfolder`), then any `liveJobs` entry belonging to this modal (the hook
   returns every live extraction in the app, so the membership check is load-bearing). A live
-  payload is *meant* never to overwrite a `result` row, which knows strictly more — but
-  `mergeRows` compares against `prev`, the remembered Map, rather than against the row it may
-  have just written in the same pass, so on the **first** pass that sees a video both entries
-  find `old === undefined` and the live row wins. Filed as **V-84**; the faithful form is
-  `next?.get(r.videoId) ?? prev.get(r.videoId)`. Narrow and self-healing (it needs the worker's
-  first `video_id`-carrying emit in the same React commit as `setResult`, and the next render
-  re-upgrades the row), so the visible cost is a transient missing `→ subfolder` label, never a
-  lost row — but do not read the code comment there as a guarantee it enforces. "Result if present,
-  otherwise liveJobs" breaks a mixed batch: submit A+B+C with A already busy and A's live bar
+  payload never overwrites a `result` row, which knows strictly more: `mergeRows` reads
+  `next?.get(r.videoId) ?? prev.get(r.videoId)`, consulting the Map it is building **before**
+  the remembered one, so the richer `result.jobs` row pushed first in `incomingRows` survives
+  the derived live row arriving in the same pass. Comparing against `prev` alone let both
+  entries find `old === undefined` on the first pass that saw a video, and the live row won.
+  The union is still the right shape, though: "result if present,
+  otherwise liveJobs" breaks a mixed batch — submit A+B+C with A already busy and A's live bar
   vanishes the instant the response lands, leaving only an amber `skipped` line for the video
   working hardest. A `skipped` entry that produced a row is suppressed.
 - **A row persists once seen**, accumulated in a `useState` Map (`seenRows`) that is
@@ -213,5 +228,8 @@ Three details are load-bearing, all inherited from `GeneratePromptsModal`
   every `VideoDetailPage` render. `TERMINAL_JOB_STATUSES` comes from `constants/jobs.ts`,
   shared with `TopBar` and `ReextractFramesForm`.
 
-`extractPhaseLabel(job)` turns `progress.phase` into a stage label, because the generic
+`extractPhaseLabel(job)` returns the job's own `message` when it has one, and only otherwise
+maps `progress.phase` to a stage label (*Detecting shots…* / *Removing previous frames…* /
+*Extracting frames…* / *Starting…*, and `""` for an absent `progress`). The message path is
+how the queue's *Queued* reaches the bar at all. Either way it exists because the generic
 done/total counts frames and says nothing during the long detection phase.

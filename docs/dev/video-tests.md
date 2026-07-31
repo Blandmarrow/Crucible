@@ -5,9 +5,10 @@ runnable both with and without OpenCV. It spans the subject matter of every othe
 `docs/dev/video.md` (model, storage, ingest), `docs/dev/video-endpoints.md`,
 `docs/dev/video-decode.md`, `docs/dev/video-shots.md`, `docs/dev/video-heuristics.md`,
 `docs/dev/video-extract.md` and `docs/dev/video-reextract.md` — which is why it is an index of
-its own rather than a section inside any one of them. `docs/dev/video-reextract.md` § Tests and
-`docs/dev/video-extract.md`'s coverage notes still live in their own files and are the next
-candidates to land here.
+its own rather than a section inside any one of them. `docs/dev/video-reextract.md` § Tests is
+the one remaining test index still living in its own file and is the next candidate to land
+here. (`docs/dev/video-extract.md` has no coverage section to move — its test references are
+inline.)
 
 ## The modules
 
@@ -30,8 +31,10 @@ telecine, sharpness, candidate rejection, all documented in `docs/dev/video-heur
 non-seekable stub), probe sampling and its caps, the telecine pass and its 25 fps control,
 shot boundaries, the empty-list trap, both
 uniform fallbacks, cancellation and `render_shot` geometry. `test_video_extract_http.py`
-drives both endpoints end to end, and additionally pins three parts of `_run_extraction`
-that no fixture-driven run reaches — see § Branches no fixture reaches below. `test_video_lineage_mirrors.py` holds the structural
+drives both endpoints end to end, and additionally pins the two `videos.py` branches no
+fixture-driven run reaches — `_detect_with_progress`' polling loop and `_run_extraction`'s
+NULL-duration step. See § Branches no fixture reaches below, whose third entry is
+`probe_samples`' telecine pass and is pinned in `test_video_extract.py`, not here. `test_video_lineage_mirrors.py` holds the structural
 mirror guard described in CLAUDE.md § Key invariants plus behavioural round-trips through
 snapshot/restore, both `duplicate_dataset` branches, cross-dataset copy and move, and video
 delete.
@@ -61,9 +64,12 @@ tested by injecting failures instead, which is deterministic.
 entire point: `probe_samples`' telecine pass is gated on ~29.97/30, so while every other
 `mp4_*` helper wrote 25.0 that branch was unreachable — never executed rather than
 under-asserted, which no assertion in a test could have revealed. Its three constraints are
-in the helper's docstring; the one worth knowing before editing it is that the pan must be
-**whole-frame**, because `combing_ratio` averages over the entire frame and a small moving
-object dilutes to 0.65 against a 0.9 threshold. Full-frame reads 2.77 combed vs 0.51 clean.
+in the helper's docstring; the one worth knowing before editing it is that `fps` must stay
+inside `abs(fps - 29.97) < 0.2`, because outside that band the telecine pass never runs and
+the test passes anyway — the only one of the three that fails *silently*. The second is that
+the pan must be **whole-frame**, because `combing_ratio` averages over the entire frame and a
+small moving object dilutes to 0.65 against a 0.9 threshold. Full-frame reads 2.77 combed vs
+0.51 clean.
 
 The rescan-collision rule is pinned in three separable parts, since each can break alone:
 same-stem containers rescanned together get distinct posters; an ordinary rescan renames
@@ -105,11 +111,12 @@ decoded-frame count here drives the TopBar pill to a number the gallery can neve
 
 `backend-tests.yml` installs opencv **and** scenedetect, in a step of its own after the
 main install (which is `pip install -r backend/requirements-ci.txt -r backend/requirements-dev.txt`
-— the pinned base file all three CI jobs share; cv2 stays out of it because e2e-smoke.yml
+— the floor-pinned base file all three CI jobs share; cv2 stays out of it because e2e-smoke.yml
 wants opencv *without* scenedetect, and nothing else wants either). Before that step
-existed it installed neither, so the ~250 tests above had never once run in CI: three
-modules errored at *collection* and the rest failed rather than skipped. Two rules keep
-both halves working.
+existed it installed neither, so almost none of the video suite above had ever run in CI:
+three modules errored at *collection*, the cv2-dependent rest failed rather than skipped,
+and only the two guard-free modules (`test_video_frames.py` and `test_media_types.py`, ~51
+tests) were ever green here. Two rules keep both halves working.
 
 **Order and flags are load-bearing.** `pip install "opencv-python-headless>=4.9"`, then
 `pip install --no-deps "scenedetect>=0.7.1"`, then its three remaining runtime deps
@@ -124,8 +131,10 @@ out: no test needs the real `bwdif` path, and both 503 tests monkeypatch `capabi
 
 **Guard placement decides error vs skip.** A `pytestmark = skipif(...)` is consulted only
 *after* the module body has run, so it cannot protect a module-level constant like
-`SHOTS_MP4 = mp4_shots_bytes()` — those three modules need
-`pytest.importorskip("cv2")` on the line immediately before it. Modules that only touch cv2
+`SHOTS_MP4 = mp4_shots_bytes()` — those three modules (`test_video_extract_http.py`,
+`test_video_reextract_http.py`, indexed in `docs/dev/video-reextract.md`, and
+`test_frames_from_video_filter.py`) need `pytest.importorskip("cv2")` on the line
+immediately before it. Modules that only touch cv2
 inside tests (`mp4_bytes` imports it lazily) take the same one-liner after the imports.
 Where a module is *mostly* media-free, use a per-test `needs_cv2` mark instead: a
 module-level skip in `test_video_lineage_mirrors.py` would drop the structural mirror guard,

@@ -81,7 +81,7 @@ successful grab reached, losing a second period on top. Do not "simplify" either
 endpoint measures and persists it, and the extraction job measures and persists it if no
 probe ran.
 
-Three details are load-bearing:
+Four details are load-bearing:
 
 - **It returns None for a stream that will not *seek*,** not only for one that will not
   open. A non-seekable stream ignores the `set()` and answers every probe with the next
@@ -103,7 +103,10 @@ Three details are load-bearing:
   deliberately *not* used as a ceiling; clamping to it returns a duration exactly 1/fps
   short on every file.
 - **The answer is the decodable extent, not the header's claim,** and on a well-formed file
-  the two agree: the fixtures measure exactly 3600 / 2000 / 1000 ms. A difference is a real
+  the two agree: the fixtures measure 3600 and 2000 ms, to within the +/-5 ms the tests
+  allow for codec-build rounding — one frame is 40 and 20 ms respectively, so the tolerance
+  is not room for a frame. (The 1000 ms of the 25-frame fixture is a *header* duration out
+  of `probe_video`; nothing measures it.) A difference is a real
   one — a broken tail the header still counts — not an artefact of the search. (Before the
   read order was fixed, the 90-frame fixture measured 3560, and that 40 ms was documented
   here as cv2 decoding one frame fewer than `VideoWriter` emitted. It was not.)
@@ -116,8 +119,15 @@ non-video payloads and True only for something decodable, so a `.mp4` extension 
 nothing about the bytes is handled without a second check. `probe_video` raises
 `UnreadableVideoError`; callers surface it as a readable rejection rather than a silent
 skip. Both ingest helpers copy before probing (probing the destination is what proves the
-copy readable), so both delete the destination when the probe fails — an orphan in
-`videos/` with no row would be re-registered by every later rescan.
+copy readable), so both delete the destination when the probe raises **anything** — an
+orphan in `videos/` with no row would be re-registered by every later rescan.
+
+That `except BaseException` on both is load-bearing rather than defensive breadth.
+`probe_and_poster` shields `generate_poster` alone, so `probe_video` still raises cv2's lazy
+`ImportError` (a headless host with no libGL), a raw `cv2.error` or a `MemoryError` straight
+past it. Folder import once caught `UnreadableVideoError` only and left the copy behind for
+every one of those; upload has always caught them all. Anything narrower recreates the
+orphan.
 
 ## Poster frames
 
@@ -137,9 +147,13 @@ OpenCV rather than ffmpeg: one seek plus one read, and cv2 is already a dependen
   set later re-posters onto a frame inside the kept range for free.
 - **Fallback ladder**: seek and read; on failure rewind to `POS_MSEC = 0` and read the
   first frame; on failure return False. Both rungs are reachable — a NULL duration has no
-  midpoint, and a header whose duration overshoots the stream seeks past the end. Failure
-  is always a False and never a raise (the CLAUDE.md invariant): `has_poster` stays false
-  and the UI draws a film glyph.
+  midpoint, and a header whose duration overshoots the stream seeks past the end. Every
+  *decode* failure is a False and never a raise (the CLAUDE.md invariant): `has_poster`
+  stays false and the UI draws a film glyph. The **encode tail below can still raise** —
+  a failed `img.save`, a full disk, a failing `os.replace` — after unlinking its temp. What
+  makes the invariant hold end to end is that every caller wraps the call:
+  `probe_and_poster` catches `Exception`, and so does the poster endpoint. A new caller
+  owes the same catch.
 - **Encode**: BGR→RGB, `PIL.Image.fromarray`, `thumbnail((size, size), LANCZOS)`, WebP at
   quality 85. Mirrors `image_service.generate_thumbnail`, which hardcodes 256 for grid
   thumbs; 512 here because a 16:9 poster is 512×288 and strip cards render at ~240 px on a
@@ -154,8 +168,11 @@ OpenCV rather than ffmpeg: one seek plus one read, and cv2 is already a dependen
   never created it.
 
 **Lazy backfill.** `GET /videos/{id}/poster` cuts a poster on demand when `poster_path` is
-NULL *or* the file is gone, commits the path, then serves it; it 404s only when the video
-itself will not decode. This is the `generation_metadata` backfill pattern from
+NULL *or* the file is gone, commits the path, then serves it. It 404s in four other
+situations besides the video refusing to decode: no row at either of the two `db.get`
+lookups, the source file missing from disk, and — the common one — a live negative-cache
+deadline, which answers 404 without attempting a decode at all for the
+`POSTER_RETRY_AFTER_SECONDS` (300) window described below. This is the `generation_metadata` backfill pattern from
 `GET /images/{image_id}`. Rows created before posters existed heal the first time anything
 looks at them — no migration, no backfill job. So `has_poster: false` is no reason for the
 UI to avoid the endpoint — both `VideoStrip`
@@ -190,8 +207,8 @@ unconditionally, without it an undecodable video re-runs a full cv2 open on ever
 render of every gallery visit — cheap per call, unbounded in visits. A `poster_failed_at`
 column is the durable form and is not worth a migration for a retry hint.
 
-**An exception out of `generate_poster` is a False like any other**: caught at the endpoint,
-logged, parked, 404. Letting it escape as a 500 bypassed the negative cache — so the
+**An exception out of `generate_poster` — the encode tail is the one that raises — is
+treated as a False like any other**: caught at the endpoint, logged, parked, 404. Letting it escape as a 500 bypassed the negative cache — so the
 unbounded re-decode above happened on exactly the videos most likely to trigger it — and
 reported an app fault in the JS error console for what is by design a nicety, never a gate.
 It is `except Exception`, not `BaseException`: a client disconnect raises `CancelledError`

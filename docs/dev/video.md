@@ -18,12 +18,13 @@ not a see-also, and says which part of the file it owns.
 |---|---|
 | `backend/media_types.py` | This file — the single ingestible-extension allowlist |
 | `backend/models/video.py` | This file § The model |
-| `backend/routers/videos.py` | `docs/dev/video-endpoints.md`; + `docs/dev/video-extract.md` for the extract and probe routes; + `docs/dev/video-reextract.md` for `POST /videos/reextract` |
-| `backend/schemas/video.py` | `docs/dev/video-extract.md` (pass 1 bodies), `docs/dev/video-reextract.md` (pass 2) |
+| `backend/routers/images.py` (its video branch) | This file § Ingest — the gallery-upload path, `_write_video_upload_sync` and the `skipped` response |
+| `backend/routers/videos.py` | `docs/dev/video-endpoints.md`; + `docs/dev/video-extract.md` for the extract and probe routes; + `docs/dev/video-reextract.md` for `POST /videos/reextract` and `POST /videos/reextract/preview` |
+| `backend/schemas/video.py` | `docs/dev/video-extract.md` (pass 1 bodies), `docs/dev/video-reextract.md` (pass 2); + `docs/dev/video-endpoints.md` for `VideoOut`, `VideoFramesSummary` and `RenameVideoRequest` |
 | `backend/services/video_service.py` | `docs/dev/video-decode.md` — the probe ladder, duration search and poster generation; + this file § Poster stems and collisions for `claimed_poster_stems` |
 | `backend/services/video_extract.py` | `docs/dev/video-shots.md` — sampling, shot detection, `render_shot`; + `docs/dev/video-extract.md` for the `video_extract` job; + `docs/dev/video-reextract.md` for `render_at_timestamps` |
 | `backend/services/video_frames.py` | `docs/dev/video-heuristics.md` — the pure-numpy judgement calls |
-| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision |
+| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision; + `docs/dev/datasets-page.md` § Dataset duplicate for `duplicate_dataset`'s video loop and `_copy_video_sync` |
 | `backend/tests/test_video_*.py` | `docs/dev/video-tests.md` — also the cv2 gate and the skip convention |
 
 ### Frontend
@@ -108,6 +109,13 @@ backfill) cannot rename to dodge a clash, so they feed it to
 `clip.mp4` keeps `clip.webp`, `clip.mkv` gets `clip_001.webp`, and both files keep the
 names the user gave them.
 
+One site writes a poster and takes **no** guard, deliberately: `duplicate_dataset`'s video
+loop copies both basenames verbatim into fresh destination folders, so it reproduces a
+resolution the source has already made rather than computing a new one. The code says not to
+convert it into a `claimed_poster_stems`/`unique_poster_path` call. It is an exception to
+the sentence above, not a hole in it — but it is the one site a reviewer working from this
+checklist would otherwise flag.
+
 That divergence is why stored stems are a separate term from filename stems — afterwards
 the two disagree, and a set built from filenames alone would let a later upload named
 `clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives only
@@ -136,24 +144,38 @@ is uniformly milliseconds, matching the `Image` frame-lineage columns.
 
 ## Ingest
 
-Three paths create a `Video`, all sharing `probe_and_poster` (`docs/dev/video-decode.md`)
-and the naming rules above. A poster failure never fails an ingest — the row is created
-with `poster_path` NULL and heals on first view.
+Three *ingest* paths create a `Video` from a file on disk, all sharing `probe_and_poster`
+(`docs/dev/video-decode.md`) and the naming rules above. A poster failure never fails an
+ingest — the row is created with `poster_path` NULL and heals on first view. A **fourth**
+path constructs `Video` rows without ingesting anything: `duplicate_dataset` under
+`include_videos` clones existing rows, re-probing nothing (`_copy_video_sync` copies bytes
+and poster with `shutil.copy2` and every probe column is read off the source row, so a slow
+decode is not repeated) and copying both basenames verbatim with no uniquifier — see § What
+is free, and what is not.
 
-- **Gallery upload** (`POST /images/upload`) branches on `media_kind_for(suffix)`. The
+Each ingest path has a named helper, and the two that copy before probing differ in nothing
+now that both unlink on any exception (they did not always: folder import once unlinked only
+on the gate error, leaving cv2's lazy `ImportError`, a raw `cv2.error` or a `MemoryError` to
+strand an orphan — see `docs/dev/video-decode.md`).
+
+- **Gallery upload** (`POST /images/upload`), via `_write_video_upload_sync`, branches on
+  `media_kind_for(suffix)`. The
   endpoint name is a mild misnomer, kept because the gallery presents one file input and
   splitting it would mean two progress states and two error surfaces for one gesture. The
   response gained `videos_added`, `videos` and `skipped`: previously the loop `continue`d
   on an unknown suffix and the response counted only successes, so a rejected file was
   indistinguishable from a stored one. `skipped` entries carry a reason and arrive with a
   201 — one bad file must not fail the rest of a multi-file upload.
-- **Folder import** takes `include_videos`, defaulting to False. `_scan_source_files` now
+- **Folder import** takes `include_videos`, defaulting to False, and copies through
+  `_ingest_video_sync`. `_scan_source_files` now
   returns `(images, videos, total_bytes)` from one traversal, so `require_free_space`
   preflights video bytes automatically whenever they are being copied and never counts
   bytes that will not be. Videos land flat regardless of `subfolder` or
   `preserve_structure`. `shutil.copy2`, not `copy_with_sidecar`: a video has no `.txt`
   companion — captions belong to the frames.
-- **Rescan** needs its own pass, `_rescan_videos`, because the image walk is
+- **Rescan** has no such helper — the file is already in place, so it calls
+  `probe_and_poster` directly. It needs its own pass, `_rescan_videos`, because the image
+  walk is
   `images_dir.rglob("*")` and cannot see `videos/` at all. That walk is a **flat** glob:
   videos are never nested, and flat conveniently skips the `videos/thumbnails/` child that
   a recursive walk would scan for video files. Results come back as `videos_added` and
@@ -162,6 +184,12 @@ with `poster_path` NULL and heals on first view.
   skipped, not reported as a failure. It adopts the filenames it finds and disambiguates
   the poster instead, per the stem rules above — the chosen stem is added to `claimed`
   inside the loop, since `unique_poster_path` does not mutate the set.
+
+  It is **cancellable**, which the four subtleties above might suggest it is not. It polls
+  `job_queue.cancel_requested` per file while still walking to the end so `seen` stays
+  complete, and `rescan_dataset` both skips the video pass outright when the image loop was
+  already cancelled and re-reads the flag afterwards. Without the poll, cancelling during a
+  minutes-long video pass did nothing and the job then reported *success*.
 
   **Everything the probe can raise that is *not* `UnreadableVideoError` — an `ImportError`
   from the lazy `import cv2`, a raw `cv2.error`, a `MemoryError` — is caught per file** and

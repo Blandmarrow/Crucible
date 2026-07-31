@@ -44,7 +44,9 @@ on it. It is scale-invariant, so the value often does not change, which is why t
 poisons it first rather than asserting it moved.
 
 **Output format is the user's.** JPEG (default) or PNG for a lossless capture; resolution
-is native by default (`long_edge=0`, which `render_shot` already read as "no downscale")
+is native by default (`long_edge=0`, which `_write_frame` — the shared write half below —
+already reads as "no downscale"; `render_shot` neither reads nor interprets 0, it defaults
+to 1024 and passes the value through)
 with an optional `max_long_edge` cap.
 
 ## The shared write half
@@ -78,8 +80,10 @@ would mean N temp files coexisting against a disk preflight that budgets for one
 cannot diverge. Exactly one scope: `image_ids` for a gallery selection (which can span videos
 and datasets) or `video_id`, optionally narrowed by `subfolder`.
 
-Three rules apply to the scope itself, all inside `_reextract_rows` so preview and enqueue
-refuse identically:
+Three rules apply to the scope itself, all enforced before either endpoint returns so
+preview and enqueue refuse identically — two of them inside `_reextract_rows`, and the
+`image_ids` half of the third on the request schema, where a Pydantic `max_length` answers
+**422** rather than the 400 its `video_id` half raises:
 
 - **An unknown `video_id` is a 404**, not an empty result. An empty result means "this video
   has no eligible frames" — a real answer the modal renders — and returning it for a video
@@ -112,6 +116,17 @@ the pixels stop being the extracted frame. The `reextract` exclusion is load-bea
 without it pass 2 refuses to run a second time, because its own history entry looks like
 third-party editing. Anything that is not a dict counts as an unknown edit and skips.
 
+**The ladder runs twice, and the second run is what makes it a guard rather than a
+snapshot.** `_resolve_reextract_targets` evaluates the whole table above at preview and
+enqueue time; nothing holds a `dataset_busy` lock over the frames for the run, so a
+replace-mode crop, upscale, LUT or detection crop landing between enqueue and a frame's turn
+would otherwise be overwritten by a job that checked before the edit existed. The worker
+therefore re-applies the `processing_history` rung alone — against a live re-read of the
+column, immediately before the overwrite — and counts what it refuses as `skipped_edited`
+rather than `failed`: the frame was not delivered, but nothing about the video failed. The
+other rungs are not re-checked; a missing row and a NULL timestamp are still the only other
+things the worker re-filters on.
+
 **The guard is only as good as what writes `processing_history`.** Upscale, LUT and
 detection-crop always recorded an entry; the five in-place paths in `routers/images.py` —
 `resize`, replace-mode `crop`, the `crop_upscale` replace job, `batch_resize` and
@@ -142,8 +157,10 @@ coexists with the original during each swap.
 ## The `video_reextract` job
 
 One job per video, which is what lets each label name its video
-(`f"Re-extract: {stem[:60]} — {n} frame(s) at full res"`; the `[:60]` matters, `label` is a
-`String(200)`). `_make_reextract_runner` copies `_make_extract_runner`'s `_run_with_stats`
+(reading `Re-extract: {stem} — 50 frames at full res`, from
+`f"Re-extract: {Path(v.filename).stem[:60]} — {n} frame{'' if n == 1 else 's'} at full res"`
+— it pluralises, so no label contains the literal `frame(s)`; the `[:60]` matters, `label`
+is a `String(200)`). `_make_reextract_runner` copies `_make_extract_runner`'s `_run_with_stats`
 wrapper verbatim, including its three load-bearing details — see
 `docs/dev/video-extract.md` § The `video_extract` job.
 
@@ -154,8 +171,10 @@ wrapper verbatim, including its three load-bearing details — see
 3. `get_image_info(tmp)`. `{}` means the file will not re-open — unlink the temp, count
    failed, carry on. **The original is still intact**, unlike upscale and LUT, which
    overwrite first and discover afterwards.
-4. `version_service.protect_file_before_overwrite` then an immediate `commit()` — mandatory
-   per that function's docstring, and the 8th call site (`docs/dev/versioning-service.md`).
+4. The live `processing_history` re-check (§ What gets skipped, and why), then
+   `version_service.protect_file_before_overwrite` and an immediate `commit()` — mandatory
+   per that function's docstring, and the eighth *router* call site
+   (`docs/dev/versioning-service.md`).
 5. `os.replace` into place (below).
 6. Row update: `filename`/`file_path` if the suffix changed, plus `width`, `height`,
    `file_size_bytes`, `format`, `phash`, `updated_at` (what busts
@@ -163,11 +182,14 @@ wrapper verbatim, including its three load-bearing details — see
    `processing_history` by list-concat reassignment, never `.append()`.
 7. `commit()`. From here the row and the file on disk agree, durably.
 8. **Best-effort epilogue**: unlink the superseded original (extension change only), then
-   regenerate the thumbnail from the new file into `img.thumbnail_path`. Both are wrapped;
+   regenerate the thumbnail from the new file into `img.thumbnail_path` **when the row has
+   one** — the whole regeneration sits inside `if img.thumbnail_path:`, so a row that lost
+   its thumbnail path gets neither a thumbnail nor a `thumbnails_stale` count. Both are wrapped;
    a failure is logged and cannot change the frame's outcome, and a failed thumbnail
-   increments `counts["thumbnails_stale"]` so `result_data` still records it. All four jobs
-   with an epilogue of this shape now report that count — `batch_lut`, `batch_upscale` and
-   `crop_upscale` as well — and `TopBar` turns it into a warning naming the repair; see
+   increments `counts["thumbnails_stale"]` so `result_data` still records it. All five jobs
+   with an epilogue of this shape report that count — `batch_lut`, `batch_upscale`,
+   `crop_upscale` and `crop_to_detection` as well — and `TopBar` turns it into a warning
+   naming the repair; see
    `docs/dev/frontend-jobs.md` § The stale-thumbnail warning.
 
 Steps 6 and 7 used to be the other way round, with the thumbnail between them. That is

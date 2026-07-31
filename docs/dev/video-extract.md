@@ -21,7 +21,8 @@ at 4.4 s on a 1080p HEVC source — decode-dominated, and *not* the ~7.5 ms per 
 once costed at (`docs/dev/video-shots.md` § Probe sampling) — so it is a few seconds of
 request-path cost, and a job would add a row, an SSE subscription and a re-attach path to
 something the user is already waiting on with the modal open. It runs `probe_samples` through `run_in_executor` inside an
-`asyncio.wait_for(25 s)` → 504.
+`asyncio.wait_for(25 s)` → 504, with a `ValueError` out of `probe_samples` (a container that
+will not open) → 422 and a missing file on disk → 404 before the call is made.
 
 That `wait_for` is legitimate, unlike the one CLAUDE.md forbids around a stdlib `re` match:
 cv2 releases the GIL for every grab and retrieve, so the loop keeps getting scheduled and the
@@ -74,7 +75,10 @@ having no filename.
 **A crop is normalized, not rejected.** Only genuine overflow (`x + w > width`, per row,
 skipping NULL dimensions) is a 400; the rest goes through `clamp_crop` once, and the
 **normalized** tuple is what lands in `Video.crop_*` — the stored rect is the rect that will
-be applied. Testing `clamp_crop(rect) != rect` instead rejects rects that plainly fit, since
+be applied. One carve-out: a batch of never-probed videos has no dimensions to normalize
+against, so `clamp_crop` is skipped entirely and the request rect is stored raw;
+`render_shot`'s per-frame clamp is the authority there. Testing `clamp_crop(rect) != rect`
+instead rejects rects that plainly fit, since
 it snaps to even coordinates and returns `None` for a full-frame rect — which means "the whole
 frame": NULL in all four columns, no crop, not an error.
 
@@ -106,20 +110,31 @@ exists to remove.
 ## The `video_extract` job
 
 `total_items` starts at 0 and is set once detection knows the shot count, following
-`import_folder`'s precedent. The auto-label is `f"Extract: {stem[:60]} — {n} frame(s)/shot"`
-— the `[:60]` is not cosmetic, since `label` is a `String(200)`.
+`import_folder`'s precedent. The auto-label reads `Extract: {stem} — 3 frames/shot`, from
+`f"Extract: {Path(v.filename).stem[:60]} — {n} frame{'' if n == 1 else 's'}/shot"` — it
+pluralises, so no label ever contains the literal `frame(s)`. The `[:60]` is not cosmetic,
+since `label` is a `String(200)`.
 
 **Step order is load-bearing, and the `replace` delete is deliberately fifth:**
 
 1. `measure_duration_ms` if NULL; persist.
 2. `require_free_space(dir, 0)` — the cheapest possible failure.
 3. Shot detection — the long phase, and the most likely to fail.
+3b. The **degenerate-window clamp**, before anything derives an estimate from the shot
+   list. When that list is a single zero-width window (`shots[0].end_ms <= shots[0].start_ms`,
+   the no-duration fallback) `frames_per_shot` is forced to 1 and the job emits "…frames per
+   shot has been reduced to 1" — otherwise every pick resolves to the same position and
+   writes N byte-identical files carrying one `source_timestamp_ms` and
+   `source_shot_index`. It has to run here rather than after step 4, since step 4's estimate
+   is `len(shots) × frames_per_shot`.
 4. `require_free_space` again, now that `len(shots) × frames_per_shot` makes the estimate
-   real.
+   real. The `job_row.total_items` write sits here too, off the same product.
 5. **The `replace`-mode delete**, only once the video is known to decode, the shot list is
    non-empty and the disk has room. A replace that destroys the previous extraction and then
    fails to produce a replacement is the worst outcome this feature can produce.
-6. The extraction loop, one executor hop per shot.
+6. The extraction loop — one executor hop per shot for `render_shot`, **plus one per
+   written frame** for `get_image_info`, so a shot at `frames_per_shot=20` costs 21 hops,
+   not one.
 7. `result_data`, final commit, `raise_if_cancelled`.
 8. `refresh_stats` — reached **only on a normal return**.
 
@@ -220,6 +235,20 @@ Extracted frames carry `source_video_id`, `source_timestamp_ms` and `source_shot
 CLAUDE.md § Key invariants states the mirroring rule those columns live under; the eight
 sites that must carry them are pinned by `backend/tests/test_video_lineage_mirrors.py`,
 whose structural test fails for the *next* unmirrored `Image` column.
+
+Migration `a7c3e5b1d9f2` added all three to `images` — plus `ix_images_source_video_id` and
+the `ON DELETE SET NULL` FK — and mirrored them onto `version_image_states` with neither an
+FK nor an index. Its docstring carries a rule worth reading before any future `images`
+migration: **check what points at the table before reaching for batch mode.** The cheap form
+(`op.add_column(..., inline_references=True)`) emits exactly the right DDL, but SQLAlchemy's
+SQLite reflection only parses `ON DELETE` off *table-level* named constraints, so it reads a
+column-level inline reference back with no `ondelete` and `scripts/check_migrations.py`
+reports permanent phantom drift. The batch rebuild avoids that, and is safe only because
+alembic's `env.py` builds its own engine and so never gets `backend/database.py`'s
+`PRAGMA foreign_keys=ON` listener — with the pragma on, batch mode's `DROP TABLE images`
+would cascade through `detections.image_id` and empty that table. Setting the pragma off
+defensively is not available: SQLite ignores it inside a transaction, and alembic wraps every
+migration in one.
 
 Of the three, `source_video_id` is the only one a restore cannot write back verbatim. It is
 the sole lineage column carrying a real foreign key, `VersionImageState` deliberately carries

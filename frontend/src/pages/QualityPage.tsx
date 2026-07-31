@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
 import { qualityApi } from "../api/quality";
+import { settingsApi, type Thresholds } from "../api/settings";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
 import { useJobSSE } from "../hooks/useSSE";
@@ -162,6 +163,16 @@ export default function QualityPage() {
     queryKey: ["duplicates", datasetId],
     queryFn: () => qualityApi.duplicates(datasetId!),
     enabled: !!datasetId,
+  });
+
+  // The duplicate scan's radius is a setting, so the group header has to read it
+  // rather than restate a number: it was hardcoded to "< 6" while the default is
+  // 8 and the value is editable in Settings → Thresholds. Same query key and
+  // staleTime as StatsPage, which renders the same threshold as a flag hint.
+  const { data: thresholds } = useQuery<Thresholds>({
+    queryKey: ["settings", "thresholds"],
+    queryFn: settingsApi.getThresholds,
+    staleTime: 60_000,
   });
 
   const scoreMutation = useMutation({
@@ -453,12 +464,21 @@ export default function QualityPage() {
             {dupGroups.map((group, gi) => (
               <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "center", padding: 12, background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
                 <div>
-                  <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 8 }}>{group.length} similar images · perceptual hash distance &lt; 6</div>
+                  <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 8 }}>
+                    {group.length} similar images
+                    {thresholds && ` · perceptual hash distance < ${thresholds.duplicate_threshold}`}
+                  </div>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     {group.map((img) => (
                       <div key={img.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                        <img src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)} alt={img.filename} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", border: "1px solid var(--line-2)" }} />
-                        <span className="mono" style={{ fontSize: 10, color: "var(--fg-dim)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }}>{img.filename}</span>
+                        <img
+                          src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)}
+                          alt={img.filename}
+                          title={img.kept ? "Kept by the scan — the other copies point at this one" : undefined}
+                          style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", border: img.kept ? "2px solid var(--good)" : "1px solid var(--line-2)" }}
+                        />
+                        <span className="mono" style={{ fontSize: 10, color: img.kept ? "var(--good)" : "var(--fg-dim)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }}>{img.filename}</span>
+                        {img.kept && <span style={{ fontSize: 10, color: "var(--good)" }}>kept</span>}
                         {img.aesthetic_score != null && <span className="mono" style={{ fontSize: 11, color: "var(--good)" }}>{img.aesthetic_score.toFixed(1)}</span>}
                       </div>
                     ))}
@@ -469,8 +489,8 @@ export default function QualityPage() {
                     const best = [...group].sort((a, b) => (b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0));
                     resolveMutation.mutate({ keep: [best[0].id], del: best.slice(1).map((i) => i.id) });
                   }}>Keep best</button>
+                  {/* group[0] is the image the scan kept — see get_duplicates. */}
                   <button className="btn sm" onClick={() => resolveMutation.mutate({ keep: [group[0].id], del: group.slice(1).map((i) => i.id) })}>Keep first</button>
-                  <button className="btn sm ghost">Review</button>
                 </div>
               </div>
             ))}

@@ -1,5 +1,18 @@
 import client from "./client";
 
+export interface DuplicateImage {
+  id: string;
+  filename: string;
+  aesthetic_score: number | null;
+  updated_at: string;
+  created_at: string;
+  /** True for the one image in the group the scan kept — the group's first
+   *  member, and the only one no default action deletes. */
+  kept: boolean;
+}
+
+export type DuplicateGroup = DuplicateImage[];
+
 export const qualityApi = {
   score: (params: {
     dataset_id: string;
@@ -16,11 +29,11 @@ export const qualityApi = {
   }) =>
     client.post<{ job_id: string; total: number }>("/quality/score", params).then((r) => r.data),
 
+  /** Groups are led by the image the scan kept (`kept: true`); the rest are the
+   *  removable copies, in `created_at` order. See `get_duplicates`. */
   duplicates: (dataset_id: string) =>
     client
-      .get<{ groups: Array<Array<{ id: string; filename: string; aesthetic_score: number | null; updated_at: string }>> }>(
-        `/quality/duplicates/${dataset_id}`
-      )
+      .get<{ groups: DuplicateGroup[] }>(`/quality/duplicates/${dataset_id}`)
       .then((r) => r.data),
 
   resolveDuplicates: (keep_ids: string[], delete_ids: string[]) =>

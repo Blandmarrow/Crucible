@@ -133,6 +133,12 @@
     outline: none;
     appearance: none;
     cursor: pointer;
+    /* A `width: auto` select sizes itself to its *widest option*, so one long
+       entry (a video filename in the gallery's frame-lineage filter) stretches
+       the control far past the text it actually shows and wraps the toolbar.
+       Cap such a select with a max-width; this truncates the closed control's
+       label instead of overflowing it. Harmless for full-width selects. */
+    text-overflow: ellipsis;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%239aa6a3' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
     background-repeat: no-repeat;
     background-position: right 10px center;

@@ -1114,8 +1114,9 @@ export default function GalleryPage() {
             follows. Unlike the subfolder sidebar this survives curation: the
             lineage column does not move when a frame is renamed or re-filed. */}
         {videos && videos.length > 0 && (
-          <select className="select" style={{ width: "auto" }} value={frameVideoId ?? ""}
+          <select className="select" style={{ width: "auto", maxWidth: 220 }} value={frameVideoId ?? ""}
             aria-label="Filter by source video"
+            title={videos.find((v) => v.id === frameVideoId)?.filename ?? "All images"}
             onChange={(e) => { setFrameVideoId(e.target.value || undefined); resetPage(); }}>
             <option value="">All images</option>
             {videos.map((v) => (

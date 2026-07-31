@@ -4,7 +4,7 @@ This file covers everything the frontend stores in `localStorage`/`sessionStorag
 
 ### `constants/storage.ts` — the key registry
 
-Every *statically named* storage key is declared here rather than inline in a component. One row per key; the four documented exceptions are listed below the table.
+Every *statically named* storage key is declared here rather than inline in a component. One row per key; the six documented exceptions are listed below the table.
 
 | Key | Storage & value | Read / written by | Notes |
 |---|---|---|---|
@@ -24,10 +24,12 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `TAG_CONSOLIDATE_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
 | `CAPTIONING_FILTERS_PREFIX`, `EXPORT_FILTERS_PREFIX`, `QUALITY_FILTERS_PREFIX`, `BULK_EDIT_FILTERS_PREFIX`, `STATS_FILTERS_PREFIX` | `localStorage` prefix, JSON blob; append `-${datasetId}` via `datasetScopedKey()` | Their owning page | Per-dataset "filters" blobs |
 
-**Component-local keys — the four sanctioned exceptions.** Each is storage owned end-to-end by
-one component and read nowhere else, so a registry row would buy nothing. Three have a key
-computed per entity, which is why it cannot be a static constant; `STATS_VIS_KEY` is exempt for
-the other reason — its key *is* static, and single-owner locality is what earns it the exemption:
+**Component-local keys — the six sanctioned exceptions.** The first four are storage owned
+end-to-end by one component and read nowhere else, so a registry row would buy nothing; three
+of those have a key computed per entity, which is why it cannot be a static constant, while
+`STATS_VIS_KEY` is exempt for the other reason — its key *is* static, and single-owner locality
+is what earns it the exemption. The last two are exceptions to the single-owner rule itself,
+because a hand-off needs two ends:
 
 - `` `comfy-genprompts-${planId}` `` and `` `comfy-genprompts-job-${planId}` ``
   (`components/comfy/GeneratePromptsModal.tsx`) — per-plan draft settings and the re-attachable
@@ -39,17 +41,29 @@ the other reason — its key *is* static, and single-owner locality is what earn
   effect, which is declared before its persist effect so the stored id is seen before the
   write can clear it. Retired with `clearPersisted` — never rewritten as `{jobId: null}`,
   which reads the same to every consumer but leaves one dead entry per video ever extracted —
-  at all four sites: the job going terminal, a recovery GET that 404s, and deleting the video.
+  at all four sites: the persist effect when the live job id becomes `null`, the recovery
+  effect when the fetched job is already terminal, that same effect's `.catch` on a 404, and
+  deleting the video.
   Pass 2's re-extract dialog deliberately has **no** counterpart key: it emits per frame, so it
   re-attaches by adopting live jobs from `jobStore` instead. See
   `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 - `` `stats-hist-edges-{metric}-${datasetId}` `` (`pages/StatsPage.tsx`) — one per editable
-  histogram, fourteen of them, passed to `HistPanel` as a `storageKey` and read/written there
+  histogram, thirteen of them, passed to `HistPanel` as a `storageKey` and read/written there
   with raw `localStorage` calls. Keyed by metric *and* dataset, so custom bucketing on one
   metric never leaks to another. Not part of the `STATS_FILTERS_PREFIX` blob, which some prose
   used to imply. See `docs/dev/statistics.md` § Editable histograms.
+- `` `gallery-state-${datasetId}` `` (`localStorage`) and `` `gallery-nav-${datasetId}` ``
+  (`sessionStorage`) — the gallery↔detail hand-off pair, and the reason this list is not four
+  entries long. `GalleryPage` owns both, but `ImageDetailPage` is the other end: it rewrites
+  the `page`/`scrollTop` of the first and reads and rewrites the second. A registry row would
+  be honest here; they are listed as exceptions rather than promoted because the shapes are
+  page-private and documented where they are used, in `docs/dev/image-detail.md`.
+- `"caption-prompt-presets"` (`store/promptPresetsStore.ts`) — a *statically* named key that is
+  nonetheless declared inline, because zustand's `persist` middleware takes its name in the
+  store module. The registry cannot hold it without the store reaching back into
+  `storage.ts` for one string. See `docs/dev/frontend-core.md`.
 
 Anything else belongs in `storage.ts` with a row above.
 
@@ -85,6 +99,6 @@ Don't "unify" them without reading this. The hook covers every *debounced blob* 
 - *Workflow* fields (model/prompt/style/toggles — *how you like to work*) are stored in a **global** blob shared across all datasets, keyed by `*_WORKFLOW_KEY`. Loaded once at `useState` init time.
 - *Filters/scope* fields that reference dataset-specific data (subfolder, score thresholds, flag exclusions) are stored in a **per-dataset** blob, keyed by `datasetScopedKey(*_FILTERS_PREFIX, datasetId)`. Reloaded when `datasetId` changes (via a `prevDatasetId` ref guard effect) so pane-mode dataset switches load the right per-dataset blob without unmounting.
 - Both blobs are saved by `useDebouncedPersist` (above). Pass `null` as the key for the per-dataset blob while `datasetId` is unset instead of guarding with an early `return`.
-- Each page exposes a "Reset to defaults" button (ghost style, near the configuration header) that calls `clearPersisted` on both blobs and resets state to the hardcoded defaults, re-reading `CAPTION_DEFAULT_*` Settings values as appropriate for `CaptioningPage`. If the page contains child forms with their own internal `useState` (e.g. text fields, operation pickers), those won't remount just because the parent scope/tab state returns to its default value. Fix by adding a `resetKey` counter to the parent (`const [resetKey, setResetKey] = useState(0)`), incrementing it in the reset handler (`setResetKey(k => k + 1)`), and including it in the child form's `key` prop (`key={\`${scope}-${resetKey}\``}). `BulkEditPage` uses this pattern — all eight tab forms carry `key={\`${scope}-${resetKey}\`}` (eight across seven tabs; the Detections tab renders two).
-- Settings → Captioning tab also has a "Reset remembered Captioning configuration" button that clears `CAPTIONING_WORKFLOW_KEY` globally (the per-dataset filter blobs are reset per-page since Settings has no enumeration of all dataset IDs).
+- Each page exposes a "Reset to defaults" button (ghost style, near the configuration header) that calls `clearPersisted` on both blobs and resets state to the hardcoded defaults, re-reading `CAPTION_DEFAULT_*` Settings values as appropriate for `CaptioningPage`. If the page contains child forms with their own internal `useState` (e.g. text fields, operation pickers), those won't remount just because the parent scope/tab state returns to its default value. Fix by adding a `resetKey` counter to the parent (`const [resetKey, setResetKey] = useState(0)`), incrementing it in the reset handler (`setResetKey(k => k + 1)`), and including it in the child form's `key` prop (`key={\`${scope}-${resetKey}\``}). `BulkEditPage` uses this pattern — all nine tab forms carry `key={\`${scope}-${resetKey}\`}` (nine across eight tabs; the Detections tab renders two).
+- Settings → Captioning tab also has a "Reset remembered Captioning configuration" button that clears `CAPTIONING_WORKFLOW_KEY` globally **and every per-dataset `CAPTIONING_FILTERS_PREFIX` blob**. It needs no dataset list to do it: the handler scans `localStorage` for the prefix and removes every key it matches. So the one button forgets the captioning setup for every dataset, not only the global workflow.
 - `Set<string>` fields (`excludeFlags`, `selectedSubfolders`, `selectedRefIds`, `selectedFlags`) are serialized as `string[]` and converted back to `Set` at each page's load boundary; `loadPersisted`/`savePersisted` stay generic over plain JSON shapes.

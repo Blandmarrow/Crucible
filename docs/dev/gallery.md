@@ -44,7 +44,7 @@ side only.
 
 - **Search bar** — debounced 350 ms; passes `search` param to `GET /images/`; filters by filename OR caption text (case-insensitive).
 - **Caption filter** — All / Captioned / Uncaptioned.
-- **Quality flag** — dropdown with options: None, Blurry (`is_blurry`), Noisy (`is_noisy`), Near-uniform (`is_uniform`), Watermarked (`has_watermark`), Duplicate (`is_duplicate`), NSFW (`is_nsfw`), AI artifacts (`has_ai_artifacts`). All values map directly to `quality_flag` param.
+- **Quality flag** — dropdown labelled *All quality*, then seven *Flagged: …* entries — blurry (`is_blurry`), noisy (`is_noisy`), near-uniform (`is_uniform`), watermark (`has_watermark`), duplicate (`is_duplicate`), NSFW (`is_nsfw`), AI artifacts (`has_ai_artifacts`). All values map directly to the `quality_flag` param, which validates them against `utils.ALLOWED_FLAG_KEYS`.
 - **Score filters** — multi-chip system: each active filter is a `{field, min?, max?}` chip with a × remove button. An "Add score filter" form lets the user pick any of the 9 score fields and enter optional min/max bounds. Multiple chips are combined as AND conditions via the JSON-encoded `score_filters` param. The older single `score_field`/`min_score`/`max_score` params are not used by GalleryPage (retained only for StatsPage BucketPanel backward compat).
 - **Detection label** — text input with icon prefix, debounced 350 ms; passes `detection_label` to `GET /images/`; uses a correlated `EXISTS` subquery against the `detections` table matching `label ILIKE '%...%'`; has a clear (×) button when set.
 - **Subfolder filter** — see Gallery subfolder sidebar section above; passes `subfolder` query param to `GET /images/`.

@@ -9,8 +9,13 @@ into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
 (`docs/dev/video-ui.md`), and the license filters shared with export
 (`docs/dev/provenance.md`, `docs/dev/export-licensing.md`).
 
-Every param is optional and additive (AND); an absent or falsy value is *no filter*, never
-"match nothing".
+Every param is optional and additive (AND), and an **absent** value is *no filter*, never
+"match nothing". A *falsy* one is not the same thing: several params are gated on
+`is not None` rather than on truthiness, so `false` and `""` are real filters wherever the row
+below says so — `license_missing=false` selects images that *have* a license,
+`captioned=false` selects uncaptioned ones, `detection_label_exact=""` matches detections
+whose label is empty, and `subfolder=""` is the dataset root. Check the row rather than
+assuming.
 
 **`GET /images/` filter extensions** (in `backend/routers/images.py`):
 
@@ -19,11 +24,14 @@ Every param is optional and additive (AND); an absent or falsy value is *no filt
 | `search` | `str` | Case-insensitive LIKE filter across `original_filename` and `caption_text` (OR logic) |
 | `score_field` | `str` | Which score column `min_score`/`max_score` apply to (whitelist-validated; defaults to `aesthetic_score`) |
 | `score_is_null` | `bool` | Filter images where `score_field IS NULL` (used for "unscored" bucket) |
-| `score_filters` | `str` (JSON) | JSON-encoded array of `{field, min?, max?}` objects; each entry adds an AND condition; fields validated against `_ALLOWED_SCORE_FIELDS` whitelist |
-| `quality_flag` | `str` | Filter by JSON flag key in `quality_flags` (e.g. `is_blurry`) |
-| `file_size_min` / `file_size_max` | `int` | `file_size_bytes` range (bytes) |
-| `mp_min` / `mp_max` | `float` | `width × height` megapixel range |
-| `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range |
+| `score_filters` | `str` (JSON) | JSON-encoded array of `{field, min?, max?}` objects; each entry adds an AND condition with **both bounds inclusive**; fields validated against `_ALLOWED_SCORE_FIELDS` whitelist |
+| `subfolder` | `str` | **Descendant-inclusive**: `Image.subfolder == s OR Image.subfolder LIKE '<escaped s>/%'`, with `%` and `_` escaped, so selecting a parent folder in the sidebar also lists every nested subfolder's images. `is not None`-gated — `""` is the dataset root and a real filter, not "no filter" |
+| `captioned` | `bool` | `true` = `caption_text != ''`, `false` = `caption_text == ''`. The gallery's All / Captioned / Uncaptioned control; `is not None`-gated, so `false` is a filter |
+| `min_score` / `max_score` | `float` | Range on whatever column `score_field` names, **both bounds inclusive**. Skipped entirely when `score_is_null` is true |
+| `quality_flag` | `str` | Filter by JSON flag key in `quality_flags` (e.g. `is_blurry`); validated against `utils.ALLOWED_FLAG_KEYS`, and an unknown key is a **400**, exactly like `score_field` |
+| `file_size_min` / `file_size_max` | `int` | `file_size_bytes` range (bytes), **both bounds inclusive** |
+| `mp_min` / `mp_max` | `float` | `width × height` megapixel range, min **inclusive** / max **exclusive** |
+| `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range, min **inclusive** / max **exclusive** |
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |
 | `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` (substring — gallery search) |
 | `detection_label_exact` | `str` | Exact `Detection.label == value`; combined with the score params below into **one** `EXISTS` subquery so all conditions apply to the same detection row (Detections & Masks label bar click-through) |

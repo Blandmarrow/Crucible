@@ -36,7 +36,7 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 | `usePaneVideoId()` | Same pattern for `videoId` |
 | `usePaneGallerySubfolder()` | Same idea for `subfolder`, except the routed-mode source is `useSearchParams().get("subfolder")` rather than a route param — a subfolder is a filter, not an identity, so there is no route segment for it. **Not a `??` chain, unlike the three rows above**: inside a pane it returns `ctx.view.subfolder` and stops. `usePaneNavigate`'s `go` sets the pane view *or* calls `navigate(url)`, never both, so in split view the URL still carries whatever was routed before the split — falling through to it would apply one pane's deep link to its neighbour, and applying one resets that gallery to page 1. `""` is a real value (the dataset root); `undefined` means no link asked for anything. `GalleryPage` applies it once per *change* so a deep link never fights the sidebar — see `docs/dev/video-ui.md` |
 | `usePaneGallerySourceVideo()` | The lineage sibling of the row above, with the same pane-wins-outright rule: `ctx.view.sourceVideoId` inside a pane, `useSearchParams().get("source_video_id")` outside. Gallery-only, a deep-link target for "every frame this video produced". Unlike `subfolder`, `""` carries no meaning — the value is an opaque uuid. `routeToView` parses the pathname only, which is exactly why the query string carries it in routed mode. See `docs/dev/video-ui.md` |
-| `usePaneNavigate()` | Returns `{ go(url, view), back(fallbackView) }`. **Inside a pane**: calls `paneStore.setView(paneId, view)`. **Outside**: calls `navigate(url)`. All intra-app navigation that may occur inside a pane MUST use this hook; raw `navigate()` calls change the URL and trigger `RouteSyncer` which only updates pane 1. |
+| `usePaneNavigate()` | Returns `{ go(url, view, opts?), back(fallbackView) }`. **Inside a pane**: calls `paneStore.setView(paneId, view)`. **Outside**: calls `navigate(url, { replace: opts?.replace })`. `opts.replace` is therefore a no-op inside a pane, which has no history of its own; `ImageDetailPage`'s cross-page arrow navigation passes it so the browser history does not fill with one entry per image. All intra-app navigation that may occur inside a pane MUST use this hook; raw `navigate()` calls change the URL and trigger `RouteSyncer` which only updates pane 1. |
 
 **Components** (`frontend/src/components/pane/`):
 
@@ -60,5 +60,11 @@ Two rules, neither of which any tool enforces:
 - **Both consumers import from that module**, never from a second copy. `App.tsx` (single-view `<Routes>`) and `components/pane/PageRenderer.tsx` (split view) must resolve a given page to the *same* lazy component identity, or toggling a pane between single- and split-view remounts the page from a second chunk and loses its state.
 
 **A *routed* page touches six sites**, not just `lazyPages.ts` — the checklist, as `video-detail` exercised it: `pages/lazyPages.ts`; `App.tsx`'s lazy import and its `<Route>`; `PageRenderer`'s switch; `contexts/PaneContext.tsx` (the `PageType` union, plus any id the page needs — `videoId`); `routeToView` in `App.tsx`, where a `/datasets/:id/…` sub-route regex must sit **above** the generic dataset-page match, which would otherwise also match; and the id accessor, `usePaneVideoId` in `hooks/usePaneDatasetId.ts`. Miss one and the page works in single view but not in a pane, or the reverse.
+
+A page that must also be **pickable** from a pane's page selector touches a seventh:
+`PaneHeader`'s `PAGE_OPTIONS` (and `NEEDS_DATASET`, if it takes one) — which is why
+`docs/dev/workspace.md` names `PaneHeader` as a site for `BooruPage`. The checklist gets away
+with six because `video-detail` and `image-detail` are deliberately absent from both: you
+reach them by clicking a card, never by choosing them from a dropdown with no id to hand.
 
 Each consumer owns its own `<Suspense>`: `App.tsx` wraps the whole `<Routes>` tree, while `PageRenderer` wraps per pane — a per-pane boundary is deliberate, so a pane still fetching its chunk shows its own fallback instead of blanking a sibling pane that is already rendered.

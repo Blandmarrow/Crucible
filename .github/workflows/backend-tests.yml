@@ -1,13 +1,13 @@
 name: backend-tests
 
 # Runs the backend test suite (backend/tests/). The dependency set is
-# backend/requirements-ci.txt — pinned, shared structurally with the job below
+# backend/requirements-ci.txt — floor-pinned, shared structurally with the job below
 # and with e2e-smoke.yml rather than hand-copied, and read as this workflow's pip
 # cache key. That file's header explains what each group is for and why it holds
 # no torch-sized / GPU deps; read it before adding a package here.
 #
-# cv2 is the one carve-out, installed as a separate step below. The video suite
-# is ~250 tests and cv2 is its decode gate: without it three modules error at
+# cv2 is the one carve-out, installed as a separate step below. cv2 is the video
+# suite's decode gate: without it three modules error at
 # *collection* and the rest fail rather than skip, so leaving it out meant no
 # video test was ever enforced here. Same reasoning e2e-smoke.yml gives for the
 # same package. Note the deliberate divergence from backend/requirements.txt,

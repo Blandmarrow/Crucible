@@ -122,9 +122,11 @@ stops the checker reading it as a split that already happened.
 
 A file organised with `**Bold**:` lead-ins instead of `##` headings cannot be split well:
 the over-budget warning picks a seam by reporting per-section word counts, and with no
-headings it can only say "read the file". **Seventeen** topic files are in this state today —
-it is the common case, not a handful of exceptions, so expect the file you are editing to be
-one of them. `docs/dev/pending-splits.md`'s queue is empty right now — the five files that had
+headings at all it can only say "read the file". **Five** topic files are in that state today.
+A further thirteen have no `## ` heading but do use `###`, which is enough — `section_words`
+splits on the shallowest level a file actually uses, so those still get a per-section
+breakdown. So eighteen files want headings *added* and five want them *at all*; expect the
+file you are editing to be one of the eighteen. `docs/dev/pending-splits.md`'s queue is empty right now — the five files that had
 a seam recorded all carried `##` headings, and all five were split on 2026-07-31 — so a
 heading-less file today has neither structure nor a seam waiting for it.
 
@@ -148,7 +150,9 @@ So before opening a PR:
    value, a component's name, whether a field still exists. Read the code; do not trust
    the prose that is already there.
 4. Check the user docs for features the branch shipped that they never mention.
-5. Run `python scripts/check_docs.py` and fix what it reports.
+5. Run `python scripts/check_docs.py` and fix what it reports — it is also CI
+   (`.github/workflows/check-docs.yml`), where only its three FAIL checks (broken paths,
+   markdown links and anchors, the `@docs/` footgun) block a PR; the rest are warnings.
 
 When asked for a "doc audit" outside a branch context, do the same against the whole file:
 diff each topic file's claims against the code it describes and propose corrections.
@@ -160,7 +164,10 @@ diff each topic file's claims against the code it describes and propose correcti
 - **Cross-reference, don't duplicate.** Documenting something in file A that depends on
   something in file B gets a one-line pointer ("see `docs/dev/versioning.md` for the
   copy-on-write mechanism"), not a copy.
-- **Refresh the Map's word counts** when you substantially edit a file.
+- **Refresh the Map's word count** when you substantially edit a file. `check_map_words`
+  WARNs when the hand-written `Words` cell drifts by more than `MAP_WORDS_TOLERANCE` (5%) or
+  `MAP_WORDS_FLOOR` (50 words), whichever is larger, and again if a Map row loses the cell
+  entirely. Round to the nearest 5 — the script prints the value to use.
 
 ## Proposing a skill
 

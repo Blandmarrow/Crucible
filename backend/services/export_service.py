@@ -961,6 +961,7 @@ async def preview_export(
     query = select(
         Image.id, Image.filename, Image.caption_text,
         Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
+        Image.scores_stale,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
@@ -1005,6 +1006,8 @@ async def preview_export(
     excl_style_sim = 0
     unlicensed_will_export = 0
     freetext_will_export = 0
+    stale_scores = 0
+    stale_scores_will_export = 0
     without_detections = 0
     sample_files: list[dict] = []
 
@@ -1017,6 +1020,9 @@ async def preview_export(
         # The license filters operate on the *effective* value, so inheritance is
         # resolved here rather than reading `r.license`. A per-license breakdown is
         # deliberately not returned — Stats owns that view, via its Licenses panel.
+        if r.scores_stale:
+            stale_scores += 1
+
         lic = resolve_provenance(r, ds_defaults)["license"]
         if not lic:
             unlicensed += 1
@@ -1046,6 +1052,8 @@ async def preview_export(
                 if mask_missing == "skip":
                     continue
             will_export += 1
+            if r.scores_stale:
+                stale_scores_will_export += 1
             if not lic:
                 unlicensed_will_export += 1
             elif lic.lower().startswith(OTHER_PREFIX):
@@ -1082,6 +1090,14 @@ async def preview_export(
         # licenses" is already on the Stats Licenses panel — what is invisible is
         # that they survive the ND filter.
         "freetext_will_export": freetext_will_export,
+        # Images whose pixels were rewritten in place after they were scored.
+        # Same whole-dataset-scope / survives-every-filter split as the unlicensed
+        # pair above, and for the same reason. This is where the damage from a
+        # stale score actually lands: `exclude_flags` drops images on flags
+        # computed against pixels that no longer exist, so an export can be
+        # silently dropping keepers and shipping rejects.
+        "stale_scores_count": stale_scores,
+        "stale_scores_will_export": stale_scores_will_export,
         "sample_files": sample_files,
     }
     if export_masks:

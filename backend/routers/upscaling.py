@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -16,7 +15,7 @@ from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -211,12 +210,11 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 actual_out_path = info.get("out_path", dest_path_str)
 
                 if replace:
-                    now = datetime.now(timezone.utc)
                     superseded: Path | None = None
                     img.width = info["width"]
                     img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
-                    img.updated_at = now
+                    # `updated_at` is stamped by `record_in_place` below.
                     if Path(actual_out_path) != src_path:
                         # The PNG fallback wrote a *different* file. Without this
                         # the row keeps pointing at the stale original, which is
@@ -233,11 +231,11 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         img.filename = Path(actual_out_path).name
                         img.file_path = actual_out_path
                         img.format = info["format"]
-                    img.processing_history = (img.processing_history or []) + [{
-                        "op": "upscale",
-                        "model": model_filename,
-                        "at": now.isoformat(),
-                    }]
+                    # Writes `processing_history` *and* `scores_stale` — an upscale
+                    # changes the resolution `blur_score` is measured against. Pure
+                    # dict building, so it cannot raise between the overwrite above
+                    # and the commit below (PM-013).
+                    record_in_place(img, "upscale", model=model_filename)
                     # Nothing fallible between the (already-done) overwrite and
                     # this commit — a raise before here would roll the row back
                     # onto a file that no longer exists (PM-013).

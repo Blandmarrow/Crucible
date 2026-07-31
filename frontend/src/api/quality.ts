@@ -9,6 +9,18 @@ export interface DuplicateImage {
   /** True for the one image in the group the scan kept — the group's first
    *  member, and the only one no default action deletes. */
   kept: boolean;
+  /** Frame lineage, annotated by `get_duplicates` rather than by the scan.
+   *  Frames from one video (held cels, recycled footage, a locked-off shot) land
+   *  inside the pHash threshold legitimately, so a group where every member
+   *  shares one non-null `source_video_id` deserves saying out loud before
+   *  anything is deleted. Null on any image that did not come from a video, and
+   *  `source_video_id` also goes null when the source video is deleted. */
+  source_video_id: string | null;
+  source_timestamp_ms: number | null;
+  source_shot_index: number | null;
+  /** Resolved filename of `source_video_id`; null when the id is null or the
+   *  video row is gone. */
+  source_video_name: string | null;
 }
 
 export type DuplicateGroup = DuplicateImage[];

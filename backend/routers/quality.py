@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
-from backend.models import BackgroundJob, Image
+from backend.models import BackgroundJob, Image, Video
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
@@ -28,6 +28,27 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 # Per-layer DINOv2 blob layout: 12 transformer layers × 768 dims × float16.
 _DINO_LAYERS = 12
 _DINO_DIM = 768
+
+# The six columns the technical block of the scoring loop writes, in one go.
+_TECHNICAL_SCORE_COLUMNS = frozenset({
+    "blur_score", "noise_score", "uniformity_score",
+    "color_score", "saturation_score", "luminance_score",
+})
+
+# Every score column the quality job is able to refresh — the universe the
+# `scores_stale` clear predicate covers. Anything a row carries that is *not*
+# here can never be brought up to date by this job, so including it would make
+# the bit un-clearable.
+#
+# **`style_similarity_score` is deliberately absent**, and this is a boundary, not
+# an oversight. `compute_style_similarity` writes it through a Core bulk
+# `update(Image)` with no per-row load, so it cannot evaluate this predicate at
+# all; letting it clear the bit would declare blur and aesthetic fresh when they
+# are not. Listing it here instead would strand the bit permanently on any
+# dataset that has ever run style similarity. See `docs/dev/scoring.md`.
+_JOB_SCORE_COLUMNS = _TECHNICAL_SCORE_COLUMNS | {
+    "aesthetic_score", "watermark_score", "nsfw_score",
+}
 
 
 def _decode_dino_layers(blob: bytes) -> np.ndarray:
@@ -179,8 +200,13 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                 img = await session.get(Image, img_id)
                 if not img:
                     continue
+                # Which score columns this row actually got refreshed, collected
+                # inside each `i < len(...)` guard so the three partial modes fall
+                # out for free — see the clear predicate at the bottom of the loop.
+                refreshed: set[str] = set()
                 if i < len(aesthetic_scores):
                     img.aesthetic_score = aesthetic_scores[i]
+                    refreshed.add("aesthetic_score")
                 if i < len(technical_results):
                     t = technical_results[i]
                     img.blur_score = t.get("blur_score")
@@ -194,12 +220,14 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     flags["is_noisy"] = t.get("is_noisy", False)
                     flags["is_uniform"] = t.get("is_uniform", False)
                     img.quality_flags = flags
+                    refreshed |= _TECHNICAL_SCORE_COLUMNS
                 if i < len(watermark_results):
                     w = watermark_results[i]
                     img.watermark_score = w.get("watermark_score")
                     flags = dict(img.quality_flags or {})
                     flags["has_watermark"] = w.get("has_watermark", False)
                     img.quality_flags = flags
+                    refreshed.add("watermark_score")
                 if i < len(clip_embeddings):
                     img.clip_embedding = clip_embeddings[i]
                 if i < len(dino_embeddings):
@@ -212,6 +240,29 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     flags = dict(img.quality_flags or {})
                     flags["is_nsfw"] = n.get("is_nsfw", False)
                     img.quality_flags = flags
+                    refreshed.add("nsfw_score")
+
+                # The one place `scores_stale` is cleared. Set-covering over what
+                # was actually *written*, not over `body.run_*`: a cancelled batch
+                # truncates a results list (rows past it never enter `refreshed`),
+                # a per-image subset never visits the row at all, and an unticked
+                # check contributes nothing — all three fall out of this one test.
+                # So a re-score with the same checks that produced the original
+                # numbers clears the bit, and a watermark-only pass never claims
+                # a stale blur score is fresh.
+                #
+                # `quality_flags` needs no separate tracking: each flag is written
+                # in the same guarded block as the score it derives from.
+                # `is_duplicate` derives from `phash`, which every in-place path
+                # re-derives, so duplicate flags were never stale.
+                #
+                # The outer test avoids N pointless UPDATEs on a routine re-score.
+                if img.scores_stale:
+                    stale_left = {
+                        c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None
+                    } - refreshed
+                    if not stale_left:
+                        img.scores_stale = False
             await session.commit()
 
         # Persist completed work before honoring the cancellation.
@@ -582,6 +633,21 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
     Ordered by `created_at`, which is also in the payload, so member order is the
     dataset's own history rather than whatever order SQLite happened to scan in.
+
+    **Frame lineage is annotated here, not in the scan.** Frames from one video —
+    held animation cels, recycled footage, a locked-off shot — land inside Hamming
+    8 and get grouped, and *Keep best* then deletes them with nothing on screen
+    saying they share a source. Teaching `_flag_duplicates` to skip same-source
+    pairs would be the wrong fix twice over: `is_duplicate` feeds bulk filters,
+    the Stats flagged counts, export exclusions and the gallery badge, so changing
+    what the scan flags has a blast radius this does not need; and two frames from
+    one shot often *are* duplicates the user wants gone. The defect is silence.
+    So the four lineage fields ride along on every row and the client decides how
+    loudly to say it.
+
+    The response stays a **list of lists**. Promoting a group to an object with a
+    `same_source` field would break `DuplicateGroup` and every assertion in
+    `test_duplicate_groups_http.py` for a boolean the client derives in one line.
     """
     def _row(img: Image, *, kept: bool) -> dict:
         return {
@@ -591,6 +657,10 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
             "updated_at": img.updated_at,
             "created_at": img.created_at,
             "kept": kept,
+            "source_video_id": img.source_video_id,
+            "source_timestamp_ms": img.source_timestamp_ms,
+            "source_shot_index": img.source_shot_index,
+            "source_video_name": video_names.get(img.source_video_id),
         }
 
     result = await db.execute(
@@ -601,25 +671,43 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
     )
     duplicates = result.scalars().all()
     flagged_ids = {img.id for img in duplicates}
+
+    # A root that is itself flagged belongs to some other group and is already
+    # rendered there; only unflagged roots are missing from the payload.
+    group_keys = {img.quality_flags.get("duplicate_of", img.id) for img in duplicates}
+    roots: dict[str, Image] = {}
+    root_ids = [k for k in group_keys if k not in flagged_ids]
+    for chunk in chunked(root_ids):
+        res = await db.execute(select(Image).where(Image.id.in_(chunk)))
+        roots.update({img.id: img for img in res.scalars().all()})
+
+    # Video filenames for the lineage annotation, resolved before any row is
+    # built so `_row` can read them for duplicates and roots alike. There is no
+    # `relationship()` from Image to Video and none should be added — this is the
+    # one place that needs the join, and a lazy load on an async session raises
+    # MissingGreenlet. A video deleted since extraction leaves the id NULL, and a
+    # video whose row is gone but whose id survived leaves the name None; both
+    # render as "unknown source", which is honest.
+    video_ids = sorted(
+        {img.source_video_id for img in [*duplicates, *roots.values()] if img.source_video_id}
+    )
+    video_names: dict[str, str] = {}
+    for chunk in chunked(video_ids):
+        res = await db.execute(
+            select(Video.id, Video.filename).where(Video.id.in_(chunk))
+        )
+        video_names.update({r.id: r.filename for r in res.all()})
+
     groups: dict[str, list] = {}
     for img in duplicates:
         key = img.quality_flags.get("duplicate_of", img.id)
         groups.setdefault(key, []).append(_row(img, kept=False))
-
-    # A root that is itself flagged belongs to some other group and is already
-    # rendered there; only unflagged roots are missing from the payload.
-    root_ids = [k for k in groups if k not in flagged_ids]
-    if root_ids:
-        roots: dict[str, Image] = {}
-        for chunk in chunked(root_ids):
-            res = await db.execute(select(Image).where(Image.id.in_(chunk)))
-            roots.update({img.id: img for img in res.scalars().all()})
-        for key, members in groups.items():
-            root = roots.get(key)
-            # A root deleted since the scan simply has no row to prepend; its
-            # group stays a group of the surviving copies.
-            if root is not None:
-                members.insert(0, _row(root, kept=True))
+    for key, members in groups.items():
+        root = roots.get(key)
+        # A root deleted since the scan simply has no row to prepend; its
+        # group stays a group of the surviving copies.
+        if root is not None:
+            members.insert(0, _row(root, kept=True))
     return {"groups": list(groups.values())}
 
 

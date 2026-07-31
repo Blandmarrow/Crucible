@@ -1,6 +1,6 @@
 # Quality scoring, flags & style similarity
 
-This file covers the quality scorers and the columns they write, the flag thresholds and where they are configured, duplicate detection, and the style-similarity / DINOv2 per-layer scoring flow.
+This file covers the quality scorers and the columns they write, the `scores_stale` bit that qualifies them, the flag thresholds and where they are configured, duplicate detection, and the style-similarity / DINOv2 per-layer scoring flow.
 
 The scorers are loaded and evicted through the shared model manager — see `docs/dev/ml-models.md`.
 
@@ -20,6 +20,29 @@ Quality scorers and what they add to `Image`:
 The column is NULL until the technical scorer runs again, and nothing detects that: `score_coverage["technical"]` counts `blur_score` alone, so a dataset scored before the column existed reports full technical coverage beside an empty Brightness histogram. Stats carries the re-score hint that says so — see `docs/dev/statistics.md` (`score_coverage`). The same staleness applies to `color_score`/`saturation_score` on anything last scored before quality-v2, and to whatever technical column is added next.
 
 `backend/tests/test_luminance_score_http.py` pins the **wiring** rather than the formula, which is where a new score field actually breaks: that `luminance_score` is in `_ALLOWED_SCORE_FIELDS` for both filter forms (an omission is a 400), that it appears in the `score_filters` array form, that `dataset-stats` and `score-values` carry it, and that a NULL brightness is absent from both the histogram and the filter rather than counting as 0. The formula itself is deliberately untested — it lives in `score_technical_sync`, which imports cv2 — matching the coverage shape of every other technical score. (Not for want of cv2 in CI: both workflows install `opencv-python-headless` for the video suite, per § Duplicate detection below. The formula is untested because a numeric assertion on a mean-grayscale value pins arithmetic, not behaviour.)
+
+## `scores_stale` — the bit that qualifies every score above
+
+`Image.scores_stale: bool` (migration `b2f6c8d0e1a4`, mirrored on `VersionImageState`) records that the image's pixels were rewritten **in place** after the scores were measured. Ten paths do that — batch and single resize, batch and single crop, LUT grading, upscaling, crop-to-detection, and video frame re-extraction — and every one of them deliberately leaves the ten `*_score` columns and `quality_flags` alone. That is still the right call: nothing recomputes a score, and zeroing them would be a claim about pixels nobody measured. What was missing was any durable record of the mismatch.
+
+The consequence lands far from the edit. `exclude_flags` at export drops images on `is_blurry`/`is_uniform`/`has_watermark`, all derived from those numbers, so an export silently drops keepers and ships rejects. `blur_score` makes it worse than a rounding issue: it is Laplacian variance against a fixed threshold, so it is resolution-dependent, and a score from a 1024px triage frame is systematically wrong for the 4K frame that replaced it.
+
+**The single writer is `backend/utils.py::record_in_place(img, op, **params)`** — the same call that appends the `processing_history` entry. That is not a convenience: two writers would drift, and a site that records the edit while leaving the scores looking trustworthy is worse than one that records nothing. `backend/tests/test_scores_stale.py` holds a structural AST guard that walks `backend/routers/*.py` and `backend/services/*.py` for any `processing_history = … + …` list-concat outside `utils.py` — the enforcement PM-010's convention never had. It matches only the `BinOp(Add)` shape, so the plain copies in `restore_snapshot` and `dataset_service` (which *carry* a history rather than extend one) are correctly excluded.
+
+**The clear site** is the write loop in `routers/quality.py`, and it is set-covering over what the run actually *wrote*, never over `body.run_*`:
+
+```python
+if img.scores_stale:
+    stale_left = {c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None} - refreshed
+    if not stale_left:
+        img.scores_stale = False
+```
+
+`refreshed` is accumulated inside each `i < len(...)` guard, which is what makes all three partial modes fall out for free: a cancelled batch truncates a results list so rows past the cut never enter it, a per-image subset never visits the row, and an unticked check contributes nothing. So the common case — re-score with the same checks that produced the original numbers — clears the bit, and a watermark-only pass never declares a stale blur score fresh. The outer `if` avoids N pointless UPDATEs on a routine re-score. `quality_flags` needs no separate tracking, since each flag is written in the same guarded block as its score; `is_duplicate` derives from `phash`, which every in-place path re-derives, so duplicate flags were never stale.
+
+**`style_similarity_score` is deliberately outside `_JOB_SCORE_COLUMNS`, and this is a boundary, not an oversight.** `compute_style_similarity` writes it through a Core bulk `update(Image)` with no per-row load, so it cannot evaluate the predicate at all; letting it clear the bit would declare blur and aesthetic fresh when they are not. Listing it in the frozenset instead would strand the bit permanently on any dataset that has ever run style similarity. Do not "fix" either direction.
+
+Surfaces: an 18×18 `var(--warn)` badge in `ImageCard`'s flag cluster, a `badge-yellow` "Scores stale" chip in `ImageDetailPage`'s flag row (**both render conditions include the bit** — an image whose only marker is this one must not render an empty cluster), and the `stale_scores_count` / `stale_scores_will_export` pair on the export preview (`docs/dev/export.md`). Not offered yet, and reasonable follow-ups: a gallery filter, a Stats tile, a Quality-page "N images need re-scoring" call to action. Users see `docs/scoring.md`.
 
 ## The failure contract
 
@@ -55,6 +78,23 @@ All thresholds are user-configurable via Settings (`/settings` → `GET/PATCH /a
 - `_find_duplicates_bruteforce`: the O(N²) vectorized all-pairs scan (numpy + module-level 256-entry `POPCNT` table). Semantically frozen — it is the reference implementation the golden tests compare against, and the fallback when `n < MIN_INDEX_N` (2048), the hash is shorter than 4 bytes, the threshold is so large the index would probe more than `CANDIDATE_FRACTION_CUTOFF` (0.25) of all rows per query (≥ ~21 for 64-bit hashes; practical thresholds are 4–12), or the total probe volume exceeds `n // PROBE_COST_DIVISOR` (8) — probes are pure-Python dict lookups, far costlier each than a vectorized scan row, so the index must be clearly cheaper before it engages (at 64-bit hashes, thresholds 13–20 need n ≳ 22k–80k).
 
 Both paths are length-generic (no 64-bit assumption; the chunk-key fold must stay **unsigned** — a signed int64 fold wraps 8-byte-chunk keys negative and silently drops pairs whose probe crosses bit 63). The dispatcher and the golden tests both derive the chunk split and probe radius from the shared `_chunk_plan()` helper, so the tested plan cannot drift from the production one. `backend/tests/test_find_duplicates.py` pins the byte-identical-output property (groups, roots, member order) across sizes, thresholds (incl. floats — `threshold_settings.duplicate_threshold` is a Float column, though the quality router currently truncates it to `int` before calling, so algorithm-level float support is future-proofing), and hash lengths up to 256-bit; it runs in CI via `.github/workflows/backend-tests.yml` (cv2 is imported lazily inside `score_technical_sync`, so *these* tests need no cv2 and no stub — the workflow installs it anyway, for the video suite: see `docs/dev/video-tests.md` § cv2 in CI, and the skip convention). The O(N²) path was the critical scaling wall found in `backend/scripts/scaling_bottlenecks_report.md` (~3.4 h projected at 1M images); re-verify with `python -m backend.scripts.bench_scaling --only dedup` after touching this code. The consumer `_flag_duplicates` (`routers/quality.py`) then loads the flagged images with a single chunked `select(...).where(Image.id.in_(...))` (≤10k ids per chunk) rather than per-row `session.get`, and follows the copy-then-reassign `quality_flags` invariant. `backend/tests/test_quality_flags_persistence_http.py` pins that invariant at request level: duplicate-resolve keep and empty-caption artifact clearing must persist their flag changes to a fresh session.
+
+### Same-source duplicate groups
+
+`GET /quality/duplicates/{dataset_id}` annotates every member row with `source_video_id`, `source_timestamp_ms`, `source_shot_index` and a resolved `source_video_name`. Frames from one video — held animation cels, recycled footage, a locked-off shot — land inside Hamming 8 legitimately, get grouped, and *Keep best* deletes them with nothing on screen saying they share a source.
+
+**The annotation lives in the read path, not in `_flag_duplicates`.** Teaching the scan to skip same-source pairs would be wrong twice: `is_duplicate` feeds bulk filters, the Stats flagged counts, export exclusions and the gallery badge, so changing what the scan flags has a blast radius the fix does not need — and two frames from one shot often *are* duplicates the user wants gone. The defect is silence, not the grouping.
+
+The endpoint already used `select(Image)`, so lineage is loaded; the names come from one chunked `select(Video.id, Video.filename)` over the distinct non-NULL ids, resolved **before** any row is built so it covers the separately-fetched root as well as the flagged members. There is no `relationship()` from `Image` to `Video` and none should be added — a lazy load on an async session raises `MissingGreenlet`. The response stays a **list of lists**: promoting a group to an object with a `same_source` field would break `DuplicateGroup` and every assertion in `test_duplicate_groups_http.py` for a boolean the client derives in one line.
+
+`QualityPage` derives that boolean in `sharedSourceVideo(group)` — non-null only when every member carries the same non-NULL id — and renders a warn-toned banner naming the video above the thumbnails; a *mixed* group gets per-thumbnail video labels instead, because the banner would be false there. Each thumbnail shows `formatFramePosition(source_timestamp_ms)` and its shot index.
+
+**Not `formatDuration`** — that helper answers "how long is this clip?" at second resolution, which is the right granularity for a length and the wrong one for a frame. Frames cut from one held shot sit tens of milliseconds apart, so two of them both render as `0:01` and a panel showing timestamps *so the user can tell them apart* says nothing. Found by running the real app: a group at 600 ms and 760 ms rendered two identical labels. `formatFramePosition` (its sibling in `frontend/src/utils/duration.ts`, same null contract) prints `0:00.760`. Use it wherever a `source_timestamp_ms` is shown.
+
+Two things changed about the buttons at the same time:
+
+- **"Keep best" goes through a `ConfirmDialog` for same-source groups**, naming the video and listing the timestamps being deleted. Refusing outright would break the legitimate case and push users to work around it in the gallery. **"Keep first" stays one click** — it keeps the scan's own choice rather than a score-driven one.
+- **The null sort was backwards.** `(b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0)` ranks an unscored frame below a 0.1 and so deletes it preferentially, when unscored means *unknown*, not bad. `rankForKeepBest` is an explicit nulls-last comparator, and the button is disabled with an explanatory `title` when no member has a score — "best" is meaningless there, and the old code silently kept whichever came first and called it best.
 
 ## Style similarity
 

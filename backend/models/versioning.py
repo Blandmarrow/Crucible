@@ -95,6 +95,12 @@ class VersionImageState(Base):
     luminance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     style_similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # The bit that qualifies the ten scores above: True when the image's pixels
+    # were rewritten in place after they were measured. It travels with them —
+    # a snapshot restoring stale scores without the flag would silently declare
+    # them trustworthy. Mutable state, so it is diffed as well as mirrored.
+    scores_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

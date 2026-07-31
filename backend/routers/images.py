@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -107,6 +107,28 @@ _ALLOWED_SCORE_FIELDS = frozenset({
     "watermark_score", "color_score", "saturation_score", "luminance_score",
     "style_similarity_score",
 })
+
+# Every value `GET /images/`'s `sort` param may take. An unknown one is coerced
+# to `created_at`, never rejected — a stale `sortIdx` persisted in
+# `gallery-state-${datasetId}` must degrade to a working gallery, not a 400.
+#
+# The allowlist exists because the ordering block reaches `Image` by `getattr`,
+# and `Image` has attributes that are not columns: `?sort=metadata`,
+# `?sort=dataset` (the relationship) and `?sort=has_dino_layer_embeddings` (the
+# property) each returned something SQLAlchemy cannot order by and raised a
+# **500**. The fallback in the `getattr` call only ever caught names that do not
+# exist at all.
+_ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
+    "created_at", "updated_at", "filename", "file_size_bytes",
+    "width", "height", "caption_token_count", "sort_order",
+    # Frame lineage. Both get an explicit nulls-last ordering below.
+    "source_timestamp_ms", "source_shot_index",
+}
+
+# Lineage sorts need nulls-last plus a stable tiebreak; the generic branch has
+# neither, so an ASC sort would float every non-frame image to the top and leave
+# equal-timestamp frames in whatever order SQLite scanned them.
+_NULLS_LAST_SORT_FIELDS = frozenset({"sort_order", "source_timestamp_ms", "source_shot_index"})
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -321,10 +343,22 @@ async def list_images(
         if caption_words_max is not None:
             q = q.where(wc_expr < caption_words_max)
 
+    # Coerce rather than 400: an unknown name already fell back today, and a
+    # stale persisted `sortIdx` must degrade to a working gallery.
+    if sort not in _ALLOWED_SORT_FIELDS:
+        sort = "created_at"
+    sort_col = getattr(Image, sort)
     if sort == "sort_order":
+        # Manual ordering is ascending by definition; unpositioned images last.
         q = q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+    elif sort in _NULLS_LAST_SORT_FIELDS:
+        # NULL here means "not a video frame", which belongs at the end whichever
+        # direction the frames run in, with `created_at` breaking the ties that
+        # two frames at the same timestamp or in the same shot would otherwise
+        # leave to SQLite's scan order.
+        direction = sort_col.desc() if order == "desc" else sort_col.asc()
+        q = q.order_by(direction.nulls_last(), Image.created_at.asc())
     else:
-        sort_col = getattr(Image, sort, Image.created_at)
         q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
 
     if caption_tokens_min is not None or caption_tokens_max is not None:
@@ -1120,24 +1154,11 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
     return FileResponse(thumb)
 
 
-def _record_in_place(img: Image, op: str, **params) -> None:
-    """Append a `processing_history` entry for an operation that overwrote the file.
-
-    Every in-place overwrite must record one. `Image.processing_history` is the
-    only durable signal that a row's pixels are no longer what produced it, and
-    video re-extraction reads it as its skip guard: a frame carrying any op other
-    than `reextract` is left alone, because re-cutting it from the source would
-    silently discard the edit (`docs/dev/video-reextract.md`).
-
-    List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
-    by equality, so mutating the loaded list in place looks unchanged and the
-    UPDATE is skipped (CLAUDE.md § Key invariants).
-    """
-    now = datetime.now(timezone.utc)
-    img.processing_history = (img.processing_history or []) + [
-        {"op": op, **params, "at": now.isoformat()}
-    ]
-    img.updated_at = now
+# The in-place-overwrite recorder lives in `backend/utils.py` so that the four
+# other routers that overwrite pixels (lut, upscaling, detection, videos) share
+# one writer of `processing_history` *and* `scores_stale`. This alias keeps the
+# six call sites below — and PM-010's prose, which names it — valid.
+_record_in_place = record_in_place
 
 
 async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
@@ -2012,7 +2033,8 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
         Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
-        Image.saturation_score, Image.luminance_score, Image.style_similarity_score, Image.dino_layer_scores,
+        Image.saturation_score, Image.luminance_score, Image.style_similarity_score,
+        Image.scores_stale, Image.dino_layer_scores,
         Image.generation_metadata, Image.processing_history, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
@@ -2134,6 +2156,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             saturation_score=row.saturation_score,
             luminance_score=row.luminance_score,
             style_similarity_score=row.style_similarity_score,
+            scores_stale=row.scores_stale,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
             processing_history=row.processing_history,

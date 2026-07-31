@@ -103,9 +103,29 @@ A seventh quality flag, `has_ai_artifacts`, is not set by scoring and has no thr
 
 The watermark score flags *that* an image has a watermark, not where it is — to locate the region, see [Locating watermarks](detection.md#locating-watermarks).
 
+## Stale scores
+
+Editing an image **in place** — resize, crop, upscale, a LUT grade, cropping to a detected subject, or re-extracting a video frame at full resolution — replaces its pixels but leaves its quality scores alone. Nothing is recomputed automatically, because scoring is a job you start, so the numbers now describe an image that no longer exists. Blur is the worst offender: it is measured against a fixed threshold and depends on resolution, so a score from a 1024 px triage frame says almost nothing about the 4K frame that replaced it.
+
+Crucible marks those images rather than guessing:
+
+- An amber clock badge appears on the gallery thumbnail.
+- A **Scores stale** chip appears in the flag row on the image detail page.
+- The [Export](export.md) preview warns how many images are affected and how many of them the current filters will actually ship.
+
+The warning matters most at export, where **Exclude flagged** decides what to ship using flags derived from those scores — so a stale run can drop images worth keeping and ship ones you meant to drop.
+
+**To clear it, run scoring again** with the same checks that produced the original numbers. The mark clears only when every score the image carries has been refreshed: a watermark-only pass will not clear an image that also has a blur score. Style similarity is the one exception — it is scored separately and is neither refreshed by nor blocking this.
+
 ## Duplicate resolution
 
 After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids, oldest first, with a green outline and a **kept** label on the one the scan chose to keep. The group header names the distance threshold actually in force, from Settings → Thresholds. Each group offers:
 
-- **Keep best** — retains the image with the highest aesthetic score and deletes the rest
+- **Keep best** — retains the image with the highest aesthetic score and deletes the rest. Images with no aesthetic score rank **last**, never first: unscored means unknown, not bad. If no image in the group has been scored at all, the button is disabled and says so — use *Keep first* instead
 - **Keep first** — retains the image marked *kept*, which is always first in the group, and deletes the rest
+
+### Duplicates that came from the same video
+
+A perceptual hash cannot tell a held animation cel or a stretch of recycled footage from a redundant copy, so frames extracted from one video often land in the same group legitimately. When every frame in a group came from the same video, Crucible says so above the thumbnails and names the video, and each thumbnail shows its timestamp and shot number so you can check before deleting. Groups that mix sources label each frame with its own video instead.
+
+They are still ordinary duplicates and *Keep best* still works on them — but on a same-source group it asks for confirmation first, naming the video and the timestamps it is about to delete. See [Videos](video.md) for where the frames came from.

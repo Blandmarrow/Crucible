@@ -15,3 +15,22 @@ export function formatDuration(ms: number | null | undefined): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
+
+/** A single frame's position in its source video, to the millisecond: "0:00.760".
+ *
+ *  Distinct from `formatDuration`, which answers "how long is this clip?" at
+ *  second resolution — the right granularity for a length, and the wrong one for
+ *  a frame. Frames cut from one held shot sit tens of milliseconds apart, so two
+ *  of them both render as "0:01" and a UI showing timestamps *so the user can
+ *  tell them apart* tells them nothing. That is not hypothetical: it is what the
+ *  duplicate-group panel did on its first run.
+ *
+ *  Same null contract as its sibling — null is unknown, never 0:00. Use this
+ *  wherever a `source_timestamp_ms` is shown; use `formatDuration` for a
+ *  `Video.duration_ms`.
+ */
+export function formatFramePosition(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const millis = Math.round(ms) % 1000;
+  return `${formatDuration(Math.floor(ms / 1000) * 1000)}.${String(millis).padStart(3, "0")}`;
+}

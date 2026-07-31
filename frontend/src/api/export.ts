@@ -44,6 +44,12 @@ export interface ExportPreview {
    *  no-derivatives" cannot classify those, so it lets them through — unlike the
    *  commercial filter, which drops anything it cannot classify. */
   freetext_will_export: number;
+  /** Images whose pixels were rewritten in place after they were scored, over the
+   *  whole dataset scope. Their flags were computed against pixels that are gone,
+   *  so `exclude_flags` may be dropping or keeping the wrong images. */
+  stale_scores_count: number;
+  /** How many of those survive the *current* filters and actually ship. */
+  stale_scores_will_export: number;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }

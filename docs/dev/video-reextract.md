@@ -37,9 +37,14 @@ old frames; it is not a seek bug.
 *normalized* values the extract endpoint stored (`docs/dev/video-extract.md` § The
 endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.
 
-**Quality scores are left alone**, matching `batch_upscale`/`batch_lut` replace mode. The
-job says so through `result_data["note"]`, which the completion toast repeats — silence
-about stale scores would be the misleading choice. `phash` *is* re-derived: dedup depends
+**Quality scores are left alone but no longer left silent.** Nothing is recomputed, matching
+`batch_upscale`/`batch_lut` replace mode — but the rewrite goes through
+`backend/utils.py::record_in_place`, which sets `Image.scores_stale` alongside the
+`processing_history` entry, so every re-extracted frame wears a badge in the gallery and on
+its detail page until a re-score clears it (`docs/dev/scoring.md` § `scores_stale`). The
+job still says so through `result_data["note"]` (`REEXTRACT_NOTE`), which the completion
+toast repeats and `ReextractFramesForm` mirrors, but the wording now points at the badge
+instead of asking the user to remember. `phash` *is* re-derived: dedup depends
 on it. It is scale-invariant, so the value often does not change, which is why the test
 poisons it first rather than asserting it moved.
 
@@ -150,9 +155,14 @@ rows pass 2 is rewriting. `extract_frames` reads the same helper.
 The endpoint alone adds `ensure_not_busy` per dataset (the job does not hold `busy`,
 following `batch_upscale`), the deinterlace 503 gate on the *stored* filter — there is no
 request field to override it, and without the gate the job dies inside every frame and
-reports a missing package as a decode fault — and a disk preflight estimating
-`cropped_w × cropped_h × 0.5` for JPEG or `× 2.0` for PNG, conservative because a temp file
-coexists with the original during each swap.
+reports a missing package as a decode fault — and a disk preflight through the shared
+`routers/videos.py::estimate_frame_bytes(width, height, *, fmt, long_edge)`, which budgets
+`cropped_w × cropped_h × BYTES_PER_PIXEL[fmt]` (0.5 JPEG, 2.0 PNG) plus a flat
+`FRAME_OVERHEAD_BYTES`. Conservative because a temp file coexists with the original during
+each swap. The estimator is shared with pass 1, which used to budget a flat 300 KB per frame
+— ~60× low at `long_edge=8192`, and pass 1's preflight runs *before* replace mode's delete,
+so the underestimate let a doomed job start and destroy the previous frames on the way down
+(`docs/dev/video-extract.md` § step 4).
 
 ## The `video_reextract` job
 

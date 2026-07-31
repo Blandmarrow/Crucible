@@ -30,6 +30,12 @@ export const SORT_OPTIONS = [
   // changes the sort of every saved gallery.
   { label: "Brightness ↓",        sort: "luminance_score",        order: "desc" },
   { label: "Brightness ↑",        sort: "luminance_score",        order: "asc"  },
+  // Frame lineage — the natural order for reviewing a triage extraction pass.
+  // Ascending only: "the last frame of the video first" is not a thing anyone
+  // reviews by, and each extra entry costs a persisted index forever. Images
+  // that did not come from a video sort last (nulls-last, applied server-side).
+  { label: "Video timeline",     sort: "source_timestamp_ms",    order: "asc"  },
+  { label: "Shot order",         sort: "source_shot_index",      order: "asc"  },
 ] as const;
 
 /** Sentinel value for the gallery's "missing license only" filter option. */

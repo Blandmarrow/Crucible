@@ -128,7 +128,15 @@ since `label` is a `String(200)`.
    `source_shot_index`. It has to run here rather than after step 4, since step 4's estimate
    is `len(shots) × frames_per_shot`.
 4. `require_free_space` again, now that `len(shots) × frames_per_shot` makes the estimate
-   real. The `job_row.total_items` write sits here too, off the same product.
+   real. The per-frame figure comes from the shared
+   `routers/videos.py::estimate_frame_bytes(video.crop_w or video.width, video.crop_h or
+   video.height, fmt="jpeg", long_edge=cfg["long_edge"])` — pass 2's estimator, hoisted so
+   both passes budget the same way. Pass 1 previously used a flat
+   `FRAME_SIZE_ESTIMATE_BYTES = 300_000`, which is ~60× low at `long_edge=8192`; because
+   this preflight runs **before** step 5's replace-mode delete, that underestimate let a
+   doomed job start and destroy the previous frames on the way down. The `job_row.total_items`
+   write sits here too, off the same product. `EXTRACT_DISK_RECHECK_EVERY` (100 frames) stays
+   as the mid-run backstop.
 5. **The `replace`-mode delete**, only once the video is known to decode, the shot list is
    non-empty and the disk has room. A replace that destroys the previous extraction and then
    fails to produce a replacement is the worst outcome this feature can produce.

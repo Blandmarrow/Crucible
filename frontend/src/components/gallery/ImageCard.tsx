@@ -153,8 +153,11 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           <GalleryCheckbox size={cbSize} selected={selected} />
         </div>
 
-        {/* Quality flags */}
-        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts) && (
+        {/* Quality flags. `scores_stale` is not a quality_flags key — it sits
+            beside them because it qualifies every one of them, and it must be in
+            this condition or a card whose only marker is the stale bit renders
+            an empty cluster. */}
+        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || image.scores_stale) && (
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
             {isNsfw && (
               <span title="NSFW" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
@@ -184,6 +187,11 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
             {isUniform && (
               <span title="Near-uniform" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--warn)" }}>
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="10" height="10"/></svg>
+              </span>
+            )}
+            {image.scores_stale && (
+              <span title="Scores are stale — this image was edited in place after it was scored. Re-run quality scoring to refresh them." style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--warn)" }}>
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.8V8l2.2 1.6"/></svg>
               </span>
             )}
           </div>

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,6 +32,7 @@ from backend.utils import (
     ALLOWED_FLAG_KEYS,
     chunked,
     normalize_subfolder,
+    record_in_place,
     slugify_filename,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -964,21 +965,24 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                             "message": f"Failed: {exc}",
                         })
                         continue
-                    now = datetime.now(timezone.utc)
                     img.width = info["width"]
                     img.height = info["height"]
                     img.file_size_bytes = info["file_size_bytes"]
                     img.format = info["format"]
                     img.phash = info["phash"]
-                    img.updated_at = now
-                    img.processing_history = (img.processing_history or []) + [{
-                        "op": "crop_to_detection",
-                        "mode": cfg["mode"],
-                        "labels": cfg["labels"],
-                        "padding_pct": cfg["padding_pct"],
-                        "target_ar": cfg["target_ar"],
-                        "at": now.isoformat(),
-                    }]
+                    # `updated_at` is stamped by `record_in_place` below.
+                    # Writes `processing_history` *and* `scores_stale` — the crop
+                    # changed both the framing and the resolution the scores were
+                    # measured against. Pure dict building, so it cannot raise
+                    # between the overwrite above and the commit below (PM-013).
+                    record_in_place(
+                        img,
+                        "crop_to_detection",
+                        mode=cfg["mode"],
+                        labels=cfg["labels"],
+                        padding_pct=cfg["padding_pct"],
+                        target_ar=cfg["target_ar"],
+                    )
                     # Replace-mode crop changed the image geometry: remap the
                     # image's detections into the crop frame (drop ones outside).
                     # In the same transaction as the geometry it describes.

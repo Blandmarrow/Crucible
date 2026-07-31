@@ -28,6 +28,9 @@ class ImageOut(BaseModel):
     saturation_score: float | None = None
     luminance_score: float | None = None
     style_similarity_score: float | None = None
+    # True when the pixels were rewritten in place after the scores above were
+    # measured — see `backend/utils.py::record_in_place`.
+    scores_stale: bool = False
     dino_layer_scores: dict | None = None
     has_dino_layer_embeddings: bool = False
     quality_flags: dict[str, Any]
@@ -82,6 +85,9 @@ class ImageListItem(BaseModel):
     saturation_score: float | None = None
     luminance_score: float | None = None
     style_similarity_score: float | None = None
+    # True when the pixels were rewritten in place after the scores above were
+    # measured — drives the gallery card's warning badge.
+    scores_stale: bool = False
     dino_layer_scores: dict | None = None
     quality_flags: dict[str, Any]
     generation_metadata: dict | None = None

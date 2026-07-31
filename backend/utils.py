@@ -4,12 +4,16 @@ import re
 import shutil
 import time
 from collections.abc import Iterator, Sequence
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import regex as _regex
 from fastapi import HTTPException
+
+if TYPE_CHECKING:  # `models/image.py` imports this module, so a runtime import cycles.
+    from backend.models.image import Image
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +450,42 @@ def read_caption_sidecar(image_path: Path | str) -> str | None:
     except (OSError, UnicodeDecodeError):
         return None
     return text or None
+
+
+def record_in_place(img: "Image", op: str, **params) -> None:
+    """Record that an operation overwrote an image's file, in the two columns that carry it.
+
+    **The single writer of both `Image.processing_history` and
+    `Image.scores_stale`.** Every path that rewrites an image's pixels in place —
+    batch and single resize, batch and single crop, LUT, upscale, crop-to-detection,
+    video frame re-extraction — must go through this and nothing else. That is what
+    keeps the two columns from drifting: a site that appends history by hand records
+    the edit and silently leaves the scores looking trustworthy.
+
+    `processing_history` is the durable signal that a row's pixels are no longer
+    what produced it, and video re-extraction reads it as its skip guard: a frame
+    carrying any op other than `reextract` is left alone, because re-cutting it from
+    the source would discard the edit (`docs/dev/video-reextract.md`).
+
+    `scores_stale` says the ten `*_score` columns and the `quality_flags` derived
+    from them were measured against pixels that no longer exist. Nothing here
+    recomputes a score — that is a manual job — so the bit stands until a quality
+    run refreshes every score the row carries (`routers/quality.py`).
+
+    List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
+    by equality, so mutating the loaded list in place looks unchanged and the
+    UPDATE is skipped (CLAUDE.md § Key invariants).
+
+    Pure attribute assignment: it cannot raise, which is what lets every caller
+    place it between an irreversible `os.replace` and the `commit()` that describes
+    it, rather than in the post-commit epilogue (PM-013).
+    """
+    now = datetime.now(timezone.utc)
+    img.processing_history = (img.processing_history or []) + [
+        {"op": op, **params, "at": now.isoformat()}
+    ]
+    img.updated_at = now
+    img.scores_stale = True
 
 
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:

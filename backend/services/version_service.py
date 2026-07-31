@@ -39,7 +39,7 @@ from backend.models.image import Image
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
 from backend.services.threshold_service import get_thresholds
-from backend.utils import chunked, contained_path
+from backend.utils import chunked, contained_path, within_datasets_dir
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,20 @@ async def _backup_and_record_hash(
     Otherwise the file is re-stored via ``_store_object`` and the backfilled hash is
     the hash of the bytes actually stored, so a file mutating between the caller's
     hash and the copy can never poison the store or the state rows.
+
+    The containment gate here is the *whole* COW surface: this is the only function
+    that copies a row's bytes into ``{ds}/.versions/objects/``, and both hooks
+    (``protect_file_before_overwrite``, ``mark_image_deleted_in_versions``) route
+    through it, so one guard covers every call site of either. Since a stored object
+    is retrievable through a snapshot restore, an out-of-tree ``file_path`` would be
+    an arbitrary-file **read** primitive even where no unlink follows. The base is
+    the row's own ``dataset_folder`` rather than ``settings.datasets_dir`` — stricter,
+    and it also catches a row pointing into a *different* dataset. Skip-and-log, per
+    CLAUDE.md's destructive-site rule: an out-of-tree row still completes its
+    overwrite or deletion instead of failing the whole job. ``within_datasets_dir``
+    resolves, so this catches the one live vector — a symlink placed in
+    ``{ds}/images/`` that rescan registers under its in-tree path while ``open()``
+    follows it out of tree.
     """
     null_check = await db.execute(
         select(VersionImageState.id).where(
@@ -167,6 +181,12 @@ async def _backup_and_record_hash(
         ).limit(1)
     )
     if null_check.first() is None or not Path(file_path).exists():
+        return None
+    if within_datasets_dir(file_path, Path(dataset_folder)) is None:
+        logger.warning(
+            "_backup_and_record_hash: refusing out-of-tree path for image %s: %s",
+            image_id, file_path,
+        )
         return None
     loop = asyncio.get_running_loop()
     sha256 = precomputed_sha256

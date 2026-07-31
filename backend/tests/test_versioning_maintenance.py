@@ -144,6 +144,71 @@ def test_backup_skips_io_when_precomputed_object_exists(tmp_path):
     run(scenario())
 
 
+def test_backup_refuses_out_of_tree_path(tmp_path):
+    """A row whose file_path escaped the dataset must not reach the object store.
+
+    A stored object is retrievable through a snapshot restore, so copying an
+    out-of-tree file in is an arbitrary-file read primitive. Skip-and-log, not
+    raise — the caller's overwrite/deletion still completes.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"REAL"})
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"SECRET")
+        async with Session() as db:
+            await version_service.create_snapshot(db, ds_id, "s1", "")
+            img = (await db.execute(select(Image).where(
+                Image.dataset_id == ds_id))).scalar_one()
+
+            recorded = await version_service._backup_and_record_hash(
+                img.id, str(outside), str(ds_dir), db
+            )
+            await db.commit()
+
+            assert recorded is None
+            secret_hash = hashlib.sha256(b"SECRET").hexdigest()
+            assert not version_service._object_store_path(str(ds_dir), secret_hash).exists()
+            hashes = (await db.execute(select(VersionImageState.file_hash).where(
+                VersionImageState.image_id == img.id))).scalars().all()
+            assert hashes == [None]
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_backup_refuses_symlink_escaping_the_dataset(tmp_path):
+    """The one live vector: rescan registers a symlink under its in-tree path
+    (`file_path=str(f)`) and `open()` follows it out of tree. The guard resolves,
+    so an in-tree-looking path whose target is outside is still refused."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"REAL"})
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"SECRET")
+        link = ds_dir / "images" / "link.png"
+        link.symlink_to(outside)
+
+        async with Session() as db:
+            await version_service.create_snapshot(db, ds_id, "s1", "")
+            img = (await db.execute(select(Image).where(
+                Image.dataset_id == ds_id))).scalar_one()
+
+            # the path is inside the dataset as a string; only .resolve() reveals it
+            assert str(link).startswith(str(ds_dir))
+            assert link.read_bytes() == b"SECRET"
+
+            recorded = await version_service._backup_and_record_hash(
+                img.id, str(link), str(ds_dir), db
+            )
+            await db.commit()
+
+            assert recorded is None
+            secret_hash = hashlib.sha256(b"SECRET").hexdigest()
+            assert not version_service._object_store_path(str(ds_dir), secret_hash).exists()
+        await engine.dispose()
+
+    run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Prune
 # ---------------------------------------------------------------------------

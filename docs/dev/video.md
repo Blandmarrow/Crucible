@@ -57,7 +57,7 @@ invariant — none of which apply to a video file. Frame extraction converts a v
 into ordinary `Image` rows at the boundary, so dedup, scoring, captioning, export and
 versioning stay entirely media-unaware and needed no changes.
 
-**`backend/media_types.py` is the single allowlist**; CLAUDE.md § Shared utilities lists
+**`backend/media_types.py` is the single allowlist**; `docs/dev/shared-utilities.md` lists
 what it exports. Before it, three separate frozensets in
 `routers/filesystem.py`, `routers/images.py` and `services/dataset_service.py` decided what
 was importable, and they had drifted: only the file browser's carried `.avif`, so a folder
@@ -120,7 +120,7 @@ That divergence is why stored stems are a separate term from filename stems — 
 the two disagree, and a set built from filenames alone would let a later upload named
 `clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives only
 the *proposal*; for an existing row read `Video.poster_path` and never re-derive it
-(CLAUDE.md § Shared utilities). Moving the poster rather than the file is the opposite of
+(`docs/dev/shared-utilities.md`). Moving the poster rather than the file is the opposite of
 image rescan's fix for the same bug — see CLAUDE.md § Key invariants, PM-007 and
 `docs/dev/image-files.md` § Importing captions & folder rescan.
 

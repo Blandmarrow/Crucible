@@ -9,7 +9,7 @@ The docs are split three ways. Put a new fact in exactly one of them:
 
 | Where | What lives there | Audience |
 |---|---|---|
-| `CLAUDE.md` | Commands, the request/job data flow, shared utilities, key invariants, the Documentation Map | Always loaded into every conversation |
+| `CLAUDE.md` | Commands, the request/job data flow, key invariants, the Documentation Map | Always loaded into every conversation |
 | `docs/dev/*.md` | One subsystem in depth | Loaded on demand via the Map |
 | `docs/*.md` + `README.md` | How to *use* a feature | End users |
 
@@ -21,10 +21,12 @@ Do not confuse them, and never duplicate one into the other — cross-reference 
 - **Narrow, subsystem-specific** → append to the relevant `docs/dev/` file under the
   best-fitting heading. If that makes the file's "Read this when..." hint incomplete,
   update the hint (keep trigger keywords front-loaded).
-- **Cross-cutting** (a new shared utility, a universal invariant, a pattern every module
-  must follow) → Key invariants or Shared utilities in `CLAUDE.md`. Test: *"would I want
-  this loaded even for a task in an unrelated subsystem?"* If no, it is subsystem-specific.
-  Utility entries stay one line there; detailed behaviour goes in the utility's docstring.
+- **Cross-cutting** — a universal invariant or a pattern every module must follow goes in
+  § Key invariants in `CLAUDE.md`; a new *shared utility* goes in
+  `docs/dev/shared-utilities.md` instead, since the index is a lookup rather than something
+  every conversation needs resident. Test for either: *"would I want this loaded even for a
+  task in an unrelated subsystem?"* If no, it is subsystem-specific. Utility entries stay
+  one line; detailed behaviour goes in the utility's docstring.
 - **Procedural and recurring** → a skill, not a doc. See "Proposing a skill" below.
 
 ## User-facing features need user-facing docs
@@ -126,9 +128,9 @@ headings at all it can only say "read the file". **Five** topic files are in tha
 A further thirteen have no `## ` heading but do use `###`, which is enough — `section_words`
 splits on the shallowest level a file actually uses, so those still get a per-section
 breakdown. So eighteen files want headings *added* and five want them *at all*; expect the
-file you are editing to be one of the eighteen. `docs/dev/pending-splits.md`'s queue is empty right now — the five files that had
-a seam recorded all carried `##` headings, and all five were split on 2026-07-31 — so a
-heading-less file today has neither structure nor a seam waiting for it.
+file you are editing to be one of the eighteen. Every file with a seam recorded in
+`docs/dev/pending-splits.md` carried `##` headings when the seam was chosen — so a
+heading-less file has neither structure nor a seam waiting for it.
 
 So when editing a heading-less file, add the `##` structure while you are there — the bold
 lead-ins already mark every boundary, so it is a cheap edit that turns a future split from

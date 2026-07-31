@@ -46,32 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## CLAUDE.md
-
-- **Moves:** § Shared utilities — the `backend/utils.py` bullet index, and the
-  `backend/media_types.py` and `backend/licenses.py` paragraphs that follow it
-  (~1,200 words of the § Architecture block's 3,085)
-- **New file:** docs/dev/shared-utilities.md
-- **Why here:** the section already says of itself "**this is an index**; each helper's
-  docstring carries its behaviour and rationale". An index is a lookup — you consult it
-  when you are about to import something — and it is the one part of this file that does
-  not need to be resident in a conversation about an unrelated subsystem. Everything else
-  here earns being always-loaded: the commands are how you run anything, the data flow is
-  the shape every request takes, and § Key invariants are rules whose whole value is that
-  nobody can start work without having seen them. Leave behind the one-paragraph framing
-  ("import from here, never re-inline") plus a Map row, and the always-loaded file drops
-  to roughly 4,300 words with the rules intact. **Do not instead thin § Key invariants** —
-  each entry's *why* is the part that stops the next editor from simplifying the rule
-  away, and moving them out of the always-loaded file defeats the point of having them.
-- **Watch for:** every topic file that says "CLAUDE.md § Shared utilities" needs
-  repointing — at least `docs/dev/gallery.md`, `docs/dev/image-files.md`,
-  `docs/dev/bulk-ops.md` and `docs/dev/provenance.md`, so grep the phrase rather than
-  trusting that list. Several entries are cross-referenced *from* § Key invariants, which
-  stays behind, so those become cross-file `§` pointers the checker cannot verify. The
-  `doc-maintenance` skill's own table describes CLAUDE.md as holding "shared utilities",
-  and `.claude/skills/doc-maintenance/SKILL.md` needs the same edit in the same change.
-  The new file mirrors no user doc, so the naming convention gives no name for free.
-
 ## docs/dev/backend-infrastructure.md
 
 - **Moves:** § Database (1,142 words — the largest section by a factor of two), plus its
@@ -115,7 +89,7 @@ staleness sweep while still recording the seam.
   split cannot reach the 60% target from 4,030 words whichever seam it picks (2,699 or
   2,614); this three-way lands all three files near 1,300.
 - **Watch for:** § `scores_stale` is the most cross-referenced section in `docs/dev/` —
-  CLAUDE.md § Shared utilities *and* § Key invariants both point at it by `§`, as do
+  `docs/dev/shared-utilities.md` *and* CLAUDE.md § Key invariants both point at it by `§`, as do
   `docs/dev/bulk-image-jobs.md` (twice), `docs/dev/video-reextract.md`,
   `docs/dev/image-detail.md`, `docs/dev/export.md` and `docs/dev/versioning-service.md`, so
   grep `scores_stale` across `docs/` and `CLAUDE.md` rather than trusting that list. Its
@@ -143,7 +117,8 @@ staleness sweep while still recording the seam.
   have not repointed them by reflex. The drag sections also reference
   `docs/dev/frontend-core.md` § SelectionToolbar in both directions.
 
-The five entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
+The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
-`export-licensing.md`, `detection.md` → `detection-inference.md`, and `statistics.md`'s
-misfiled `GET /images/` filter table → `image-filters.md`.
+`export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
+misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
+utilities → `docs/dev/shared-utilities.md`.

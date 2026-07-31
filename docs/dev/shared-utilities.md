@@ -1,0 +1,39 @@
+# Shared utilities: backend/utils.py, media_types.py & licenses.py
+
+The three cross-cutting modules every router and service imports from, plus the frontend
+components that recur across subsystems. Many of these helpers exist to enforce a rule in
+CLAUDE.md § Key invariants; read that section for the *why* behind the containment guards,
+the stem-collision rules and the in-place-rewrite bookkeeping. Siblings: `docs/dev/provenance.md` (the license and
+provenance rules built on `licenses.py`), `docs/dev/video.md` (`media_types.py` and the
+poster-stem rules), `docs/dev/image-files.md` (naming, collisions and caption sidecars).
+
+## `backend/utils.py`
+
+`backend/utils.py` — helpers shared across routers. **This is an index; each helper's docstring carries its behaviour and rationale.** Import from here and never re-inline the logic — that is the point of every entry below.
+
+- **Client-supplied path/URL validators.** `normalize_subfolder(s)` (rejects `..` → 400; never re-import it from a router), `sanitize_abs_path(path)` (rejects null bytes and relative paths → 400; use in every router taking an arbitrary path — `filesystem`, `comfy` workflow scan), `safe_external_url(value)` — the only sanctioned check before a **provenance** URL reaches a markdown link target or an `href` (mirrored client-side by `frontend/src/utils/url.ts::safeExternalUrl`).
+- **Stored-path containment.** `within_datasets_dir(path_str, base_dir) -> Path | None` and its raising wrapper `safe_dataset_path(...) -> Path` (403) — the guards CLAUDE.md § Key invariants (Path traversal guard) refers to. **Serve** routes take the wrapper; **destructive** ones take `contained_path(path_str, base_dir, *, context, ident="") -> Path | None`, the packaged destructive-site form — the `None` branch plus its `logger.warning`, so the site skips the filesystem op *and* the versioning hook while still dropping the row. Gate per row, unlink the path it returns, never the raw string.
+- **Naming.** `slugify_filename(name)`; `unique_filename(directory, stem, suffix, db_names, disk_exclude=None)` — a name free both on disk and in `db_names`, since the two checks cover different gaps; `unique_filename_with_thumb(images_dir, stem, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)` — the same, also avoiding thumbnail-stem collisions. Call the latter in every path that creates or renames an image file and associates a thumbnail with it, and **never exclude the stems of images being renamed/moved** from `occupied_thumb_stems`.
+- **Derived paths.** `thumbnail_path_for(image_path)` (`parent.parent/thumbnails/{stem}.webp`); `poster_path_for(video_path)` / `unique_poster_path(poster_dir, stem, claimed)` for video posters — the poster form is only a *proposal* (a poster's stem need not match its video's), so read `Video.poster_path` for an existing row. `unique_poster_path` is the tool for paths that **adopt** a filename off disk instead of picking one — see CLAUDE.md § Key invariants (stem-keyed derived artifacts).
+- **Caption sidecars.** `rename_with_sidecar(old, new)` / `copy_with_sidecar(old, new)` move or copy a file together with its `.txt` sidecar in one call; `read_caption_sidecar(image_path) -> str | None` is the read side. See `docs/dev/image-files.md` (§ Importing captions & folder rescan).
+- **In-place pixel rewrites.** `record_in_place(img, op, **params)` — the **single writer** of both `Image.processing_history` (always) and `Image.scores_stale` (only when the row already carries a score, per `score_columns(cls)` — the suffix-derived set of every `*_score` column on a mapped class), called by every path that overwrites an image's file (see CLAUDE.md § Key invariants). Pure attribute access, so it belongs above the `commit()`, never in the epilogue.
+- **Client-supplied regex.** `compile_user_regex(pattern)` (raises `regex_error` → 400) / `regex_sub_deadline(compiled, repl, text, deadline)` (raises `TimeoutError` → 408) / `REGEX_TIMEOUT_SECONDS` / `regex_error` — the only sanctioned way to run one, with a single deadline covering a whole batch instead of N × timeout. See CLAUDE.md § Key invariants for why stdlib `re` is unusable here.
+- **Batching & saving.** `chunked(seq, size=10_000)` — the single source of truth for splitting id lists before an SQL `IN (...)`, keeping bind parameters under SQLite's `SQLITE_MAX_VARIABLE_NUMBER` (**32766** since SQLite 3.32; the familiar 999 is the pre-2020 default and would be violated by `chunked`'s own 10k default). `normalize_image_format(suffix, out_path)` + `image_save_kwargs(fmt)` — the JPG/PNG fallback and its PIL `save()` kwargs, always used as a pair.
+- **Disk.** `require_free_space(target_dir, needed_bytes=0)` / `InsufficientDiskSpaceError` — preflight for any run that writes many files (→ HTTP 507); `format_bytes(n)` renders sizes for prose, never for filenames or ids.
+- `ALLOWED_FLAG_KEYS: frozenset` — the canonical valid quality-flag names. `subsume_tags(tags)` — order-stable whole-word tag dedup; see `docs/dev/tag-consolidation.md`.
+- `count_caption_tokens(text)` / `_get_enc()` — the single tokenizer entry point. **`Image.caption_token_count` is a persisted column kept in sync by a SQLAlchemy `set` listener on `Image.caption_text`** (`backend/models/image.py`), so **captions must always be written via ORM attribute assignment** — a raw `update(Image)` / SQL write bypasses the listener and leaves the count stale. No such bulk-update write exists today; keep it that way.
+
+## `backend/media_types.py`
+
+**`backend/media_types.py`** — the single allowlist of ingestible file types: `IMAGE_EXTENSIONS`, `VIDEO_EXTENSIONS`, `MEDIA_EXTENSIONS`, `media_kind_for(suffix) -> "image" | "video" | None`, `video_mime(suffix)`, `fourcc_to_code(n)` and `codec_label(fourcc)`. Import from here in any code path that decides whether a file can be ingested; never write a local extension set. Discriminators stay `media_kind`-shaped, never `is_video` booleans. See `docs/dev/video.md`.
+
+## `backend/licenses.py`
+
+**`backend/licenses.py`** — the license vocabulary (`LICENSES`, `LICENSE_IDS`, `FIELD_MAX_LEN`, `normalize_license`, `license_info`, `allows_commercial`) and the provenance rules built on it; `frontend/src/constants/licenses.ts` mirrors it under test. Read side: `resolve_provenance(img, ds)`. Write side: `merge_provenance(*layers)`, `clamp_provenance(values)`, `normalize_license_input(v)`, `copy_provenance(img)` (same-dataset derivative), `materialize_provenance(img, ds)` (cross-dataset copy/move), `materialize_by_source(rows, ds_by_id)` (the batch form). A **client-supplied** license-id list is read only through `utils.parse_license_filter_param` / `normalize_license_filter` — a JSON array, never comma-separated, because an `other:<free text>` id may contain commas; an empty list always means "no filter", never "match nothing". Whether `""` inside that list is meaningful **differs by endpoint**, so check which one you are on. See `docs/dev/provenance.md`.
+
+## Shared frontend components
+
+**Shared frontend components** recur across the topic files in CLAUDE.md's Documentation Map; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog` and `useModalBehavior` → `docs/dev/styling.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/datasets-page.md`; `JobProgressBar` → `docs/dev/versioning.md`;
+`NumberField` (any bounded numeric input — never re-clamp per keystroke) →
+`docs/dev/frontend-core.md` for the one-line rule, `docs/dev/video-extract-controls.md`
+§ NumberField for the full contract.

@@ -117,7 +117,15 @@ async def score_images_watermark(
             fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats, watermark_threshold)
             r = await loop.run_in_executor(None, fn)
         except Exception:
-            r = {"watermark_score": 0.0, "has_watermark": False}
+            # "Nothing measured", not a zero — the technical scorer's contract
+            # (docs/dev/scoring.md § The failure contract). A 0.0 here claimed the
+            # image was confidently watermark-free about a file no decoder read,
+            # and it inflated `score_coverage`. The flag stays False rather than
+            # None because routers/quality.py folds it into a JSON flags dict
+            # where None is not expressible. This branch used to log nothing at
+            # all, so a whole run could fail silently.
+            logger.warning("Watermark scoring failed for %s", path, exc_info=True)
+            r = {"watermark_score": None, "has_watermark": False}
         results.append(r)
 
         if job_id and i % 10 == 0:
@@ -192,12 +200,12 @@ async def score_images_batch(
     image_paths: list[str],
     model_entry_dict: dict,
     job_id: str | None = None,
-) -> list[float]:
+) -> list[float | None]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
     loop = asyncio.get_event_loop()
-    scores = []
+    scores: list[float | None] = []
     total = len(image_paths)
 
     for i, path in enumerate(image_paths):
@@ -206,7 +214,13 @@ async def score_images_batch(
         try:
             score = await loop.run_in_executor(None, score_image_sync, path, model_entry_dict)
         except Exception:
-            score = 0.0
+            # NULL, not 0.0 — the technical scorer's failure contract
+            # (docs/dev/scoring.md § The failure contract). `aesthetic_score` is
+            # a 1–10 column, so 0.0 was not merely a wrong measurement but an
+            # out-of-range one, and it sorted the failure to the bottom of every
+            # "worst first" view as though it had been judged.
+            logger.warning("Aesthetic scoring failed for %s", path, exc_info=True)
+            score = None
         scores.append(score)
 
         if job_id and i % 10 == 0:

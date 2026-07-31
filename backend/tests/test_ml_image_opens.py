@@ -37,12 +37,39 @@ ML_DIR = Path(__file__).resolve().parents[1] / "ml"
 # Inference paths only. `lut_processor` and `upscaler` are image-*processing*
 # paths — they transpose inline and write the result to disk, which is governed
 # by the `image_service._open_safe` half of the same invariant, not this one.
+#
+# The list covered four scorers for a long time, which left the rule unenforced
+# in exactly the place a new module would break it: the captioners. All five of
+# them, both SAM predictors and `nudenet_scorer` are inference paths by the same
+# definition and are now in scope. None of them was an offender when they were
+# added here — they route through `image_utils.open_rgb` or
+# `image_utils.preprocess_for_caption` — so this is a guard against the next one,
+# which is the only kind of guard that helps.
 INFERENCE_MODULES = [
     "aesthetic_scorer.py",
     "dino_scorer.py",
+    "florence_captioner.py",
+    "joycaption_captioner.py",
     "nsfw_scorer.py",
+    "nudenet_scorer.py",
+    "ollama_captioner.py",
+    "openai_compat_captioner.py",
+    "paligemma_captioner.py",
+    "sam2_predictor.py",
+    "sam3_predictor.py",
     "wd14_tagger.py",
 ]
+
+# Modules matching the naming patterns above that are deliberately out of scope,
+# with the reason. Anything else new must be triaged into one list or the other —
+# see `test_the_module_list_covers_every_inference_module`.
+NOT_INFERENCE = {
+    # cv2.imread, not PIL; its scores are computed on the stored frame and the
+    # `_unmeasured()` contract, not orientation, is what governs it.
+    "technical_scorer.py",
+    # Operates on stored embeddings; never opens a file.
+    "similarity_scorer.py",
+}
 
 
 def _exif_rotated_jpeg(tmp_path: Path) -> Path:
@@ -117,3 +144,27 @@ def test_no_inference_module_opens_an_image_without_the_helper():
         "use backend.ml.image_utils.open_rgb / open_rgb_bytes instead: "
         + ", ".join(offenders)
     )
+
+
+def test_the_module_list_covers_every_inference_module():
+    """The list above is only a guard if adding a module updates it.
+
+    A new captioner or predictor dropped into `backend/ml/` is invisible to the
+    structural check until someone remembers to list it — which is how the four
+    original entries stayed four while eight more inference paths shipped. This
+    fails on the *next* one instead, and takes either answer: list it, or say why
+    it is not an inference path in `NOT_INFERENCE`.
+    """
+    suffixes = ("_scorer.py", "_captioner.py", "_predictor.py", "_tagger.py")
+    on_disk = {
+        p.name for p in ML_DIR.glob("*.py")
+        if p.name.endswith(suffixes)
+    }
+    untriaged = sorted(on_disk - set(INFERENCE_MODULES) - NOT_INFERENCE)
+    assert untriaged == [], (
+        "new ML modules are covered by neither list; add each to "
+        "INFERENCE_MODULES, or to NOT_INFERENCE with the reason: "
+        + ", ".join(untriaged)
+    )
+    stale = sorted(set(INFERENCE_MODULES) - on_disk)
+    assert stale == [], "INFERENCE_MODULES names files that no longer exist: " + ", ".join(stale)

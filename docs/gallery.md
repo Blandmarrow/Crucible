@@ -46,6 +46,17 @@ If the card you drag is part of the current selection, the **whole selection mov
 
 Whether moved files are also renamed to match the target subfolder follows the same **auto-rename** preference as the selection toolbar's "Move to subfolder" action. The toolbar route remains available for moving to a subfolder that doesn't exist yet.
 
+## Sorting
+
+The gallery sort dropdown covers newest/oldest, name, aesthetic score, style similarity, colourfulness, brightness, and **Custom order** (below). Your choice is remembered per dataset, and **Settings → Gallery** sets the default for datasets you have not sorted yet.
+
+Two entries are for video frames:
+
+- **Video timeline** — frames in the order they appear in their source video, earliest first
+- **Shot order** — frames grouped by the shot they were cut from, in shot order
+
+Both are the natural way to review a triage extraction pass, and unlike browsing by subfolder they keep working after you have moved or renamed the frames. Images that did not come from a video sort to the end. Pair either with the **Frames from** filter to see one video's frames on their own → [Videos](video.md).
+
 ## Manual Image Ordering
 
 The gallery sort dropdown includes a **Custom order** option. Selecting it activates drag-and-drop reordering:

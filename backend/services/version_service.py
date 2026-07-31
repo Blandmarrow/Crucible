@@ -431,6 +431,7 @@ async def create_snapshot(
             saturation_score=img.saturation_score,
             luminance_score=img.luminance_score,
             style_similarity_score=img.style_similarity_score,
+            scores_stale=img.scores_stale,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
             source_name=img.source_name,
@@ -502,6 +503,11 @@ _DIFF_COLS = (
     VersionImageState.saturation_score,
     VersionImageState.luminance_score,
     VersionImageState.style_similarity_score,
+    # Mutable, so diffed as well as mirrored — the carve-out below is for
+    # *immutable* lineage columns only. An in-place pixel rewrite between two
+    # snapshots flips this and nothing else, and that is exactly a difference
+    # worth showing.
+    VersionImageState.scores_stale,
     VersionImageState.dino_layer_scores,
     VersionImageState.generation_metadata,
     VersionImageState.source_name,
@@ -532,7 +538,7 @@ _DIFF_COMPARE_FIELDS = (
     "caption_text", "quality_flags", "subfolder",
     "nsfw_score", "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
     "watermark_score", "color_score", "saturation_score", "luminance_score",
-    "style_similarity_score",
+    "style_similarity_score", "scores_stale",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
     "source_meta", "sort_order",
@@ -945,6 +951,7 @@ async def restore_snapshot(
         img.attribution = state.attribution
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
+        img.scores_stale = state.scores_stale
         img.sort_order = state.sort_order
         img.source_video_id = (
             state.source_video_id if state.source_video_id in live_video_ids else None

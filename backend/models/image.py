@@ -95,6 +95,19 @@ class Image(Base):
     # Log of destructive replace operations: [{op, params..., at}]
     processing_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Set by every path that rewrites this image's pixels in place (resize,
+    # crop, LUT, upscale, detection crop, frame re-extraction) — the scores above
+    # were measured against pixels that no longer exist. `blur_score` is Laplacian
+    # variance against a fixed threshold, so it is resolution-dependent and a
+    # score from a 1024px triage frame is systematically wrong for the 4K frame
+    # that replaced it. Cleared only by a scoring run that refreshes every score
+    # the row actually carries (`routers/quality.py`).
+    #
+    # Deliberately NOT named `*_score`: `SCORE_COLUMNS` in
+    # `backend/tests/test_video_lineage_mirrors.py` is suffix-derived and would
+    # enrol a boolean in the float-seeding guards.
+    scores_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     # Manual sort order (NULL = no custom order set; NULLS LAST when sorting)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
@@ -123,6 +136,14 @@ class Image(Base):
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),
         Index("ix_images_dataset_created_at", "dataset_id", "created_at"),
         Index("ix_images_dataset_caption", "dataset_id", "caption_text"),
+        # Frame lineage in video order. Covers both shapes the gallery asks for:
+        # filter-then-order ("frames from video X", sorted by timeline — the
+        # dominant use) and the unfiltered whole-dataset lineage sort, whose
+        # nulls-last ASC scan walks this index instead of sorting the table.
+        # `ix_images_source_video_id` is now a redundant prefix of this; dropping
+        # it would touch the delete-video NULLing UPDATE and `frames-summary`, so
+        # it stays for now.
+        Index("ix_images_source_video_timeline", "source_video_id", "source_timestamp_ms"),
         # No index on (dataset_id, license): every license filter runs on the
         # *effective* license, COALESCE(images.license, datasets.license), which is
         # not sargable against one. See migration b5e8d2a7c9f4.

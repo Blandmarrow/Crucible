@@ -1657,14 +1657,24 @@ export default function ImageDetailPage() {
             </p>
           ) : null}
 
-          {/* Quality flags */}
-          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true || isNsfw === true) && (
+          {/* Quality flags. `scores_stale` is not one of them — it qualifies all
+              of them, so it renders here and must be in the row's condition too,
+              or an image whose only marker is the stale bit shows nothing. */}
+          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true || isNsfw === true || image?.scores_stale === true) && (
             <div className="flex gap-2 flex-wrap mt-2">
               {isNsfw === true && <span className="badge-red flex items-center gap-1"><EyeOff size={10} />NSFW</span>}
               {isBlurry === true && <span className="badge-yellow flex items-center gap-1"><AlertTriangle size={10} />Blurry</span>}
               {isDuplicate === true && <span className="badge-yellow flex items-center gap-1"><Copy size={10} />Duplicate</span>}
               {isUniform === true && <span className="badge-orange flex items-center gap-1"><AlertTriangle size={10} />Near-uniform</span>}
               {hasWatermark === true && <span className="badge-blue flex items-center gap-1"><Type size={10} />Watermark</span>}
+              {image?.scores_stale === true && (
+                <span
+                  className="badge-yellow flex items-center gap-1"
+                  title="This image was edited in place (resize, crop, upscale, LUT, or frame re-extraction) after it was scored. The scores and flags above describe pixels that no longer exist — re-run quality scoring to refresh them."
+                >
+                  <AlertTriangle size={10} />Scores stale
+                </span>
+              )}
             </div>
           )}
 

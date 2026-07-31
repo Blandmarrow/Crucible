@@ -273,9 +273,14 @@ export default function ReextractFramesForm({
         )}
       </div>
 
+      {/* Mirrors REEXTRACT_NOTE in backend/routers/videos.py, which the
+          completion toast shows. Re-extraction now records the fact durably
+          (Image.scores_stale), so this points at the badge rather than asking
+          the user to remember. */}
       <p className="text-xs" style={{ color: "var(--fg-mute)" }}>
-        Quality scores were measured on the triage frames and are kept as they are. Re-run
-        scoring if you want scores that reflect the full-resolution images.
+        Quality scores were measured on the triage frames and are kept as they are. The
+        re-extracted frames are marked <strong>scores stale</strong> in the gallery until
+        you re-run scoring.
       </p>
 
       {/* Progress */}

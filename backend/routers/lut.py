@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -16,7 +15,7 @@ from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -210,10 +209,9 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                 actual_out_path = info.get("out_path", dest_path_str)
 
                 if replace:
-                    now = datetime.now(timezone.utc)
                     superseded: Path | None = None
                     img.file_size_bytes = info["file_size_bytes"]
-                    img.updated_at = now
+                    # `updated_at` is stamped by `record_in_place` below.
                     if Path(actual_out_path) != src_path:
                         # `normalize_image_format` falls back to PNG for .gif,
                         # .bmp, .tiff and .avif — all in IMAGE_EXTENSIONS — so a
@@ -235,12 +233,11 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                         img.filename = Path(actual_out_path).name
                         img.file_path = actual_out_path
                         img.format = info["format"]
-                    img.processing_history = (img.processing_history or []) + [{
-                        "op": "lut",
-                        "lut": lut_filename,
-                        "intensity": intensity,
-                        "at": now.isoformat(),
-                    }]
+                    # Writes `processing_history` *and* `scores_stale` — the grade
+                    # changed the pixels the scores were measured on. Pure dict
+                    # building, so it cannot raise between the overwrite above and
+                    # the commit below (PM-013).
+                    record_in_place(img, "lut", lut=lut_filename, intensity=intensity)
                     # Nothing fallible between the (already-done) overwrite and
                     # this commit — a raise before here would roll the row back
                     # onto a file that no longer exists (PM-013).

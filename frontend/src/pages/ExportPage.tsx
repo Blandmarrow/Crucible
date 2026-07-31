@@ -873,6 +873,37 @@ export default function ExportPage() {
                     </div>
                   )}
 
+                  {/* Stale scores — advisory only; export never blocks. Same
+                      whole-dataset-count / survives-every-filter shape as the
+                      unlicensed warning above, because this is where a stale
+                      score actually costs something: "Exclude flagged" decides
+                      on flags derived from the old pixels. */}
+                  {!!preview.stale_scores_count && (
+                    <div
+                      style={{
+                        marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 12, color: "var(--warn)",
+                      }}
+                    >
+                      {preview.stale_scores_count.toLocaleString()} image
+                      {preview.stale_scores_count !== 1 ? "s were" : " was"} edited in place
+                      (resize, crop, upscale, LUT, or frame re-extraction) after being scored,
+                      so their quality scores and flags describe pixels that no longer exist.
+                      {preview.stale_scores_will_export === 0
+                        ? " None of them are included in this export."
+                        : preview.stale_scores_will_export === preview.stale_scores_count
+                          ? " They still export"
+                          : ` ${preview.stale_scores_will_export.toLocaleString()} of them still export`}
+                      {preview.stale_scores_will_export > 0 && (
+                        <>
+                          , and any flag-based exclusion may be dropping or keeping the wrong
+                          images. Re-run quality scoring to refresh them.
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* Free text under the ND filter — the one place the two
                       redistribution-safety filters disagree. "Commercial use"
                       drops what it cannot classify; "exclude no-derivatives"

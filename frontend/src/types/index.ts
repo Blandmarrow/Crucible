@@ -130,6 +130,12 @@ export interface ImageListItem {
   saturation_score: number | null;
   luminance_score: number | null;
   style_similarity_score: number | null;
+  /** The pixels were rewritten in place (resize, crop, LUT, upscale, crop-to-
+   *  detection, frame re-extraction) after the scores above were measured, so
+   *  they and the `quality_flags` derived from them describe an image that no
+   *  longer exists. Cleared by a quality run that refreshes every score the
+   *  image carries. `ImageDetail` inherits this. */
+  scores_stale: boolean;
   dino_layer_scores: Record<string, number> | null;
   quality_flags: Record<string, unknown>;
   generation_metadata?: GenerationMetadata | null;

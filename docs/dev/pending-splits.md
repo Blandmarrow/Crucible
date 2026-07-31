@@ -71,7 +71,54 @@ staleness sweep while still recording the seam.
   file mirrors no user doc, so the naming convention gives no name for free — `database.md`
   is a proposal, not a constraint.
 
-The five entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
+## docs/dev/scoring.md
+
+- **Moves:** a three-way split. § `scores_stale` — the bit that qualifies every score above
+  (1,331 words, the largest section) to one new file, and § Duplicate detection +
+  § Style similarity (981 + 435) to another. The base file keeps § The scorers and their
+  columns, § The failure contract, § Flag thresholds and § Frontend coverage (~1,250).
+- **New files:** docs/dev/scores-stale.md (mirrors docs/scoring.md § Stale scores) and
+  docs/dev/image-similarity.md
+- **Why here:** three subjects wear one title, and a reader arrives for exactly one.
+  *Per-image measurement* — which scorer writes which column, what a failure writes, what
+  each threshold flags. *The staleness bit* — a different lifecycle entirely: one writer in
+  `utils.py`, one clear predicate in `routers/quality.py`, three rendered surfaces, and a
+  set/clear symmetry argument that has nothing to say about how a score is computed.
+  *Image-to-image comparison* — pHash duplicate grouping and CLIP/DINOv2 style similarity,
+  which are about relationships between images rather than properties of one. A two-way
+  split cannot reach the 60% target from 4,030 words whichever seam it picks (2,699 or
+  2,614); this three-way lands all three files near 1,300.
+- **Watch for:** § `scores_stale` is the most cross-referenced section in `docs/dev/` —
+  `docs/dev/shared-utilities.md` *and* CLAUDE.md § Key invariants both point at it by `§`, as do
+  `docs/dev/bulk-image-jobs.md` (twice), `docs/dev/video-reextract.md`,
+  `docs/dev/image-detail.md`, `docs/dev/export.md` and `docs/dev/versioning-service.md`, so
+  grep `scores_stale` across `docs/` and `CLAUDE.md` rather than trusting that list. Its
+  prose also cites § Duplicate detection for the cv2-in-CI fact, which becomes a cross-file
+  pointer the checker cannot verify — and § Duplicate detection is itself referenced from
+  `docs/dev/statistics.md` and `docs/dev/gallery.md`. The `luminance_score` paragraph in
+  § The scorers and their columns stays behind but names `VersionImageState` mirroring, a
+  fact § `scores_stale` also leans on; leave a pointer, not a copy.
+
+## docs/dev/gallery.md
+
+- **Moves:** § Drag images onto subfolders (1,253 words — more than a third of the file)
+  and § Manual image ordering (199)
+- **New file:** docs/dev/gallery-dnd.md
+- **Why here:** both sections are one subsystem — dnd-kit. Droppables, collision detection,
+  the drag overlay, what a drop mutates, and the manual `sort_order` reorder that is the
+  same gesture with a different target. Everything left is *reading* a gallery: filters,
+  sorting, selection, the subfolder sidebar. Splitting there leaves ~2,050 and ~1,450, both
+  at or under the 60% target, and the moved half is the one a reader almost never needs
+  while working on filters or sort.
+- **Watch for:** § Manual image ordering is cited from `docs/dev/bulk-ops.md` (Renumber's
+  two-phase rename) and from § Sorting in this same file, which becomes a cross-file `§`
+  pointer. `docs/dev/image-filters.md` points at § Gallery filters and
+  `docs/dev/datasets-page.md` at the subfolder sidebar — both stay behind, so check you
+  have not repointed them by reflex. The drag sections also reference
+  `docs/dev/frontend-core.md` § SelectionToolbar in both directions.
+
+The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
-`export-licensing.md`, `detection.md` → `detection-inference.md`, and `statistics.md`'s
-misfiled `GET /images/` filter table → `image-filters.md`.
+`export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
+misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
+utilities → `docs/dev/shared-utilities.md`.

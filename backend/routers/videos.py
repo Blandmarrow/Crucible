@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from uuid import uuid4
@@ -46,6 +45,7 @@ from backend.utils import (
     contained_path,
     normalize_subfolder,
     poster_path_for,
+    record_in_place,
     require_free_space,
     safe_dataset_path,
     slugify_filename,
@@ -404,10 +404,15 @@ async def probe_video_samples(
 # Frame extraction
 # ---------------------------------------------------------------------------
 
-# Rough bytes per written frame, for the post-detection disk preflight. A
-# 1024px JPEG at quality 95 plus its WebP thumbnail lands well under this; the
-# point is an order-of-magnitude guard, not an accounting.
-FRAME_SIZE_ESTIMATE_BYTES = 300_000
+# Bytes per written pixel, for the disk preflight both extraction passes run.
+# Deliberately generous: a temp file coexists with the original during each pass-2
+# swap. (Hoisted from pass 2's `REEXTRACT_BYTES_PER_PIXEL`, which is what this
+# was before pass 1 started sharing it.)
+BYTES_PER_PIXEL = {"jpeg": 0.5, "png": 2.0}
+# Container headers, plus pass 1's WebP thumbnail, which the per-pixel term does
+# not cover. Small and flat: it only matters at tiny frame sizes, where the
+# per-pixel figure alone would budget almost nothing per file.
+FRAME_OVERHEAD_BYTES = 24_000
 # Frames between commits. Detection-crop's single terminal commit is wrong for a
 # job that can run twenty minutes (nothing appears in the gallery until it ends);
 # folder import's 200 is tuned for a loop that does far less per item.
@@ -429,6 +434,38 @@ PHASE_BANDS = {
     "rewriting": (0.0, 100.0),
 }
 DETECT_EMIT_INTERVAL = 0.5
+
+
+def estimate_frame_bytes(
+    width: int | None,
+    height: int | None,
+    *,
+    fmt: str = "jpeg",
+    long_edge: int | None = None,
+) -> int:
+    """Bytes one extracted frame will take on disk, for a preflight.
+
+    The single estimator both passes use. Pass 1 previously budgeted a flat
+    300 KB per frame, which is ~60× low at `long_edge=8192` — and because the
+    preflight runs *before* replace mode deletes the previous frames, an
+    underestimate lets a doomed job start and destroy them on the way down.
+
+    `width`/`height` are the *cropped* source dimensions; pass the crop, not the
+    container. Either being falsy means the probe could not read it, and 1920×1080
+    is the stand-in — a guess is better than budgeting zero.
+
+    `long_edge` clamps: it only ever downscales, so a value above the source's
+    long edge is a no-op rather than an inflated estimate.
+
+    Lives here, not in `services/video_extract.py`: that module is the cv2/RSS
+    decode half, and a byte estimate is neither. Both call sites are in this file.
+    """
+    w = width or 1920
+    h = height or 1080
+    if long_edge and max(w, h) > long_edge:
+        scale = long_edge / max(w, h)
+        w, h = max(1, int(w * scale)), max(1, int(h * scale))
+    return int(w * h * BYTES_PER_PIXEL[fmt]) + FRAME_OVERHEAD_BYTES
 
 # One copy of the text, quoted by the extract gate, the re-extract gate and
 # `video_extract.require_deinterlace`.
@@ -998,8 +1035,16 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
             "would be identical — frames per shot has been reduced to 1"
         ))
 
-    # 4. Now the estimate is real, so the preflight can be.
-    require_free_space(images_dir, len(shots) * frames_per_shot * FRAME_SIZE_ESTIMATE_BYTES)
+    # 4. Now the estimate is real, so the preflight can be. Pass 1 always writes
+    # .jpg plus a .webp thumbnail, and `long_edge` is what actually bounds the
+    # frame — a flat per-frame constant here was 60× low at large values, and
+    # step 5 below is the irreversible replace-mode delete.
+    require_free_space(images_dir, len(shots) * frames_per_shot * estimate_frame_bytes(
+        video.crop_w or video.width,
+        video.crop_h or video.height,
+        fmt="jpeg",
+        long_edge=cfg["long_edge"],
+    ))
 
     job_row = await session.get(BackgroundJob, job_id)
     if job_row:
@@ -1185,15 +1230,17 @@ async def _run_extraction(session: AsyncSession, job_id: str, cfg: dict) -> None
 # Pass 2 — full-resolution re-extraction
 # ---------------------------------------------------------------------------
 
-# Bytes per re-extracted frame, per cropped pixel, for the disk preflight.
-# Deliberately generous: a temp file coexists with the original during each swap.
-REEXTRACT_BYTES_PER_PIXEL = {"jpeg": 0.5, "png": 2.0}
+# (The per-pixel byte figure this pass used to own is now `BYTES_PER_PIXEL` in
+# the shared constant block above — pass 1 needs the same estimate.)
+
 # Carried on `result_data` so the completion toast can say it as well as the
 # form. Pass 2 leaves the scores alone (matching `batch_upscale`/`batch_lut`
-# replace mode), and silence about that would be the misleading choice.
+# replace mode), but it no longer asks the user to remember that: every in-place
+# rewrite now sets `Image.scores_stale`, so the frames carry a badge in the
+# gallery and on the detail page until a re-score clears it.
 REEXTRACT_NOTE = (
     "Quality scores were measured on the triage frames and have been kept as they are. "
-    "Re-run scoring if you want scores that reflect the full-resolution images."
+    "The re-extracted frames are marked \"scores stale\" until you re-run scoring."
 )
 
 
@@ -1393,12 +1440,12 @@ async def reextract_frames(body: VideoReextractRequest, db: AsyncSession = Depen
     needed: dict[str, int] = {}
     for g in groups:
         v = g["video"]
-        w = v.crop_w or v.width or 1920
-        h = v.crop_h or v.height or 1080
-        if body.max_long_edge and max(w, h) > body.max_long_edge:
-            scale = body.max_long_edge / max(w, h)
-            w, h = max(1, int(w * scale)), max(1, int(h * scale))
-        per_frame = int(w * h * REEXTRACT_BYTES_PER_PIXEL[body.format])
+        per_frame = estimate_frame_bytes(
+            v.crop_w or v.width,
+            v.crop_h or v.height,
+            fmt=body.format,
+            long_edge=body.max_long_edge,
+        )
         needed[v.dataset_id] = needed.get(v.dataset_id, 0) + per_frame * len(g["frames"])
     for dataset_id, size in needed.items():
         ds = await db.get(Dataset, dataset_id)
@@ -1616,7 +1663,6 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 img.filename = target.name
                 img.file_path = str(target)
 
-            now = datetime.now(timezone.utc)
             img.width = info["width"]
             img.height = info["height"]
             img.file_size_bytes = info["file_size_bytes"]
@@ -1624,17 +1670,21 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             # phash is re-derived even though the scores are not: dedup depends on it,
             # and a full-res frame hashes differently from its 1024px triage version.
             img.phash = info["phash"]
-            # What busts `imagesApi.thumbnailUrlVersioned` — without it an open detail
-            # pane keeps showing the triage thumbnail.
-            img.updated_at = now
-            img.processing_history = (img.processing_history or []) + [{
-                "op": "reextract",
-                "video_id": video.id,
-                "timestamp_ms": img.source_timestamp_ms,
-                "format": fmt,
-                "long_edge": long_edge,
-                "at": now.isoformat(),
-            }]
+            # `record_in_place` below stamps `updated_at`, which is what busts
+            # `imagesApi.thumbnailUrlVersioned` — without it an open detail pane
+            # keeps showing the triage thumbnail.
+            # Writes `processing_history` *and* `scores_stale`. The history entry
+            # is also pass 2's own skip guard (`_edited_in_place`), so its `op` must
+            # stay exactly `"reextract"`. Pure dict building, so it cannot raise
+            # between the `os.replace` above and the commit below (PM-013).
+            record_in_place(
+                img,
+                "reextract",
+                video_id=video.id,
+                timestamp_ms=img.source_timestamp_ms,
+                format=fmt,
+                long_edge=long_edge,
+            )
             # Nothing fallible may sit between the `os.replace` above and this
             # commit: the swap is irreversible, so a raise before here would roll
             # the row back onto a file that no longer exists (the 404 of PM-013).

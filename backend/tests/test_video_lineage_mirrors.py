@@ -304,6 +304,55 @@ def test_lineage_is_mirrored_and_snapshotted_but_not_diffed():
     assert set(version_service._DIFF_COMPARE_FIELDS) <= selected
 
 
+def test_scores_stale_is_mirrored_and_diffed():
+    """The bit qualifying the ten scores is *mutable*, so unlike lineage it is
+    compared as well as carried.
+
+    The mirror itself is already forced by
+    `test_every_image_column_is_mirrored_on_version_image_state` — a snapshot
+    restoring stale scores without the bit would silently declare them
+    trustworthy. What that guard cannot say is which side of `_DIFF_COLS`'
+    immutable-lineage carve-out this falls on. An in-place pixel rewrite between
+    two snapshots flips this column and nothing else, which is exactly a
+    difference the diff exists to show.
+    """
+    assert "scores_stale" in _columns(VersionImageState)
+    selected = {c.key for c in version_service._DIFF_COLS}
+    assert "scores_stale" in selected
+    assert "scores_stale" in version_service._DIFF_COMPARE_FIELDS
+
+
+def test_scores_stale_is_not_mistaken_for_a_score_column():
+    """`SCORE_COLUMNS` is derived by suffix and drives float-seeding guards, so a
+    boolean must never land in it. The naming rule this pins is in
+    `backend/models/image.py`'s comment on the column."""
+    assert "scores_stale" not in SCORE_COLUMNS
+    assert all(not c.endswith("_score") for c in ("scores_stale",))
+
+
+def test_every_rebuild_path_carries_scores_stale():
+    """The `scores_stale` half of `test_every_rebuild_path_carries_every_score`.
+
+    Same five field-by-field rebuild sites, same silent failure: a snapshot that
+    carries a stale score and drops the bit is worse than one that carries
+    neither, because it presents the number as current.
+    """
+    missing = [
+        label for label, kwargs in _score_carriers().items()
+        if not kwargs.get("scores_stale")
+    ]
+    assert not missing, (
+        f"these rebuild paths drop `scores_stale`: {missing} — carry it from the "
+        "source row alongside the scores it qualifies"
+    )
+    mismatched = {
+        label: kwargs["scores_stale"][1]
+        for label, kwargs in _score_carriers().items()
+        if kwargs.get("scores_stale") and kwargs["scores_stale"][1] != "scores_stale"
+    }
+    assert not mismatched, f"`scores_stale` copied from the wrong attribute: {mismatched}"
+
+
 def test_version_image_state_does_not_carry_a_video_foreign_key():
     """Matching `image_id`, which is FK-free because a restore can target
     another dataset. A snapshot must also survive its source video's deletion —
@@ -443,6 +492,142 @@ def test_a_duplicate_carries_every_score(tmp_path):
                     select(Image).where(Image.dataset_id != src["id"])
                 )).scalars().one()
             assert _read_scores(copy) == scores
+
+    run(scenario())
+
+
+async def _seed_stale(env, image_id: str) -> None:
+    """Set `scores_stale` directly. The HTTP paths that set it for real are
+    exercised in `test_scores_stale.py`; here the bit is only cargo."""
+    async with env.Session() as db:
+        row = await db.get(Image, image_id)
+        row.scores_stale = True
+        await db.commit()
+
+
+def test_a_cross_dataset_copy_carries_scores_stale(tmp_path):
+    """A copy that carried the numbers and dropped the bit would present scores
+    measured on deleted pixels as current — worse than dropping both."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            dest = await env.create_dataset("dest")
+            img = await upload_image(env, src["id"], "a.png")
+            await _seed_scores(env, img["id"])
+            await _seed_stale(env, img["id"])
+
+            r = await env.client.post(
+                f"{API}/images/batch/copy-dataset",
+                json={"image_ids": [img["id"]], "target_dataset_id": dest["id"], "subfolder": ""},
+            )
+            assert r.status_code == 200, r.text
+
+            async with env.Session() as db:
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id == dest["id"])
+                )).scalar_one()
+            assert copy.scores_stale is True
+
+    run(scenario())
+
+
+def test_both_duplicate_branches_carry_scores_stale(tmp_path):
+    """`duplicate_dataset`'s on-disk branch and its snapshot branch are separate
+    field-by-field rebuilds with separate column lists; both must carry it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            img = await upload_image(env, src["id"], "a.png")
+            await _seed_scores(env, img["id"])
+            await _seed_stale(env, img["id"])
+
+            # On-disk branch.
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate", json={"new_name": "copy"}
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                copy = (await db.execute(
+                    select(Image).where(Image.dataset_id != src["id"])
+                )).scalars().one()
+                assert copy.scores_stale is True
+                copy_dataset_id = copy.dataset_id
+
+            # Snapshot branch.
+            await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "manual"})
+            r = await env.client.post(f"{API}/datasets/{src['id']}/versions", json={"name": "v1"})
+            assert r.status_code in (200, 201, 202), r.text
+            if "job_id" in r.json():
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+            version_id = (await env.client.get(f"{API}/datasets/{src['id']}/versions")).json()[0]["id"]
+
+            r = await env.client.post(
+                f"{API}/datasets/{src['id']}/duplicate",
+                json={"new_name": "from-snapshot", "version_id": version_id},
+            )
+            assert r.status_code in (200, 202), r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                from_snap = (await db.execute(
+                    select(Image).where(
+                        Image.dataset_id.notin_([src["id"], copy_dataset_id])
+                    )
+                )).scalars().one()
+            assert from_snap.scores_stale is True
+
+    run(scenario())
+
+
+def test_snapshot_and_restore_preserve_scores_stale(tmp_path):
+    """The mirror's whole point: a restore writes back exactly what the state row
+    holds, so an unmirrored bit is cleared by every restore — leaving a snapshot
+    whose scores are stale and whose flag says they are fine.
+
+    Restores *from* True and *to* True both matter, so this snapshots the stale
+    state, clears the bit as a re-score would, and restores.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png")
+            await _seed_scores(env, img["id"])
+            await _seed_stale(env, img["id"])
+
+            await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "manual"})
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/versions", json={"name": "v1"})
+            assert r.status_code in (200, 201, 202), r.text
+            if "job_id" in r.json():
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+            version_id = (await env.client.get(f"{API}/datasets/{ds['id']}/versions")).json()[0]["id"]
+
+            async with env.Session() as db:
+                state = (await db.execute(
+                    select(VersionImageState).where(VersionImageState.image_id == img["id"])
+                )).scalar_one()
+                assert state.scores_stale is True
+
+            # What a successful re-score does.
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                row.scores_stale = False
+                await db.commit()
+
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/versions/{version_id}/restore", json={}
+            )
+            assert r.status_code in (200, 202), r.text
+            if "job_id" in r.json():
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                await db.refresh(row)
+            assert row.scores_stale is True
 
     run(scenario())
 

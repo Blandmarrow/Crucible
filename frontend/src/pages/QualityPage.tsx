@@ -3,7 +3,9 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
-import { qualityApi } from "../api/quality";
+import { qualityApi, type DuplicateGroup, type DuplicateImage } from "../api/quality";
+import ConfirmDialog from "../components/common/ConfirmDialog";
+import { formatFramePosition } from "../utils/duration";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
@@ -25,6 +27,69 @@ interface QualityWorkflow {
   runDinoLayers: boolean;
   embeddingType: "clip" | "dino" | "combined";
   dinoLayer: number | "all" | null;
+}
+
+/** Rank a duplicate group best-first for *Keep best*, nulls **last**.
+ *
+ *  The naive `(b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0)` sorts an
+ *  unscored image below a 0.1 and so deletes it preferentially — exactly
+ *  backwards, since an unscored image is unknown, not bad. Scored images rank by
+ *  score descending; unscored ones keep their incoming (created_at) order behind
+ *  all of them. The caller disables the button entirely when nothing is scored.
+ */
+function rankForKeepBest(group: DuplicateGroup): DuplicateImage[] {
+  return [...group].sort((a, b) => {
+    const as = a.aesthetic_score, bs = b.aesthetic_score;
+    if (as == null && bs == null) return 0;
+    if (as == null) return 1;
+    if (bs == null) return -1;
+    return bs - as;
+  });
+}
+
+/** The one video every member of a group came from, or null.
+ *
+ *  Non-null only when *every* member carries the same non-null
+ *  `source_video_id` — a mixed group gets per-thumbnail labels instead, because
+ *  a banner saying "these all came from clip.mp4" would be false there.
+ */
+function sharedSourceVideo(group: DuplicateGroup): { id: string; name: string | null } | null {
+  const first = group[0]?.source_video_id;
+  if (!first) return null;
+  if (!group.every((m) => m.source_video_id === first)) return null;
+  return { id: first, name: group[0].source_video_name };
+}
+
+/** A duplicate-group resolution held for the confirm dialog. */
+interface PendingResolve {
+  mode: "best" | "first";
+  keep: string[];
+  del: string[];
+  videoName: string | null;
+  timestamps: (number | null)[];
+}
+
+/** The confirm copy for a same-source resolution — written once for both buttons.
+ *
+ *  The hazard the dialog exists for — a held animation cel or recycled footage
+ *  hashing identical to a redundant copy — is a property of the *group*, not of
+ *  the ranking heuristic, so *Keep first* deletes exactly the same N−1 frames on
+ *  one click and earns the same beat of friction. Only the survivor clause
+ *  differs; a second hardcoded message block would drift the caveat.
+ */
+function resolveConfirmCopy(p: PendingResolve): { title: string; message: string } {
+  const n = p.del.length;
+  const survivor = p.mode === "best"
+    ? "keeps the highest-scoring one"
+    : "keeps the one the duplicate scan picked, which is not necessarily the best";
+  return {
+    title: "Delete frames from one video?",
+    message:
+      `Every image in this group was extracted from ${p.videoName ?? "the same video"}. ` +
+      `This deletes ${n} frame${n === 1 ? "" : "s"} at ` +
+      `${p.timestamps.map((t) => formatFramePosition(t)).join(", ")} and ${survivor}. ` +
+      `Held animation cels and recycled footage hash the same as a redundant copy, so these may be distinct shots.`,
+  };
 }
 
 const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
@@ -87,6 +152,12 @@ export default function QualityPage() {
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set(filters.selectedRefIds));
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(filters.activeSubfolder ?? undefined);
+  // Pending resolution of a same-source group, held for the confirm dialog —
+  // from either button. Same-source only: refusing outright would break the
+  // legitimate case (two genuinely redundant frames from one shot) and push
+  // users to work around it in the gallery, so the fix is a beat of friction,
+  // not a block.
+  const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(null);
 
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -461,13 +532,51 @@ export default function QualityPage() {
             <span className="badge warn dot">{dupGroups.length} groups</span>
           </div>
           <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {dupGroups.map((group, gi) => (
+            {dupGroups.map((group, gi) => {
+              const shared = sharedSourceVideo(group);
+              const anyScored = group.some((m) => m.aesthetic_score != null);
+              const anyLineage = group.some((m) => m.source_video_id != null);
+              // Both buttons route through here: one ordered array yields the
+              // survivor, the deletions and their timestamps, so `del` and
+              // `timestamps` cannot desynchronise the way two independent
+              // `.slice(1).map(...)` passes could.
+              const resolve = (mode: "best" | "first", ordered: DuplicateImage[]) => {
+                const keep = [ordered[0].id];
+                const del = ordered.slice(1).map((i) => i.id);
+                if (shared) {
+                  setPendingResolve({
+                    mode, keep, del,
+                    videoName: shared.name,
+                    timestamps: ordered.slice(1).map((i) => i.source_timestamp_ms),
+                  });
+                } else {
+                  resolveMutation.mutate({ keep, del });
+                }
+              };
+              return (
               <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "center", padding: 12, background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
                 <div>
                   <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 8 }}>
                     {group.length} similar images
                     {thresholds && ` · perceptual hash distance < ${thresholds.duplicate_threshold}`}
                   </div>
+                  {/* Same-source banner. A perceptual hash cannot tell a held
+                      animation cel or recycled footage from a redundant copy, so
+                      say where these came from before anything is deleted. */}
+                  {shared && (
+                    <div
+                      style={{
+                        marginBottom: 8, padding: "6px 9px", borderRadius: "var(--r-sm)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 11.5, color: "var(--warn)",
+                      }}
+                    >
+                      All {group.length} frames came from{" "}
+                      <span className="mono">{shared.name ?? "a video that has since been deleted"}</span>.
+                      Held animation cels and recycled footage look identical to a perceptual hash —
+                      check the timestamps before deleting.
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     {group.map((img) => (
                       <div key={img.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -479,23 +588,58 @@ export default function QualityPage() {
                         />
                         <span className="mono" style={{ fontSize: 10, color: img.kept ? "var(--good)" : "var(--fg-dim)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }}>{img.filename}</span>
                         {img.kept && <span style={{ fontSize: 10, color: "var(--good)" }}>kept</span>}
+                        {/* A mixed group names the video per thumbnail — the
+                            banner above would be false there. */}
+                        {!shared && anyLineage && img.source_video_id && (
+                          <span className="mono" style={{ fontSize: 9.5, color: "var(--warn)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }} title={img.source_video_name ?? undefined}>
+                            {img.source_video_name ?? "video"}
+                          </span>
+                        )}
+                        {img.source_timestamp_ms != null && (
+                          <span className="mono" style={{ fontSize: 9.5, color: "var(--fg-dim)" }}>
+                            {formatFramePosition(img.source_timestamp_ms)}
+                            {img.source_shot_index != null && ` · shot ${img.source_shot_index}`}
+                          </span>
+                        )}
                         {img.aesthetic_score != null && <span className="mono" style={{ fontSize: 11, color: "var(--good)" }}>{img.aesthetic_score.toFixed(1)}</span>}
                       </div>
                     ))}
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <button className="btn sm primary" onClick={() => {
-                    const best = [...group].sort((a, b) => (b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0));
-                    resolveMutation.mutate({ keep: [best[0].id], del: best.slice(1).map((i) => i.id) });
-                  }}>Keep best</button>
-                  {/* group[0] is the image the scan kept — see get_duplicates. */}
-                  <button className="btn sm" onClick={() => resolveMutation.mutate({ keep: [group[0].id], del: group.slice(1).map((i) => i.id) })}>Keep first</button>
+                  <button
+                    className="btn sm primary"
+                    // "Best" is meaningless with nothing scored: the old code
+                    // silently kept whichever member came first and called it
+                    // best. Say so instead of pretending.
+                    disabled={!anyScored}
+                    title={anyScored ? undefined : "No image in this group has an aesthetic score — run scoring first, or use Keep first."}
+                    onClick={() => resolve("best", rankForKeepBest(group))}
+                  >Keep best</button>
+                  {/* group[0] is the image the scan kept — see get_duplicates.
+                      Confirms on a same-source group just as *Keep best* does:
+                      it deletes the same N−1 frames on one click, and the hazard
+                      belongs to the group, not to the ranking. */}
+                  <button className="btn sm" onClick={() => resolve("first", group)}>Keep first</button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
+      )}
+
+      {pendingResolve && (
+        <ConfirmDialog
+          {...resolveConfirmCopy(pendingResolve)}
+          confirmLabel="Delete frames"
+          danger
+          onCancel={() => setPendingResolve(null)}
+          onConfirm={() => {
+            resolveMutation.mutate({ keep: pendingResolve.keep, del: pendingResolve.del });
+            setPendingResolve(null);
+          }}
+        />
       )}
     </div>
   );

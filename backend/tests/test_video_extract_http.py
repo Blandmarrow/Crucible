@@ -2000,3 +2000,72 @@ def test_a_locked_previous_frame_does_not_abort_the_replace(tmp_path, monkeypatc
             assert all((images_dir / i.filename).exists() for i in after)
 
     run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# The shared disk estimator
+#
+# Pure arithmetic, so no fixture, no decode and no gate. Pass 1 used to budget a
+# flat 300 KB per frame where pass 2 computed a real per-pixel figure; at
+# `long_edge=8192` that was ~60× low, and because the preflight runs *before*
+# replace mode deletes the previous frames, an underestimate let a doomed job
+# start and destroy them on the way down. The two disk tests above still bypass
+# the estimate by design (one starves the whole volume, the other gates the
+# router's symbol), so this is the only cover the arithmetic has.
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_frame_bytes_scales_with_area():
+    from backend.routers.videos import estimate_frame_bytes
+
+    small = estimate_frame_bytes(100, 100)
+    big = estimate_frame_bytes(200, 200)
+    # 4× the pixels, so 4× the per-pixel term (the flat overhead is on both).
+    from backend.routers.videos import FRAME_OVERHEAD_BYTES
+    assert (big - FRAME_OVERHEAD_BYTES) == 4 * (small - FRAME_OVERHEAD_BYTES)
+
+
+def test_estimate_frame_bytes_charges_png_four_times_jpeg():
+    from backend.routers.videos import FRAME_OVERHEAD_BYTES, estimate_frame_bytes
+
+    jpeg = estimate_frame_bytes(1920, 1080, fmt="jpeg") - FRAME_OVERHEAD_BYTES
+    png = estimate_frame_bytes(1920, 1080, fmt="png") - FRAME_OVERHEAD_BYTES
+    assert png == 4 * jpeg
+
+
+def test_the_long_edge_clamp_only_ever_downscales():
+    """A `long_edge` above the source's long edge is a no-op. Treating it as a
+    target instead would inflate the estimate for every small video and 507 runs
+    that would have fit."""
+    from backend.routers.videos import estimate_frame_bytes
+
+    native = estimate_frame_bytes(640, 480)
+    assert estimate_frame_bytes(640, 480, long_edge=4096) == native
+    assert estimate_frame_bytes(640, 480, long_edge=640) == native
+    assert estimate_frame_bytes(640, 480, long_edge=320) < native
+
+
+def test_a_large_long_edge_is_budgeted_far_above_the_old_flat_constant():
+    """The bug in one assertion: the retired `FRAME_SIZE_ESTIMATE_BYTES` was
+    300_000, and an 8192px frame does not fit in that by any margin."""
+    from backend.routers.videos import estimate_frame_bytes
+
+    assert estimate_frame_bytes(7680, 4320, long_edge=8192) > 20 * 300_000
+
+
+def test_a_missing_probe_falls_back_to_1080p():
+    """`width`/`height` are NULL when the probe could not read them. Budgeting
+    zero there would make the preflight useless on exactly the containers most
+    likely to misbehave."""
+    from backend.routers.videos import estimate_frame_bytes
+
+    assert estimate_frame_bytes(None, None) == estimate_frame_bytes(1920, 1080)
+    assert estimate_frame_bytes(0, 0) == estimate_frame_bytes(1920, 1080)
+
+
+def test_a_tiny_frame_still_budgets_at_least_the_overhead():
+    """Headers plus pass 1's WebP thumbnail do not shrink with the frame."""
+    from backend.routers.videos import FRAME_OVERHEAD_BYTES, estimate_frame_bytes
+
+    assert estimate_frame_bytes(64, 64) >= FRAME_OVERHEAD_BYTES
+    assert estimate_frame_bytes(1, 1) >= FRAME_OVERHEAD_BYTES

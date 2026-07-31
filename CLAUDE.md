@@ -193,11 +193,11 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2040 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, or any modal dialog — CSS variable tokens, `@layer components` classes, `CrucibleMark` drift checks, `ConfirmDialog`, `useModalBehavior` | ~1610 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation — production frontend serving, the shutdown/restart loop and `JobQueue.stop()`'s open hang, DB indexes and deferred columns, the SSE broadcaster | ~3515 |
-| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~2395 |
+| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~2685 |
 | `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient | ~2815 |
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — the one-shot generate endpoint, the durable `comfy_prompts` job, `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow`, the `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, ComfyUI API constraints | ~710 |
-| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~1140 |
+| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~1225 |
 
 ### Code review & bug investigation
 

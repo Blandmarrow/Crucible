@@ -505,11 +505,18 @@ def _ingest_video_sync(src_file: Path, dest_file: Path, poster_file: Path) -> tu
     without this an undecodable source would leave an orphan in videos/ that no
     DB row points at — and rescan would then try to register it on every run.
     A failed *poster* is not a failed import; it just leaves the path NULL.
+
+    `except BaseException`, matching upload's `_ingest_upload_sync`: this used to
+    catch `UnreadableVideoError` alone, but `probe_and_poster` shields
+    `generate_poster` only, so `probe_video` still raises cv2's lazy `ImportError`
+    (a headless host with no libGL), a raw `cv2.error` or a `MemoryError` straight
+    through — every one of which left behind exactly the orphan the narrow catch
+    was written to prevent.
     """
     shutil.copy2(src_file, dest_file)
     try:
         return probe_and_poster(dest_file, poster_file)
-    except UnreadableVideoError:
+    except BaseException:
         dest_file.unlink(missing_ok=True)
         raise
 

@@ -1510,6 +1510,11 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
 
     counts = {
         "rewritten": 0, "failed": 0, "skipped": len(image_ids) - len(rows),
+        # Frames that became ineligible *after* the resolver ran — see
+        # `_rewrite`'s re-check. Reported separately from `skipped`, which counts
+        # rows that never resolved, so the modal's accounting stays honest about
+        # which of the two happened.
+        "skipped_edited": 0,
         # A frame whose thumbnail could not be regenerated is still `rewritten`:
         # the file and the row agree and are committed. This counts the stale
         # thumbnails so the outcome is visible in `result_data` rather than lost.
@@ -1519,14 +1524,15 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
     total = len(rows)
     require_free_space(images_dir, 0)
 
-    async def _rewrite(img: Image) -> tuple[str, bool] | None:
+    async def _rewrite(img: Image) -> tuple[str, str, bool] | None:
         """Rewrite one frame in place.
 
-        Returns None on success, else `(reason, is_fault)`. `is_fault` is False
-        for a refusal that says nothing about the video's readability — a name
-        collision — so a run cannot trip the consecutive-failure breaker over
-        one. Either way the frame counts as `failed`: it was asked for and not
-        delivered.
+        Returns None on success, else `(outcome, reason, is_fault)`. `outcome` is
+        `"failed"` for a frame that was asked for and not delivered, or
+        `"skipped"` for one that stopped being eligible before its turn came.
+        `is_fault` is False for a refusal that says nothing about the video's
+        readability — a name collision, a late edit — so a run cannot trip the
+        consecutive-failure breaker over one.
 
         On success the row has already been committed: nothing fallible runs
         between the swap and that commit, so disk and DB can never disagree.
@@ -1548,9 +1554,9 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 ))
             except Exception as exc:
                 logger.warning("video_reextract: %s could not be decoded: %s", img.filename, exc)
-                return "decode failed", True
+                return "failed", "decode failed", True
             if not result.written:
-                return "no frame decoded at that timestamp", True
+                return "failed", "no frame decoded at that timestamp", True
             tmp = Path(result.written[0].path)
 
             # Verify *before* anything is destroyed. `get_image_info` swallows every
@@ -1558,14 +1564,31 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             # unlike upscale/LUT, the original is still sitting there untouched.
             info = await loop.run_in_executor(None, get_image_info, str(tmp))
             if not info:
-                return "the written frame would not re-open", True
+                return "failed", "the written frame would not re-open", True
 
             if target != src_path and target.exists():
                 # An unregistered file — hand-dropped into images/ and not yet
                 # rescanned, so no DB row guards it. The only real hazard in the
                 # extension swap; never clobber it. Not a fault: the video decodes
                 # fine, so the rest of the run must still get its chance.
-                return f"{target.name} already exists on disk", False
+                return "failed", f"{target.name} already exists on disk", False
+
+            # The `processing_history` skip rule, re-applied against the *live*
+            # row immediately before the overwrite. `_resolve_reextract_targets`
+            # evaluates it once at enqueue time, and nothing holds a lock over
+            # these frames, so a replace-mode crop, upscale, LUT or detection crop
+            # landing between then and now leaves a frame whose pixels are no
+            # longer the extracted frame — and pass 2 would silently discard that
+            # edit, which is the one outcome the rule exists to prevent. A real
+            # re-read, not `img.processing_history`: the row was loaded before the
+            # job started and `expire_on_commit=False` keeps that stale value in
+            # the identity map. Cheap enough to pay per frame — one indexed
+            # single-column lookup against a decode that just took far longer.
+            live_history = (await session.execute(
+                select(Image.processing_history).where(Image.id == img.id)
+            )).scalar_one_or_none()
+            if _edited_in_place(live_history):
+                return "skipped", "edited in place after this run was queued", False
 
             # Mandatory before an in-place overwrite, and so is the commit: the hook
             # only *flushes* the hash backfill, so a crash during the swap would roll
@@ -1668,13 +1691,13 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             consecutive_failures = 0
             written_since_disk_check += 1
         else:
-            reason, is_fault = outcome
-            counts["failed"] += 1
+            kind, reason, is_fault = outcome
+            counts["failed" if kind == "failed" else "skipped_edited"] += 1
             # A refusal that says nothing about the video's readability must not
             # feed the breaker, or one squatting file per frame aborts the run.
             if is_fault:
                 consecutive_failures += 1
-            logger.info("video_reextract: skipped %s — %s", img.filename, reason)
+            logger.info("video_reextract: %s %s — %s", kind, img.filename, reason)
 
         # A no-op on every path — `_rewrite` commits the frame itself, and its
         # refusals mutate nothing — but kept, and kept here: `_rewrite` already

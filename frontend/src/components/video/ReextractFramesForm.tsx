@@ -34,10 +34,15 @@ function skipSummary(skipped: { reason: string }[]): string[] {
 function resultToast(result: Record<string, unknown>) {
   const rewritten = Number(result.rewritten ?? 0);
   const failed = Number(result.failed ?? 0);
+  // Frames the worker refused because something edited them in place after the
+  // preview ran. Distinct from the preview's own `skipped` list, which is
+  // already shown in the form before the run.
+  const editedLate = Number(result.skipped_edited ?? 0);
   const parts = [`Re-extracted ${rewritten} frame${rewritten !== 1 ? "s" : ""}`];
   if (failed > 0) parts.push(`${failed} failed`);
+  if (editedLate > 0) parts.push(`${editedLate} skipped (edited meanwhile)`);
   const msg = parts.join(", ");
-  if (failed > 0) toast(msg, { icon: "⚠️" });
+  if (failed > 0 || editedLate > 0) toast(msg, { icon: "⚠️" });
   else toast.success(msg);
   // The stale-scores note travels on `result_data` so it is said at the end as
   // well as before the run — a user who scrolled past it in the form still sees

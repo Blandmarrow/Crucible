@@ -317,6 +317,78 @@ def test_a_missing_source_video_file_is_reported_not_attempted(tmp_path):
     run(scenario())
 
 
+def test_a_frame_edited_after_the_resolver_ran_is_skipped_not_overwritten(tmp_path, monkeypatch):
+    """The race the `processing_history` rule exists to lose gracefully.
+
+    `_resolve_reextract_targets` evaluates the rule once, at enqueue time, and
+    nothing locks these frames for the duration of the run — so a replace-mode
+    crop, upscale, LUT or detection crop landing between enqueue and the frame's
+    turn leaves a row whose pixels are no longer the extracted frame. The worker
+    used to re-check nothing but `source_timestamp_ms is not None` and would
+    silently discard that edit, which is the one outcome the rule prevents.
+
+    The edit is written from inside `render_at_timestamps` — the executor hop
+    immediately before the overwrite — through a *separate* sqlite connection, so
+    it is a genuine cross-session write and the worker's cached row is stale
+    exactly as it would be in the field. `long_edge=160` makes the assertion
+    byte-level: any rewrite grows the frame to the fixture's native 320x240.
+    """
+    import json
+    import sqlite3
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _video, frames = await _triage(env, ds["id"], long_edge=160)
+            assert len(frames) >= 2, "need a frame that is not the first of the run"
+
+            async with env.Session() as db:
+                rows = [await db.get(Image, f.id) for f in frames]
+            rows.sort(key=lambda r: r.source_timestamp_ms)   # the worker's order
+            doomed = rows[-1]
+            before = Path(doomed.file_path).read_bytes()
+            doomed_ts = float(doomed.source_timestamp_ms)
+            doomed_id = doomed.id
+
+            db_file = tmp_path / "test.db"
+            original = video_extract.render_at_timestamps
+
+            def edit_then_render(src, timestamps, **kwargs):
+                if timestamps and timestamps[0] == doomed_ts:
+                    conn = sqlite3.connect(db_file, timeout=30)
+                    try:
+                        conn.execute(
+                            "UPDATE images SET processing_history = ? WHERE id = ?",
+                            (json.dumps([{"op": "upscale", "at": "2026-01-01T00:00:00"}]),
+                             doomed_id),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                return original(src, timestamps, **kwargs)
+
+            monkeypatch.setattr(video_extract, "render_at_timestamps", edit_then_render)
+
+            _payload, jobs = await _reextract_and_wait(
+                env, image_ids=[r.id for r in rows]
+            )
+            assert [j["status"] for j in jobs] == ["completed"], jobs
+            result = jobs[0]["result_data"]
+            assert result["skipped_edited"] == 1
+            assert result["failed"] == 0
+            assert result["rewritten"] == len(rows) - 1
+
+            # The pixels the edit produced are still there, byte for byte.
+            async with env.Session() as db:
+                row = await db.get(Image, doomed_id)
+            assert Path(row.file_path).read_bytes() == before
+            assert row.width == 160
+            assert [h["op"] for h in row.processing_history] == ["upscale"], \
+                "pass 2 appended its own entry to a frame it was told to leave alone"
+
+    run(scenario())
+
+
 def test_the_video_scope_can_be_narrowed_to_one_subfolder(tmp_path):
     """The scope the extraction-history rows have to hand — they know a video and
     a subfolder, never a list of ids."""

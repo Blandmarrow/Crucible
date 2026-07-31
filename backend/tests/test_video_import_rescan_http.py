@@ -158,6 +158,47 @@ def test_an_undecodable_source_video_leaves_no_orphan_file(tmp_path):
     run(scenario())
 
 
+def test_any_probe_failure_leaves_no_orphan_file(tmp_path, monkeypatch):
+    """`UnreadableVideoError` was the *only* exception that removed the copy.
+
+    `probe_and_poster` shields `generate_poster` alone, so `probe_video` still
+    raises cv2's lazy `ImportError` on a headless host, a raw `cv2.error` or a
+    `MemoryError` straight through — and every one of those left behind exactly
+    the orphan the narrow catch was written to prevent. Upload's
+    `_ingest_upload_sync` already caught `BaseException`; this is the same file
+    landing by a different route.
+    """
+    from backend.services import dataset_service
+
+    def boom(video_path, poster_path):
+        raise MemoryError("decoder asked for 4 GB")
+
+    monkeypatch.setattr(dataset_service, "probe_and_poster", boom)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            src = tmp_path / "src"
+            src.mkdir()
+            (src / "clip.mp4").write_bytes(mp4_bytes())
+
+            r = await env.client.post(
+                f"{API}/datasets/{ds['id']}/import",
+                json={"folder_path": str(src), "include_videos": True},
+            )
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["videos_added"] == 0
+            assert job["result_data"]["failed_count"] == 1
+
+            assert list((Path(ds["folder_path"]) / "videos").glob("*.mp4")) == [], \
+                "the copy survived a non-UnreadableVideoError probe failure"
+            async with env.Session() as db:
+                assert (await db.execute(select(Video))).scalars().all() == []
+
+    run(scenario())
+
+
 def test_rescan_registers_a_video_dropped_into_videos(tmp_path):
     """The image walk is images_dir.rglob("*"), so videos/ is invisible to it —
     without the second pass a hand-copied video stays permanently unknown."""

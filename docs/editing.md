@@ -8,7 +8,7 @@ Available from: the selection toolbar in the gallery, the **Bulk Edit** sidebar 
 
 Select any images in the gallery (checkbox click), **shift+click** a checkbox to extend the selection as a contiguous range (re-shift-clicking replaces the previous range without affecting independently-selected images outside it), or use **Space** while viewing an image in the detail view. Selections persist across dataset navigation — the selection toolbar and every action modal show a **per-dataset badge breakdown** so you can always see which datasets your selected images come from (images from a dataset other than the current one are highlighted in amber as a warning).
 
-Bulk score, upscale, LUT, detect, detection-crop, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
+Bulk score, upscale, LUT, detect, detection-crop, thumbnail regeneration, and rename operations all support a **quality flag exclusion** filter to skip flagged images without deleting them.
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
@@ -17,8 +17,6 @@ Bulk score, upscale, LUT, detect, detection-crop, and rename operations all supp
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
 - **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM 2.1 / SAM 3 text-prompt segmentation on the selection
 - **Crop to detected subject** — batch-crop selected images to their detection boxes with padding and aspect-ratio snap → [details](detection.md#crop-to-detected-subject)
-- **Batch crop** — crop selected images to a target aspect ratio (center, top-left, or custom anchor)
-- **Batch resize** — resize the longest side of selected images to a target pixel count (downscale only)
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
 - **Merge tags** — drop redundant tags within each selected caption (e.g. `tail` when `long tail` is present) and collapse exact duplicates; also available per-image from the detail view → [details](tag-consolidation.md)
 - **Set source/license** — write source name, source URL, license, and attribution across the selection. Each field has its own mode: **Keep** (leave it alone), **Set** (write this value), or **Inherit** (clear it so the image follows its dataset default) → [details](provenance.md)
@@ -51,7 +49,6 @@ Apply 3D colour look-up tables (`.cube` or `.3dl`) to images:
 
 Available from: the **LUT** button in the ImageDetailPage toolbar (mutually exclusive with Crop and Upscale), the **LUT** modal in SelectionToolbar, and the **Apply LUT** tab on the Bulk Edit page.
 
-### Crop & Resize
+### Crop
 
 - **Crop** — by default creates a new image record (non-destructive); toggle **Replace** to overwrite the source instead; choose aspect ratio, anchor point, and optional output pixel dimensions; supports atomic crop + upscale in one step. Replace + upscale on a BMP/GIF/TIFF/AVIF saves as PNG (above); it is refused with a message naming the file if something untracked already occupies that name
-- **Resize** — downscale the longest side of selected images to a target pixel count (original untouched)

@@ -48,7 +48,18 @@ needs a Technical re-run. The Statistics panel says as much in place of a bare "
 An image whose file cannot be read — corrupt, truncated, or a format the decoder does
 not handle — records **no** technical scores rather than zeros. It appears as unscored,
 which is what it is; previously it was stored as a pitch-black, perfectly uniform,
-out-of-focus image and counted toward the dataset's technical coverage.
+out-of-focus image and counted toward the dataset's technical coverage. The same now holds
+for Aesthetic, Watermark and NSFW: an image one of them could not score is left blank
+instead of being recorded as a confident 0.
+
+**Photo datasets scored before this release may need re-scoring.** Until 2026-07-30 the
+GPU scorers — Aesthetic, Watermark, NSFW and the CLIP/DINOv2 embeddings — read the stored
+pixels without applying a photo's EXIF *rotation* tag, while the Technical scorer always
+applied it. On a library of camera or phone photos that means those scores and embeddings
+describe a sideways image, and disagree with the technical scores computed in the same run.
+Generated images (PNG/WebP out of ComfyUI) carry no rotation tag and are unaffected. If your
+dataset is photographs, re-run the affected scorers; the embeddings matter most, since style
+similarity compares them against each other.
 
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
@@ -94,7 +105,7 @@ The watermark score flags *that* an image has a watermark, not where it is — t
 
 ## Duplicate resolution
 
-After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids. Each group offers:
+After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids, oldest first, with a green outline and a **kept** label on the one the scan chose to keep. The group header names the distance threshold actually in force, from Settings → Thresholds. Each group offers:
 
 - **Keep best** — retains the image with the highest aesthetic score and deletes the rest
-- **Keep first** — retains the earliest-uploaded image and deletes the rest
+- **Keep first** — retains the image marked *kept*, which is always first in the group, and deletes the rest

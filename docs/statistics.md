@@ -4,10 +4,12 @@ Inspect the composition of a dataset — score distributions, caption lengths, t
 
 Available from: the **Stats** sidebar item on any dataset page.
 
+Everything here describes the dataset's **images**. Videos are counted separately and appear on the dataset card rather than on this page → [Videos](video.md).
+
 - 15+ interactive histograms: aesthetic, blur, noise, uniformity, color, saturation, brightness, watermark, megapixels, file size, aspect ratio, caption length, caption token distribution, style similarity, quality flags
   - **Caption token distribution** uses GPT-2 BPE tokenisation and highlights captions that exceed CLIP's 77-token truncation limit
 - Editable histogram bucket edges — rebucketing runs entirely client-side against raw score arrays
-- Top-500 tag frequency chart and tag co-occurrence matrix
+- Top-20 tag frequency chart (the full 500 are in the tag CSV) and tag co-occurrence matrix
 - The **Summary** section includes a score guide table (metric, value range, flag threshold, detection method) and score coverage bars showing what percentage of images have been scored for each metric
 - The **Licenses** panel (in the Summary section) breaks the dataset down by *effective* license — the image's own value, or the dataset default it inherits — as a table of License / Commercial use / Images / Share. A warning badge counts images with no license at either level. Click any row to open a filtered thumbnail grid of exactly those images, including the "No license" row. Only the largest license buckets are listed individually; a footnote counts the remainder (a scrape folder can produce a free-text license per image) and points you at the gallery's license filter to reach them → [details](provenance.md)
 - The **Detections & Masks** section audits object-detection/mask data before it feeds export or training: overview cards (total detections, % of images with detections, distinct labels, bbox-only count, images with no detections), a label distribution, a per-model breakdown, and detection-score, mask-coverage, and detections-per-image histograms. Mask coverage is an approximate percentage of the image each mask covers, useful for spotting masks that are too small (<2%) or that swallowed the whole frame (>95%). Clicking a bar opens the same filtered thumbnail grid — e.g. jump straight to the suspicious masks. The section live-updates while a detection job runs

@@ -10,7 +10,7 @@ Browser-local preferences, each taking effect immediately:
 - Selection checkbox size: 14–32 px (default 18) — the size of the selection checkbox on gallery thumbnails. A live preview sits next to the slider, and open galleries update as you drag
 - Subfolder rename on move: *Rename to subfolder name* (default) or *Keep original filenames* — when disabled, moving images to a subfolder updates their subfolder metadata only, without renaming the files
 - License badge on cards (off by default) — shows each image's effective license on its gallery card, including a muted **No license** badge for images with none at either the image or dataset level. Applies immediately to every open gallery, and is not affected by the gallery toolbar's reset button (which is why it sits outside **Gallery defaults**). Off by default because most datasets are single-source, where a badge on every card is noise → [details](provenance.md)
-- **Gallery defaults** — applied on first visit to a dataset (session state takes precedence on subsequent visits): default sort order, default caption filter (All / Captioned only / Uncaptioned only), default quality flag filter
+- **Gallery defaults** — applied on first visit to a dataset, after which the filters you last used there take precedence (they are remembered per dataset and survive a browser restart; the gallery toolbar's **Reset filters** button clears them): default sort order, default caption filter (All / Captioned only / Uncaptioned only), default quality flag filter
 
 ## Captioning
 
@@ -23,6 +23,7 @@ Browser-local preferences, each taking effect immediately (applied once when the
 - Strip refusals (default on)
 - Rename on caption (default off)
 - Save backup (default off)
+- **Reset remembered Captioning configuration** — forgets the Captioning page's remembered setup so the defaults above apply again on the next visit. It clears the global setup *and* the remembered filters for **every** dataset, not just the one you last used
 
 ## UI Behavior
 

@@ -25,8 +25,16 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   only `commit()` sat *outside* the loop, so the blast radius was not one image's stale
   geometry but every image the run had already overwritten. The note above understates any
   instance where the commit is not per item, and that is the question to ask of a loop, not
-  just "what runs between the write and the commit". Tier 2 is now `routers/images.py`'s
-  single crop and `routers/detection.py`'s crop worker.
+  just "what runs between the write and the commit".
+
+  **Amended again 2026-07-31:** `routers/detection.py`'s `crop_to_detection` was the third
+  instance of that same worse shape — an un-`try`-wrapped `generate_thumbnail` after the
+  `tmp_path.replace`, and the loop's only `commit()` after the loop — so it is **fixed**,
+  not milder, and now follows the Tier-1 order with a per-image commit and a
+  `counts["thumbnails_stale"]` epilogue. Tier 2 is now `routers/images.py`'s single crop
+  alone, which keeps the milder label honestly: it handles one image, so a raise strands
+  only that image's geometry and history entry, and there is no loop to widen the blast
+  radius.
 - **Tier 3 — copy-mode branches that cut the thumbnail before the row insert**
   (`routers/lut.py`, `routers/upscaling.py`, `routers/detection.py`, `routers/images.py`'s
   new-file crop worker). A mid-loop raise orphans files with zero rows; nothing 404s.

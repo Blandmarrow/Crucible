@@ -27,7 +27,7 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-// The four jobs that re-cut an image thumbnail as a best-effort post-commit
+// The five jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
 // the five forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
@@ -35,7 +35,7 @@ const PROMPT_JOB_TYPE = "comfy_prompts";
 // because TopBar is always mounted — and a 400-frame re-extraction is exactly
 // the job you walk away from.
 const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
-  "batch_lut", "batch_upscale", "crop_upscale", "video_reextract",
+  "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "video_reextract",
 ]);
 
 const PAGE_LABELS: Record<string, string> = {

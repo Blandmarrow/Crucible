@@ -1002,7 +1002,14 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             replace = cfg["replace"]
             dest_subfolder = cfg["dest_subfolder"]  # None = inherit source subfolder
-            counts = {"cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0, "failed": 0}
+            # `thumbnails_stale` counts replace-mode crops whose *preview* could not
+            # be recut in the post-commit epilogue. The image itself is correct and
+            # committed; only the gallery tile is stale, and the realistic trigger
+            # (a full volume, a read-only thumbnails/) hits every image in the run.
+            counts = {
+                "cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0,
+                "failed": 0, "thumbnails_stale": 0,
+            }
 
             # Occupied/planned thumbnail stems for the non-replace path, keyed by
             # thumbnail directory: matched images can span multiple datasets (each
@@ -1065,8 +1072,6 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                             "message": f"Failed: {exc}",
                         })
                         continue
-                    if img.thumbnail_path:
-                        await loop.run_in_executor(None, generate_thumbnail, str(src_path), img.thumbnail_path)
                     now = datetime.now(timezone.utc)
                     img.width = info["width"]
                     img.height = info["height"]
@@ -1084,7 +1089,33 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     }]
                     # Replace-mode crop changed the image geometry: remap the
                     # image's detections into the crop frame (drop ones outside).
+                    # In the same transaction as the geometry it describes.
                     await remap_detections_for_crop(session, img.id, rect, old_size)
+                    # Nothing fallible between the (already-done) overwrite and this
+                    # commit — a raise before here would roll back the geometry,
+                    # processing_history and detection remaps of *every* image the
+                    # loop has already overwritten on disk (PM-013). Committing per
+                    # image is what bounds the damage to the one that failed.
+                    await session.commit()
+
+                    # --- epilogue: best-effort, cannot undo the crop ---
+                    # `expire_on_commit=False` (backend/database.py) keeps `img`
+                    # readable after the commit without a refresh.
+                    if img.thumbnail_path:
+                        try:
+                            await loop.run_in_executor(
+                                None, generate_thumbnail, str(src_path), img.thumbnail_path
+                            )
+                        except Exception as exc:
+                            # A stale thumbnail is cosmetic; the cropped image is
+                            # committed and serves. Counted rather than merely
+                            # logged so the run can say so: TopBar reads this count
+                            # and points at Bulk Edit → Thumbnails.
+                            counts["thumbnails_stale"] += 1
+                            logger.warning(
+                                "Detection crop: thumbnail for %s could not be "
+                                "regenerated: %s", img.filename, exc,
+                            )
                     last_image_id = img.id
                 else:
                     dest_images = src_path.parent

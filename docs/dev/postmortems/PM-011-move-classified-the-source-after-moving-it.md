@@ -83,9 +83,12 @@ thumbnail. Two follow-up commits closed that:
   filesystem untouched. The condition is broader than "another dataset" — a registered file
   moved out of the datasets tree entirely 403s from `utils.safe_dataset_path` just the same.
   Files with no DB row still move anywhere.
-- The directory branch now prefix-rewrites `Image.thumbnail_path` / `Video.poster_path` when
-  the derived path is *inside* the moved tree (a poster is; an image's thumbnail, one level
-  up in `{ds}/thumbnails/`, is not).
+- The directory branch **did** prefix-rewrite `Image.thumbnail_path` / `Video.poster_path`
+  when the derived path was inside the moved tree (a poster is; an image's thumbnail, one
+  level up in `{ds}/thumbnails/`, is not). Past tense as of V-21: once the bullet below added
+  the containment guard, any folder holding a registered `file_path` was refused before the
+  rewrite could run, so the rewrite had nothing left to rewrite and was deleted. It went with
+  the permission it existed to serve. See `docs/dev/file-browser.md`.
 - The directory branch later got the containment guard too — it had been fixed on the file
   branch only, which a subsequent review caught (V-02's twin, V-01). Its rows are now loaded
   before `shutil.move` so the 409 can land with the filesystem untouched, and the predicate

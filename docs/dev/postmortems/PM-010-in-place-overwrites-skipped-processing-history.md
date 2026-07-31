@@ -80,11 +80,14 @@ Commit `7f5d895`. `images._record_in_place(img, op, **params)` gave the five sil
 `routers/images.py` a record — but note what it did **not** do, because the original wording
 here ("the single writer … one implementation rather than four") sent reviewers looking for a
 choke point that was never built. That commit touched `routers/images.py` alone. The helper is
-the single writer *within that module*, called from its five sites (`:954`, `:1012`, `:1089`,
-`:1295`, `:1330`); the other writers were never converted and are still hand-rolled
-list-concat blocks — `routers/lut.py:211`, `routers/upscaling.py:211`,
-`routers/detection.py:1077` and `routers/videos.py:1574` (added later, for `reextract`). So
-**five implementations**, not one. Nothing is behaviourally wrong: all five use list-concat
+the single writer *within that module*, called from its five sites — `batch_resize`,
+`batch_crop` (op `crop_aspect`), the single `resize`, replace-mode `crop`, and the
+`crop_upscale` replace job; the other writers were never converted and are still hand-rolled
+list-concat blocks, one each in `routers/lut.py` (`lut`), `routers/upscaling.py` (`upscale`),
+`routers/detection.py` (`crop_to_detection`) and `routers/videos.py` (`reextract`, added
+later). So **five implementations**, not one. Cited by symbol rather than by line: the nine
+line numbers this paragraph carried had all drifted within three weeks, which is its own
+small lesson about postmortems that enumerate call sites. Nothing is behaviourally wrong: all five use list-concat
 reassignment plus an `updated_at` bump, which is what the invariant requires. But a reviewer
 checking a new path cannot grep for one call, which is why § Root cause's description of "hand-rolled
 list-concat blocks" still reads as a description of the tree today rather than of the tree
@@ -100,8 +103,15 @@ See `docs/dev/video-reextract.md` § Target resolution.
 
 ### Status & date
 
-MITIGATED — the five paths are fixed and the helper is the choke point, but nothing
-structurally prevents a *new* in-place path from skipping it; only review catches that. The
-two unreachable batch endpoints remain unreachable and untestable over HTTP. Found in code
-review of the `experimental-video-support` branch, not in production.
-Last reviewed for staleness: 2026-07-28.
+MITIGATED — the five paths are fixed and the helper is the choke point within
+`routers/images.py`, but nothing structurally prevents a *new* in-place path from skipping
+it; only review catches that, and four writers sit outside the helper entirely.
+
+**Amended 2026-07-31:** the sentence that used to close this section — that the two batch
+endpoints remain unreachable and untestable over HTTP — is no longer true and contradicted
+the § Why it wasn't caught note eleven lines above it. PM-018 moved both above the
+parameterized routes on 2026-07-31; they execute, and `backend/tests/test_batch_resize_crop_http.py`
+covers them.
+
+Found in code review of the `experimental-video-support` branch, not in production.
+Last reviewed for staleness: 2026-07-31.

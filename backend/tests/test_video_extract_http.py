@@ -21,8 +21,10 @@ versioning can still bring it back.
 
 import asyncio
 import shutil
+import time
 from collections import namedtuple
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -55,6 +57,10 @@ SHOTS_MP4 = mp4_shots_bytes()
 
 GB = 2 ** 30
 _Usage = namedtuple("_Usage", "total used free")
+
+# The four detector keys `_detect_with_progress` reads out of a job config. Only
+# the loop around the call is under test, so the values just have to be present.
+_CFG = {"sensitivity": 3.0, "min_shot_ms": 400, "detector_frame_skip": 0, "max_shots": 200}
 
 
 def _usage(free_bytes: int):
@@ -1638,6 +1644,249 @@ def test_every_progress_payload_names_its_video(tmp_path, monkeypatch):
             ), progress
 
     run(scenario())
+
+
+def test_extraction_backfills_a_null_duration_before_it_detects(tmp_path):
+    """Step 1 of `_run_extraction`, which no test reached: the *job* measures a
+    missing duration, not just the probe.
+
+    `test_probe_backfills_a_missing_duration` covers the probe endpoint, and a
+    video can reach extraction without ever being probed — "add to the existing
+    subfolder" re-runs off the stored row. A NULL here breaks percentage, tail
+    trim and sample positions alike, so it is corrected before anything reads it.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                row.duration_ms = None
+                await db.commit()
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], frames_per_shot=1)
+            assert jobs[0]["status"] == "completed", jobs
+
+            async with env.Session() as db:
+                assert (await db.get(Video, video["id"])).duration_ms > 3000
+
+    run(scenario())
+
+
+def test_extraction_says_so_when_the_duration_cannot_be_measured(tmp_path, monkeypatch):
+    """The other half of step 1 — a container that reports no duration and will
+    not seek. It is not an error: extraction proceeds without a percentage and
+    with the tail trim ignored, and the user is told exactly that rather than
+    watching a bar that never moves.
+    """
+    async def scenario():
+        from backend.routers import videos as videos_router
+        from backend.workers.progress import broadcaster
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            async with env.Session() as db:
+                row = await db.get(Video, video["id"])
+                row.duration_ms = None
+                await db.commit()
+
+            seen: list[dict] = []
+            real_emit = broadcaster.emit
+
+            async def capturing(job_id, payload):
+                seen.append(payload)
+                return await real_emit(job_id, payload)
+
+            monkeypatch.setattr(broadcaster, "emit", capturing)
+            monkeypatch.setattr(videos_router, "measure_duration_ms", lambda _p: 0)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], frames_per_shot=1)
+            assert jobs[0]["status"] == "completed", jobs
+
+            warned = [p for p in seen if "no usable duration" in str(p.get("message", ""))]
+            assert warned, [p.get("message") for p in seen]
+            assert warned[0]["phase"] == "detecting"
+            assert warned[0]["done"] == 0 and warned[0]["total"] == 0, warned[0]
+
+            # Still NULL: an unmeasurable duration must not be written back as 0,
+            # which reads as "known to be zero-length" everywhere downstream.
+            async with env.Session() as db:
+                assert (await db.get(Video, video["id"])).duration_ms is None
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# _detect_with_progress — the polling loop
+# ---------------------------------------------------------------------------
+#
+# The loop body only runs when detection outlives one `DETECT_EMIT_INTERVAL`
+# (0.5 s). Every fixture here is ~1200 ms of 320x240, which detects in well
+# under that, so the whole block — the cancel check, the frame-count message,
+# the ETA and the emit itself — was never executed by the suite. That matters
+# more here than the line count suggests: PM-008 was a defect in this job's
+# progress accounting, and its write-up named exactly this gap ("runs against
+# short fixtures, where detection emits nothing and the defect cannot
+# manifest"). `test_every_progress_payload_names_its_video` above asserts the
+# pinned-zero invariant across the phases it reaches; this emit site is not one
+# of them.
+
+
+def _stub_detection(monkeypatch, *, total=100, seconds=0.2, on_stop=None):
+    """Replace `detect_shots` with a slow, cancellable stub that reports frames.
+
+    Real detection on these fixtures is far too fast to poll, and lengthening a
+    fixture until it is slow enough buys a machine-dependent test. The stub runs
+    in the executor exactly as the real call does, so the loop under test is
+    unchanged.
+    """
+    def fake_detect_shots(_src, *, progress=None, **_kw):
+        progress.total_frames = total
+        progress.stop_hook = on_stop
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if progress.cancel:
+                return [], "cancelled"
+            progress.frames_read = min(progress.frames_read + 5, total)
+            time.sleep(0.01)
+        return [], "adaptive"
+
+    monkeypatch.setattr(video_extract, "detect_shots", fake_detect_shots)
+
+
+def _fake_video(video_id="v1"):
+    """The five attributes `_detect_with_progress` reads off a `Video`."""
+    return SimpleNamespace(
+        id=video_id, duration_ms=5000,
+        crop_x=None, crop_y=None, crop_w=None, crop_h=None,
+        trim_start_ms=0, trim_end_ms=0,
+    )
+
+
+def test_the_detection_loop_emits_a_frame_count_with_its_counters_pinned_to_zero(monkeypatch):
+    """The in-loop emit, which no fixture-driven test reaches.
+
+    Asserted on `done`/`total` rather than on the message alone: this phase
+    decodes frames but *writes* none, and the job's counter means one thing for
+    the whole run — frames a gallery refetch would see. `jobStore` merges
+    partials by job id, so emitting a decoded-frame count here would drive the
+    TopBar pill to a number the gallery can never reach, then snap it back. That
+    is PM-008 verbatim.
+    """
+    async def scenario():
+        from backend.routers import videos as videos_router
+        from backend.workers.progress import broadcaster
+
+        seen: list[dict] = []
+        real_emit = broadcaster.emit
+
+        async def capturing(job_id, payload):
+            seen.append(payload)
+            return await real_emit(job_id, payload)
+
+        monkeypatch.setattr(broadcaster, "emit", capturing)
+        monkeypatch.setattr(videos_router, "DETECT_EMIT_INTERVAL", 0.01)
+        _stub_detection(monkeypatch)
+
+        shots, method = await videos_router._detect_with_progress(
+            "job-detect", Path("unused.mp4"), video=_fake_video(), cfg=_CFG,
+        )
+        assert (shots, method) == ([], "adaptive")
+
+        in_loop = [p for p in seen if "frames" in str(p.get("message", ""))]
+        assert in_loop, [p.get("message") for p in seen]
+        for p in in_loop:
+            assert p["phase"] == "detecting"
+            assert p["video_id"] == "v1"
+            assert p["done"] == 0 and p["total"] == 0, p
+        # The count is real, not a placeholder: the stub reports frames as it
+        # goes, so the last emit must have seen more than the first.
+        counts = [int(p["message"].split("—")[1].split()[0].replace(",", "")) for p in in_loop]
+        assert counts == sorted(counts), counts
+        assert counts[-1] > 0, counts
+
+    run(scenario())
+
+
+def test_the_detection_loop_withholds_an_eta_until_it_can_mean_something(monkeypatch):
+    """No ETA in the first 5 s, one after — and the clock is faked, not waited on.
+
+    `videos.time` is rebound rather than `time.monotonic` patched globally,
+    because the event loop reads the same clock: a monotonic that jumps three
+    seconds per call would derange `asyncio.wait`'s own timeouts.
+    """
+    async def scenario():
+        from backend.routers import videos as videos_router
+        from backend.workers.progress import broadcaster
+
+        real_time = time
+
+        class _Clock:
+            """Advances 3 s per read, so `elapsed` crosses 5.0 on the 2nd poll."""
+            def __init__(self):
+                self.t = 0.0
+
+            def monotonic(self):
+                self.t += 3.0
+                return self.t
+
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+        seen: list[dict] = []
+        real_emit = broadcaster.emit
+
+        async def capturing(job_id, payload):
+            seen.append(payload)
+            return await real_emit(job_id, payload)
+
+        monkeypatch.setattr(broadcaster, "emit", capturing)
+        monkeypatch.setattr(videos_router, "DETECT_EMIT_INTERVAL", 0.01)
+        monkeypatch.setattr(videos_router, "time", _Clock())
+        _stub_detection(monkeypatch, seconds=0.3)
+
+        await videos_router._detect_with_progress(
+            "job-eta", Path("unused.mp4"), video=_fake_video(), cfg=_CFG,
+        )
+
+        messages = [p["message"] for p in seen if "frames" in str(p.get("message", ""))]
+        assert len(messages) >= 2, messages
+        assert "left" not in messages[0], messages[0]
+        assert any("left" in m for m in messages), messages
+
+    run(scenario())
+
+
+def test_a_cancel_during_detection_reaches_the_detector_not_just_the_queue(monkeypatch):
+    """Setting `progress.cancel` is what actually stops the run; `stop_hook` is
+    `SceneManager.stop()`, published so the event loop can end a decode already
+    in flight rather than waiting out the file."""
+    async def scenario():
+        from backend.routers import videos as videos_router
+        from backend.workers.job_queue import job_queue
+
+        stopped: list[bool] = []
+        monkeypatch.setattr(videos_router, "DETECT_EMIT_INTERVAL", 0.01)
+        _stub_detection(monkeypatch, seconds=5.0, on_stop=lambda: stopped.append(True))
+
+        job_id = "job-cancel"
+        job_queue.request_cancel(job_id)
+        try:
+            shots, method = await videos_router._detect_with_progress(
+                job_id, Path("unused.mp4"), video=_fake_video(), cfg=_CFG,
+            )
+        finally:
+            job_queue._cancel_requested.discard(job_id)
+
+        # Returned early rather than running the stub's full 5 s.
+        assert (shots, method) == ([], "cancelled")
+        assert stopped == [True], stopped
+
+    run(scenario())
+
 
 def test_the_commit_interval_makes_frames_visible_before_the_job_ends(tmp_path, monkeypatch):
     """`EXTRACT_COMMIT_EVERY` never fires under any other test here — the fixture

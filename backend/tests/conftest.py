@@ -285,6 +285,73 @@ def mp4_shots_bytes(
         return path.read_bytes()
 
 
+def mp4_telecine_bytes(
+    frames: int = 60,
+    size=(320, 240),
+    fps: float = 29.97,
+    shift: int = 7,
+) -> bytes:
+    """A real .mp4 carrying a 3:2 pulldown pattern — the telecine fixture.
+
+    `probe_samples`' telecine pass is gated on ~29.97/30 fps, so **every other
+    `mp4_*` helper here (all 25.0 fps) leaves that branch unreachable** — not
+    under-asserted, never executed. That gate is the whole reason this fixture
+    exists; `fps` must stay inside `abs(fps - 29.97) < 0.2` or the pass it is
+    written for silently does not run and the test still passes.
+
+    Three constraints, each of which quietly breaks detection if changed:
+
+    - **The pan must be whole-frame.** `combing_ratio` averages row differences
+      over the *entire* frame, so a small moving object dilutes to nothing: a
+      50x60 block on this fixture's grating peaks at 0.65, under the 0.9
+      threshold. A full-frame pan of a diagonal grating reads 2.77 combed
+      against 0.51 clean — wide margins on both sides, so encoder noise cannot
+      flip a frame.
+    - **The grating must be diagonal.** `combing_ratio` returns 0.0 when
+      same-parity rows are identical (`d2 < COMBING_D2_FLOOR`), which a purely
+      horizontal pan of purely horizontal stripes produces. The diagonal gives
+      both the vertical detail `d2` needs and the horizontal structure a pan can
+      move.
+    - **>= `PROBE_TELECINE_RUN` frames after the midpoint.** The pass seeks to
+      the middle sample and reads 20 *consecutive* frames from there; 60 leaves
+      room. `telecine_from_series` needs `TELECINE_MIN_SAMPLES` (13) of them.
+
+    The 5-frame cadence is 3 clean : 2 combed, which is what 24 fps film becomes
+    at 30: duty 0.40, mid-range of `TELECINE_DUTY_RANGE`. Phase alignment does
+    not matter — the decision is a lag-5 autocorrelation.
+    """
+    import tempfile
+
+    import cv2
+    import numpy as np
+
+    w, h = size
+    yy, xx = np.mgrid[0:h, 0:w]
+
+    def source(t: int) -> np.ndarray:
+        """One progressive 24 fps frame: the grating panned by `t * shift`."""
+        v = (np.sin((xx + yy + t * shift) / 3.0) * 60 + 128).astype(np.uint8)
+        return np.dstack([v] * 3)
+
+    def weave(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """Even rows from one instant, odd rows from the next — a combed frame."""
+        out = a.copy()
+        out[1::2] = b[1::2]
+        return out
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "telecine.mp4"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+        assert writer.isOpened(), "cv2 could not open an mp4v VideoWriter"
+        for i in range(frames):
+            src = i * 4 // 5  # 24 -> 30
+            writer.write(
+                weave(source(src), source(src + 1)) if i % 5 in (3, 4) else source(src)
+            )
+        writer.release()
+        return path.read_bytes()
+
+
 def mp4_corrupt_bytes(keep_frac: float = 0.6, **kwargs) -> bytes:
     """A real mp4 with its tail cut off — a file cv2 cannot open at all.
 

@@ -27,9 +27,11 @@ Extraction (`docs/dev/video-shots.md`, `docs/dev/video-extract.md`) adds four mo
 `test_video_frames.py` is pure numpy and needs no fixture at all — cropdetect, combing,
 telecine, sharpness, candidate rejection, all documented in `docs/dev/video-heuristics.md`. `test_video_extract.py` is service level, with
 `scenedetect` skipped rather than required, and covers `measure_duration_ms` (including a
-non-seekable stub), probe sampling and its caps, shot boundaries, the empty-list trap, both
+non-seekable stub), probe sampling and its caps, the telecine pass and its 25 fps control,
+shot boundaries, the empty-list trap, both
 uniform fallbacks, cancellation and `render_shot` geometry. `test_video_extract_http.py`
-drives both endpoints end to end. `test_video_lineage_mirrors.py` holds the structural
+drives both endpoints end to end, and additionally pins three parts of `_run_extraction`
+that no fixture-driven run reaches — see § Branches no fixture reaches below. `test_video_lineage_mirrors.py` holds the structural
 mirror guard described in CLAUDE.md § Key invariants plus behavioural round-trips through
 snapshot/restore, both `duplicate_dataset` branches, cross-dataset copy and move, and video
 delete.
@@ -44,7 +46,7 @@ this way. Both are cv2- and `scenedetect`-gated.
 
 ## Fixtures
 
-Two fixtures join `mp4_bytes` in `conftest.py`. `mp4_shots_bytes` writes hard cuts between
+Three fixtures join `mp4_bytes` in `conftest.py`. `mp4_shots_bytes` writes hard cuts between
 distinctly-coloured shots and must stay at **320×240 with ≥24 frames per shot**:
 `AdaptiveDetector` auto-sizes its edge kernel from the frame size and finds nothing at all
 at 64×48, and `min_scene_len` merges anything shorter into its neighbour. `frame_colour()`
@@ -55,6 +57,14 @@ it was meant to be: truncating an `mp4v` file removes the `moov` atom, which
 will-not-open fixture, not the mid-extraction one it was intended as. The circuit breaker is
 tested by injecting failures instead, which is deterministic.
 
+`mp4_telecine_bytes` writes 60 frames of 3:2 pulldown at **29.97 fps**, and the fps is the
+entire point: `probe_samples`' telecine pass is gated on ~29.97/30, so while every other
+`mp4_*` helper wrote 25.0 that branch was unreachable — never executed rather than
+under-asserted, which no assertion in a test could have revealed. Its three constraints are
+in the helper's docstring; the one worth knowing before editing it is that the pan must be
+**whole-frame**, because `combing_ratio` averages over the entire frame and a small moving
+object dilutes to 0.65 against a 0.9 threshold. Full-frame reads 2.77 combed vs 0.51 clean.
+
 The rescan-collision rule is pinned in three separable parts, since each can break alone:
 same-stem containers rescanned together get distinct posters; an ordinary rescan renames
 *nothing*; and an upload after a disambiguation cannot take the poster stem whose filename
@@ -64,6 +74,32 @@ The repo ships no sample media, so `conftest.mp4_bytes()` synthesizes a real `.m
 `cv2.VideoWriter`. Use the `mp4v` fourcc: `avc1` needs an h264 encoder the opencv-python
 wheel does not carry and its writer silently fails to open. `VideoWriter` cannot write to a
 buffer, hence the temp file.
+
+## Branches no fixture reaches
+
+A fixture's *properties* decide which code the suite can execute at all, and three
+extraction branches sat unexecuted because every fixture here is short and 25 fps. None
+were under-asserted; each was unreachable, so no test could have failed on them. They are
+grouped here because the next one will be found the same way — by intersecting a coverage
+run with the branch diff, not by reading.
+
+- **The telecine pass** (`probe_samples`) — gated on ~29.97/30 fps. Fixed by
+  `mp4_telecine_bytes` above, paired with a 25 fps control so the test can tell detection
+  from a hardcoded `True`.
+- **`_detect_with_progress`' polling loop** — its body runs only when detection outlives one
+  `DETECT_EMIT_INTERVAL` (0.5 s), and these fixtures detect in far less. Covered by stubbing
+  `detect_shots` with a slow, cancellable fake rather than by lengthening a fixture, which
+  would buy a machine-dependent test. The ETA branch needs `elapsed > 5.0`, faked by
+  rebinding `videos.time` — **not** by patching `time.monotonic` globally, since the event
+  loop reads the same clock and a jumping monotonic deranges `asyncio.wait`'s own timeouts.
+  This is where PM-008 lived, and its write-up named this exact gap.
+- **`_run_extraction`'s NULL-duration step** — both halves. A video can reach extraction
+  without ever being probed, so the job measures a missing duration itself; when it cannot,
+  it says so and continues rather than failing, and must not write the 0 back.
+
+The loop's emits are asserted on `done`/`total` being pinned to zero, not on the message:
+detection decodes frames but writes none, and `jobStore` merges partials by job id, so a
+decoded-frame count here drives the TopBar pill to a number the gallery can never reach.
 
 ## cv2 in CI, and the skip convention
 

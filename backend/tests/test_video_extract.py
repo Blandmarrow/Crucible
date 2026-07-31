@@ -19,7 +19,13 @@ import pytest
 
 from backend.services import video_extract as ve
 from backend.services.video_service import UnreadableVideoError, measure_duration_ms
-from backend.tests.conftest import frame_colour, mp4_bytes, mp4_corrupt_bytes, mp4_shots_bytes
+from backend.tests.conftest import (
+    frame_colour,
+    mp4_bytes,
+    mp4_corrupt_bytes,
+    mp4_shots_bytes,
+    mp4_telecine_bytes,
+)
 
 pytest.importorskip("cv2", reason="opencv is not installed")
 
@@ -42,6 +48,15 @@ def flat_mp4(tmp_path_factory) -> Path:
     """A continuous grey ramp — no cuts anywhere in it."""
     p = tmp_path_factory.mktemp("fixtures") / "flat.mp4"
     p.write_bytes(mp4_bytes(frames=40, size=(320, 240)))
+    return p
+
+
+@pytest.fixture(scope="module")
+def telecine_mp4(tmp_path_factory) -> Path:
+    """60 frames of 3:2 pulldown at 29.97 fps — the only fixture whose fps
+    clears the telecine gate. See `conftest.mp4_telecine_bytes`."""
+    p = tmp_path_factory.mktemp("fixtures") / "telecine.mp4"
+    p.write_bytes(mp4_telecine_bytes())
     return p
 
 
@@ -297,6 +312,34 @@ def test_probe_refuses_a_file_that_will_not_open(tmp_path):
 
 def test_probe_finds_no_crop_in_a_full_frame_source(shots_mp4):
     assert ve.probe_samples(shots_mp4, duration_ms=3600, samples=6)["crop"] is None
+
+
+def test_probe_detects_telecine_in_a_29_97_source(telecine_mp4):
+    """The consecutive-frame pass, end to end through a real decode.
+
+    `telecine_from_series` is unit-tested against synthetic series in
+    `test_video_frames.py`; what this covers is the half that *builds* the
+    series — the extra seek and the run of 20 consecutive `cap.read()`s in
+    `probe_samples`, which the scattered samples cannot supply because a
+    period-5 pattern is invisible to frames taken seconds apart.
+
+    That block sat unexecuted by the entire suite until this fixture existed:
+    it is gated on ~29.97/30 fps and every other `mp4_*` helper writes 25.0,
+    so the condition was constant-False and no assertion here could fail.
+    """
+    r = ve.probe_samples(telecine_mp4, duration_ms=2000, samples=6)
+    assert r["fps"] == pytest.approx(29.97, abs=0.2)
+    assert r["telecine"] is True
+    assert any("pulldown" in w for w in r["warnings"]), r["warnings"]
+
+
+def test_probe_reports_no_telecine_for_a_25_fps_source(shots_mp4):
+    """The gate's other side, and the reason the fixture above is not enough on
+    its own: a test that only ever sees the positive case cannot tell detection
+    from a hardcoded True."""
+    r = ve.probe_samples(shots_mp4, duration_ms=3600, samples=6)
+    assert r["telecine"] is False
+    assert not any("pulldown" in w for w in r["warnings"]), r["warnings"]
 
 
 # ---------------------------------------------------------------------------

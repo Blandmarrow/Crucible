@@ -18,7 +18,7 @@ from backend.models import BackgroundJob, Image, Video
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
-from backend.utils import chunked, contained_path, normalize_subfolder
+from backend.utils import chunked, contained_path, normalize_subfolder, score_columns
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -35,20 +35,34 @@ _TECHNICAL_SCORE_COLUMNS = frozenset({
     "color_score", "saturation_score", "luminance_score",
 })
 
+# **`style_similarity_score` is deliberately excluded**, and this is a boundary,
+# not an oversight. `compute_style_similarity` writes it through a Core bulk
+# `update(Image)` with no per-row load, so it cannot evaluate this predicate at
+# all; letting it clear the bit would declare blur and aesthetic fresh when they
+# are not. Keeping it in the clear universe instead would strand the bit
+# permanently on any dataset that has ever run style similarity. It stays in the
+# *set* universe (`utils.score_columns` — it is a measurement of those pixels),
+# which leaves one corner written down rather than fixed: a row carrying only
+# `style_similarity_score` is marked, then cleared by any later run that measured
+# something. See `docs/dev/scoring.md`.
+_UNREFRESHABLE_SCORE_COLUMNS = frozenset({"style_similarity_score"})
+
 # Every score column the quality job is able to refresh — the universe the
 # `scores_stale` clear predicate covers. Anything a row carries that is *not*
 # here can never be brought up to date by this job, so including it would make
 # the bit un-clearable.
 #
-# **`style_similarity_score` is deliberately absent**, and this is a boundary, not
-# an oversight. `compute_style_similarity` writes it through a Core bulk
-# `update(Image)` with no per-row load, so it cannot evaluate this predicate at
-# all; letting it clear the bit would declare blur and aesthetic fresh when they
-# are not. Listing it here instead would strand the bit permanently on any
-# dataset that has ever run style similarity. See `docs/dev/scoring.md`.
-_JOB_SCORE_COLUMNS = _TECHNICAL_SCORE_COLUMNS | {
-    "aesthetic_score", "watermark_score", "nsfw_score",
-}
+# Derived from the same source as the set site (`utils.record_in_place`), so the
+# two ends of the bit are provably over one set. Derivation is the safe default
+# because the failure directions are asymmetric: a hand-written list that misses
+# an eleventh column **over-clears** — the badge vanishes while a score is stale,
+# silently, which is the exact bug the feature exists to prevent — while a derived
+# set that gains a column this job cannot refresh makes the bit **un-clearable**,
+# a permanent badge that gets reported. `backend/tests/test_scores_stale.py` pins
+# the resulting nine names, so an eleventh score column fails CI with a decision to
+# make rather than either outcome. `_TECHNICAL_SCORE_COLUMNS` above stays an
+# explicit literal: it names what one block writes, not a property of the schema.
+_JOB_SCORE_COLUMNS = score_columns(Image) - _UNREFRESHABLE_SCORE_COLUMNS
 
 
 def _decode_dino_layers(blob: bytes) -> np.ndarray:
@@ -256,8 +270,16 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                 # `is_duplicate` derives from `phash`, which every in-place path
                 # re-derives, so duplicate flags were never stale.
                 #
+                # A run that measured *nothing* clears nothing: `refreshed` is
+                # empty for a pass with only `run_embeddings` or only `run_dino`
+                # ticked (neither writes a score column), and `stale_left` would
+                # then be empty for any row whose job-score columns are all NULL —
+                # clearing the bit having taken no measurement at all. `ScoreRequest`
+                # has no `run_duplicates`; duplicate flagging rides on
+                # `run_technical` below, which does write scores.
+                #
                 # The outer test avoids N pointless UPDATEs on a routine re-score.
-                if img.scores_stale:
+                if img.scores_stale and refreshed:
                     stale_left = {
                         c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None
                     } - refreshed

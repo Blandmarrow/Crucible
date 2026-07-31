@@ -8,6 +8,12 @@ before this column nothing recorded the fact anywhere durable, so the damage
 surfaced weeks later at export, where `exclude_flags` drops images on flags
 computed against pixels that no longer exist.
 
+The bit is set only when the row actually carries a score: an image that has
+never been scored has no measurement to invalidate, and marking it warned about
+"scores measured on pixels that no longer exist" on the commonest workflow there
+is (upload → resize → export). `processing_history` is written either way —
+that divergence is deliberate and is asserted here.
+
 Three kinds of test here:
 
 * **HTTP round-trips** over the four in-place sites reachable without a decoder
@@ -69,12 +75,14 @@ def test_a_new_image_is_not_stale(tmp_path):
     run(scenario())
 
 
-def test_batch_resize_sets_and_commits_the_bit(tmp_path):
+def test_batch_resize_sets_and_commits_the_bit_on_a_scored_image(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             imgs = [await _one_image(env, ds["id"], "a.png"),
                     await _one_image(env, ds["id"], "b.png")]
+            for i in imgs:
+                await _seed_scores(env, i["id"], aesthetic_score=0.4)
 
             r = await env.client.post(
                 f"{API}/images/batch/resize",
@@ -94,11 +102,12 @@ def test_batch_resize_sets_and_commits_the_bit(tmp_path):
     run(scenario())
 
 
-def test_batch_crop_sets_and_commits_the_bit(tmp_path):
+def test_batch_crop_sets_and_commits_the_bit_on_a_scored_image(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             img = await _one_image(env, ds["id"])  # 40x20, AR 2.0
+            await _seed_scores(env, img["id"], aesthetic_score=0.4)
 
             r = await env.client.post(
                 f"{API}/images/batch/crop",
@@ -115,11 +124,12 @@ def test_batch_crop_sets_and_commits_the_bit(tmp_path):
     run(scenario())
 
 
-def test_single_resize_sets_and_commits_the_bit(tmp_path):
+def test_single_resize_sets_and_commits_the_bit_on_a_scored_image(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             img = await _one_image(env, ds["id"])
+            await _seed_scores(env, img["id"], aesthetic_score=0.4)
 
             r = await env.client.post(
                 f"{API}/images/{img['id']}/resize",
@@ -131,13 +141,14 @@ def test_single_resize_sets_and_commits_the_bit(tmp_path):
     run(scenario())
 
 
-def test_single_replace_crop_sets_and_commits_the_bit(tmp_path):
+def test_single_replace_crop_sets_and_commits_the_bit_on_a_scored_image(tmp_path):
     """`replace: true` only. The non-replace crop writes a *new* row, which
     correctly starts False — its pixels have never been scored."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             img = await _one_image(env, ds["id"])
+            await _seed_scores(env, img["id"], aesthetic_score=0.4)
 
             r = await env.client.post(
                 f"{API}/images/{img['id']}/crop",
@@ -251,20 +262,27 @@ def test_the_guard_can_see_a_hand_rolled_append():
 
 
 def test_record_in_place_writes_both_columns_and_cannot_raise():
-    """The helper's whole contract in one place: it sets the history entry, the
-    timestamp and the bit, and it is pure attribute assignment — which is what
-    lets every caller put it between an irreversible `os.replace` and the commit
-    that describes it, rather than in the post-commit epilogue (PM-013)."""
+    """The helper's whole contract in one place: it sets the history entry and the
+    timestamp unconditionally, sets the bit only when there is a score to
+    invalidate, and is pure attribute access and assignment — which is what lets
+    every caller put it between an irreversible `os.replace` and the commit that
+    describes it, rather than in the post-commit epilogue (PM-013).
+
+    Driven against a transient `Image()` rather than a stub, because the helper
+    now reads the class's columns: no session is needed, since every attribute on
+    an unflushed instance is an already-materialised `None`.
+    """
     from backend.utils import record_in_place
 
-    class _Row:
-        processing_history = None
-        updated_at = None
-        scores_stale = False
-
-    row = _Row()
+    row = Image()
+    # A loaded row carries the column's `False`; on a transient instance the
+    # default only lands at flush, so set it here to model the real thing.
+    row.scores_stale = False
     record_in_place(row, "lut", lut="warm.cube", intensity=0.5)
-    assert row.scores_stale is True
+    # Unscored: the history entry is written, the bit is not. The two columns
+    # deliberately diverge — history is the durable "these pixels were rewritten"
+    # record and pass 2's skip guard; the bit qualifies a measurement.
+    assert row.scores_stale is False
     assert len(row.processing_history) == 1
     entry = row.processing_history[0]
     assert entry["op"] == "lut"
@@ -273,13 +291,169 @@ def test_record_in_place_writes_both_columns_and_cannot_raise():
     assert "at" in entry
     assert row.updated_at is not None
 
+    # One score is enough, and the history keeps extending either way.
     # Reassignment, never .append() — SQLAlchemy compares JSON columns by
     # equality, so a mutated-in-place list looks unchanged and the UPDATE is
     # skipped (CLAUDE.md § Key invariants).
     first = row.processing_history
+    row.blur_score = 50.0
     record_in_place(row, "resize", width=10, height=10)
+    assert row.scores_stale is True
     assert row.processing_history is not first
     assert [e["op"] for e in row.processing_history] == ["lut", "resize"]
+
+
+def test_an_in_place_edit_on_an_unscored_image_records_the_history_but_not_the_bit(tmp_path):
+    """The headline of this fix, over a real endpoint.
+
+    `scores_stale` says a *measurement* no longer describes the pixels. An image
+    that has never been scored carries no measurement, so there is nothing to
+    invalidate — marking it put an amber badge, a detail chip and an export
+    warning reading "edited in place after being scored" on rows with no scores
+    and no flags. `processing_history` still records the rewrite unconditionally:
+    it is the durable record and re-extraction's skip guard, and that is the one
+    place the two columns are meant to disagree.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await _one_image(env, ds["id"])
+
+            r = await env.client.post(
+                f"{API}/images/{img['id']}/resize",
+                json={"width": 20, "height": 10, "maintain_ar": False},
+            )
+            assert r.status_code == 200, r.text
+
+            row = await _fresh(env, img["id"])
+            assert row.scores_stale is False
+            assert [h["op"] for h in row.processing_history] == ["resize"]
+
+    run(scenario())
+
+
+def test_the_commonest_workflow_never_warns_at_export(tmp_path):
+    """Upload → batch resize → export, with no scoring anywhere: the export
+    preview must report nothing stale. This is the whole user-visible bug in one
+    assertion."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = [await _one_image(env, ds["id"], "a.png"),
+                    await _one_image(env, ds["id"], "b.png")]
+
+            r = await env.client.post(
+                f"{API}/images/batch/resize",
+                json={"image_ids": [i["id"] for i in imgs], "width": 20, "height": 10,
+                      "maintain_ar": False},
+            )
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+            p = (await env.client.get(f"{API}/export/preview/{ds['id']}")).json()
+            assert p["stale_scores_count"] == 0
+            assert p["stale_scores_will_export"] == 0
+
+    run(scenario())
+
+
+def test_one_score_is_enough_and_style_similarity_counts(tmp_path):
+    """The *set* universe is all ten `*_score` columns, `style_similarity_score`
+    included — it is a measurement of those pixels like any other. (It is out of
+    the *clear* universe, which is a different question; see
+    `test_the_clear_universe_is_the_nine_scores_the_job_writes`.)"""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await _one_image(env, ds["id"])
+            await _seed_scores(env, img["id"], style_similarity_score=0.9)
+
+            r = await env.client.post(
+                f"{API}/images/{img['id']}/resize",
+                json={"width": 20, "height": 10, "maintain_ar": False},
+            )
+            assert r.status_code == 200, r.text
+            assert (await _fresh(env, img["id"])).scores_stale is True
+
+    run(scenario())
+
+
+def test_quality_flags_alone_do_not_mark_a_row_stale(tmp_path):
+    """Flags derive from scores, so a row with flags and no score is not a state
+    the scoring job produces — and the clear predicate ignores flags for the same
+    reason. The two ends stay symmetric."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await _one_image(env, ds["id"])
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                row.quality_flags = {"is_blurry": True}
+                await db.commit()
+
+            r = await env.client.post(
+                f"{API}/images/{img['id']}/resize",
+                json={"width": 20, "height": 10, "maintain_ar": False},
+            )
+            assert r.status_code == 200, r.text
+            assert (await _fresh(env, img["id"])).scores_stale is False
+
+    run(scenario())
+
+
+def test_the_score_universe_is_the_ten_suffixed_columns():
+    """`utils.score_columns` is suffix-derived, so this pins what the suffix
+    currently catches — and, deliberately, what it must not: `dino_layer_scores`
+    is plural (a JSON blob of embeddings, not a score) and `scores_stale` is the
+    bit itself."""
+    from backend.utils import score_columns
+
+    assert score_columns(Image) == frozenset({
+        "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+        "watermark_score", "color_score", "saturation_score", "luminance_score",
+        "style_similarity_score", "nsfw_score",
+    })
+    assert "dino_layer_scores" not in score_columns(Image)
+    assert "scores_stale" not in score_columns(Image)
+
+
+def test_the_clear_universe_is_the_nine_scores_the_job_writes():
+    """`_JOB_SCORE_COLUMNS` is derived from the same source as the set site, minus
+    the one column the job cannot refresh.
+
+    An eleventh `*_score` column fails this test on purpose: derivation makes the
+    default a *loud* failure (a permanently un-clearable bit) rather than the
+    silent one a hand-written list gives (the badge vanishing while a score is
+    stale), and this assertion turns even the loud one into a decision made at
+    review time.
+    """
+    from backend.routers.quality import _JOB_SCORE_COLUMNS, _TECHNICAL_SCORE_COLUMNS
+    from backend.utils import score_columns
+
+    assert _JOB_SCORE_COLUMNS == score_columns(Image) - {"style_similarity_score"}
+    assert _JOB_SCORE_COLUMNS == frozenset({
+        "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+        "watermark_score", "color_score", "saturation_score", "luminance_score",
+        "nsfw_score",
+    })
+    # The technical block's literal names what one block writes; it still has to
+    # be a subset of what the job as a whole can refresh.
+    assert _TECHNICAL_SCORE_COLUMNS <= _JOB_SCORE_COLUMNS
+
+
+def test_no_score_column_is_deferred():
+    """`record_in_place` reads every score column by `getattr` between an
+    irreversible file write and the commit that describes it. A `deferred`
+    column would make that a lazy load — IO on an async session, i.e. a
+    `MissingGreenlet` raised exactly where PM-013 says nothing may raise."""
+    from sqlalchemy import inspect
+
+    from backend.utils import score_columns
+
+    attrs = inspect(Image).attrs
+    deferred = [c for c in score_columns(Image) if getattr(attrs[c], "deferred", False)]
+    assert not deferred, f"score columns must stay eagerly loaded: {deferred}"
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +685,70 @@ def test_an_nsfw_score_the_run_skipped_keeps_the_bit(tmp_path, monkeypatch):
 
             r = await env.client.post(f"{API}/quality/score", json={
                 "dataset_id": ds["id"], "run_aesthetic": True, "run_technical": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            assert (await _fresh(env, img["id"])).scores_stale is True
+
+    run(scenario())
+
+
+def test_a_run_that_measured_nothing_leaves_the_bit_alone(tmp_path, monkeypatch):
+    """A pass with only `run_embeddings` (or only `run_dino`) ticked writes no
+    score column at all, so `refreshed` is empty — and for a row whose *job*-score
+    columns are all NULL, `stale_left` would be empty too and the bit would clear
+    having taken no measurement. The clear is gated on `refreshed` as well.
+
+    `run_aesthetic` and `run_technical` default to **True** in `ScoreRequest`, so
+    both must be passed false explicitly.
+    """
+    _patch_scorers(monkeypatch)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await _one_image(env, ds["id"])
+            # Only a score the job cannot refresh, so nothing lands in the
+            # job-score universe to keep the bit standing on its own.
+            await _seed_scores(env, img["id"], style_similarity_score=0.9)
+            await _mark_stale(env, img["id"])
+
+            r = await env.client.post(f"{API}/quality/score", json={
+                "dataset_id": ds["id"], "run_aesthetic": False, "run_technical": False,
+                "run_embeddings": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+
+            assert (await _fresh(env, img["id"])).scores_stale is True
+
+    run(scenario())
+
+
+def test_an_embeddings_only_run_does_not_clear_a_bit_a_real_edit_set(tmp_path, monkeypatch):
+    """The same guard, reached the way a user reaches it: a real in-place resize
+    sets the bit, then an embeddings-only pass must leave it standing."""
+    _patch_scorers(monkeypatch)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await _one_image(env, ds["id"])
+            await _seed_scores(env, img["id"], style_similarity_score=0.9)
+
+            r = await env.client.post(
+                f"{API}/images/{img['id']}/resize",
+                json={"width": 20, "height": 10, "maintain_ar": False},
+            )
+            assert r.status_code == 200, r.text
+            assert (await _fresh(env, img["id"])).scores_stale is True
+
+            r = await env.client.post(f"{API}/quality/score", json={
+                "dataset_id": ds["id"], "run_aesthetic": False, "run_technical": False,
+                "run_embeddings": True,
             })
             assert r.status_code == 200, r.text
             job = await wait_for_job(env, r.json()["job_id"], timeout=60)

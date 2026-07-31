@@ -31,10 +31,21 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   instance of that same worse shape — an un-`try`-wrapped `generate_thumbnail` after the
   `tmp_path.replace`, and the loop's only `commit()` after the loop — so it is **fixed**,
   not milder, and now follows the Tier-1 order with a per-image commit and a
-  `counts["thumbnails_stale"]` epilogue. Tier 2 is now `routers/images.py`'s single crop
-  alone, which keeps the milder label honestly: it handles one image, so a raise strands
-  only that image's geometry and history entry, and there is no loop to widen the blast
-  radius.
+  `counts["thumbnails_stale"]` epilogue.
+
+  **Amended a third time 2026-07-31: Tier 2 is now empty.** `routers/images.py`'s single
+  crop is fixed to the Tier-1 shape (commit, then a `try`-wrapped `generate_thumbnail` that
+  logs and continues) — and so is **`POST /images/{id}/resize`, which this entry never
+  enumerated at all** despite the identical shape: `resize_image` saves over `img.file_path`
+  in place and `generate_thumbnail` ran before the only `commit()`. It was worse than the
+  crop, because it was not even guarded on `img.thumbnail_path` being set, so a row with no
+  thumbnail raised `TypeError` outright and lost the resize's geometry every time. That is
+  an enumeration miss by this entry's own generalizable rule — the sweep that produced these
+  tiers looked at the *crop* endpoints and their workers and never asked the same question
+  of the resize twin sitting forty lines above them. Neither endpoint reports a
+  `thumbnails_stale` count: that is a *job* counter `TopBar` reads off `job.result_data`,
+  and both return dicts rather than jobs. `backend/tests/test_single_image_edit_epilogue_http.py`
+  holds all three cases.
 - **Tier 3 — copy-mode branches that cut the thumbnail before the row insert**
   (`routers/lut.py`, `routers/upscaling.py`, `routers/detection.py`, `routers/images.py`'s
   new-file crop worker). A mid-loop raise orphans files with zero rows; nothing 404s.

@@ -1,17 +1,27 @@
 import { test, expect } from '@playwright/test'
 import { createDatasetViaApi, uploadViaApi } from './helpers'
 
-// `Image.scores_stale`, end to end through the two screens that surface it.
+// `Image.scores_stale` on the journey that is by far the commonest: upload,
+// edit in place, export — with no scoring anywhere.
 //
-// The in-place rewrite is driven with a batch resize, which is the one such path
-// with no ML dependency at all — the crop/LUT/upscale/re-extract siblings need
-// torch or cv2, and the point here is the badge, not the pixels.
+// The bit says the ten `*_score` columns and the `quality_flags` derived from
+// them were measured against pixels that no longer exist. An image that has
+// never been scored carries no such measurement, so it must stay clean: the
+// gallery badge, the detail chip and the export warning ("edited in place after
+// being scored") were all appearing on rows with no scores and no flags.
 //
-// What this cannot reach is the *clear*: `POST /quality/score` imports the
-// aesthetic scorer at job start, so it needs torch, which the e2e runner does
-// not have. That half lives in `backend/tests/test_scores_stale.py`, driven with
-// stubbed scorers.
-test('an in-place edit marks the image stale in the gallery and warns at export', async ({
+// **The positive case — an edit on a *scored* image — is deliberately absent,
+// and cannot be restored here.** No HTTP surface can write a score: there is no
+// `PATCH /images/{id}` and no score field on any input schema, so only the
+// copy/restore paths ever carry pre-existing scores; and `POST /quality/score`
+// imports the aesthetic scorer at job start, which needs torch, which the e2e
+// runner does not have. Both halves of the positive journey live in
+// `backend/tests/test_scores_stale.py`, driven with stubbed scorers.
+//
+// The in-place rewrite is driven with a batch resize, the one such path with no
+// ML dependency at all — its crop/LUT/upscale/re-extract siblings need torch or
+// cv2.
+test('an in-place edit of a never-scored image leaves it clean everywhere', async ({
   page,
   request,
 }) => {
@@ -26,8 +36,6 @@ test('an in-place edit marks the image stale in the gallery and warns at export'
   const edited = rows.find((r: { filename: string }) => r.filename === 'edited.png')
   expect(edited, JSON.stringify(rows)).toBeTruthy()
 
-  // Nothing is stale before the edit — otherwise the badge below would prove
-  // nothing about the resize.
   const before = await (await request.get(`/api/v1/export/preview/${ds.id}`)).json()
   expect(before.stale_scores_count).toBe(0)
 
@@ -43,24 +51,34 @@ test('an in-place edit marks the image stale in the gallery and warns at export'
     )
     .toBe('completed')
 
-  // Gallery: one card wears the badge, the other does not.
+  // The resize really happened — asserted from the payload, so this spec cannot
+  // pass by doing nothing and then finding nothing stale.
+  const after = await (await request.get(`/api/v1/images/${edited.id}`)).json()
+  expect(after.width).toBe(16)
+  expect(after.scores_stale).toBe(false)
+
+  // Gallery: no card wears the badge. Anchored on the tiles being rendered
+  // first, or an absence assertion would pass against a blank page.
   await page.goto(`/datasets/${ds.id}/gallery`)
-  const badge = page.getByTitle(/Scores are stale/)
-  await expect(badge).toHaveCount(1)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  await expect(page.getByTitle(/Scores are stale/)).toHaveCount(0)
 
-  // Detail page: the flag row carries it, and the row's own render condition has
-  // to include it — this image has no quality flags at all, so a condition that
-  // forgot it would render nothing.
+  // Detail page: no chip either — again anchored on the page having rendered.
   await page.goto(`/datasets/${ds.id}/image/${edited.id}`)
-  await expect(page.getByText('Scores stale', { exact: true })).toBeVisible()
-
-  // Export: the advisory warning, and the numbers behind it.
-  const after = await (await request.get(`/api/v1/export/preview/${ds.id}`)).json()
-  expect(after.stale_scores_count).toBe(1)
-  expect(after.stale_scores_will_export).toBe(1)
-
-  await page.goto(`/datasets/${ds.id}/export`)
   await expect(
-    page.getByText('after being scored', { exact: false }),
+    page.getByPlaceholder('Natural language description', { exact: false }),
   ).toBeVisible()
+  await expect(page.getByText('Scores stale', { exact: true })).toHaveCount(0)
+
+  // Export: nothing counted, and no advisory warning rendered.
+  const preview = await (await request.get(`/api/v1/export/preview/${ds.id}`)).json()
+  expect(preview.stale_scores_count).toBe(0)
+  expect(preview.stale_scores_will_export).toBe(0)
+
+  // Anchored on the *preview payload* having rendered, not merely the page: the
+  // sibling unlicensed warning comes from the same fetch, so waiting for the
+  // button alone would let the stale assertion pass before the data arrives.
+  await page.goto(`/datasets/${ds.id}/export`)
+  await expect(page.getByText('have no license recorded', { exact: false })).toBeVisible()
+  await expect(page.getByText('after being scored', { exact: false })).toHaveCount(0)
 })

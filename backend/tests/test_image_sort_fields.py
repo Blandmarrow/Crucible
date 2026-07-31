@@ -14,6 +14,11 @@ The two lineage sorts need explicit nulls-last handling. The generic branch has
 none, so an ASC sort on `source_timestamp_ms` would float every image that never
 came from a video to the top of the list — which is most of a typical dataset.
 
+The allowlist is *not* the score-filter set: it is that set plus `nsfw_score`,
+which is excluded from filtering (and from the Stats histograms) on purpose but
+has always been orderable. `sort_order` sits in neither nulls-last group — its
+own branch matches first and ignores `order` by design.
+
 No cv2: lineage is written straight onto the rows. What is under test is the
 ordering SQL, not extraction.
 """
@@ -171,6 +176,81 @@ def test_nulls_stay_last_when_the_lineage_sort_runs_descending(tmp_path):
             })
             assert r.status_code == 200, r.text
             assert _names(r.json()) == ["late.png", "early.png", "plain.png"]
+
+    run(scenario())
+
+
+async def _column(env, dataset_id: str, column: str, spec: list[tuple[str, object]]) -> None:
+    """Upload each `(name, value)` and write `value` into `column` on its row."""
+    for i, (name, _value) in enumerate(spec):
+        await upload_image(env, dataset_id, name, png_bytes((10 * i + 5, 20, 30)))
+    async with env.Session() as db:
+        for name, value in spec:
+            row = (await db.execute(
+                select(Image).where(Image.dataset_id == dataset_id, Image.filename == name)
+            )).scalar_one()
+            setattr(row, column, value)
+        await db.commit()
+
+
+def test_every_score_column_is_sortable():
+    """`_ALLOWED_SORT_FIELDS` is built from `_ALLOWED_SCORE_FIELDS`, which omits
+    `nsfw_score` for *filter* reasons — that set also drives the score filters, the
+    Stats histograms and `score_filters`, all of which exclude NSFW deliberately.
+    Sorting is a separate question, and inheriting the filter set silently removed
+    an ordering that worked before the allowlist existed.
+
+    So: the two sets are deliberately different, and this is the structural guard
+    that an eleventh score column is orderable even if it is not filterable.
+    """
+    from backend.routers.images import _ALLOWED_SCORE_FIELDS, _ALLOWED_SORT_FIELDS
+    from backend.utils import score_columns
+
+    missing = score_columns(Image) - _ALLOWED_SORT_FIELDS
+    assert not missing, f"these score columns cannot be sorted on: {sorted(missing)}"
+    # The difference is the point, not an accident.
+    assert "nsfw_score" not in _ALLOWED_SCORE_FIELDS
+
+
+def test_nsfw_score_sorts_descending(tmp_path):
+    """The regression: `?sort=nsfw_score` was coerced to `created_at`, so the
+    dropdown entry silently did nothing."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await _column(env, ds["id"], "nsfw_score", [
+                ("low.png", 0.1), ("high.png", 0.9), ("mid.png", 0.5),
+            ])
+
+            r = await env.client.get(f"{API}/images/", params={
+                "dataset_id": ds["id"], "sort": "nsfw_score", "order": "desc",
+            })
+            assert r.status_code == 200, r.text
+            assert _names(r.json()) == ["high.png", "mid.png", "low.png"]
+
+    run(scenario())
+
+
+def test_custom_order_ignores_the_order_param(tmp_path):
+    """`sort=sort_order` is ascending by definition — "custom order, descending"
+    is not something the drag-and-drop grid can mean — and its branch matches
+    before the nulls-last one, so an entry for it there could never be reached.
+    This makes dropping that entry a provable no-op.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await _column(env, ds["id"], "sort_order", [
+                ("third.png", 3), ("first.png", 1), ("unplaced.png", None), ("second.png", 2),
+            ])
+
+            expected = ["first.png", "second.png", "third.png", "unplaced.png"]
+            for order in ("asc", "desc"):
+                r = await env.client.get(f"{API}/images/", params={
+                    "dataset_id": ds["id"], "sort": "sort_order", "order": order,
+                })
+                assert r.status_code == 200, r.text
+                assert _names(r.json()) == expected, order
 
     run(scenario())
 

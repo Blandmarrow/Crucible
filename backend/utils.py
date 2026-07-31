@@ -452,6 +452,23 @@ def read_caption_sidecar(image_path: Path | str) -> str | None:
     return text or None
 
 
+@lru_cache(maxsize=None)
+def score_columns(cls: type) -> frozenset[str]:
+    """Every `*_score` column on a mapped class, derived by suffix.
+
+    Derived rather than listed so the *eleventh* score column is covered the
+    moment it is added. The suffix rule is already load-bearing — the structural
+    guards in `backend/tests/test_video_lineage_mirrors.py` and
+    `backend/tests/test_versioning_restore.py` derive the same set, and the
+    comment on `Image.scores_stale` exists to protect it.
+
+    Takes the *class* rather than importing `Image`, so this module still has no
+    runtime import of `backend.models` (`models/image.py` imports this one).
+    Correctly excludes `dino_layer_scores` (plural) and `scores_stale` itself.
+    """
+    return frozenset(c.key for c in cls.__table__.columns if c.key.endswith("_score"))
+
+
 def record_in_place(img: "Image", op: str, **params) -> None:
     """Record that an operation overwrote an image's file, in the two columns that carry it.
 
@@ -470,22 +487,36 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     `scores_stale` says the ten `*_score` columns and the `quality_flags` derived
     from them were measured against pixels that no longer exist. Nothing here
     recomputes a score — that is a manual job — so the bit stands until a quality
-    run refreshes every score the row carries (`routers/quality.py`).
+    run that actually measured something refreshes every score the row carries
+    (`routers/quality.py`).
+
+    **The two columns deliberately diverge**: the history entry is the durable
+    "these pixels were rewritten" record and pass 2's skip guard, so it is written
+    either way, while the bit qualifies a *measurement* — a row that carries no
+    score has none to invalidate, and marking it would put a "scores describe
+    pixels that no longer exist" warning on the commonest workflow there is
+    (upload → resize → export). It is never written `False` here: clearing is the
+    quality job's job.
 
     List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
     by equality, so mutating the loaded list in place looks unchanged and the
     UPDATE is skipped (CLAUDE.md § Key invariants).
 
-    Pure attribute assignment: it cannot raise, which is what lets every caller
-    place it between an irreversible `os.replace` and the `commit()` that describes
-    it, rather than in the post-commit epilogue (PM-013).
+    Pure attribute access and assignment: it cannot raise, which is what lets every
+    caller place it between an irreversible `os.replace` and the `commit()` that
+    describes it, rather than in the post-commit epilogue (PM-013).
     """
     now = datetime.now(timezone.utc)
     img.processing_history = (img.processing_history or []) + [
         {"op": op, **params, "at": now.isoformat()}
     ]
     img.updated_at = now
-    img.scores_stale = True
+    # Pure attribute access, so the PM-013 placement above still holds: no
+    # `*_score` column is `deferred` and nothing loads an `Image` under
+    # `load_only`, so none of these getattrs can emit IO or raise. Both facts are
+    # pinned by `backend/tests/test_scores_stale.py`.
+    if any(getattr(img, c) is not None for c in score_columns(type(img))):
+        img.scores_stale = True
 
 
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:

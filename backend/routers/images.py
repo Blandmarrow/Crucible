@@ -121,6 +121,12 @@ _ALLOWED_SCORE_FIELDS = frozenset({
 _ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
     "created_at", "updated_at", "filename", "file_size_bytes",
     "width", "height", "caption_token_count", "sort_order",
+    # `_ALLOWED_SCORE_FIELDS` omits NSFW for *filter* reasons — that set also
+    # drives the score filters, the Stats histograms and `score_filters`, all of
+    # which exclude it deliberately. Sorting is a separate question, and
+    # inheriting the filter set silently removed an ordering that worked before
+    # this allowlist existed. Do not add it to `_ALLOWED_SCORE_FIELDS`.
+    "nsfw_score",
     # Frame lineage. Both get an explicit nulls-last ordering below.
     "source_timestamp_ms", "source_shot_index",
 }
@@ -128,7 +134,7 @@ _ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
 # Lineage sorts need nulls-last plus a stable tiebreak; the generic branch has
 # neither, so an ASC sort would float every non-frame image to the top and leave
 # equal-timestamp frames in whatever order SQLite scanned them.
-_NULLS_LAST_SORT_FIELDS = frozenset({"sort_order", "source_timestamp_ms", "source_shot_index"})
+_NULLS_LAST_SORT_FIELDS = frozenset({"source_timestamp_ms", "source_shot_index"})
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -350,6 +356,10 @@ async def list_images(
     sort_col = getattr(Image, sort)
     if sort == "sort_order":
         # Manual ordering is ascending by definition; unpositioned images last.
+        # `order` is ignored on purpose — "custom order, descending" is not
+        # something the drag-and-drop grid can mean. This branch matches first,
+        # which is why `sort_order` is absent from `_NULLS_LAST_SORT_FIELDS`
+        # below: an entry there could never be reached.
         q = q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
     elif sort in _NULLS_LAST_SORT_FIELDS:
         # NULL here means "not a video frame", which belongs at the end whichever
@@ -1399,9 +1409,27 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     )
     img.width, img.height = new_w, new_h
     _record_in_place(img, "resize", width=new_w, height=new_h)
-    # Regenerate thumbnail
-    await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
+    # `resize_image` saved over `img.file_path` in place; nothing fallible may sit
+    # between that irreversible write and this commit, or a raise rolls the row
+    # back onto pixels that no longer match it (PM-013).
     await db.commit()
+
+    # --- epilogue: best-effort, cannot undo the resize ---
+    # `expire_on_commit=False` (backend/database.py) keeps `img` readable here.
+    if img.thumbnail_path:
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, generate_thumbnail, img.file_path, img.thumbnail_path
+            )
+        except Exception as exc:
+            # A stale thumbnail is cosmetic; the resized image is committed and
+            # serves. This endpoint returns a dict rather than a job, so there is
+            # no `thumbnails_stale` counter to raise — TopBar reads that off
+            # `job.result_data`, and a new response field would be a second
+            # reporting channel for the same fact.
+            logger.warning(
+                "Resize: thumbnail for %s could not be regenerated: %s", img.filename, exc
+            )
     return {"width": new_w, "height": new_h}
 
 
@@ -1449,8 +1477,6 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 body.output_width, body.output_height,
             )
             tmp_path.replace(src_path)
-            if img.thumbnail_path:
-                await loop.run_in_executor(None, generate_thumbnail, str(src_path), img.thumbnail_path)
             img.width = info["width"]
             img.height = info["height"]
             img.file_size_bytes = info["file_size_bytes"]
@@ -1461,7 +1487,24 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             await remap_detections_for_crop(
                 db, img.id, (body.x, body.y, body.width, body.height), old_size
             )
+            # `tmp_path.replace(src_path)` above is irreversible; nothing fallible
+            # may precede this commit or the row rolls back onto the cropped file
+            # (PM-013). The thumbnail regenerates in the epilogue below.
             await db.commit()
+
+            # --- epilogue: best-effort, cannot undo the crop ---
+            if img.thumbnail_path:
+                try:
+                    await loop.run_in_executor(
+                        None, generate_thumbnail, str(src_path), img.thumbnail_path
+                    )
+                except Exception as exc:
+                    # Cosmetic; the crop is committed and serves. No
+                    # `thumbnails_stale` counter here — this endpoint returns a
+                    # dict, not a job (see the resize endpoint above).
+                    logger.warning(
+                        "Crop: thumbnail for %s could not be regenerated: %s", img.filename, exc
+                    )
             return {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
 
         # Replace + upscale: crop to temp, enqueue job that upscales to original path

@@ -40,8 +40,12 @@ endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.
 **Quality scores are left alone but no longer left silent.** Nothing is recomputed, matching
 `batch_upscale`/`batch_lut` replace mode — but the rewrite goes through
 `backend/utils.py::record_in_place`, which sets `Image.scores_stale` alongside the
-`processing_history` entry, so every re-extracted frame wears a badge in the gallery and on
-its detail page until a re-score clears it (`docs/dev/scoring.md` § `scores_stale`). The
+`processing_history` entry **for any frame that carries a score**, so a re-extracted frame
+that had been scored wears a badge in the gallery and on its detail page until a re-score
+clears it (`docs/dev/scoring.md` § `scores_stale`). A triage frame is commonly *unscored* —
+the whole point of pass 1 is to get frames cheap and cull them later — so in practice
+re-extraction often leaves the bit `False` and writes only the history entry. That entry is
+unconditional, and it is the one this doc's skip rule below depends on. The
 job still says so through `result_data["note"]` (`REEXTRACT_NOTE`), which the completion
 toast repeats and `ReextractFramesForm` mirrors, but the wording now points at the badge
 instead of asking the user to remember. `phash` *is* re-derived: dedup depends

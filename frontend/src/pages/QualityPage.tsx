@@ -60,6 +60,38 @@ function sharedSourceVideo(group: DuplicateGroup): { id: string; name: string | 
   return { id: first, name: group[0].source_video_name };
 }
 
+/** A duplicate-group resolution held for the confirm dialog. */
+interface PendingResolve {
+  mode: "best" | "first";
+  keep: string[];
+  del: string[];
+  videoName: string | null;
+  timestamps: (number | null)[];
+}
+
+/** The confirm copy for a same-source resolution — written once for both buttons.
+ *
+ *  The hazard the dialog exists for — a held animation cel or recycled footage
+ *  hashing identical to a redundant copy — is a property of the *group*, not of
+ *  the ranking heuristic, so *Keep first* deletes exactly the same N−1 frames on
+ *  one click and earns the same beat of friction. Only the survivor clause
+ *  differs; a second hardcoded message block would drift the caveat.
+ */
+function resolveConfirmCopy(p: PendingResolve): { title: string; message: string } {
+  const n = p.del.length;
+  const survivor = p.mode === "best"
+    ? "keeps the highest-scoring one"
+    : "keeps the one the duplicate scan picked, which is not necessarily the best";
+  return {
+    title: "Delete frames from one video?",
+    message:
+      `Every image in this group was extracted from ${p.videoName ?? "the same video"}. ` +
+      `This deletes ${n} frame${n === 1 ? "" : "s"} at ` +
+      `${p.timestamps.map((t) => formatFramePosition(t)).join(", ")} and ${survivor}. ` +
+      `Held animation cels and recycled footage hash the same as a redundant copy, so these may be distinct shots.`,
+  };
+}
+
 const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
   runAesthetic: true,
   runTechnical: true,
@@ -120,13 +152,12 @@ export default function QualityPage() {
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set(filters.selectedRefIds));
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(filters.activeSubfolder ?? undefined);
-  // Pending *Keep best* on a same-source group, held for the confirm dialog.
-  // Same-source only: refusing outright would break the legitimate case (two
-  // genuinely redundant frames from one shot) and push users to work around it
-  // in the gallery, so the fix is a beat of friction, not a block.
-  const [pendingKeepBest, setPendingKeepBest] = useState<
-    { keep: string[]; del: string[]; videoName: string | null; timestamps: (number | null)[] } | null
-  >(null);
+  // Pending resolution of a same-source group, held for the confirm dialog —
+  // from either button. Same-source only: refusing outright would break the
+  // legitimate case (two genuinely redundant frames from one shot) and push
+  // users to work around it in the gallery, so the fix is a beat of friction,
+  // not a block.
+  const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(null);
 
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -505,6 +536,23 @@ export default function QualityPage() {
               const shared = sharedSourceVideo(group);
               const anyScored = group.some((m) => m.aesthetic_score != null);
               const anyLineage = group.some((m) => m.source_video_id != null);
+              // Both buttons route through here: one ordered array yields the
+              // survivor, the deletions and their timestamps, so `del` and
+              // `timestamps` cannot desynchronise the way two independent
+              // `.slice(1).map(...)` passes could.
+              const resolve = (mode: "best" | "first", ordered: DuplicateImage[]) => {
+                const keep = [ordered[0].id];
+                const del = ordered.slice(1).map((i) => i.id);
+                if (shared) {
+                  setPendingResolve({
+                    mode, keep, del,
+                    videoName: shared.name,
+                    timestamps: ordered.slice(1).map((i) => i.source_timestamp_ms),
+                  });
+                } else {
+                  resolveMutation.mutate({ keep, del });
+                }
+              };
               return (
               <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "center", padding: 12, background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
                 <div>
@@ -566,24 +614,13 @@ export default function QualityPage() {
                     // best. Say so instead of pretending.
                     disabled={!anyScored}
                     title={anyScored ? undefined : "No image in this group has an aesthetic score — run scoring first, or use Keep first."}
-                    onClick={() => {
-                      const best = rankForKeepBest(group);
-                      const payload = { keep: [best[0].id], del: best.slice(1).map((i) => i.id) };
-                      if (shared) {
-                        setPendingKeepBest({
-                          ...payload,
-                          videoName: shared.name,
-                          timestamps: best.slice(1).map((i) => i.source_timestamp_ms),
-                        });
-                      } else {
-                        resolveMutation.mutate(payload);
-                      }
-                    }}
+                    onClick={() => resolve("best", rankForKeepBest(group))}
                   >Keep best</button>
                   {/* group[0] is the image the scan kept — see get_duplicates.
-                      No confirm: it keeps the scan's own choice rather than a
-                      score-driven one, so it stays one click. */}
-                  <button className="btn sm" onClick={() => resolveMutation.mutate({ keep: [group[0].id], del: group.slice(1).map((i) => i.id) })}>Keep first</button>
+                      Confirms on a same-source group just as *Keep best* does:
+                      it deletes the same N−1 frames on one click, and the hazard
+                      belongs to the group, not to the ranking. */}
+                  <button className="btn sm" onClick={() => resolve("first", group)}>Keep first</button>
                 </div>
               </div>
               );
@@ -592,21 +629,15 @@ export default function QualityPage() {
         </div>
       )}
 
-      {pendingKeepBest && (
+      {pendingResolve && (
         <ConfirmDialog
-          title="Delete frames from one video?"
-          message={
-            `Every image in this group was extracted from ${pendingKeepBest.videoName ?? "the same video"}. ` +
-            `This deletes ${pendingKeepBest.del.length} frame${pendingKeepBest.del.length === 1 ? "" : "s"} at ` +
-            `${pendingKeepBest.timestamps.map((t) => formatFramePosition(t)).join(", ")} and keeps the highest-scoring one. ` +
-            `Held animation cels and recycled footage hash the same as a redundant copy, so these may be distinct shots.`
-          }
+          {...resolveConfirmCopy(pendingResolve)}
           confirmLabel="Delete frames"
           danger
-          onCancel={() => setPendingKeepBest(null)}
+          onCancel={() => setPendingResolve(null)}
           onConfirm={() => {
-            resolveMutation.mutate({ keep: pendingKeepBest.keep, del: pendingKeepBest.del });
-            setPendingKeepBest(null);
+            resolveMutation.mutate({ keep: pendingResolve.keep, del: pendingResolve.del });
+            setPendingResolve(null);
           }}
         />
       )}

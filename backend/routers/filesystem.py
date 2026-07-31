@@ -23,6 +23,7 @@ from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import extract_generation_metadata, get_image_info
 from backend.utils import (
     chunked,
+    contained_path,
     rename_with_sidecar,
     sanitize_abs_path,
     thumbnail_path_for,
@@ -717,8 +718,21 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     # internally, which after a staged delete autoflushes and returns None, and the
     # hook then no-ops via its `dataset is None` early return — and before the
     # unlink, since `_backup_and_record_hash` early-returns on a file that is gone.
+    #
+    # Gated per row, because the hook is a *read* of the named file: it copies the
+    # bytes into `{ds}/.versions/objects/`, where a snapshot restore hands them
+    # back. `delete_path` validates the path the request names with
+    # `sanitize_abs_path`, which proves it absolute and NUL-free, not contained —
+    # so a row whose `file_path` was written outside `datasets_dir` reaches this
+    # hook and turns an unauthenticated delete into an arbitrary-file read. The
+    # row deletes below stay unconditional: an undeletable row the user can see is
+    # the worse failure.
     for img in img_rows:
-        await version_service.mark_image_deleted_in_versions(img.id, img.file_path, db)
+        safe = contained_path(
+            img.file_path, settings.datasets_dir, context="delete_path", ident=img.id
+        )
+        if safe is not None:
+            await version_service.mark_image_deleted_in_versions(img.id, str(safe), db)
 
     # Frames extracted from a deleted video are ordinary Image rows and survive
     # with their lineage cut, exactly as `DELETE /videos/{id}` leaves them.

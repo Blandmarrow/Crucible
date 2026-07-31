@@ -120,10 +120,12 @@ would have discarded the crop (`docs/dev/postmortems/PM-010`). They now all go t
 `images._record_in_place(img, op,
 **params)`, which is the single writer: list-concat reassignment, never `.append()`
 (CLAUDE.md § Key invariants), plus the `updated_at` bump. Add a call there in any future
-path that overwrites an image file. (`POST /images/batch/crop` and `/batch/resize` are
-unreachable today — `POST /images/{image_id}/crop` is declared first and reads `batch` as an
-image id, and nothing in the frontend calls either — so their entries are written but
-untestable over HTTP.)
+path that overwrites an image file. (`POST /images/batch/crop` and `/batch/resize` were
+unreachable until 2026-07-31 — `POST /images/{image_id}/crop` was declared first and read
+`batch` as an image id — so their entries were written but had never executed. The block now
+sits above the parameterized routes and both are covered by
+`backend/tests/test_batch_resize_crop_http.py`; see
+`docs/dev/postmortems/PM-018-batch-routes-shadowed-by-a-path-parameter.md`.)
 
 **In-flight dedupe lives in the resolver**, not the enqueue path, so the preview is honest
 about it too — and it now runs in **both directions**: `_videos_with_running_extractions`

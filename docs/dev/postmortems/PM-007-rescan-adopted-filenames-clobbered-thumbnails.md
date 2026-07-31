@@ -90,6 +90,20 @@ only arises from hand-placed input, exactly the case rescan exists to serve.
   upload-after-divergence), `test_video_serving_http.py` (backfill stem resolution),
   `test_http_smoke_jobs.py` (the image half).
 
+**Recurrence, 2026-07-31 — the stem set was right but asked about the wrong directory.**
+`routers/lut.py` and `routers/upscaling.py` built `occupied_thumb_stems` as one **flat** set
+from `images[0]`'s `thumbnails/` dir, while `dest_images` is chosen per image inside the
+loop and both jobs select on `Image.id.in_(...)` with **no dataset constraint**. A selection
+spanning two datasets therefore asked one dataset's thumbnail directory about the other's
+stems, and copy mode wrote a `.webp` over a live sibling's in whichever dataset did not seed
+the set. `db_names` was already per image, which is why the derived *filename* looked right
+while the thumbnail was clobbered — the same names-are-fine, bytes-are-wrong signature as
+PM-017. Both now use the `occupied_by_dir` / `planned_by_dir` dicts that
+`routers/detection.py` already had; tests in `test_lut_replace_extension_http.py` and
+`test_upscale_png_fallback_http.py`. The review question this adds: when a guard is built
+*once before* a loop but the thing it guards is chosen *inside* it, ask what makes them
+agree — here, nothing did.
+
 ### Status & date
 
 MITIGATED — the guard now exists at both rescan paths, but the class is still reachable by

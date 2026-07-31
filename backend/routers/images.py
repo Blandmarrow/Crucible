@@ -773,15 +773,24 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         )
     )
     db_names: set[str] = {r[0] for r in existing.all()}
-    # Exclude batch files from both the thumbnail and disk-existence checks during planning.
-    # Without these exclusions, a second renumber sees image_001.webp (thumbnail) and
-    # image_001.jpg (on disk) as already occupied and skips past them, making new images
-    # start at image_008 instead of restarting from 001.
+    # The **sanctioned exception** to `unique_filename_with_thumb`'s "never exclude
+    # the stems of images being renamed" contract: the batch's own thumbnails and
+    # image files are excluded from the occupancy checks, because without that a
+    # second Renumber of image.jpg … image_007.jpg sees all eight .webp stems and
+    # all eight files as occupied and starts the counter at image_008 instead of
+    # restarting at 001. What pays for it is the two-phase rename below, which
+    # defers any rename whose target collides with a batch member's *current*
+    # image, thumbnail or sidecar path (PM-017).
     batch_thumb_stems: set[str] = {Path(thumbnail_path_for(r.file_path)).stem for r in rows}
     occupied_thumb_stems: set[str] = (
         {p.stem for p in thumb_dir.glob("*.webp") if p.stem not in batch_thumb_stems}
         if thumb_dir.exists() else set()
     )
+    # A non-batch row whose .webp is missing (never generated, or hand-deleted)
+    # still owns its stem — the thumbnail this rename creates for it would be
+    # regenerated onto that row's path by `serve_thumbnail`. Occupancy is the union
+    # of the two, exactly as `file-browser.md` defines it.
+    occupied_thumb_stems |= {Path(n).stem for n in db_names}
     # Image files currently on disk that belong to this batch — they will be renamed away,
     # so the counter should not treat them as occupied during planning.
     batch_current_filenames: set[str] = {Path(r.file_path).name for r in rows}
@@ -828,15 +837,32 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     # Phase 1: rename everything whose target is still occupied to a unique temp name;
     #          rename the rest directly.
     # Phase 2: move temp files to their final names.
+    # A rename moves three things, and the deferral has to cover all three. The
+    # image path alone is not enough: the thumbnail ({stem}.webp) and the caption
+    # sidecar ({stem}.txt) are keyed on the **stem**, so a cross-extension
+    # collision — shot.png taking shot.jpg's stem — is invisible to a path test,
+    # takes the direct branch, and `replace`s a live sibling's thumbnail while
+    # `rename_with_sidecar` overwrites its caption. Nothing repairs either: the
+    # filenames are all correct, so `serve_thumbnail` regenerates only when the
+    # file is *missing*, never when it is another image (PM-017).
     batch_old_paths: set[str] = {str(e[0]) for e in plan}
+    batch_old_thumbs: set[str] = {str(e[2]) for e in plan}
+    batch_old_sidecars: set[str] = {str(e[0].with_suffix(".txt")) for e in plan}
     deferred: list[tuple[Path, Path, Path, Path]] = []
 
-    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
+    for old_path, new_path, old_thumb, new_thumb, img_id, _ in plan:
         if new_path == old_path:
             continue
-        if str(new_path) in batch_old_paths:
-            tmp_path = old_path.with_name("__renaming__" + old_path.name)
-            tmp_thumb = old_thumb.parent / ("__renaming__" + old_thumb.name)
+        if (
+            str(new_path) in batch_old_paths
+            or str(new_thumb) in batch_old_thumbs
+            or str(new_path.with_suffix(".txt")) in batch_old_sidecars
+        ):
+            # Keyed on the row id, like the DB half's temp names two blocks above:
+            # a user renaming to the stem "__renaming__image" would otherwise pick
+            # a name that collides with a live temp file.
+            tmp_path = old_path.with_name(f"__renaming__{img_id}{old_path.suffix}")
+            tmp_thumb = old_thumb.parent / f"__renaming__{img_id}{old_thumb.suffix}"
             rename_with_sidecar(old_path, tmp_path)
             if old_thumb.exists():
                 old_thumb.replace(tmp_thumb)
@@ -1112,6 +1138,231 @@ def _record_in_place(img: Image, op: str, **params) -> None:
         {"op": op, **params, "at": now.isoformat()}
     ]
     img.updated_at = now
+
+
+async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
+    """`ensure_not_busy` every dataset a bare id list touches; return the set.
+
+    The two `/batch/*` overwrite endpoints below take `image_ids` with no dataset
+    constraint, so one selection can span datasets — each needs its own guard,
+    the way `batch_move_dataset` and `bulk_provenance` do it. Chunked so the bind
+    parameter count stays under SQLite's ceiling (`utils.chunked`).
+
+    The returned set also names the job: `BackgroundJob.dataset_id` is a single
+    column, so it is only meaningful when the selection resolved to one dataset.
+    """
+    dataset_ids: set[str] = set()
+    for batch in chunked(image_ids):
+        rows = await db.execute(
+            select(Image.dataset_id).where(Image.id.in_(list(batch))).distinct()
+        )
+        dataset_ids.update(r[0] for r in rows.all())
+    for ds_id in dataset_ids:
+        ensure_not_busy(ds_id)
+    return dataset_ids
+
+
+# ── Batch geometry ────────────────────────────────────────────────────────────
+# Declaration order *is* the routing table. FastAPI matches routes in the order
+# they are declared and `image_id: str` accepts the literal segment "batch", so
+# these two have to stay **above** `/{image_id}/resize` and `/{image_id}/crop`.
+# Declared after them they were simply unreachable — a POST to /batch/resize was
+# answered by the single-image handler, which 404'd out of `db.get(Image,
+# "batch")`, and /batch/crop 422'd on the single-crop body model (PM-018). Any
+# future `/batch/*` route on this router belongs in this block too.
+
+
+@router.post("/batch/resize")
+async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
+    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    auto_label = f"Batch resize — {len(body.image_ids)} images"
+    job = BackgroundJob(
+        job_type="batch_resize",
+        label=body.label or auto_label,
+        dataset_id=next(iter(dataset_ids)) if len(dataset_ids) == 1 else None,
+        total_items=len(body.image_ids),
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
+            images = result.scalars().all()
+            loop = asyncio.get_running_loop()
+
+            # The whole outcome of the run, seeded like the LUT/upscale twins.
+            # `skipped` starts at the rows that no longer exist (deleted between
+            # enqueue and run); `thumbnails_stale` counts resized images whose
+            # *preview* could not be recut — the image itself is correct and
+            # committed, the gallery just keeps rendering the old tile.
+            counts = {
+                "processed": 0,
+                "skipped": len(body.image_ids) - len(images),
+                "failed": 0,
+                "thumbnails_stale": 0,
+            }
+
+            cancelled = False
+            for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
+                try:
+                    new_w, new_h = await loop.run_in_executor(
+                        None, resize_image, img.file_path, body.width, body.height,
+                        body.scale, body.maintain_ar,
+                    )
+                except Exception as exc:
+                    logger.error("Batch resize failed for %s: %s", img.filename, exc)
+                    counts["failed"] += 1
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_resize",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {exc}",
+                    })
+                    continue
+                img.width, img.height = new_w, new_h
+                _record_in_place(img, "resize", width=new_w, height=new_h)
+                # Per image, with nothing fallible between the (already-done)
+                # overwrite and it. The commit used to sit outside the loop, so a
+                # raise on image N rolled back the geometry and processing_history
+                # of images 1..N — every one of them already rewritten on disk
+                # (PM-013).
+                await session.commit()
+
+                # --- epilogue: best-effort, cannot undo the resize ---
+                # `expire_on_commit=False` (backend/database.py) keeps `img`
+                # readable after the commit without a refresh.
+                if img.thumbnail_path:
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                        )
+                    except Exception as exc:
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Batch resize: thumbnail for %s could not be regenerated: %s",
+                            img.filename, exc,
+                        )
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_resize",
+                    "status": "running", "done": i + 1, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename,
+                })
+                counts["processed"] += 1
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
+            # everything it did manage — including any stale thumbnail.
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.post("/batch/crop")
+async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
+    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    auto_label = f"Batch crop — {body.target_ar:g} AR, {len(body.image_ids)} images"
+    job = BackgroundJob(
+        job_type="batch_crop",
+        label=body.label or auto_label,
+        dataset_id=next(iter(dataset_ids)) if len(dataset_ids) == 1 else None,
+        total_items=len(body.image_ids),
+        config=body.model_dump(),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.workers.progress import broadcaster
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
+            images = result.scalars().all()
+            loop = asyncio.get_running_loop()
+
+            # Seeded and incremented exactly like the resize twin above.
+            counts = {
+                "processed": 0,
+                "skipped": len(body.image_ids) - len(images),
+                "failed": 0,
+                "thumbnails_stale": 0,
+            }
+
+            cancelled = False
+            for i, img in enumerate(images):
+                if job_queue.cancel_requested(job_id):
+                    cancelled = True
+                    break
+                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                await session.commit()  # persist the COW hash backfill before the overwrite
+                try:
+                    new_w, new_h, rect, old_size = await loop.run_in_executor(
+                        None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
+                    )
+                except Exception as exc:
+                    logger.error("Batch crop failed for %s: %s", img.filename, exc)
+                    counts["failed"] += 1
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_crop",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {exc}",
+                    })
+                    continue
+                img.width, img.height = new_w, new_h
+                _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
+                # Aspect crop changed geometry: remap this image's detections.
+                # DB-only work, so it stays *above* the commit — the same place
+                # `_run_crop_upscale_replace` puts it. Below this line the row and
+                # the file on disk agree, durably.
+                await remap_detections_for_crop(session, img.id, rect, old_size)
+                await session.commit()
+
+                # --- epilogue: best-effort, cannot undo the crop ---
+                if img.thumbnail_path:
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                        )
+                    except Exception as exc:
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Batch crop: thumbnail for %s could not be regenerated: %s",
+                            img.filename, exc,
+                        )
+                await broadcaster.emit(job_id, {
+                    "type": "progress", "job_id": job_id, "job_type": "batch_crop",
+                    "status": "running", "done": i + 1, "total": len(images),
+                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "current_item": img.filename,
+                })
+                counts["processed"] += 1
+
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = counts
+            await session.commit()
+            if cancelled:
+                job_queue.raise_if_cancelled(job_id)
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
 
 
 @router.post("/{image_id}/resize")
@@ -1464,78 +1715,6 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     await db.commit()
     await db.refresh(new_img)
     return {"id": new_img.id, "filename": new_img.filename, "width": new_img.width, "height": new_img.height}
-
-
-@router.post("/batch/resize")
-async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_resize", label="Batch resize", total_items=len(body.image_ids), config=body.model_dump())
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        from backend.workers.progress import broadcaster
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
-            for i, img in enumerate(images):
-                loop = asyncio.get_running_loop()
-                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-                await session.commit()  # persist the COW hash backfill before the overwrite
-                new_w, new_h = await loop.run_in_executor(
-                    None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar
-                )
-                img.width, img.height = new_w, new_h
-                _record_in_place(img, "resize", width=new_w, height=new_h)
-                if img.thumbnail_path:
-                    await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
-                await broadcaster.emit(job_id, {
-                    "type": "progress", "job_id": job_id, "job_type": "batch_resize",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
-                    "current_item": img.filename,
-                })
-            await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
-
-
-@router.post("/batch/crop")
-async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
-    job = BackgroundJob(job_type="batch_crop", label="Batch crop", total_items=len(body.image_ids), config=body.model_dump())
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        from backend.workers.progress import broadcaster
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
-            for i, img in enumerate(images):
-                loop = asyncio.get_running_loop()
-                await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
-                await session.commit()  # persist the COW hash backfill before the overwrite
-                new_w, new_h, rect, old_size = await loop.run_in_executor(
-                    None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
-                )
-                img.width, img.height = new_w, new_h
-                _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
-                # Aspect crop changed geometry: remap this image's detections.
-                await remap_detections_for_crop(session, img.id, rect, old_size)
-                if img.thumbnail_path:
-                    await loop.run_in_executor(None, generate_thumbnail, img.file_path, img.thumbnail_path)
-                await broadcaster.emit(job_id, {
-                    "type": "progress", "job_id": job_id, "job_type": "batch_crop",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
-                    "current_item": img.filename,
-                })
-            await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
 
 
 @router.patch("/{image_id}/rename")

@@ -272,6 +272,126 @@ def test_bulk_rename_swap_permutation_no_clobber(tmp_path):
     run(scenario())
 
 
+def test_bulk_renumber_twice_keeps_every_row_its_own_three_artifacts(tmp_path):
+    """PM-017: a cross-extension stem collision destroyed a sibling's thumbnail
+    and caption.
+
+    Two images of different extensions renumber to `img.png` / `img_001.jpg`.
+    Reverse them and renumber again and the stems swap *across* extensions —
+    `img_001.jpg` becomes `img.jpg` while `img.png` becomes `img_001.png`. Neither
+    target is any batch member's current **image path**, so the old predicate took
+    the direct branch for both: the first `replace` moved one row's `.webp` onto
+    the other's and `rename_with_sidecar` overwrote its `.txt`.
+
+    Asserts **bytes**, not names. Every filename here is correct either way, which
+    is exactly why the set-of-stems assertions in the tests above pass with the bug.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            images_dir, thumb_dir = _dirs(ds)
+
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((11, 22, 33)))
+            b = await upload_image(env, ds["id"], "b.jpg", jpeg_bytes((200, 60, 20)))
+            for img, text in ((a, "the first caption"), (b, "the second caption")):
+                r = await env.client.put(
+                    f"{API}/captions/image/{img['id']}", json={"caption_text": text}
+                )
+                assert r.status_code == 200, r.text
+
+            r = await env.client.post(
+                f"{API}/images/bulk-rename",
+                json={"dataset_id": ds["id"], "new_stem": "img"},
+            )
+            assert r.status_code == 200, r.text
+
+            # Fingerprint each row's three artifacts after the first renumber.
+            rows = await _rows(env, ds["id"])
+            before: dict[str, tuple[bytes, bytes, str]] = {}
+            name_before: dict[str, str] = {}
+            for row in rows:
+                before[row.id] = (
+                    Path(row.file_path).read_bytes(),
+                    Path(row.thumbnail_path).read_bytes(),
+                    Path(row.file_path).with_suffix(".txt").read_text(encoding="utf-8"),
+                )
+                name_before[row.id] = row.filename
+            assert len({v[0] for v in before.values()}) == 2, "fixtures must differ"
+            assert len({v[1] for v in before.values()}) == 2, "thumbnails must differ"
+
+            # Reverse the order so the second renumber permutes the stems.
+            rows_sorted = sorted(rows, key=lambda r: r.file_path)
+            r = await env.client.patch(
+                f"{API}/images/batch/reorder",
+                json={"dataset_id": ds["id"], "updates": [
+                    {"id": rows_sorted[0].id, "sort_order": 1},
+                    {"id": rows_sorted[1].id, "sort_order": 0},
+                ]},
+            )
+            assert r.status_code == 200, r.text
+
+            r = await env.client.post(
+                f"{API}/images/bulk-rename",
+                json={"dataset_id": ds["id"], "new_stem": "img",
+                      "sort_by_sort_order": True},
+            )
+            assert r.status_code == 200, r.text
+
+            rows = await _rows(env, ds["id"])
+            for row in rows:
+                # Without this the permutation never happened and the test stops
+                # covering anything.
+                assert row.filename != name_before[row.id]
+                img_bytes, thumb_bytes, caption = before[row.id]
+                assert Path(row.file_path).read_bytes() == img_bytes
+                assert Path(row.thumbnail_path).exists(), "the thumbnail was lost"
+                assert Path(row.thumbnail_path).read_bytes() == thumb_bytes, \
+                    "a sibling's thumbnail was clobbered"
+                sidecar = Path(row.file_path).with_suffix(".txt")
+                assert sidecar.exists(), "the caption sidecar was lost"
+                assert sidecar.read_text(encoding="utf-8") == caption, \
+                    "a sibling's caption was clobbered"
+
+            assert not any("__renaming__" in p.name for p in images_dir.iterdir())
+            assert not any("__renaming__" in p.name for p in thumb_dir.iterdir())
+
+    run(scenario())
+
+
+def test_bulk_renumber_restarts_its_counter_on_a_second_pass(tmp_path):
+    """The counter restart the `disk_exclude`/`batch_thumb_stems` exclusions buy.
+
+    Renumbering the same three images twice must land on the same three names both
+    times. Without the exclusions the second pass sees the first pass's `.webp`
+    stems and files as occupied and continues at `img_003`, which is what makes
+    them a sanctioned exception to `unique_filename_with_thumb`'s contract rather
+    than something to simplify away.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _, thumb_dir = _dirs(ds)
+
+            for i, name in enumerate(("x.png", "y.png", "z.png")):
+                await upload_image(env, ds["id"], name, png_bytes((i + 1, 2, 3)))
+
+            expected = {"img.png", "img_001.png", "img_002.png"}
+            for pass_no in (1, 2):
+                r = await env.client.post(
+                    f"{API}/images/bulk-rename",
+                    json={"dataset_id": ds["id"], "new_stem": "img"},
+                )
+                assert r.status_code == 200, r.text
+                rows = await _rows(env, ds["id"])
+                names = {row.filename for row in rows}
+                assert names == expected, f"pass {pass_no} produced {names}"
+                assert {p.stem for p in thumb_dir.glob("*.webp")} == {
+                    Path(n).stem for n in expected
+                }
+
+    run(scenario())
+
+
 async def _row_bytes(env, image_id: str) -> bytes:
     async with env.Session() as db:
         row = await db.get(Image, image_id)

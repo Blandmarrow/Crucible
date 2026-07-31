@@ -29,6 +29,8 @@ from backend.tests.conftest import (
     api_env,
     bmp_bytes,
     frame_colour,
+    jpeg_bytes,
+    png_bytes,
     run,
     upload_image,
     wait_for_job,
@@ -313,6 +315,72 @@ def test_upscale_copy_registers_the_written_file_and_reserves_the_png_name(tmp_p
             assert _is_upscaled(derived.thumbnail_path), frame_colour(derived.thumbnail_path)
             # The source is untouched — copy mode adds, it does not replace.
             assert Path(rows[0].file_path if rows[0].id == img["id"] else img["file_path"]).exists()
+
+    run(scenario())
+
+
+def test_upscale_copy_across_two_datasets_does_not_share_one_thumbnail_stem_set(
+    tmp_path, monkeypatch
+):
+    """The LUT twin, and the same defect at the same line number in each router.
+
+    `occupied_thumb_stems` was one flat set built from `images[0]`'s thumbnail
+    directory, while `dest_images` is picked per image inside the loop and the job
+    selects on `Image.id.in_(...)` with no dataset constraint — so a selection
+    spanning two datasets asked one dataset's `thumbnails/` about the other's
+    stems. `db_names` was already per image, which is why the derived *filename*
+    looked right while the `.webp` landed on a live sibling's. PM-007 class.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+
+            fixtures: dict[str, dict] = {}
+            for i, name in enumerate(("alpha", "beta")):
+                ds = await env.create_dataset(name)
+                source = await upload_image(
+                    env, ds["id"], f"{name}.jpg", jpeg_bytes((200, 60 + i, 20))
+                )
+                # `.png` against a `.jpg` derived name: `db_names` cannot see the
+                # collision, only the thumbnail stem can.
+                occupant = await upload_image(
+                    env, ds["id"], f"{name}_up2x.png", png_bytes((7, 9 + i, 240), (24, 24))
+                )
+                async with env.Session() as db:
+                    thumb = Path((await db.get(Image, occupant["id"])).thumbnail_path)
+                assert thumb.exists(), thumb
+                fixtures[name] = {
+                    "ds": ds, "source": source, "occupant": occupant,
+                    "thumb": thumb, "thumb_bytes": thumb.read_bytes(),
+                }
+
+            r = await env.client.post(f"{API}/upscaling/run", json={
+                "dataset_id": fixtures["alpha"]["ds"]["id"],
+                "image_ids": [f["source"]["id"] for f in fixtures.values()],
+                "model_path": MODEL, "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"]["processed"] == 2, job["result_data"]
+
+            for name, f in fixtures.items():
+                assert f["thumb"].read_bytes() == f["thumb_bytes"], (
+                    f"{name}: the upscaled thumbnail clobbered a live sibling's"
+                )
+                assert not _is_upscaled(f["thumb"]), frame_colour(f["thumb"])
+                async with env.Session() as db:
+                    rows = (await db.execute(select(Image).where(
+                        Image.dataset_id == f["ds"]["id"]
+                    ))).scalars().all()
+                derived = [
+                    row for row in rows
+                    if row.id not in (f["source"]["id"], f["occupant"]["id"])
+                ]
+                assert len(derived) == 1, [row.filename for row in rows]
+                assert derived[0].filename == f"{name}_up2x_001.jpg"
+                assert _is_upscaled(derived[0].thumbnail_path), \
+                    frame_colour(derived[0].thumbnail_path)
 
     run(scenario())
 

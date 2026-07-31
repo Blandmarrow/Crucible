@@ -780,13 +780,24 @@ async def restore_snapshot(
     # up first. In "remove" mode every extra is deleted anyway, so fire the
     # deletion hook for all of them here (before any FS write), making the
     # removal undoable via the pre-restore snapshot.
-    if handle_extra_images == "remove":
-        for extra_img in extra_imgs:
-            await mark_image_deleted_in_versions(extra_img.id, extra_img.file_path, db)
-    else:
-        for extra_img in extra_imgs:
-            if extra_img.file_path in all_targets:
-                await protect_file_before_overwrite(extra_img.id, extra_img.file_path, db)
+    #
+    # The containment gate covers the **whole** loop, not just the "remove"
+    # branch: both hooks end at `_store_object`, which copies the named file's
+    # bytes into `{ds}/.versions/objects/` where a restore hands them back, so an
+    # out-of-tree `file_path` is the same arbitrary-file read primitive either
+    # way. Gated per row, and the restore carries on without the extra — the row
+    # itself is still removed or renamed by Pass 2.
+    for extra_img in extra_imgs:
+        safe_extra = contained_path(
+            extra_img.file_path, app_settings.datasets_dir,
+            context="restore_snapshot extras", ident=extra_img.id,
+        )
+        if safe_extra is None:
+            continue
+        if handle_extra_images == "remove":
+            await mark_image_deleted_in_versions(extra_img.id, str(safe_extra), db)
+        elif extra_img.file_path in all_targets:
+            await protect_file_before_overwrite(extra_img.id, str(safe_extra), db)
 
     # ── Pass 2: all DB updates, then commit (DB is authoritative before FS) ──
     # Filename moves need DB-level staging too: SQLite checks uq_dataset_filename

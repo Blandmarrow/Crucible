@@ -160,9 +160,11 @@ def contained_path(
 
     Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
     `videos._delete_previous_frames`, `quality.resolve_duplicates`,
-    `version_service._remove_stale_files`. `videos.delete_video`'s inline loop and
-    `filesystem._add_orphan` still hand-roll the equivalent and are the remaining
-    two to fold in.
+    `version_service._remove_stale_files`, plus the two sites that gate only the
+    versioning hook rather than an unlink — `filesystem.delete_path`'s row loop and
+    `version_service.restore_snapshot`'s extras loop. `filesystem._add_orphan`
+    hand-rolls the equivalent and stays that way: it carries an extra
+    `is_dir`/`old_prefix` responsibility this helper does not model.
     """
     if not path_str:
         return None
@@ -322,6 +324,12 @@ def unique_filename_with_thumb(
     NOT exclude the stems of images being renamed/moved from that set — doing so
     re-introduces the within-batch clobber bug where one image's new thumbnail
     path matches another image's current one.
+
+    The one sanctioned exception is `images.bulk_rename`, which *must* exclude
+    them so a second Renumber restarts its counter at 001 instead of continuing
+    past the stems the first one left behind. It pays for the exclusion itself,
+    by deferring any rename whose target image, thumbnail **or** `.txt` sidecar
+    path is a batch member's current one through a temp name (PM-017).
     """
     candidate = unique_filename(images_dir, stem, suffix, db_names, disk_exclude)
     while True:
@@ -395,6 +403,15 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     """Rename a file and its .txt sidecar (if it exists) atomically.
 
     Use this everywhere a file is renamed; never copy the two-step pattern inline.
+
+    **The caller must have proved `new_path` free.** `Path.rename` silently
+    replaces an existing target on POSIX and raises `FileExistsError` on Windows,
+    so an unproven target either destroys a live file or aborts a batch halfway —
+    and the same is true of the sidecar, which is renamed onto `{new
+    stem}.txt` independently of whatever the image rename found there. Neither is
+    fixed here: `os.replace` would only make Windows destroy data as quietly as
+    POSIX does, and an `exists()` guard would add a TOCTOU race to a contract the
+    caller can satisfy exactly (see `bulk_rename`'s two-phase pass, PM-017).
     """
     old_path.rename(new_path)
     old_txt = old_path.with_suffix(".txt")

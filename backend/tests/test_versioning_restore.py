@@ -280,6 +280,69 @@ def test_restore_remove_skips_an_extra_image_whose_path_escaped(tmp_path):
     run(scenario())
 
 
+def _object_store_contents(ds_dir: Path) -> set[bytes]:
+    """Every blob the copy-on-write object store holds, by content."""
+    objects = ds_dir / ".versions" / "objects"
+    return {p.read_bytes() for p in objects.rglob("*") if p.is_file()}
+
+
+def test_restore_remove_never_backs_up_an_escaped_path_into_the_object_store(tmp_path):
+    """The gate covers the **versioning hook**, not only the unlink.
+
+    `mark_image_deleted_in_versions` copies the named file's bytes into
+    `{ds}/.versions/objects/`, where a snapshot restore hands them back — so an
+    out-of-tree `file_path` reaching it is an arbitrary-file *read* primitive on
+    an unauthenticated API, whether or not the later unlink is skipped. Restore's
+    extras loop was one of the two sites that called it ungated.
+
+    **Two snapshots are load-bearing.** The escaping test above never reaches the
+    hook at all: its extra image was added after the only snapshot, so it has no
+    `VersionImageState` row and the hook no-ops on its first query. The second
+    snapshot gives the extras rows, which is what makes the hook run.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"OLD!"})
+        outside = tmp_path / "datasets_backup"
+        outside.mkdir(parents=True)
+        escaped = outside / "keep-me.png"
+        escaped.write_bytes(b"NOT OURS")
+        assert str(escaped).startswith(str(app_settings.datasets_dir)), (
+            "the fixture must share the datasets dir's string prefix or it does "
+            "not test anything"
+        )
+
+        async with Session() as db:
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+            ds = await db.get(Dataset, ds_id)
+            db.add(_image_row(ds, ds_dir, "bad.png", b"BAD!"))
+            db.add(_image_row(ds, ds_dir, "good.png", b"GOOD"))
+            await db.commit()
+            # The second snapshot is what gives the two extras VersionImageState
+            # rows — without it the deletion hook returns before doing any work.
+            await version_service.create_snapshot(db, ds_id, "s2", "")
+
+            bad = await _get_by_filename(db, ds_id, "bad.png")
+            bad.file_path = str(escaped)
+            await db.commit()
+
+            await version_service.restore_snapshot(
+                db, ds_id, snap.id, handle_extra_images="remove",
+                pre_restore_snapshot=False)
+
+        stored = _object_store_contents(ds_dir)
+        assert b"NOT OURS" not in stored, (
+            "an out-of-tree file was copied into the object store — a snapshot "
+            "restore would hand its bytes straight back"
+        )
+        # The contained neighbour proves the hook really ran; without this the
+        # assertion above would also pass on a hook that no-op'd for both rows.
+        assert b"GOOD" in stored, "the hook did not fire — the test proves nothing"
+        assert escaped.read_bytes() == b"NOT OURS"
+        await engine.dispose()
+
+    run(scenario())
+
+
 def test_pre_restore_snapshot_lands_on_active_branch(tmp_path):
     async def scenario():
         engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})

@@ -133,12 +133,14 @@ class BatchResizeRequest(BaseModel):
     height: int | None = None
     scale: float | None = None
     maintain_ar: bool = True
+    label: str | None = None
 
 
 class BatchCropRequest(BaseModel):
     image_ids: list[str]
     target_ar: float
     strategy: str = "center"
+    label: str | None = None
 
 
 class BatchMoveSubfolderRequest(BaseModel):

@@ -14,7 +14,16 @@ from pathlib import Path
 from sqlalchemy import select
 
 from backend.models import Image
-from backend.tests.conftest import API, api_env, bmp_bytes, run, upload_image, wait_for_job
+from backend.tests.conftest import (
+    API,
+    api_env,
+    bmp_bytes,
+    jpeg_bytes,
+    png_bytes,
+    run,
+    upload_image,
+    wait_for_job,
+)
 
 
 def _identity_cube(path: Path) -> Path:
@@ -209,6 +218,76 @@ def test_lut_counts_a_disk_collision_as_skipped_not_processed(tmp_path):
             assert job["result_data"] == {
                 "processed": 0, "skipped": 1, "failed": 0, "thumbnails_stale": 0,
             }
+
+    run(scenario())
+
+
+async def _two_datasets_with_an_occupied_derived_stem(env, suffix: str) -> dict:
+    """Two datasets, each holding a source `{name}.jpg` and a registered
+    `{name}{suffix}.png` whose thumbnail already owns the derived stem.
+
+    The occupant's *extension* differs from the one the derived file will be
+    written under, so `db_names` — which is per image and was never the bug —
+    cannot catch it. Only the thumbnail-stem check can, and only if it is asked
+    about the right dataset's `thumbnails/` directory. Returns
+    `{name: {"ds", "source", "occupant", "thumb", "thumb_bytes"}}`.
+    """
+    out: dict[str, dict] = {}
+    for i, name in enumerate(("alpha", "beta")):
+        ds = await env.create_dataset(name)
+        source = await upload_image(env, ds["id"], f"{name}.jpg", jpeg_bytes((200, 60 + i, 20)))
+        occupant = await upload_image(
+            env, ds["id"], f"{name}{suffix}.png", png_bytes((7, 9 + i, 240), (24, 24))
+        )
+        async with env.Session() as db:
+            thumb = Path((await db.get(Image, occupant["id"])).thumbnail_path)
+        assert thumb.exists(), thumb
+        out[name] = {
+            "ds": ds, "source": source, "occupant": occupant,
+            "thumb": thumb, "thumb_bytes": thumb.read_bytes(),
+        }
+    return out
+
+
+def test_lut_copy_across_two_datasets_does_not_share_one_thumbnail_stem_set(tmp_path):
+    """PM-007 class. `occupied_thumb_stems` was one flat set built from
+    `images[0]`'s thumbnail directory, while `dest_images` is chosen **per image**
+    inside the loop and the job selects on `Image.id.in_(...)` with no dataset
+    constraint. A selection spanning two datasets therefore asked one dataset's
+    `thumbnails/` about the other's stems: whichever dataset did not seed the set
+    had its derived name accepted, and the new `.webp` landed on a live sibling's.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            env_by_name = await _two_datasets_with_an_occupied_derived_stem(env, "_lut")
+            lut = _identity_cube(tmp_path / "identity.cube")
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": env_by_name["alpha"]["ds"]["id"],
+                "image_ids": [e["source"]["id"] for e in env_by_name.values()],
+                "lut_path": str(lut), "intensity": 1.0, "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"]["processed"] == 2, job["result_data"]
+
+            for name, e in env_by_name.items():
+                assert e["thumb"].read_bytes() == e["thumb_bytes"], (
+                    f"{name}: the derived thumbnail clobbered a live sibling's"
+                )
+                async with env.Session() as db:
+                    rows = (await db.execute(select(Image).where(
+                        Image.dataset_id == e["ds"]["id"]
+                    ))).scalars().all()
+                derived = [
+                    row for row in rows
+                    if row.id not in (e["source"]["id"], e["occupant"]["id"])
+                ]
+                assert len(derived) == 1, [row.filename for row in rows]
+                assert derived[0].filename == f"{name}_lut_001.jpg"
+                assert Path(derived[0].thumbnail_path) != e["thumb"]
+                assert Path(derived[0].thumbnail_path).exists()
 
     run(scenario())
 

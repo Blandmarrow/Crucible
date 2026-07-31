@@ -48,11 +48,36 @@ staleness sweep while still recording the seam.
 
 ### Seam recorded, split pending
 
-None of these four is over budget today, so no split is due for any of them — the queue holds
-files that need restructuring, not only files that are numerically over. All four carry `##`
-headings, so `scripts/check_docs.py`'s per-section breakdown prints the counts quoted
-below and the seam is a measurement rather than a judgement call. The counts are the
-sections' own; the file total is larger by its intro and heading lines.
+`bulk-ops.md` and `versioning.md` are over budget today; the other three are queued because
+they need restructuring, not because they are numerically over — the queue holds both. All
+five carry `##` headings, so `scripts/check_docs.py`'s per-section breakdown prints the
+counts quoted below and the seam is a measurement rather than a judgement call. The counts
+are the sections' own; the file total is larger by its intro and heading lines.
+
+## docs/dev/bulk-ops.md
+
+- **Moves:** § Detection-driven cropping (879 w) and the three `###` subsections under
+  § Bulk image operations — § Renumber's two-phase rename (287), § Batch resize and aspect
+  crop (267), § Rebuilding thumbnails (566). 1,999 w together.
+- **New file:** docs/dev/bulk-image-jobs.md
+- **Why here:** the file holds two subjects that only share the word "bulk". What stays is
+  **scope-filtered metadata editing** — `_apply_bulk_filters`, the endpoint table, caption
+  find/replace/regex, `BulkEditPage`'s tabs — where the interesting content is *which rows
+  are selected*. What moves is **bulk jobs that rewrite pixels or files**, where the
+  interesting content is the per-image loop: PM-013 commit ordering, thumbnail-stem
+  collisions, `remap_detections_for_crop`, the `thumbnails_stale` counter. A reader
+  debugging one never wants the other.
+- **Leaves:** 3,672 total → ~1,640 / ~2,000 (47% / 57%).
+- **Watch for:** § Renumber's two-phase rename explains the `bulk-rename` table row, which
+  stays behind — the row must gain a cross-file pointer, not a copy of the explanation.
+  § Rebuilding thumbnails is the *repair* for the `thumbnails_stale` counter that
+  `docs/dev/frontend-jobs.md` surfaces and that `lut.py`/`upscaling.py`/`images.py` write, so
+  it travels with the jobs, not with the endpoint table that exposes it. § Detection-driven
+  cropping is referenced from `docs/dev/detection.md`, which is itself queued below and would
+  be the wrong place to absorb it — `detection.md` owns the *detector*, this owns the crop
+  job that consumes its boxes. Four CLAUDE.md Documentation Map triggers point here
+  (`BulkEditPage`, `CropToDetectionForm`, `bulk-*` endpoint, `detection_crop_rect`); the last
+  two follow the new file.
 
 ## docs/dev/export.md
 
@@ -105,15 +130,17 @@ sections' own; the file total is larger by its intro and heading lines.
 
 ## docs/dev/versioning.md
 
-- **Moves:** § Backend's `### Service` (1,246 w) — `version_service.py`, chiefly
+- **Moves:** § Backend's `### Service` (1,434 w) — `version_service.py`, chiefly
   `restore_snapshot`'s four passes
 - **New file:** docs/dev/versioning-restore.md
-- **Why here:** that one subsection is 39% of the file and is the only part of it that is
-  hard. Everything else (Guards 216, Model and storage 430, `### Router` 232,
-  `### Copy-on-write injection points` 306, Frontend 527, Provenance mirror and regression
+- **Why here:** that one subsection is 40% of the file and is the only part of it that is
+  hard. Everything else (Guards 310, Model and storage 430, `### Router` 232,
+  `### Copy-on-write injection points` 431, Frontend 527, Provenance mirror and regression
   tests 161) is reference a reader skims; the restore passes are read line by line when
   something has gone wrong.
-- **Leaves:** 3,187 total → ~1,940 / ~1,250.
+- **Leaves:** 3,594 total (over budget as of 2026-07-31) → ~2,160 / ~1,435. That is 62% for
+  the remainder, marginally over the 60% target, so consider taking
+  `### Copy-on-write injection points` with it (see Watch for) — that lands ~1,730 / ~1,865.
 - **Watch for:** `### Copy-on-write injection points` is a table of *call sites* in other
   routers and belongs with whichever half documents the two hooks — the hooks themselves are
   in `### Service`, so it likely travels with it despite reading like router content. The

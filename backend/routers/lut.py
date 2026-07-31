@@ -103,15 +103,14 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
 
             last_image_id: str | None = None
 
-            # Pre-build occupied thumbnail stems for the non-replace path so that
-            # images with different extensions but the same derived stem don't share
-            # a thumbnail. planned_thumb_stems accumulates across iterations.
-            occupied_thumb_stems: set[str] = set()
-            planned_thumb_stems: set[str] = set()
-            if not replace and images:
-                dest_thumb_dir = Path(images[0].file_path).parent.parent / "thumbnails"
-                if dest_thumb_dir.exists():
-                    occupied_thumb_stems = {p.stem for p in dest_thumb_dir.glob("*.webp")}
+            # Occupied/planned thumbnail stems for the non-replace path, keyed by
+            # thumbnail directory: matched images can span multiple datasets (each
+            # with its own thumbnails/ dir), so a single flat set would false-share
+            # stems across datasets. Built lazily per dir inside the loop;
+            # planned_by_dir accumulates across iterations (mutated by
+            # unique_filename_with_thumb per its contract).
+            occupied_by_dir: dict[Path, set[str]] = {}
+            planned_by_dir: dict[Path, set[str]] = {}
 
             cancelled = False
             for i, img in enumerate(images):
@@ -140,6 +139,14 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     dest_path_str = str(src_path)
                 else:
                     dest_images = src_path.parent
+                    dest_thumb_dir = src_path.parent.parent / "thumbnails"
+                    if dest_thumb_dir not in occupied_by_dir:
+                        occupied_by_dir[dest_thumb_dir] = (
+                            {p.stem for p in dest_thumb_dir.glob("*.webp")}
+                            if dest_thumb_dir.exists() else set()
+                        )
+                    occupied_thumb_stems = occupied_by_dir[dest_thumb_dir]
+                    planned_thumb_stems = planned_by_dir.setdefault(dest_thumb_dir, set())
                     dest_stem = slugify_filename(src_path.stem + "_lut")
                     existing = await session.execute(
                         select(Image.filename).where(

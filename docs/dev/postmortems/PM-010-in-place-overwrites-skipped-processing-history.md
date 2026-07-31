@@ -64,11 +64,15 @@ none could have failed usefully — the column had no reader, so its value was c
 vacuous definition.
 
 Noted while writing this up, and worth keeping: **`POST /images/batch/crop` and
-`/images/batch/resize` are unreachable.** `POST /images/{image_id}/crop` is declared first,
-so FastAPI matches it and reads `batch` as an image id; nothing in the frontend calls either
-endpoint. Two of the five paths therefore could not have been exercised by any test, HTTP or
-otherwise — which is a second, independent reason the gap was invisible, and a reminder that
-route shadowing hides code from coverage as effectively as it hides it from users.
+`/images/batch/resize` were unreachable.** `POST /images/{image_id}/crop` was declared
+first, so FastAPI matched it and read `batch` as an image id; nothing in the frontend called
+either endpoint. Two of the five paths therefore could not have been exercised by any test,
+HTTP or otherwise — which was a second, independent reason the gap was invisible, and a
+reminder that route shadowing hides code from coverage as effectively as it hides it from
+users. Fixed on 2026-07-31: the observation became PM-018, the block was moved above the
+parameterized routes, and both handlers are now covered by
+`backend/tests/test_batch_resize_crop_http.py`. Their `_record_in_place` calls are live for
+the first time.
 
 ### Fix
 

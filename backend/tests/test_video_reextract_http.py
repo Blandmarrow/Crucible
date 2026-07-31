@@ -492,11 +492,11 @@ def test_every_in_place_overwrite_marks_the_frame_as_edited(tmp_path):
     silently eligible and pass 2 would have discarded the crop. Asserted through
     the *preview*, since that is what decides.
 
-    `POST /images/batch/crop` and `/batch/resize` record one too, but cannot be
-    driven from here: `POST /images/{image_id}/crop` is declared first and reads
-    `batch` as an image id, so both have been unreachable since they shipped
-    (nothing in the frontend calls them either). Left alone here — un-shadowing a
-    dead endpoint is not this feature's change to make.
+    `POST /images/batch/crop` and `/batch/resize` record one too. They were
+    unreachable when this was written — `POST /images/{image_id}/crop` was
+    declared first and read `batch` as an image id — and were un-shadowed
+    separately (PM-018). Their `processing_history` entries are asserted in
+    `backend/tests/test_batch_resize_crop_http.py`, not here.
     """
     async def scenario():
         async with api_env(tmp_path) as env:

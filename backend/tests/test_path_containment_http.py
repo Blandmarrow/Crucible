@@ -303,3 +303,68 @@ def test_replace_mode_extraction_skips_an_escaped_frame_path(tmp_path):
             assert (images_dir / f"{bad_orphan.stem}_001{bad_orphan.suffix}").exists()
 
     run(scenario())
+
+
+def test_the_file_browser_delete_never_backs_an_escaped_path_into_the_store(tmp_path):
+    """`filesystem.delete_path` gated only its unlinks, not its versioning hook.
+
+    The endpoint validates the requested path with `sanitize_abs_path`, which
+    proves it absolute and NUL-free — **not** contained — so it is reachable with
+    any path on the machine, by design: it is a file browser. What must not follow
+    is `mark_image_deleted_in_versions` copying the named file's bytes into
+    `{ds}/.versions/objects/`, from where a snapshot restore hands them back. On an
+    unauthenticated API that is an arbitrary-file *read* primitive, and the unlink
+    guard below it does nothing to stop it.
+
+    `versioning_mode` has to be switched on: the column defaults to `"off"`, in
+    which the hook returns immediately and the test proves nothing. The contained
+    control delete at the end is the other half of that — it fails if the hook is
+    inert for any other reason.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.patch(
+                f"{API}/settings/thresholds", json={"versioning_mode": "auto"}
+            )
+            assert r.status_code == 200, r.text
+
+            ds = await env.create_dataset("d")
+            bad = await upload_image(env, ds["id"], "bad.png", png_bytes((1, 2, 3)))
+            good = await upload_image(env, ds["id"], "good.png", png_bytes((4, 5, 6)))
+
+            from backend.services import version_service
+            async with env.Session() as db:
+                await version_service.create_snapshot(db, ds["id"], "s1", "")
+
+            secret = b"NOT OURS"
+            escaped = _escaped_file(tmp_path, "keep-me.png", secret)
+            await _set(env, Image, bad["id"], file_path=str(escaped))
+
+            objects = Path(ds["folder_path"]) / ".versions" / "objects"
+
+            def stored() -> set[bytes]:
+                if not objects.exists():
+                    return set()
+                return {p.read_bytes() for p in objects.rglob("*") if p.is_file()}
+
+            r = await env.client.post(
+                f"{API}/filesystem/delete", json={"path": str(escaped)}
+            )
+            assert r.status_code == 200, r.text
+            assert secret not in stored(), (
+                "an out-of-tree file was copied into the object store — a snapshot "
+                "restore would hand its bytes straight back"
+            )
+
+            # The control: a contained delete through the same endpoint must still
+            # reach the hook, or the assertion above is vacuous.
+            async with env.Session() as db:
+                good_file = Path((await db.get(Image, good["id"])).file_path)
+            good_bytes = good_file.read_bytes()
+            r = await env.client.post(
+                f"{API}/filesystem/delete", json={"path": str(good_file)}
+            )
+            assert r.status_code == 200, r.text
+            assert good_bytes in stored(), "the hook did not fire — the test proves nothing"
+
+    run(scenario())

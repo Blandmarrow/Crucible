@@ -18,6 +18,15 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   `routers/detection.py`'s crop worker. Milder — no 404, because the filename never changes
   — but a lost history entry means a later re-extraction silently discards a user's edit
   (PM-010's consumer).
+
+  **Amended 2026-07-31:** the two batch workers left this tier, fixed to the Tier-1 shape
+  alongside PM-018 (which is what made them reachable at all — they were shadowed routes
+  and had never executed). Their instance was also **worse than this entry recorded**: the
+  only `commit()` sat *outside* the loop, so the blast radius was not one image's stale
+  geometry but every image the run had already overwritten. The note above understates any
+  instance where the commit is not per item, and that is the question to ask of a loop, not
+  just "what runs between the write and the commit". Tier 2 is now `routers/images.py`'s
+  single crop and `routers/detection.py`'s crop worker.
 - **Tier 3 — copy-mode branches that cut the thumbnail before the row insert**
   (`routers/lut.py`, `routers/upscaling.py`, `routers/detection.py`, `routers/images.py`'s
   new-file crop worker). A mid-loop raise orphans files with zero rows; nothing 404s.

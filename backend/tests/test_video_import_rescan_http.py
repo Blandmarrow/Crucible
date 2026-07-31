@@ -10,12 +10,13 @@ Rescan needs its own pass at all because the image walk is
 `images_dir.rglob("*")`, which cannot see videos/.
 """
 
+import asyncio
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 
-from backend.models import Image, Video
+from backend.models import Dataset, Image, Video
 from backend.services.dataset_service import _scan_source_files
 from backend.tests.conftest import API, api_env, mp4_bytes, png_bytes, run, upload_video, wait_for_job
 
@@ -387,5 +388,59 @@ def test_an_upload_will_not_take_a_poster_stem_rescan_disambiguated(tmp_path):
             posters = {row.poster_path for row in rows}
             assert len(posters) == len(rows) == 3, f"posters collided: {posters}"
             assert all(Path(p).exists() for p in posters)
+
+    run(scenario())
+
+
+def test_a_cancel_during_the_video_pass_is_not_reported_as_success(tmp_path, monkeypatch):
+    """`cancelled` was set only by the image loop, so a cancel pressed while the
+    *video* pass was running was never observed.
+
+    That pass is where a rescan spends its time: an already-registered clip hits
+    an early `continue`, but a new one costs a decode plus a poster write, so a
+    folder that just received a few hundred clips keeps the loop busy for minutes
+    after the image loop's last progress emit. Pressing the pill's × there did
+    nothing, and the run then reported `completed` — the optimistic "cancelled"
+    the client had already written was overwritten by a terminal success for a
+    job the user stopped.
+
+    The probe is what trips the flag here, which puts the cancel exactly where it
+    used to be invisible: after the image loop finished, during the video pass.
+    """
+    from backend.services import dataset_service
+    from backend.services.video_service import probe_and_poster as real_probe
+    from backend.workers.job_queue import job_queue
+
+    JOB_ID = "cancel-during-video-pass"
+
+    def probe_then_cancel(video_path, poster_path):
+        job_queue._cancel_requested.add(JOB_ID)
+        return real_probe(video_path, poster_path)
+
+    monkeypatch.setattr(dataset_service, "probe_and_poster", probe_then_cancel)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            root = Path(ds["folder_path"])
+            (root / "images").mkdir(parents=True, exist_ok=True)
+            (root / "images" / "a.png").write_bytes(png_bytes())
+            (root / "videos").mkdir(parents=True, exist_ok=True)
+            (root / "videos" / "clip.mp4").write_bytes(mp4_bytes())
+
+            async with env.Session() as db:
+                dataset = await db.get(Dataset, ds["id"])
+                with pytest.raises(asyncio.CancelledError):
+                    # Before the fix this returned a result dict, and the queue
+                    # marked the job "completed".
+                    await dataset_service.rescan_dataset(db, dataset, job_id=JOB_ID)
+
+            # The cancel stops the run without discarding what it already staged —
+            # same contract as a cancel during the image pass.
+            async with env.Session() as db:
+                imgs = (await db.execute(select(Image))).scalars().all()
+            assert [i.filename for i in imgs] == ["a.png"]
+
+        job_queue._cancel_requested.discard(JOB_ID)
 
     run(scenario())

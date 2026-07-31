@@ -405,6 +405,12 @@ export default function GalleryPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // A rescan adopts clips out of videos/ too, and its toast reports the count.
+    // Without this the header badge updates (it reads `dataset.video_count`) but
+    // `VideoStrip` keeps its pre-rescan list for the 30 s staleTime — the page
+    // says "12 videos" above a strip that renders nothing, and Extract frames is
+    // unreachable until the tab loses and regains focus.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
     if (rescanManualRef.current) {
       const jid = rescanJobId;
       jobsApi.get(jid).then((job) => {
@@ -445,6 +451,8 @@ export default function GalleryPage() {
     // An import is a provenance writer: a scraper sidecar is the largest source
     // of new `other:` licenses, and they are unpickable until this refetches.
     qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });
+    // Same as the rescan handler above: `include_videos` creates Video rows.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
     showImportSummaryToast(importJobId);
     setImportJobId(null);
   }, [importProgress?.status, importJobId, datasetId, qc]);

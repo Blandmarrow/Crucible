@@ -235,6 +235,11 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
+            // An import under `include_videos` creates Video rows. This is the
+            // always-mounted net, so it is what covers the user who started the
+            // import from DatasetsPage or the file browser and then walked into
+            // the gallery — the page-local handler there never ran.
+            qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
           }
         }
         // Detection jobs (run / manual box+SAM / mask refine) change per-image

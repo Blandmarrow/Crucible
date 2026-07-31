@@ -81,7 +81,10 @@ export function mp4Buffer(): Buffer {
 export async function createDatasetViaApi(
   request: APIRequestContext,
   name: string,
-): Promise<{ id: string; name: string }> {
+  // `folder_path` is what the endpoint has always returned; it is declared here
+  // so a spec can reach the dataset folder on disk — the only way to stage the
+  // "files appeared outside the app" state that Rescan exists to pick up.
+): Promise<{ id: string; name: string; folder_path: string }> {
   const r = await request.post('/api/v1/datasets/', { data: { name } })
   expect(r.status(), await r.text()).toBe(201)
   return r.json()

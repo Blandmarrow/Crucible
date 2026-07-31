@@ -221,6 +221,18 @@ CLAUDE.md § Key invariants states the mirroring rule those columns live under; 
 sites that must carry them are pinned by `backend/tests/test_video_lineage_mirrors.py`,
 whose structural test fails for the *next* unmirrored `Image` column.
 
+Of the three, `source_video_id` is the only one a restore cannot write back verbatim. It is
+the sole lineage column carrying a real foreign key, `VersionImageState` deliberately carries
+none, and deleting a video is a supported action that NULLs the live frames' lineage rather
+than destroying curated data — so a snapshot routinely outlives the video it names. Since
+`ondelete="SET NULL"` covers only deleting the parent, an UPDATE onto a missing parent key
+still raises `FOREIGN KEY constraint failed`; restore Pass 2c therefore resolves the
+snapshotted ids against `videos` first and writes NULL for the ones that are gone, the same
+fallback `duplicate_dataset` uses when its old→new map misses. Without it the restore aborted
+at its own commit, failed identically on every retry, and burned a pre-restore auto-snapshot
+each time — invisible to the suite, because the harness leaves `PRAGMA foreign_keys` off by
+default (see `backend/tests/test_versioning_restore.py`'s `foreign_keys=True` env).
+
 `source_shot_index` is **0-based**, and matches the `_sNNNN_` in the frame's own filename.
 `ImageDetailPage` therefore renders *"shot 0"* deliberately; it is not off by one against the
 *"Shot 1 of N"* progress message, which numbers shots for a human watching a bar.

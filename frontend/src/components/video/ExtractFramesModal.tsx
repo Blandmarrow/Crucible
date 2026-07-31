@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../../api/datasets";
@@ -84,6 +84,10 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   // so an untouched control sends `undefined`. It also makes the single-video
   // case a no-op instead of a rewrite.
   const [cropTouched, setCropTouched] = useState(false);
+  // The rect this modal opened with, pinned for the session. `crop` is seeded by
+  // a mount-only initializer, so comparing against a re-read of `primary` would
+  // let a background cache refresh silently flip `cropTouched` under the user.
+  const initialCrop = useRef<CropRect | null>(storedCrop(primary));
   const [deinterlaceTouched, setDeinterlaceTouched] = useState(false);
   const [trimTouched, setTrimTouched] = useState(false);
 
@@ -266,9 +270,29 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
   // to every video in the batch. So a spurious touch — a tab through a crop field
   // with no typing, a drag that jitters back to where it started — wipes the
   // batch's stored rects. A change that changes nothing marks nothing.
+  //
+  // Two things make "changes nothing" wider than a `!==` on the incoming rect.
+  //
+  // First, a full-frame rect *is* no crop: `CropOverlay` draws no crop as the
+  // full frame (`active = rect ?? full`) and never hands back `null`, and
+  // `clamp_crop` maps a full-frame rect to `None` server-side. So `{0,0,W,H}`
+  // and `null` are one state everywhere except `sameRect`, which reads them as
+  // different — normalize before comparing.
+  //
+  // Second, the flag has to be *derived*, not latched. `CropOverlay` calls
+  // `onChange` on every pointer move, so a drag inward and back out to the edge
+  // latches `cropTouched` on its first intermediate frame and no amount of
+  // normalizing the final value clears it. Comparing against the rect this modal
+  // opened with is what makes the round trip a no-op — and it keeps the real
+  // clear honest: dragging a stored rect out to the frame edge still yields
+  // `crop === null` with `cropTouched`, hence `clear_crop: true`.
   function applyCrop(r: CropRect | null) {
-    setCrop(r);
-    if (!sameRect(r, crop)) setCropTouched(true);
+    const normalized =
+      r && frameW > 0 && frameH > 0 && r.x === 0 && r.y === 0 && r.w === frameW && r.h === frameH
+        ? null
+        : r;
+    setCrop(normalized);
+    setCropTouched(!sameRect(normalized, initialCrop.current));
   }
 
   async function handleSubmit() {
@@ -319,7 +343,15 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
 
   const { overlayProps, panelProps } = useModalBehavior({ onClose, label: "Extract frames" });
 
-  const previousCount = framesSummary?.total ?? 0;
+  // Replace deletes one subfolder, so the label counts one subfolder. The job
+  // resolves its target to `_last_subfolder_for`, which is `groups[0]`, and
+  // `_delete_previous_frames` scopes its select to `Image.subfolder == target` —
+  // frames this video produced into *other* subfolders survive untouched.
+  // `framesSummary.total` sums every group, so on a video extracted twice it
+  // overstated the deletion (a "deletes 100" that removed 50) while giving no
+  // hint that the other 50 were being left behind. Replace mode also hides the
+  // subfolder control, so nothing else on screen disambiguates the number.
+  const previousCount = framesSummary?.groups[0]?.count ?? 0;
   const lastSubfolder = framesSummary?.groups[0]?.subfolder;
 
   return (

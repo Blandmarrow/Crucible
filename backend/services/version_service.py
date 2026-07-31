@@ -37,8 +37,9 @@ from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
+from backend.models.video import Video
 from backend.services.threshold_service import get_thresholds
-from backend.utils import contained_path
+from backend.utils import chunked, contained_path
 
 logger = logging.getLogger(__name__)
 
@@ -835,6 +836,30 @@ async def restore_snapshot(
             )
         await db.flush()
 
+    # A snapshot outlives its video on purpose: `VersionImageState` carries no
+    # FK, so deleting a video (which NULLs the live frames' lineage rather than
+    # destroying curated data) leaves the stored id naming a row that is gone.
+    # `Image.source_video_id` *is* a real FK, and `ondelete="SET NULL"` covers
+    # only deleting the parent — an UPDATE to a missing parent key still raises
+    # `FOREIGN KEY constraint failed`, aborting the whole restore permanently.
+    # So resolve the ids that still exist and NULL the rest, the same fallback
+    # `duplicate_dataset` uses when its old→new video map misses.
+    snapshot_video_ids = {
+        p.state.source_video_id for p in plans if p.state.source_video_id
+    }
+    live_video_ids: set[str] = set()
+    for chunk in chunked(sorted(snapshot_video_ids)):
+        rows = await db.execute(select(Video.id).where(Video.id.in_(chunk)))
+        live_video_ids.update(rows.scalars().all())
+    missing_video_ids = snapshot_video_ids - live_video_ids
+    if missing_video_ids:
+        logger.warning(
+            "restore: %d snapshotted frame(s) name %d video(s) that no longer "
+            "exist; restoring their lineage as NULL",
+            sum(1 for p in plans if p.state.source_video_id in missing_video_ids),
+            len(missing_video_ids),
+        )
+
     # Pass 2c: final values; re-creation INSERTs are now collision-free.
     for p in plans:
         img = p.img
@@ -890,7 +915,9 @@ async def restore_snapshot(
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.sort_order = state.sort_order
-        img.source_video_id = state.source_video_id
+        img.source_video_id = (
+            state.source_video_id if state.source_video_id in live_video_ids else None
+        )
         img.source_timestamp_ms = state.source_timestamp_ms
         img.source_shot_index = state.source_shot_index
         if state.width:

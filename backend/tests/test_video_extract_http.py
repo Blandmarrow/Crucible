@@ -1941,3 +1941,62 @@ def test_the_commit_interval_makes_frames_visible_before_the_job_ends(tmp_path, 
                 assert len((await db.execute(select(Image))).scalars().all()) == 6
 
     run(scenario())
+
+
+def test_a_locked_previous_frame_does_not_abort_the_replace(tmp_path, monkeypatch):
+    """The replace delete's unlink loop is a post-commit epilogue, so a file the
+    OS refuses to remove must not change the run's outcome.
+
+    `missing_ok=True` covers a file that is already gone; it does nothing for one
+    that is locked. On Windows that is routine — Explorer's preview pane, an AV
+    scanner, or a `/file` response still streaming the frame — and an unwrapped
+    `PermissionError` here escaped `_delete_previous_frames`, `_run_extraction`
+    and the job at step 5: every previous row already deleted and committed, the
+    *tail* of their files still on disk (the loop aborts at the first failure,
+    so the residue is every file after it too), and not one replacement written.
+
+    That is precisely the state the step-5 ordering exists to prevent — the
+    docstring calls it "the worst outcome this feature can produce" — so the
+    failure has to be logged and stepped over, per PM-013's epilogue rule.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            video = await upload_video(env, ds["id"], "clip.mp4", SHOTS_MP4)
+
+            await _extract_and_wait(env, [video["id"]])
+            async with env.Session() as db:
+                before = (await db.execute(select(Image))).scalars().all()
+                images_dir = Path(before[0].file_path).parent
+            assert len(before) == 3
+
+            # Lock the *first* file the loop reaches, so an unwrapped raise would
+            # also strand the two behind it.
+            locked = sorted(p.name for p in images_dir.glob("*.jpg"))[0]
+            real_unlink = Path.unlink
+
+            def flaky_unlink(self, *a, **kw):
+                if self.name == locked:
+                    raise PermissionError(32, "The process cannot access the file")
+                return real_unlink(self, *a, **kw)
+
+            monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+            _body, jobs = await _extract_and_wait(env, [video["id"]], mode="replace")
+            # Before the fix: "failed", with a raw PermissionError as the error.
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["replaced"] == 3
+
+            monkeypatch.undo()
+            async with env.Session() as db:
+                after = (await db.execute(select(Image))).scalars().all()
+            # The replacements were written, and the rows are the new ones.
+            assert len(after) == 3
+            assert {i.id for i in after}.isdisjoint({i.id for i in before})
+            # The neighbours behind the locked file were still cleaned up: only
+            # the one the OS refused survives as a stray, and because the new
+            # frames reuse the freed names it is a stray only if it was not
+            # reclaimed by a replacement.
+            assert all((images_dir / i.filename).exists() for i in after)
+
+    run(scenario())

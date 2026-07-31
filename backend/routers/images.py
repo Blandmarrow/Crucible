@@ -93,7 +93,12 @@ def _write_video_upload_sync(src_fileobj, dest: Path, poster_path: Path) -> tupl
         shutil.copyfileobj(src_fileobj, f)
     try:
         return probe_and_poster(dest, poster_path)
-    except UnreadableVideoError:
+    except BaseException:
+        # Every failure removes the bytes, not just the gate's. `probe_and_poster`
+        # shields `generate_poster` alone, so `probe_video` still raises cv2's
+        # lazy `ImportError` (a headless host with no libGL), a raw `cv2.error`
+        # or a `MemoryError` straight through — and those left the file behind in
+        # videos/ with no row for the next folder sync to adopt.
         dest.unlink(missing_ok=True)
         raise
 
@@ -461,6 +466,23 @@ async def upload_images(
                 video_db_names.discard(filename)
                 planned_poster_stems.discard(dest.stem)
                 continue
+            except Exception as exc:
+                # One bad file must not take the request down. The only commit is
+                # after this loop, so an escaping exception discards the rows for
+                # every file already copied in this request while leaving those
+                # files (and their thumbnails) on disk — the user sees "nothing
+                # uploaded", re-uploads into `_001` duplicates, and a later folder
+                # sync adopts the orphans at `subfolder=""` as a second copy of
+                # everything. The other two ingest paths (`import_images_from_folder`
+                # and `_rescan_videos`) both guard per file for exactly this.
+                logger.exception("upload: probing %s failed", upload.filename)
+                skipped.append({
+                    "file": upload.filename or "",
+                    "reason": f"Could not read video: {exc.__class__.__name__}",
+                })
+                video_db_names.discard(filename)
+                planned_poster_stems.discard(dest.stem)
+                continue
             db.add(Video(
                 dataset_id=dataset_id,
                 filename=filename,
@@ -479,9 +501,26 @@ async def upload_images(
         filename = unique_filename_with_thumb(dest_images, slug, suffix, db_names, occupied_thumb_stems, planned_thumb_stems)
         dest = dest_images / filename
         thumb_path = str(dest_thumbs / (dest.stem + ".webp"))
-        info, gen_meta, captured = await asyncio.get_running_loop().run_in_executor(
-            None, _write_upload_sync, upload.file, dest, thumb_path
-        )
+        try:
+            info, gen_meta, captured = await asyncio.get_running_loop().run_in_executor(
+                None, _write_upload_sync, upload.file, dest, thumb_path
+            )
+        except Exception as exc:
+            # Same per-file containment as the video branch above, and for the
+            # same reason: `_write_upload_sync` copies the file *first*, then runs
+            # `get_image_info`, `extract_generation_metadata` and
+            # `generate_thumbnail`, any of which can raise on a corrupt or
+            # truncated image — and the single commit sits after this loop.
+            logger.exception("upload: processing %s failed", upload.filename)
+            dest.unlink(missing_ok=True)
+            Path(thumb_path).unlink(missing_ok=True)
+            skipped.append({
+                "file": upload.filename or "",
+                "reason": f"Could not read image: {exc.__class__.__name__}",
+            })
+            db_names.discard(filename)
+            planned_thumb_stems.discard(dest.stem)
+            continue
 
         img = Image(
             dataset_id=dataset_id,

@@ -35,7 +35,8 @@ import backend.models  # noqa: F401 — register all models on Base
 from backend.models.dataset import Dataset
 from backend.models.image import Image
 from backend.models.threshold_settings import ThresholdSettings
-from backend.models.versioning import DatasetBranch, DatasetVersion
+from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
+from backend.models.video import Video
 from backend.services import version_service
 
 
@@ -60,9 +61,31 @@ def _datasets_root(tmp_path, monkeypatch):
     return root
 
 
-async def make_env(tmp_path: Path, names_contents: dict[str, bytes], mode: str = "auto"):
-    """Engine + session factory + one dataset with the given image files."""
+async def make_env(
+    tmp_path: Path,
+    names_contents: dict[str, bytes],
+    mode: str = "auto",
+    *,
+    foreign_keys: bool = False,
+):
+    """Engine + session factory + one dataset with the given image files.
+
+    `foreign_keys` opts this engine into the `PRAGMA foreign_keys=ON` that
+    `backend/database.py` installs on the app engine. SQLite defaults it OFF per
+    connection, so without it every FK in the schema is unenforced here and a
+    restore that writes a dangling `Image.source_video_id` passes silently —
+    exactly the blind spot `test_duplicate_video_fk_enforced.py` documents.
+    """
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    if foreign_keys:
+        from sqlalchemy import event
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            cur.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
@@ -426,6 +449,106 @@ def test_diff_reports_a_changed_technical_score(tmp_path):
             # Floats, not `_HEAVY_DIFF_FIELDS`, so both values are reported.
             assert changes["luminance_score"] == {"from": 0.2, "to": 0.7}
             assert changes["nsfw_score"] == {"from": 0.9, "to": 0.1}
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_restore_after_the_source_video_was_deleted(tmp_path):
+    """A snapshot outlives its video; restoring it must not re-impose the FK.
+
+    `VersionImageState.source_video_id` deliberately carries no foreign key, so a
+    snapshot keeps naming a video the user later deletes — and deleting a video
+    is a supported action that NULLs the live frames' lineage rather than
+    destroying curated data. `Image.source_video_id` *is* a real FK, and
+    `ondelete="SET NULL"` only covers deleting the parent: updating a child to a
+    parent key that no longer exists still violates the constraint.
+
+    So the Pass 2c write-back cannot copy the stored id blindly. Before the fix
+    the commit raised `IntegrityError: FOREIGN KEY constraint failed`, the job
+    ended `failed`, and every retry failed identically — the snapshot was
+    permanently un-restorable while still burning a pre-restore auto-snapshot per
+    attempt. The whole suite missed it because the harness leaves the pragma off.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(
+            tmp_path, {"frame.png": b"AAAA"}, mode="manual", foreign_keys=True)
+        (ds_dir / "videos").mkdir(parents=True, exist_ok=True)
+        async with Session() as db:
+            video = Video(
+                dataset_id=ds_id, filename="clip.mp4", original_filename="clip.mp4",
+                file_path=str(ds_dir / "videos" / "clip.mp4"),
+            )
+            db.add(video)
+            await db.flush()
+            video_id = video.id
+
+            frame = await _get_by_filename(db, ds_id, "frame.png")
+            frame.source_video_id = video_id
+            frame.source_timestamp_ms = 4321
+            frame.source_shot_index = 7
+            await db.commit()
+
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+
+            # Delete the video the way routers/videos.py::delete_video does:
+            # the frames survive with their lineage NULLed.
+            frame.source_video_id = None
+            await db.delete(video)
+            await db.commit()
+
+            # The snapshot still names the dead video — that is by design.
+            state = (await db.execute(select(VersionImageState).where(
+                VersionImageState.version_id == snap.id))).scalar_one()
+            assert state.source_video_id == video_id
+
+            result = await version_service.restore_snapshot(
+                db, ds_id, snap.id, pre_restore_snapshot=False)
+            assert result["files_failed"] == 0
+
+            await db.refresh(frame)
+            # Lineage that can no longer resolve comes back NULL, not dangling.
+            assert frame.source_video_id is None
+            # The rest of the lineage trio is not derived-from-elsewhere and travels.
+            assert frame.source_timestamp_ms == 4321
+            assert frame.source_shot_index == 7
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_restore_keeps_lineage_when_the_video_still_exists(tmp_path):
+    """The guard must not become a blanket NULL: a live video still restores."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(
+            tmp_path, {"frame.png": b"AAAA"}, mode="manual", foreign_keys=True)
+        (ds_dir / "videos").mkdir(parents=True, exist_ok=True)
+        async with Session() as db:
+            video = Video(
+                dataset_id=ds_id, filename="clip.mp4", original_filename="clip.mp4",
+                file_path=str(ds_dir / "videos" / "clip.mp4"),
+            )
+            db.add(video)
+            await db.flush()
+            video_id = video.id
+
+            frame = await _get_by_filename(db, ds_id, "frame.png")
+            frame.source_video_id = video_id
+            frame.source_timestamp_ms = 900
+            await db.commit()
+
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+
+            # Something unrelated changes, then the user restores.
+            frame.source_video_id = None
+            frame.caption_text = "edited"
+            await db.commit()
+
+            await version_service.restore_snapshot(
+                db, ds_id, snap.id, pre_restore_snapshot=False)
+            await db.refresh(frame)
+            assert frame.source_video_id == video_id
+            assert frame.source_timestamp_ms == 900
         await engine.dispose()
 
     run(scenario())

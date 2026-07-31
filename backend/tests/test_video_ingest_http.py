@@ -390,3 +390,62 @@ def test_videos_dataset_fk_cascades_on_delete(tmp_path):
             assert 'REFERENCES datasets' in ddl.replace('"', "")
 
     run(scenario())
+
+
+def test_a_probe_crash_does_not_discard_the_images_uploaded_beside_it(tmp_path, monkeypatch):
+    """`UnreadableVideoError` is the ingest *gate*; everything else the probe can
+    raise was escaping the endpoint entirely.
+
+    `probe_and_poster` shields `generate_poster` alone, so cv2's lazy
+    `ImportError` (a headless host with no `libGL.so.1`), a raw `cv2.error` or a
+    `MemoryError` from `probe_video` passed straight through the
+    `except UnreadableVideoError` arm. The only `db.commit()` is *after* the
+    per-file loop, so that escape threw away the rows for every image already
+    copied in the same request while their files and thumbnails stayed on disk:
+    the user saw "nothing uploaded", re-uploaded into `_001` duplicates, and the
+    next folder sync adopted the orphans at `subfolder=""` — every image twice.
+
+    Drag-and-drop onto a dataset card sends one mixed batch, so a single bad clip
+    among fifty photos is the ordinary way to reach this.
+    """
+    from backend.routers import images as images_router
+    from backend.services.video_service import probe_and_poster as real_probe
+
+    def flaky(video_path, poster_path):
+        if Path(video_path).name.startswith("bad"):
+            raise ImportError("libGL.so.1: cannot open shared object file")
+        return real_probe(video_path, poster_path)
+
+    monkeypatch.setattr(images_router, "probe_and_poster", flaky)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+
+            r = await env.client.post(
+                f"{API}/images/upload",
+                params={"dataset_id": ds["id"]},
+                files=[
+                    ("files", ("one.png", jpeg_bytes(), "image/png")),
+                    ("files", ("bad.mp4", mp4_bytes(), "video/mp4")),
+                    ("files", ("two.png", jpeg_bytes(), "image/png")),
+                ],
+            )
+            # Before the fix: a 500, no commit, and two orphaned .png files.
+            assert r.status_code == 201, r.text
+            body = r.json()
+            assert body["added"] == 2, body
+            assert body["videos_added"] == 0, body
+            assert [s["file"] for s in body["skipped"]] == ["bad.mp4"]
+
+            async with env.Session() as db:
+                imgs = (await db.execute(select(Image))).scalars().all()
+                vids = (await db.execute(select(Video))).scalars().all()
+            assert sorted(i.filename for i in imgs) == ["one.png", "two.png"]
+            assert vids == []
+
+            # And the rejected clip left nothing for a later sync to adopt.
+            videos_dir = Path(ds["folder_path"]) / "videos"
+            assert list(videos_dir.glob("*.mp4")) == []
+
+    run(scenario())

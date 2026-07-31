@@ -354,6 +354,10 @@ export default function DatasetsPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    // Both callers (rescan and import) can add Video rows now, and the preview
+    // strip's counts come off `["dataset", id]` — so leaving this out desynced
+    // the card's video count from the video list any pane opened next.
+    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
   }, [qc]);
 
   useEffect(() => {

@@ -893,8 +893,23 @@ async def _delete_previous_frames(
         for chunk in chunked([r.id for r in rows]):
             await session.execute(sa_delete(Image).where(Image.id.in_(chunk)))
         await session.commit()
+        # Post-commit epilogue, so it must not be able to change this step's
+        # outcome. `missing_ok` covers a file that is already gone, not one the
+        # OS refuses to unlink — a Windows lock (Explorer's preview pane, an AV
+        # scanner, a `/file` response still streaming a frame) raises
+        # PermissionError, and an unwrapped raise here escapes `_run_extraction`
+        # and fails the whole job at step 5: every previous frame's row deleted,
+        # the tail of their files still on disk for the next sync to re-adopt as
+        # unlineaged strays, and not one replacement frame written. That is the
+        # precise outcome this step's position in the order exists to prevent
+        # (see `_run_extraction`'s docstring). Log and keep going, per PM-013.
         for f in files:
-            f.unlink(missing_ok=True)
+            try:
+                f.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    "_delete_previous_frames: could not remove %s: %s", f.name, exc
+                )
     # `done`/`total` pinned to zero rather than omitted, for the reason spelled
     # out in `_detect_with_progress`: `jobStore` merges partials by job id, so an
     # omitted key inherits whatever the client last held. This phase writes no

@@ -717,11 +717,20 @@ def _fold_video_failures(vids: dict, failed: list[dict], failed_count: int) -> i
     return failed_count + vids.pop("videos_failed_count")
 
 
-async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
+async def _rescan_videos(db: AsyncSession, dataset: Dataset, job_id: str | None = None) -> dict:
     """Reconcile videos/ with the `videos` table.
 
     Returns {videos_added, videos_missing, videos_failed, videos_failed_count};
     callers fold the last two into their own tally via `_fold_video_failures`.
+
+    `job_id` makes the pass cancellable. It is not decoration: a video that is
+    already registered costs an early `continue`, but a *new* one costs a decode
+    plus a poster write, so a folder that just received a few hundred clips keeps
+    this loop busy for minutes with the progress pill frozen on the image loop's
+    last emit. Without the poll the cancel button did nothing here, and — worse —
+    the caller's `cancelled` flag is set only by the image loop, so a cancel
+    arriving during this pass was never observed at all and the job reported
+    *success*.
 
     Its own pass because the image rescan walks `images_dir.rglob("*")`, which
     cannot see videos/ at all. The walk here is a **flat** glob: videos are never
@@ -730,6 +739,8 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
 
     Callers commit and refresh stats — this only stages rows.
     """
+    from backend.workers.job_queue import job_queue
+
     videos_dir = Path(dataset.folder_path) / "videos"
     if not videos_dir.exists():
         return {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
@@ -762,6 +773,10 @@ async def _rescan_videos(db: AsyncSession, dataset: Dataset) -> dict:
     for f in disk_videos:
         seen.add(f.name)
         if f.name in by_filename:
+            continue
+        if job_id and job_queue.cancel_requested(job_id):
+            # Stop staging new rows, but keep walking so `seen` stays complete —
+            # a half-filled `seen` would report every unvisited row as missing.
             continue
         poster_target = unique_poster_path(poster_dir, f.stem, claimed)
         claimed.add(poster_target.stem)  # keep the set honest across this run
@@ -824,7 +839,7 @@ async def rescan_dataset(
     images_dir = Path(dataset.folder_path) / "images"
     if not images_dir.exists():
         # videos/ can exist without images/ — reconcile it either way.
-        vids = await _rescan_videos(db, dataset)
+        vids = await _rescan_videos(db, dataset, job_id)
         failed: list[dict] = []
         failed_count = _fold_video_failures(vids, failed, 0)
         # Explicit, rather than relying on `refresh_stats` to commit the staged
@@ -1011,13 +1026,18 @@ async def rescan_dataset(
     # whose entries are image-shaped ({subfolder, filename}).
     vids = (
         {"videos_added": 0, "videos_missing": [], "videos_failed": [], "videos_failed_count": 0}
-        if cancelled else await _rescan_videos(db, dataset)
+        if cancelled else await _rescan_videos(db, dataset, job_id)
     )
     failed_count = _fold_video_failures(vids, failed, failed_count)
 
     await db.commit()
     await refresh_stats(db, dataset.id)
-    if cancelled:
+    # Re-read the flag rather than trusting the image loop's: the video pass runs
+    # after it and can take minutes, so a cancel pressed during that window left
+    # `cancelled` False and the job reported "completed" for a run the user
+    # stopped. Committing first is deliberate — whatever both passes did stage is
+    # real and should survive, exactly as it does for a cancel during the images.
+    if cancelled or (job_id and job_queue.cancel_requested(job_id)):
         job_queue.raise_if_cancelled(job_id)
     return {
         "added": added,

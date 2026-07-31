@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi } from './helpers'
+import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi, mp4Buffer } from './helpers'
 
 // The frame-extraction surface, GPU-free: the video strip and its selection, the
 // two-step modal, the controls each step owns, and one journey that actually
@@ -614,4 +614,131 @@ test('the import modal sends include_videos when the box is ticked', async ({ pa
   await expect.poll(() => body).not.toBeNull()
   expect(target).toBe(ds.id)
   expect(body!.include_videos).toBe(true)
+})
+
+// The same `cropTouched` guard, from the side that actually destroys data.
+//
+// `CropOverlay` renders no crop as the *full frame* and calls `onChange` on
+// every pointer move, so narrowing the crop and putting it back latched the flag
+// on the first intermediate frame and left `crop = {0,0,W,H}` in state. That
+// rect is not `null`, so it was sent; `clamp_crop` maps it to `None`; and the
+// endpoint writes `crop_* = NULL` to **every** video in the batch. A user who
+// tried a crop, changed their mind and dragged it back wiped the stored
+// letterbox rect off every other episode they had selected — with the overlay
+// looking exactly as it did on open.
+//
+// The numeric fields are the deterministic way to drive that round trip; the
+// pointer path reaches the identical state through `clampRect`.
+test('narrowing the crop and putting it back sends no crop', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-roundtrip-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/videos/extract', (route) => {
+    body = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"jobs":[],"skipped":[]}' })
+  })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+
+  // With no stored crop the overlay seeds the full frame, so W opens at frameW.
+  const wField = dialog.getByRole('spinbutton', { name: 'Crop w' })
+  const fullW = await wField.inputValue()
+  expect(Number(fullW)).toBeGreaterThan(0)
+
+  // Narrow it — this is the gesture that used to latch the flag …
+  await wField.fill(String(Number(fullW) - 10))
+  await wField.blur()
+  // … and put it back.
+  await wField.fill(fullW)
+  await wField.blur()
+
+  await dialog.getByRole('button', { name: 'Next' }).click()
+  await dialog.getByRole('button', { name: 'Extract from 1 video' }).click()
+  await expect.poll(() => body).not.toBeNull()
+  expect(body).not.toHaveProperty('crop')
+  expect(body).not.toHaveProperty('clear_crop')
+})
+
+// The replace radio is the most destructive control in this feature, and its
+// number has to be the number of frames it will actually delete.
+//
+// A video extracted twice lands in two subfolders (`clip`, then `clip_2` — the
+// default mode is "new subfolder"). Replace resolves its target to the most
+// recent one and `_delete_previous_frames` scopes the delete to it, so the other
+// subfolder's frames survive. The label used to read `framesSummary.total`, the
+// sum over *every* group: on 50 + 50 it promised "deletes 100 previous frames"
+// and removed 50, leaving the user with a stale extraction they believed was
+// gone. Replace mode hides the subfolder control, so the count is the only thing
+// on screen describing the blast radius.
+//
+// The summary is stubbed rather than built by running two extractions: the
+// number under test is the label's arithmetic, not the router's grouping (which
+// backend tests already cover), and a canned response pins the two-group shape
+// that makes total and groups[0] differ.
+test('the replace label counts only the subfolder it will delete', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-extract-replace-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.route('**/frames-summary', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 100,
+        groups: [
+          { subfolder: 'clip_2', count: 50, last_extracted_at: null },
+          { subfolder: 'clip', count: 50, last_extracted_at: null },
+        ],
+      }),
+    }),
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByRole('button', { name: 'clip.mp4' }).first().click()
+  await page.getByRole('button', { name: 'Extract frames' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Extract frames' })
+  await dialog.getByRole('button', { name: 'Next' }).click()
+
+  // 50, the count of `clip_2` — not 100, the sum across both subfolders.
+  await expect(dialog.getByText('Replace (deletes 50 previous frames)')).toBeVisible()
+  await expect(dialog.getByText('Replace (deletes 100 previous frames)')).toHaveCount(0)
+})
+
+// The rescan wiring, from the cache side.
+//
+// This branch taught rescan to adopt clips out of `videos/`, and the toast
+// reports the count — but the completion handler invalidated everything *except*
+// `["videos", datasetId]`. The header badge reads `dataset.video_count` off a key
+// that *was* invalidated, so the page updated itself to say "1 video" above a
+// `VideoStrip` still rendering its pre-rescan empty array, for the full 30 s
+// staleTime. Extract frames is reachable only through that strip.
+//
+// A real rescan, not a stub: the assertion is precisely that the refetch happens,
+// which a stubbed job cannot demonstrate.
+test('a rescan that adopts a clip shows the video strip without a reload', async ({ page, request }) => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  const ds = await createDatasetViaApi(request, `e2e-rescan-videos-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'still.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByRole('button', { name: 'still.png' }).first()).toBeVisible()
+  // Nothing in videos/ yet, so the strip is absent.
+  await expect(page.getByRole('button', { name: 'dropped.mp4' })).toHaveCount(0)
+
+  // Drop a clip into the dataset folder behind the app's back — the case the
+  // "Rescan folder from disk" control exists for.
+  const videosDir = path.join(ds.folder_path, 'videos')
+  fs.mkdirSync(videosDir, { recursive: true })
+  fs.writeFileSync(path.join(videosDir, 'dropped.mp4'), mp4Buffer())
+
+  await page.getByTitle(/Rescan folder from disk/).click()
+
+  // Before the fix this never appeared without a refocus or a navigation.
+  await expect(page.getByRole('button', { name: 'dropped.mp4' })).toBeVisible({ timeout: 20_000 })
 })

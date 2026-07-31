@@ -155,7 +155,7 @@ wrapper verbatim, including its three load-bearing details — see
    failed, carry on. **The original is still intact**, unlike upscale and LUT, which
    overwrite first and discover afterwards.
 4. `version_service.protect_file_before_overwrite` then an immediate `commit()` — mandatory
-   per that function's docstring, and the 8th call site (`docs/dev/versioning.md`).
+   per that function's docstring, and the 8th call site (`docs/dev/versioning-service.md`).
 5. `os.replace` into place (below).
 6. Row update: `filename`/`file_path` if the suffix changed, plus `width`, `height`,
    `file_size_bytes`, `format`, `phash`, `updated_at` (what busts

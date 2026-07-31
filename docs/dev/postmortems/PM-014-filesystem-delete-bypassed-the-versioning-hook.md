@@ -45,7 +45,7 @@ exists.
 the Core `delete(Image).where(...)` looked exactly like `batch_delete`'s in
 `routers/images.py` — which fires the hook two lines above it. A reader pattern-matching on
 the statement rather than on the surrounding block sees a correct-looking site. The hook's
-call-site table in `docs/dev/versioning.md` was likewise organised by file, so a router
+call-site table in `docs/dev/versioning-service.md` was likewise organised by file, so a router
 missing from it looked like a router with nothing to say.
 
 ### Fix

@@ -59,7 +59,7 @@ from — and because it already watches every terminal job deduped by `processed
 Those forms keep their own outcome toasts and are deliberately silent about the count;
 the warning stacks beside the outcome, as `ReextractFramesForm` already does with its
 `note` toast. The repair it points at is **Bulk Edit → Thumbnails**
-(`docs/dev/bulk-ops.md` § Rebuilding thumbnails).
+(`docs/dev/bulk-image-jobs.md` § Rebuilding thumbnails).
 
 Three details are load-bearing:
 

@@ -124,7 +124,9 @@ uuid). `GalleryPage` holds it as `frameVideoId` and applies an incoming link dur
 against an `appliedVideo` record — **clearing `activeSubfolder` when it does**. That is
 load-bearing: arriving via `?source_video_id=` leaves `linkedSubfolder` undefined, so a
 subfolder restored from `gallery-state-${datasetId}` would silently intersect the filter and
-show an empty grid. Lineage spans subfolders; that is the point.
+show an empty grid. Lineage spans subfolders; that is the point. The backend half — the
+`source_video_id` param's plain indexed equality and its truthiness gate — is one row of
+`docs/dev/image-filters.md`.
 
 The clear runs in **both** directions: the subfolder branch likewise clears `frameVideoId`,
 because a lineage filter restored from that same key would intersect the linked subfolder

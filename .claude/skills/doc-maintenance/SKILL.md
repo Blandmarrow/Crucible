@@ -124,8 +124,9 @@ A file organised with `**Bold**:` lead-ins instead of `##` headings cannot be sp
 the over-budget warning picks a seam by reporting per-section word counts, and with no
 headings it can only say "read the file". **Seventeen** topic files are in this state today —
 it is the common case, not a handful of exceptions, so expect the file you are editing to be
-one of them. Only the four in `docs/dev/pending-splits.md` have a seam recorded, and all four
-already carry headings; the rest have neither.
+one of them. `docs/dev/pending-splits.md`'s queue is empty right now — the five files that had
+a seam recorded all carried `##` headings, and all five were split on 2026-07-31 — so a
+heading-less file today has neither structure nor a seam waiting for it.
 
 So when editing a heading-less file, add the `##` structure while you are there — the bold
 lead-ins already mark every boundary, so it is a cheap edit that turns a future split from

@@ -7,7 +7,7 @@ cross-dataset moves, exposed by the API, and edited in the UI.
 The vocabulary itself and the read/write helpers live in `backend/licenses.py` — see
 CLAUDE.md (§ Shared utilities) for the one-line index of every function named here.
 Export-side consumption (CREDITS.md, licenses.csv, the license filters) is in
-`docs/dev/export.md`; the snapshot mirror is in `docs/dev/versioning.md`.
+`docs/dev/export-licensing.md`; the snapshot mirror is in `docs/dev/versioning.md`.
 
 ## Model & schema
 

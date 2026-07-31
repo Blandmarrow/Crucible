@@ -38,7 +38,9 @@ The `(root)` row renders **whenever the sidebar does**, even at count 0: `rootEn
 
 ### Gallery filters
 
-`GalleryPage` supports the following filter controls:
+`GalleryPage` supports the following filter controls. What each one sends is one row of the
+shared `GET /images/` param contract in `docs/dev/image-filters.md`; this section is the UI
+side only.
 
 - **Search bar** — debounced 350 ms; passes `search` param to `GET /images/`; filters by filename OR caption text (case-insensitive).
 - **Caption filter** — All / Captioned / Uncaptioned.

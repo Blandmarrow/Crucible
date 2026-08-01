@@ -79,9 +79,13 @@ staleness sweep while still recording the seam.
 - **Why here:** both sections are one subsystem — dnd-kit. Droppables, collision detection,
   the drag overlay, what a drop mutates, and the manual `sort_order` reorder that is the
   same gesture with a different target. Everything left is *reading* a gallery: filters,
-  sorting, selection, the subfolder sidebar. Splitting there leaves ~2,050 and ~1,450, both
-  at or under the 60% target, and the moved half is the one a reader almost never needs
-  while working on filters or sort.
+  sorting, selection, the subfolder sidebar. Splitting there leaves ~2,540 and ~1,450, and
+  the moved half is the one a reader almost never needs while working on filters or sort.
+  The staying half has since grown past the ~2,100 target: § Gallery image selection took
+  on select-all-matching-filters and the pagination row (901 words now, from ~400). If it
+  needs a second seam, that is where — the affordance, the count query key and the
+  pagination arithmetic are one feature, and the shift-click range model above them is a
+  different one.
 - **Watch for:** § Manual image ordering is cited from `docs/dev/bulk-ops.md` (Renumber's
   two-phase rename) and from § Sorting in this same file, which becomes a cross-file `§`
   pointer. `docs/dev/image-filters.md` points at § Gallery filters and

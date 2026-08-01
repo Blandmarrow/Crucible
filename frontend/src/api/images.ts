@@ -98,6 +98,19 @@ export interface ImageListParams {
   license_missing?: boolean;
 }
 
+/** What "the current view" means, minus which slice of it is on screen — the
+ *  mirror of the backend's `ImageFilterParams`. `count` and `listIds` take this
+ *  so they cannot describe a different set of images than the grid does. */
+export type ImageFilterParams = Omit<ImageListParams, "page" | "limit">;
+
+/** `GET /images/ids`. `count` is the true total even when the response was
+ *  trimmed, so a truncated selection can say "the first 20,000 of 84,113". */
+export interface ImageIdsResult {
+  ids: string[];
+  count: number;
+  truncated: boolean;
+}
+
 /**
  * One provenance field in an edit request. undefined/null = leave unchanged,
  * "" = clear so the dataset default applies, anything else = set that value.
@@ -114,6 +127,14 @@ export interface BulkProvenanceParams extends BulkFilterParams, ProvenanceEdit {
 export const imagesApi = {
   list: (params: ImageListParams) =>
     client.get<ImageListItem[]>("/images/", { params }).then((r) => r.data),
+  /** How many images match these filters — the pagination row's total and the
+   *  number in the select-all offer. */
+  count: (params: ImageFilterParams) =>
+    client.get<{ count: number }>("/images/count", { params }).then((r) => r.data),
+  /** Every matching id, in the order the grid is showing them, capped server-side
+   *  (`truncated`). Feeds "select all N matching filters". */
+  listIds: (params: ImageFilterParams) =>
+    client.get<ImageIdsResult>("/images/ids", { params }).then((r) => r.data),
   get: (id: string) => client.get<ImageDetail>(`/images/${id}`).then((r) => r.data),
   delete: (id: string) => client.delete(`/images/${id}`),
   batchDelete: (image_ids: string[]) =>

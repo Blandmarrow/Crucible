@@ -4,7 +4,7 @@ import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -40,7 +40,10 @@ from backend.schemas.image import (
     BulkRenameRequest,
     BulkThumbnailRequest,
     ImageCropRequest,
+    ImageFilterParams,
+    ImageIdsParams,
     ImageListItem,
+    ImageListParams,
     ImageOut,
     ImageProvenanceUpdate,
     ImageResizeRequest,
@@ -152,98 +155,78 @@ def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flag
 
 
 
-@router.get("/", response_model=list[ImageListItem])
-async def list_images(
-    dataset_id: str,
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=500),
-    sort: str = "created_at",
-    order: str = "desc",
-    captioned: bool | None = None,
-    search: str | None = None,
-    min_score: float | None = None,
-    max_score: float | None = None,
-    score_field: str | None = None,
-    score_is_null: bool | None = None,
-    quality_flag: str | None = None,
-    file_size_min: int | None = None,
-    file_size_max: int | None = None,
-    mp_min: float | None = None,
-    mp_max: float | None = None,
-    ar_min: float | None = None,
-    ar_max: float | None = None,
-    format_filter: str | None = None,
-    score_filters: str | None = Query(None),
-    subfolder: str | None = Query(None),
-    source_video_id: str | None = Query(None),
-    detection_label: str | None = Query(None),
-    detection_label_exact: str | None = Query(None),
-    detection_score_min: float | None = Query(None),
-    detection_score_max: float | None = Query(None),
-    detection_score_null: bool | None = Query(None),
-    mask_coverage_min: float | None = Query(None),
-    mask_coverage_max: float | None = Query(None),
-    detection_count_min: int | None = Query(None),
-    detection_count_max: int | None = Query(None),
-    caption_words_min: int | None = Query(None),
-    caption_words_max: int | None = Query(None),
-    caption_tokens_min: int | None = Query(None),
-    caption_tokens_max: int | None = Query(None),
-    license_filter: str | None = Query(None, description="JSON array of effective license ids; empty = no filter"),
-    license_missing: bool | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    if score_field and score_field not in _ALLOWED_SCORE_FIELDS:
-        raise HTTPException(400, f"Invalid score_field: {score_field}")
-    if quality_flag and quality_flag not in ALLOWED_FLAG_KEYS:
-        raise HTTPException(400, f"Invalid quality_flag: {quality_flag}")
+# Cap on `GET /images/ids`. It bounds the response *and* every batch request
+# body that follows from the selection it hands back — a 200k-id POST is a
+# different problem from a 200k-id GET, and this is the one place both are
+# bounded.
+SELECT_ALL_ID_CAP = 20_000
 
-    q = select(Image).where(Image.dataset_id == dataset_id)
 
-    if captioned is True:
+def _apply_image_filters(q, f: ImageFilterParams):
+    """Narrow `q` by `dataset_id` plus every filter in `f`.
+
+    Shared verbatim by the three endpoints that must describe the same view —
+    `GET /images/`, `GET /images/count` and `GET /images/ids` — so a filter
+    reaches all three or none. Takes any select shape: the license block's
+    `join(Dataset, …)` carries a `select(func.count(Image.id))` as happily as a
+    `select(Image)`, and no clause here depends on the columns selected.
+
+    The two 400s live here rather than in the routes so bad input is rejected
+    identically by all three; a count that silently ignored an invalid
+    `score_field` the grid rejected would offer a number for a view that does
+    not exist.
+    """
+    if f.score_field and f.score_field not in _ALLOWED_SCORE_FIELDS:
+        raise HTTPException(400, f"Invalid score_field: {f.score_field}")
+    if f.quality_flag and f.quality_flag not in ALLOWED_FLAG_KEYS:
+        raise HTTPException(400, f"Invalid quality_flag: {f.quality_flag}")
+
+    q = q.where(Image.dataset_id == f.dataset_id)
+
+    if f.captioned is True:
         q = q.where(Image.caption_text != "")
-    elif captioned is False:
+    elif f.captioned is False:
         q = q.where(Image.caption_text == "")
 
-    if search:
-        term = f"%{search}%"
+    if f.search:
+        term = f"%{f.search}%"
         q = q.where(or_(Image.original_filename.ilike(term), Image.caption_text.ilike(term)))
 
     # Score filtering — score_field selects the column; defaults to aesthetic_score
-    score_col = getattr(Image, score_field) if score_field else Image.aesthetic_score
-    if score_is_null is True:
+    score_col = getattr(Image, f.score_field) if f.score_field else Image.aesthetic_score
+    if f.score_is_null is True:
         q = q.where(score_col.is_(None))
     else:
-        if min_score is not None:
-            q = q.where(score_col >= min_score)
-        if max_score is not None:
-            q = q.where(score_col <= max_score)
+        if f.min_score is not None:
+            q = q.where(score_col >= f.min_score)
+        if f.max_score is not None:
+            q = q.where(score_col <= f.max_score)
 
-    if quality_flag:
-        q = q.where(Image.quality_flags[quality_flag].as_boolean() == True)  # noqa: E712
+    if f.quality_flag:
+        q = q.where(Image.quality_flags[f.quality_flag].as_boolean() == True)  # noqa: E712
 
-    if file_size_min is not None:
-        q = q.where(Image.file_size_bytes >= file_size_min)
-    if file_size_max is not None:
-        q = q.where(Image.file_size_bytes <= file_size_max)
+    if f.file_size_min is not None:
+        q = q.where(Image.file_size_bytes >= f.file_size_min)
+    if f.file_size_max is not None:
+        q = q.where(Image.file_size_bytes <= f.file_size_max)
 
-    if mp_min is not None:
-        q = q.where(Image.width * Image.height >= int(mp_min * 1_000_000))
-    if mp_max is not None:
-        q = q.where(Image.width * Image.height < int(mp_max * 1_000_000))
+    if f.mp_min is not None:
+        q = q.where(Image.width * Image.height >= int(f.mp_min * 1_000_000))
+    if f.mp_max is not None:
+        q = q.where(Image.width * Image.height < int(f.mp_max * 1_000_000))
 
-    if ar_min is not None:
-        q = q.where(Image.width >= ar_min * Image.height)
-    if ar_max is not None:
-        q = q.where(Image.width < ar_max * Image.height)
+    if f.ar_min is not None:
+        q = q.where(Image.width >= f.ar_min * Image.height)
+    if f.ar_max is not None:
+        q = q.where(Image.width < f.ar_max * Image.height)
 
-    if format_filter:
-        q = q.where(Image.format == format_filter)
+    if f.format_filter:
+        q = q.where(Image.format == f.format_filter)
 
-    if subfolder is not None:
-        escaped_subfolder = subfolder.replace("%", r"\%").replace("_", r"\_")
+    if f.subfolder is not None:
+        escaped_subfolder = f.subfolder.replace("%", r"\%").replace("_", r"\_")
         q = q.where(
-            (Image.subfolder == subfolder)
+            (Image.subfolder == f.subfolder)
             | Image.subfolder.like(escaped_subfolder + "/%", escape="\\")
         )
 
@@ -252,13 +235,13 @@ async def list_images(
     # EXISTS. Truthiness rather than `is not None` (unlike `subfolder`, "" carries
     # no meaning here), and no allowlist — the value is an opaque uuid and an
     # unknown one correctly returns zero rows.
-    if source_video_id:
-        q = q.where(Image.source_video_id == source_video_id)
+    if f.source_video_id:
+        q = q.where(Image.source_video_id == f.source_video_id)
 
-    if detection_label:
+    if f.detection_label:
         q = q.where(
             select(Detection.id)
-            .where(Detection.image_id == Image.id, Detection.label.ilike(f"%{detection_label}%"))
+            .where(Detection.image_id == Image.id, Detection.label.ilike(f"%{f.detection_label}%"))
             .exists()
         )
 
@@ -267,27 +250,27 @@ async def list_images(
     # apply to the *same* detection row (a row scoring low on one label must not be
     # matched via a different high-scoring label).
     if (
-        detection_label_exact is not None
-        or detection_score_min is not None
-        or detection_score_max is not None
-        or detection_score_null is True
+        f.detection_label_exact is not None
+        or f.detection_score_min is not None
+        or f.detection_score_max is not None
+        or f.detection_score_null is True
     ):
         det_conds = [Detection.image_id == Image.id]
-        if detection_label_exact is not None:
-            det_conds.append(Detection.label == detection_label_exact)
-        if detection_score_null is True:
+        if f.detection_label_exact is not None:
+            det_conds.append(Detection.label == f.detection_label_exact)
+        if f.detection_score_null is True:
             det_conds.append(Detection.score.is_(None))
         else:
-            if detection_score_min is not None:
-                det_conds.append(Detection.score >= detection_score_min)
-            if detection_score_max is not None:
-                det_conds.append(Detection.score < detection_score_max)
+            if f.detection_score_min is not None:
+                det_conds.append(Detection.score >= f.detection_score_min)
+            if f.detection_score_max is not None:
+                det_conds.append(Detection.score < f.detection_score_max)
         q = q.where(select(Detection.id).where(*det_conds).exists())
 
     # Mask coverage — per-image SUM(mask_area) clamped to 1.0; min inclusive, max
     # exclusive (matching caption filters). Requires ≥1 detection (EXISTS) so the
     # click-through population matches the coverage histogram.
-    if mask_coverage_min is not None or mask_coverage_max is not None:
+    if f.mask_coverage_min is not None or f.mask_coverage_max is not None:
         cov_subq = (
             select(func.coalesce(func.sum(Detection.mask_area), 0.0))
             .where(Detection.image_id == Image.id)
@@ -297,34 +280,35 @@ async def list_images(
         q = q.where(
             select(Detection.id).where(Detection.image_id == Image.id).exists()
         )
-        if mask_coverage_min is not None:
-            q = q.where(cov_expr >= mask_coverage_min)
-        if mask_coverage_max is not None:
-            q = q.where(cov_expr < mask_coverage_max)
+        if f.mask_coverage_min is not None:
+            q = q.where(cov_expr >= f.mask_coverage_min)
+        if f.mask_coverage_max is not None:
+            q = q.where(cov_expr < f.mask_coverage_max)
 
     # Detections-per-image count — correlated COUNT coalesced to 0 so the "0"
     # bucket (images with no detections) works naturally.
-    if detection_count_min is not None or detection_count_max is not None:
+    if f.detection_count_min is not None or f.detection_count_max is not None:
         count_subq = (
             select(func.count(Detection.id))
             .where(Detection.image_id == Image.id)
             .scalar_subquery()
         )
         count_expr = func.coalesce(count_subq, 0)
-        if detection_count_min is not None:
-            q = q.where(count_expr >= detection_count_min)
-        if detection_count_max is not None:
-            q = q.where(count_expr <= detection_count_max)
+        if f.detection_count_min is not None:
+            q = q.where(count_expr >= f.detection_count_min)
+        if f.detection_count_max is not None:
+            q = q.where(count_expr <= f.detection_count_max)
 
-    if score_filters:
+    if f.score_filters:
         try:
-            for f in json.loads(score_filters):
-                field = f.get("field", "")
+            # `sf`, not `f` — `f` is the filter model in this scope now.
+            for sf in json.loads(f.score_filters):
+                field = sf.get("field", "")
                 if field not in _ALLOWED_SCORE_FIELDS:
                     continue
                 col = getattr(Image, field)
-                mn = f.get("min")
-                mx = f.get("max")
+                mn = sf.get("min")
+                mx = sf.get("max")
                 if mn is not None:
                     q = q.where(col >= float(mn))
                 if mx is not None:
@@ -332,7 +316,7 @@ async def list_images(
         except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
-    if caption_words_min is not None or caption_words_max is not None:
+    if f.caption_words_min is not None or f.caption_words_max is not None:
         wc_expr = case(
             (
                 (Image.caption_text.is_(None)) | (func.trim(Image.caption_text) == ""),
@@ -344,57 +328,35 @@ async def list_images(
                 + 1
             ),
         )
-        if caption_words_min is not None:
-            q = q.where(wc_expr >= caption_words_min)
-        if caption_words_max is not None:
-            q = q.where(wc_expr < caption_words_max)
+        if f.caption_words_min is not None:
+            q = q.where(wc_expr >= f.caption_words_min)
+        if f.caption_words_max is not None:
+            q = q.where(wc_expr < f.caption_words_max)
 
-    # Coerce rather than 400: an unknown name already fell back today, and a
-    # stale persisted `sortIdx` must degrade to a working gallery.
-    if sort not in _ALLOWED_SORT_FIELDS:
-        sort = "created_at"
-    sort_col = getattr(Image, sort)
-    if sort == "sort_order":
-        # Manual ordering is ascending by definition; unpositioned images last.
-        # `order` is ignored on purpose — "custom order, descending" is not
-        # something the drag-and-drop grid can mean. This branch matches first,
-        # which is why `sort_order` is absent from `_NULLS_LAST_SORT_FIELDS`
-        # below: an entry there could never be reached.
-        q = q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
-    elif sort in _NULLS_LAST_SORT_FIELDS:
-        # NULL here means "not a video frame", which belongs at the end whichever
-        # direction the frames run in, with `created_at` breaking the ties that
-        # two frames at the same timestamp or in the same shot would otherwise
-        # leave to SQLite's scan order.
-        direction = sort_col.desc() if order == "desc" else sort_col.asc()
-        q = q.order_by(direction.nulls_last(), Image.created_at.asc())
-    else:
-        q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
-
-    if caption_tokens_min is not None or caption_tokens_max is not None:
+    if f.caption_tokens_min is not None or f.caption_tokens_max is not None:
         # Token counts are persisted in Image.caption_token_count (kept in sync by the
         # caption_text listener), so filtering is plain SQL — min inclusive, max exclusive,
         # empty caption = 0. No fetch cap, no in-Python BPE pass.
         tc_expr = func.coalesce(Image.caption_token_count, 0)
-        if caption_tokens_min is not None:
-            q = q.where(tc_expr >= caption_tokens_min)
-        if caption_tokens_max is not None:
-            q = q.where(tc_expr < caption_tokens_max)
+        if f.caption_tokens_min is not None:
+            q = q.where(tc_expr >= f.caption_tokens_min)
+        if f.caption_tokens_max is not None:
+            q = q.where(tc_expr < f.caption_tokens_max)
 
     # License filter operates on the *effective* value — an image with NULL
     # license carries its dataset's default, so the filter must join and
     # coalesce rather than test Image.license alone.
     effective_license = func.coalesce(func.nullif(Image.license, ""), Dataset.license, "")
-    if license_filter or license_missing is not None:
+    if f.license_filter or f.license_missing is not None:
         q = q.join(Dataset, Dataset.id == Image.dataset_id)
-        if license_missing is True:
+        if f.license_missing is True:
             q = q.where(effective_license == "")
-        elif license_missing is False:
+        elif f.license_missing is False:
             q = q.where(effective_license != "")
-        if license_filter:
+        if f.license_filter:
             # JSON array, not comma-separated: an `other:<free text>` id may
             # contain commas. Same encoding as the export preview.
-            parsed = parse_license_filter_param(license_filter) or []
+            parsed = parse_license_filter_param(f.license_filter) or []
             if parsed and any(not v for v in parsed):
                 # `""` is a meaningful entry for the *export* filters ("no license
                 # recorded"), so a client can reasonably send it here too — but
@@ -411,7 +373,46 @@ async def list_images(
             if parsed:
                 q = q.where(effective_license.in_(parsed))
 
-    q = q.offset((page - 1) * limit).limit(limit)
+    return q
+
+
+def _apply_image_ordering(q, sort: str, order: str):
+    """Order `q` the way the gallery grid is ordered.
+
+    Split out of the filter chain so `GET /images/ids` hands back the *first N
+    in the order the user is looking at* rather than an arbitrary slice. Safe to
+    apply after every filter even though this block used to sit between two of
+    them: `where` clauses accumulate order-independently.
+    """
+    # Coerce rather than 400: an unknown name already fell back today, and a
+    # stale persisted `sortIdx` must degrade to a working gallery.
+    if sort not in _ALLOWED_SORT_FIELDS:
+        sort = "created_at"
+    sort_col = getattr(Image, sort)
+    if sort == "sort_order":
+        # Manual ordering is ascending by definition; unpositioned images last.
+        # `order` is ignored on purpose — "custom order, descending" is not
+        # something the drag-and-drop grid can mean. This branch matches first,
+        # which is why `sort_order` is absent from `_NULLS_LAST_SORT_FIELDS`
+        # below: an entry there could never be reached.
+        return q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+    if sort in _NULLS_LAST_SORT_FIELDS:
+        # NULL here means "not a video frame", which belongs at the end whichever
+        # direction the frames run in, with `created_at` breaking the ties that
+        # two frames at the same timestamp or in the same shot would otherwise
+        # leave to SQLite's scan order.
+        direction = sort_col.desc() if order == "desc" else sort_col.asc()
+        return q.order_by(direction.nulls_last(), Image.created_at.asc())
+    return q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+
+
+@router.get("/", response_model=list[ImageListItem])
+async def list_images(
+    f: Annotated[ImageListParams, Query()],
+    db: AsyncSession = Depends(get_db),
+):
+    q = _apply_image_ordering(_apply_image_filters(select(Image), f), f.sort, f.order)
+    q = q.offset((f.page - 1) * f.limit).limit(f.limit)
     result = await db.execute(q)
     images = result.scalars().all()
 
@@ -420,7 +421,7 @@ async def list_images(
     ds_license = ""
     if images:
         ds_license = (await db.execute(
-            select(Dataset.license).where(Dataset.id == dataset_id)
+            select(Dataset.license).where(Dataset.id == f.dataset_id)
         )).scalar_one_or_none() or ""
     out = []
     for img in images:
@@ -428,6 +429,41 @@ async def list_images(
         item.license = img.license or ds_license
         out.append(item)
     return out
+
+
+# Both of these must stay **above** `GET /{image_id}`, or FastAPI matches
+# `count`/`ids` as an image id and answers 404.
+@router.get("/count")
+async def count_images(
+    f: Annotated[ImageFilterParams, Query()],
+    db: AsyncSession = Depends(get_db),
+):
+    """How many images the current filters match — the number behind the
+    pagination row and the select-all offer. No ordering, no paging."""
+    q = _apply_image_filters(select(func.count(Image.id)), f)
+    return {"count": (await db.execute(q)).scalar_one()}
+
+
+@router.get("/ids")
+async def list_image_ids(
+    f: Annotated[ImageIdsParams, Query()],
+    db: AsyncSession = Depends(get_db),
+):
+    """Every id the current filters match, for "select all matching filters".
+
+    Takes `sort`/`order` as well as the filters, so a truncated result is the
+    first `SELECT_ALL_ID_CAP` *in the order the user is looking at*. Over the
+    cap, `count` is the true total (a second query) rather than the trimmed
+    length, so the UI can say "the first 20,000 of 84,113".
+    """
+    q = _apply_image_ordering(_apply_image_filters(select(Image.id), f), f.sort, f.order)
+    rows = (await db.execute(q.limit(SELECT_ALL_ID_CAP + 1))).scalars().all()
+    if len(rows) > SELECT_ALL_ID_CAP:
+        total = (await db.execute(
+            _apply_image_filters(select(func.count(Image.id)), f)
+        )).scalar_one()
+        return {"ids": list(rows[:SELECT_ALL_ID_CAP]), "count": total, "truncated": True}
+    return {"ids": list(rows), "count": len(rows), "truncated": False}
 
 
 @router.post("/upload", status_code=201)

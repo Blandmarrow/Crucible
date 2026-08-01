@@ -32,7 +32,8 @@ Bulk score, upscale, LUT, detect, detection-crop, thumbnail regeneration, and re
 ML-based image upscaling via the [`spandrel`](https://github.com/chaiNNer-org/spandrel) library, which auto-detects architecture from model files:
 - Supported architectures: RealESRGAN/RRDB, SwinIR, HAT, OmniSR, and more (anything spandrel recognises)
 - Place `.pth` or `.safetensors` model files in `models/upscale_models/` — or point `UPSCALE_MODELS_DIR=` in `.env` at an existing models folder
-- Two output modes: **Replace** (overwrites source image, updates DB record) or **New file** (`{stem}_upNx{ext}`, creates a new DB record)
+- **1× restoration models** (denoise, deblur, JPEG-artifact removal, descreen) work here too — they clean the image up at its original size instead of enlarging it. The model dropdown labels them `(1× restore)`; anything else shows its scale, e.g. `(4×)`
+- Two output modes: **Replace** (overwrites source image, updates DB record) or **New file** (creates a new DB record, named `{stem}_upNx{ext}` — or `{stem}_1x{ext}` for a 1× restoration model, and `{stem}_upscale{ext}` when the scale cannot be read from the model's filename)
 - Optional target width × height — upscales first, then resizes down to fit, preserving aspect ratio
 - BMP, GIF, TIFF and AVIF cannot be written back, so the result is saved as **PNG** and the image is renamed to match — same as LUT grading. If a file of that name is already sitting in the folder untracked, the image is skipped (the job carries on) rather than overwriting it
 - The run reports how many images it upscaled, skipped and failed when it finishes. If it could not rebuild some of the small gallery previews — usually because the disk is full or the `thumbnails/` folder is read-only — the upscaled images are still correct and saved, and you get a separate warning saying how many previews are out of date. **Bulk Edit → Thumbnails** repairs them

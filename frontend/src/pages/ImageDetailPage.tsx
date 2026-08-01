@@ -16,7 +16,7 @@ import { tagConsolidationApi } from "../api/tagConsolidation";
 import { captioningApi, type DelimiterMode } from "../api/captioning";
 import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
-import { upscalingApi } from "../api/upscaling";
+import { upscalingApi, upscaleModelLabel } from "../api/upscaling";
 import { lutApi } from "../api/lut";
 import { useJobStore } from "../store/jobStore";
 import { useSelectionStore } from "../store/selectionStore";
@@ -439,7 +439,7 @@ export default function ImageDetailPage() {
     staleTime: Infinity,
   });
   const upscaleModelOptions = upscaleModels.map((m) => (
-    <option key={m.path} value={m.path}>{m.name}{m.scale ? ` (${m.scale}×)` : ""}</option>
+    <option key={m.path} value={m.path}>{upscaleModelLabel(m)}</option>
   ));
 
   const { data: lutModels = [] } = useQuery({

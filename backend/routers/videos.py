@@ -40,17 +40,20 @@ from backend.services.image_service import generate_thumbnail, get_image_info
 from backend.services.video_frames import clamp_crop
 from backend.services.video_service import claimed_poster_stems, generate_poster, measure_duration_ms
 from backend.utils import (
+    FileInUseError,
     InsufficientDiskSpaceError,
     chunked,
     contained_path,
     normalize_subfolder,
     poster_path_for,
     record_in_place,
+    rename_retrying,
     require_free_space,
     safe_dataset_path,
     slugify_filename,
     unique_filename_with_thumb,
     unique_poster_path,
+    unlink_retrying,
     within_datasets_dir,
 )
 from backend.workers.job_queue import job_queue
@@ -1875,7 +1878,12 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
     # Path.rename, not rename_with_sidecar: a video has no .txt companion —
     # captions belong to the frames extracted from it.
     try:
-        old_path.rename(new_path)  # FS last — if this raises, commit never runs
+        # FS last — if this raises, commit never runs. The retry is for Windows,
+        # where a browser still holding the range request this app served keeps
+        # the file open and MoveFileEx fails with ERROR_SHARING_VIOLATION; if it
+        # is still held after the backoff, FileInUseError becomes a 409 and the
+        # file stays at its old name with the row uncommitted.
+        await rename_retrying(old_path, new_path)
     except FileNotFoundError:
         # Lost the TOCTOU race against the check above. Same answer either way.
         raise HTTPException(404, "File not found on disk") from None
@@ -1936,7 +1944,15 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     # datasets tree is skipped rather than refused: the row still goes, because
     # an undeletable row the user can see is the worse failure. The unlink is of
     # the *resolved* path the guard returns, never the raw string.
-    for candidate in (video.file_path, video.poster_path):
+    #
+    # The two columns part company on a *locked* file (Windows, where a browser
+    # still holding a range request this app served keeps the handle open).
+    # `file_path` propagates as a 409 — this runs before `db.delete`, so row and
+    # file both survive and the user can retry. `poster_path` is logged and the
+    # delete continues, because a poster is never a gate: 409-ing on it here
+    # would abandon a video file that is already gone, leaving a row
+    # `_rescan_videos` reports under `videos_missing`.
+    for candidate, fatal in ((video.file_path, True), (video.poster_path, False)):
         if not candidate:
             continue
         safe = within_datasets_dir(candidate, settings.datasets_dir)
@@ -1945,7 +1961,14 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
                 "delete_video %s: refusing to unlink out-of-tree path %s", video_id, candidate
             )
             continue
-        safe.unlink(missing_ok=True)
+        try:
+            await unlink_retrying(safe)
+        except FileInUseError:
+            if fatal:
+                raise
+            logger.warning(
+                "delete_video %s: poster %s is locked; leaving it on disk", video_id, safe
+            )
 
     await db.delete(video)
     await db.commit()

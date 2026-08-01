@@ -57,6 +57,32 @@ strip's behaviour for users. With a selection, the header grows
 changes (adjusted during render, so a stale selection is never painted; the anchors are
 left alone because an id from the previous dataset simply misses `indexOf`).
 
+### Deleting from the strip
+
+The selection bar carries `N selected · Extract frames · Delete · Clear`, and `Delete`
+opens a `ConfirmDialog` stating the Phase 0 contract — the videos and their posters go, the
+extracted frames keep their files and lose only the link back. Deliberately **without** a
+frame count: `VideoDetailPage` gets one from `GET /videos/{id}/frames-summary`, but a bulk
+confirm would need one request per video to say the same sentence. The mutation is a
+sequential loop over `videosApi.delete` — there is no bulk route, a strip-sized selection is
+a handful of clips, and each `DELETE` runs its own `refresh_stats`. It never rejects: both
+halves come back, successes are counted into one toast and the first failure's
+`apiErrorDetail` is shown verbatim so a 409 from a locked file (`docs/dev/video-endpoints.md`
+§ Locked files) reaches the user with its wording intact. What failed stays selected. The
+invalidations mirror `VideoDetailPage`'s `deleteMutation` exactly — `["videos", datasetId]`,
+`["datasets"]`, `["dataset-stats", datasetId]`, `["images", datasetId]`, `["image"]`,
+`["video-frames"]`, plus `removeQueries(["video", id])` and
+`clearPersisted(videoExtractJobKey(id))` per deleted id.
+
+**The Delete key belongs to the image selection whenever there is one.** The strip's
+`keydown` effect carries `SelectionToolbar`'s guards (text fields and contentEditable, any
+open modal) plus two of its own: a focused `VIDEO` element owns its keys, and the effect
+stands down entirely when `useSelectionStore((s) => s.count) > 0`. That last rule is what
+keeps one keypress from opening two confirms — with both kinds selected, Delete keeps its
+existing image meaning. `VideoDetailPage` carries the same binding and the same precedence
+rule, since a split view can have both pages live at once. `frontend/e2e/video-delete.spec.ts`
+pins both the button and the precedence.
+
 **The card is a `<div role="button" tabIndex={0}>`, not a `<button>`.** A checkbox is an
 interactive control and cannot legally nest inside a button, so Enter/Space are
 re-implemented by hand. This is **not** `ImageCard`'s shape — that is a bare `<div>` with no
@@ -90,6 +116,35 @@ same summary: *"N extracted frame(s) keep their files but lose their link back t
 video."* It falls back to the count-free wording at zero. `DELETE /videos/{id}` never
 touches `Image` rows and that is not what a user expects, so the number is what makes the
 sentence a fact rather than a claim.
+
+### Releasing the player, and the unplayable overlay
+
+`playerReleased = showDeleteConfirm || renameMode` **unmounts** the `<video>` and shows the
+poster in its place. Unmounting rather than clearing `src`: an empty `src` leaves the
+element attached and fires a spurious `error` event into the overlay below, while unmounting
+aborts the request outright. That request is the problem — Firefox holds it open under
+`preload="metadata"` and Starlette keeps the file open for the whole body send, so on
+Windows the app's own handle is what makes the delete or rename fail
+(`docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`). The backend
+retry covers only the teardown race; this covers the rest. Cancelling the dialog remounts
+the player. `FileBrowserPage`'s `PreviewPanel` takes the same `released` prop, set whenever
+any modal is open (`docs/dev/file-browser.md`).
+
+`utils/videoPlayback.ts` is the shared classifier. `playbackErrorMessage(el, {filename,
+codecLabel})` reads `el.error.code` and returns **null for `MEDIA_ERR_ABORTED`** — the
+release above produces exactly that, and an overlay there would accuse the app of a failure
+it performed itself — a network message for code 2, and for decode/unsupported the real
+explanation: the browser has no decoder, and probing, posters, shot detection and frame
+extraction all still work on the file. Firefox renders those two codes as *"the file is
+corrupt"*, which is its own string and not a fact about the bytes. `VideoDetailPage` stores
+the result on `onError` (reset on `video.id` change) and renders
+`components/video/UnplayableOverlay.tsx` over the poster; the sibling
+`browserPlaybackHint(codecLabel, filename)` predicts the same failure from stored metadata
+and renders a note under the Video Info panel's Codec row, so the warning is visible *before*
+anyone presses play. The hint flags `.mkv`/`.avi` containers and the codecs no browser
+carries (HEVC, ProRes, MPEG-4 part 2, Motion JPEG, Windows Media, Theora); AV1 is
+deliberately absent, since current browsers decode it in `.mp4`/`.webm` and an `.mkv`
+carrying it is already caught by the container rule.
 
 Route registration follows the six-site pattern in `docs/dev/panes-routing.md`
 (§ Route-level code splitting). The `/datasets/:id/video/:vid` regex in `routeToView` sits

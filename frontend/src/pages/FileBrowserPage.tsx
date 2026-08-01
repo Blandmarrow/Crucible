@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import { filesystemApi, type FsEntry } from "../api/filesystem";
 import { parentOf, breadcrumbsFromPath } from "../utils/pathUtils";
 import { apiErrorDetail } from "../utils/apiError";
+import { playbackErrorMessage } from "../utils/videoPlayback";
 import { datasetsApi } from "../api/datasets";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { Dataset, GenerationMetadata as GenMeta } from "../types";
@@ -108,11 +109,17 @@ function RenameInput({ initial, onConfirm, onCancel }: { initial: string; onConf
 
 interface PreviewPanelProps {
   entry: FsEntry;
+  /** Unmount the `<video>` — a mutation is pending against this file. */
+  released: boolean;
   onClose: () => void;
 }
 
-function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
+function PreviewPanel({ entry, released, onClose }: PreviewPanelProps) {
   const isVideo = entry.media_kind === "video";
+  // Firefox calls a missing decoder "corrupt"; say the true thing instead. No
+  // codec is available here — /image-meta is image-only — so the message falls
+  // back to the extension.
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const { data: meta } = useQuery({
     queryKey: ["fs-image-meta", entry.path],
     queryFn: () => filesystemApi.imageMeta(entry.path),
@@ -121,6 +128,15 @@ function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
     // which a container carries. /preview serves both kinds; this does not.
     enabled: !isVideo,
   });
+
+  // The panel is not keyed, so it survives a change of selection — adjusted
+  // during render so the previous file's failure is never painted against this
+  // one.
+  const [errorFor, setErrorFor] = useState(entry.path);
+  if (errorFor !== entry.path) {
+    setErrorFor(entry.path);
+    setPlaybackError(null);
+  }
 
   return (
     <div style={{
@@ -134,16 +150,23 @@ function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
 
       <div style={{ background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", padding: 8, minHeight: 160 }}>
         {isVideo ? (
-          // preload="metadata" so selecting a file in the list does not pull a
-          // whole clip off disk. Seeking works because /preview returns a
-          // FileResponse, which supplies Range/206 on its own.
-          <video
-            key={entry.path}
-            controls
-            preload="metadata"
-            src={filesystemApi.previewUrl(entry.path)}
-            style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 4, outline: "none" }}
-          />
+          released ? (
+            <span style={{ fontSize: 11.5, color: "var(--fg-mute)" }}>Preview paused</span>
+          ) : (
+            // preload="metadata" so selecting a file in the list does not pull a
+            // whole clip off disk. Seeking works because /preview returns a
+            // FileResponse, which supplies Range/206 on its own.
+            <video
+              key={entry.path}
+              controls
+              preload="metadata"
+              src={filesystemApi.previewUrl(entry.path)}
+              onError={(e) =>
+                setPlaybackError(playbackErrorMessage(e.currentTarget, { filename: entry.name }))
+              }
+              style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 4, outline: "none" }}
+            />
+          )
         ) : (
           <img
             src={filesystemApi.previewUrl(entry.path)}
@@ -155,6 +178,11 @@ function PreviewPanel({ entry, onClose }: PreviewPanelProps) {
 
       <div style={{ padding: "10px 12px", fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
         <p style={{ fontWeight: 500, wordBreak: "break-all", color: "var(--fg)" }}>{entry.name}</p>
+        {playbackError && !released && (
+          <p role="status" style={{ fontSize: 11, lineHeight: 1.45, color: "var(--warn)" }}>
+            {playbackError}
+          </p>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 10px", color: "var(--fg-mute)" }}>
           <span>Size</span><span>{formatSize(entry.size_bytes)}</span>
           {meta?.width && <><span>Dimensions</span><span>{meta.width}×{meta.height}</span></>}
@@ -582,7 +610,15 @@ export default function FileBrowserPage() {
 
       {/* ── Right: Preview panel ── */}
       {selectedEntry && (
-        <PreviewPanel entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
+        <PreviewPanel
+          entry={selectedEntry}
+          // Any modal open means a mutation is being decided on — rename, delete
+          // or import. Unmount the player so it is not still holding the file
+          // when the request goes out (PM-021); `modal` is the whole set, which
+          // costs a preview nobody is looking at while a dialog covers it.
+          released={modal !== null}
+          onClose={() => setSelectedEntry(null)}
+        />
       )}
 
       {/* Context menu */}

@@ -117,6 +117,50 @@ staleness sweep while still recording the seam.
   have not repointed them by reflex. The drag sections also reference
   `docs/dev/frontend-core.md` § SelectionToolbar in both directions.
 
+## docs/dev/file-browser.md
+
+- **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
+  (395) and the two short sections that exist only to serve them, § Name collisions and
+  § DB sync
+- **New file:** docs/dev/file-browser-mutations.md
+- **Why here:** the file is a read surface and a write surface bolted together. Everything
+  moving is about *mutating the filesystem and keeping the DB in step* — the structural-folder
+  refusals, the 409s, the orphan bookkeeping, the versioning hook, the collision rules. What
+  stays is *browsing*: the eight endpoints' listing side, path safety, the three-panel page
+  and its preview panel. A reader working on the preview never needs the move/rename
+  semantics and vice versa. The seam leaves ~2,955 and ~570 words, which is the problem —
+  it does **not** reach the 60% target, so the moving half likely wants a further seam
+  between move/rename (which share `_move_or_rename`'s DB-sync core) and delete. Decide that
+  with the file open.
+- **Watch for:** § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
+  `docs/dev/video-endpoints.md` § Serving bytes; § `POST /delete` is cited from
+  `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
+  from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are
+  `§`-level pointers the checker cannot verify. The user doc it mirrors is
+  `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
+  gives no name for free.
+
+## docs/video.md
+
+- **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and
+  § Re-extracting at full resolution (503)
+- **New file:** docs/video-extraction.md
+- **Why here:** two user tasks share one page. *Holding videos* — adding them, the strip,
+  the player, rename and delete, what plays in a browser and what does not — is what a user
+  does before they have decided to extract anything, and § Browsing them grew again when
+  strip delete and the unplayable message landed. *Turning a video into frames* is the
+  two-step dialog, the progress rows, and pass 2, which a user reads once they are committed.
+  The seam leaves ~1,000 and ~1,740; the second is over the ~1,500 target, so consider moving
+  § Re-extracting at full resolution to its own file or leaving it behind with § Browsing them
+  — it is the one section that is about *curated frames* rather than about the dialog.
+- **Watch for:** this is a user doc, so the inbound links are markdown links from
+  `README.md` (three of them, plus the Docs table row), `docs/gallery.md` (five), and
+  `docs/features.md`'s index row — a new file needs its own README Docs-table row and a
+  `docs/features.md` row, not prose. Several of those links point at the *page*, not a
+  section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
+  docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
+  which is where the mirror-the-user-doc naming convention points.
+
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
 `export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s

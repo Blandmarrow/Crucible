@@ -1,9 +1,11 @@
+import asyncio
+import errno
 import json
 import logging
 import re
 import shutil
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -345,6 +347,73 @@ def unique_filename_with_thumb(
     db_names.add(candidate)
     planned_thumb_stems.add(Path(candidate).stem)
     return candidate
+
+
+class FileInUseError(OSError):
+    """Raised by `unlink_retrying`/`rename_retrying` — carries a message meant for the user.
+
+    `backend/main.py` translates it to a 409; routers should let it propagate
+    rather than catching it, except where the mutation is deliberately
+    non-fatal (a poster is never a gate).
+    """
+
+
+# Windows refuses to unlink or rename a file another handle has open without
+# FILE_SHARE_DELETE, which Python's open() does not request — and Crucible is
+# often that other handle itself, because Starlette's FileResponse keeps the
+# file open for the whole body send and a browser can hold a range request open
+# indefinitely. POSIX allows both, so nothing in CI or a dev container can see
+# this; the retry is the only reason a delete issued while the player is tearing
+# down succeeds. ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33) are
+# the Windows codes; EACCES/EBUSY cover the POSIX-shaped equivalents.
+_LOCKED_WINERRORS = (32, 33)
+_LOCKED_ERRNOS = (errno.EACCES, errno.EBUSY)
+_LOCK_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)  # ~0.75 s worst case; zero cost when the first try wins
+
+
+def _is_locked_error(exc: OSError) -> bool:
+    """True when `exc` means 'another handle holds this file', not a real failure."""
+    if getattr(exc, "winerror", None) in _LOCKED_WINERRORS:
+        return True
+    return exc.errno in _LOCKED_ERRNOS
+
+
+async def _retry_locked(op: Callable[[], None], description: str, attempts: int) -> None:
+    """Run `op`, retrying on a locked-file OSError with a short backoff.
+
+    Any other OSError propagates unchanged, so callers keep their existing
+    FileNotFoundError branches. `asyncio.sleep` rather than `time.sleep`
+    because every caller is an async route — a blocking sleep would stall the
+    event loop, and with it the very response whose socket teardown we are
+    waiting on.
+    """
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    last: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            op()
+            return
+        except OSError as exc:
+            if not _is_locked_error(exc):
+                raise
+            last = exc
+            if attempt == attempts - 1:
+                break
+            await asyncio.sleep(_LOCK_RETRY_DELAYS[min(attempt, len(_LOCK_RETRY_DELAYS) - 1)])
+    raise FileInUseError(
+        f"{description} is open in a preview or another program. Close it and try again."
+    ) from last
+
+
+async def unlink_retrying(path: Path, *, missing_ok: bool = True, attempts: int = 5) -> None:
+    """`path.unlink`, retrying while the file is locked; raises FileInUseError if it stays locked."""
+    await _retry_locked(lambda: path.unlink(missing_ok=missing_ok), f"'{path.name}'", attempts)
+
+
+async def rename_retrying(src: Path, dst: Path, *, attempts: int = 5) -> None:
+    """`src.rename(dst)`, retrying while the file is locked; raises FileInUseError if it stays locked."""
+    await _retry_locked(lambda: src.rename(dst), f"'{src.name}'", attempts)
 
 
 class InsufficientDiskSpaceError(RuntimeError):

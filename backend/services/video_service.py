@@ -348,6 +348,12 @@ def generate_poster(
     # lazy backfills for one video would otherwise have one serving a
     # half-written file the other is still writing.
     tmp = dest.parent / f".{dest.name}.{uuid4().hex}.tmp"
+    # Deliberately a bare `os.replace` and not `utils.replace_retrying`: this
+    # function is synchronous (every caller hands it to an executor), so the
+    # async helper is not reachable from here — and it would buy nothing. A
+    # poster is never a gate: every caller already treats a failure as "no
+    # poster", and the picture is re-derivable from the video on the next
+    # request.
     try:
         img.thumbnail((size, size), PILImage.Resampling.LANCZOS)
         img.save(tmp, "WEBP", quality=85)

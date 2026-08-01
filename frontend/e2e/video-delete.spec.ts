@@ -76,3 +76,42 @@ test('Delete keeps its image meaning while images are also selected', async ({ p
   // And the video is untouched by any of it.
   await expect(videoCheckbox).toHaveAttribute('aria-checked', 'true')
 })
+
+test('only the active pane answers Delete in split view', async ({ page, request }) => {
+  // The case the single-pane spec above cannot reach. `splitPane` clones the
+  // current view, so two gallery panes mount two VideoStrips — and the strip's
+  // *other* guards do not help here: the selection is per-strip local state and
+  // the image selection is empty. Without the active-pane check the strip that
+  // holds the selection opens its confirm no matter which pane the user is
+  // working in.
+  const ds = await createDatasetViaApi(request, `e2e-vdel-pane-${Date.now()}`)
+  await uploadVideoViaApi(request, ds.id, 'clip.mp4')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByRole('button', { name: /^Videos/ })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Enter split view' }).click()
+  await page.getByRole('button', { name: 'Split horizontal (side by side)' }).click()
+
+  const panes = page.getByTestId('pane-leaf')
+  await expect(panes).toHaveCount(2)
+  // Both panes render the same dataset, so every locator below is pane-scoped.
+  const left = panes.nth(0)
+  const right = panes.nth(1)
+  await expect(right.getByRole('checkbox', { name: 'Select clip.mp4' })).toBeVisible()
+
+  // Select in the left pane. The click also makes it the active one.
+  await left.getByRole('checkbox', { name: 'Select clip.mp4' }).click()
+  await expect(left.getByText('1 selected')).toBeVisible()
+
+  // Now work in the right pane. The top-left corner of a pane is its header's
+  // padding — no control there, so this only sets the active pane.
+  await right.click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('dialog', { name: 'Delete 1 video?' })).toHaveCount(0)
+
+  // Back to the pane that holds the selection, and it answers — exactly once.
+  await left.click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('dialog', { name: 'Delete 1 video?' })).toHaveCount(1)
+})

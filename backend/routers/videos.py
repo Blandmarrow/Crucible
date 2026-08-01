@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 from functools import partial
 from pathlib import Path
@@ -48,6 +47,7 @@ from backend.utils import (
     poster_path_for,
     record_in_place,
     rename_retrying,
+    replace_retrying,
     require_free_space,
     safe_dataset_path,
     slugify_filename,
@@ -946,6 +946,10 @@ async def _delete_previous_frames(
         # unlineaged strays, and not one replacement frame written. That is the
         # precise outcome this step's position in the order exists to prevent
         # (see `_run_extraction`'s docstring). Log and keep going, per PM-013.
+        #
+        # Deliberately *not* `unlink_retrying`: this already logs and continues,
+        # so a lock costs one stray file a rescan can adopt, and the ~0.75 s
+        # backoff would be paid per frame across a whole replace-mode run.
         for f in files:
             try:
                 f.unlink(missing_ok=True)
@@ -1583,9 +1587,13 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         Returns None on success, else `(outcome, reason, is_fault)`. `outcome` is
         `"failed"` for a frame that was asked for and not delivered, or
         `"skipped"` for one that stopped being eligible before its turn came.
-        `is_fault` is False for a refusal that says nothing about the video's
-        readability — a name collision, a late edit — so a run cannot trip the
-        consecutive-failure breaker over one.
+
+        `is_fault` is a prediction that the next frame will fail the same way,
+        not a claim about how serious this one was: True feeds the
+        consecutive-failure breaker, so it belongs to a condition that will still
+        hold in a millisecond's time. False is for a refusal specific to *this*
+        frame — a name collision, a late edit — which must not abort a run of
+        otherwise fine frames.
 
         On success the row has already been committed: nothing fallible runs
         between the swap and that commit, so disk and DB can never disagree.
@@ -1649,7 +1657,30 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
             await session.commit()
 
-            os.replace(tmp, target)
+            # The frame being overwritten is served by `GET /images/{id}/file`,
+            # so on Windows an open detail pane blocks this exactly as it blocked
+            # `delete_video` (PM-021) — and here an unhandled raise escapes
+            # `_rewrite` and kills the whole job, which is worse than the delete
+            # bug. `replace_retrying`, not `rename_retrying`: `target == src_path`
+            # whenever the format is unchanged, and `Path.rename` refuses an
+            # existing destination on Windows while clobbering happily on POSIX.
+            try:
+                await replace_retrying(tmp, target)
+            except FileInUseError:
+                # Narrow on purpose. A broad `except OSError` would report ENOSPC
+                # or EROFS as "open in another program" on every single frame;
+                # those must propagate and fail the job loudly, because they are
+                # systemic and the run cannot succeed.
+                #
+                # is_fault=True: a lock that outlived the ~0.75 s backoff is a
+                # pane someone left open, so it will still be there for the next
+                # frame. The breaker is 10 *consecutive* failures, so one locked
+                # frame among good ones can never abort a run — while with False
+                # a systemic lock would pay a full-res decode *and* a whole-file
+                # copy into `.versions/objects/` per frame for zero rewrites, and
+                # end "completed, 0 rewritten" with the cause only in the log.
+                logger.warning("video_reextract: %s is locked; not overwritten", target.name)
+                return "failed", "the frame file is open in another program", True
             if target != src_path:
                 # A *pure* extension change: the stem never moves, so the thumbnail
                 # ({stem}.webp) and the caption sidecar ({stem}.txt) both stay exactly
@@ -1679,7 +1710,7 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             # Writes `processing_history` *and* `scores_stale`. The history entry
             # is also pass 2's own skip guard (`_edited_in_place`), so its `op` must
             # stay exactly `"reextract"`. Pure dict building, so it cannot raise
-            # between the `os.replace` above and the commit below (PM-013).
+            # between the replace above and the commit below (PM-013).
             record_in_place(
                 img,
                 "reextract",
@@ -1688,7 +1719,7 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 format=fmt,
                 long_edge=long_edge,
             )
-            # Nothing fallible may sit between the `os.replace` above and this
+            # Nothing fallible may sit between the replace above and this
             # commit: the swap is irreversible, so a raise before here would roll
             # the row back onto a file that no longer exists (the 404 of PM-013).
             # The epilogue below is the place for anything that can fail.
@@ -1704,6 +1735,8 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                 except OSError as exc:
                     # The row already names the new file, which exists. The old one
                     # is orphan residue a rescan can adopt — not a failed frame.
+                    # Deliberately not `unlink_retrying`, for that reason: there
+                    # is nothing here a retry could save.
                     logger.warning(
                         "video_reextract: could not remove superseded %s: %s",
                         superseded.name, exc,
@@ -1727,9 +1760,22 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
             # `rescan_dataset` would adopt it as a new image. Every handled return
             # is covered here, and so is any raise inside the `try`.
             # `tmp` is rebound to the written path after the render, so this must
-            # read the live binding; after a successful `os.replace` it is gone and
+            # read the live binding; after a successful replace it is gone and
             # `missing_ok` makes the unlink a no-op.
-            tmp.unlink(missing_ok=True)
+            #
+            # Guarded, because a raise from a `finally` discards this frame's
+            # return value and kills the job — the exact outcome the outcome
+            # tuple exists to prevent — and the temp was written milliseconds
+            # ago, which is precisely when an AV scanner is holding it. A leftover
+            # `.tmp{suffix}` is residue a rescan can adopt; that is the lesser
+            # harm. Plain try/except and *not* `unlink_retrying`: awaiting here
+            # during a `CancelledError` unwind would lose the cleanup entirely.
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    "video_reextract: could not remove temp %s: %s", tmp.name, exc
+                )
 
     consecutive_failures = 0
     written_since_disk_check = 0
@@ -1886,6 +1932,10 @@ async def rename_video(video_id: str, body: RenameVideoRequest, db: AsyncSession
         await rename_retrying(old_path, new_path)
     except FileNotFoundError:
         # Lost the TOCTOU race against the check above. Same answer either way.
+        # Untested on purpose: the `exists()` pre-check makes this reachable only
+        # by deleting the file inside that window, which no test here can stage
+        # without patching the rename itself — at which point the test proves the
+        # patch, not the branch.
         raise HTTPException(404, "File not found on disk") from None
     await db.commit()
 

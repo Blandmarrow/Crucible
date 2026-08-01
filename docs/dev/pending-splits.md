@@ -140,6 +140,29 @@ staleness sweep while still recording the seam.
   `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
   gives no name for free.
 
+## docs/dev/video-reextract.md
+
+- **Moves:** § Target resolution — one function, two callers (873 words) and § The contract
+  (444), i.e. the whole request-side half
+- **New file:** docs/dev/video-reextract-endpoints.md
+- **Why here:** the file is two subjects wearing one name. *Deciding which frames to
+  re-extract* is `_resolve_reextract_targets` and the two endpoints that share it — pure
+  request/response, no filesystem — and it is what a reader arrives for when they are
+  changing the preview's accounting or a skip reason. *Rewriting a frame in place* is the
+  job: `_rewrite`'s step order, the PM-013 window, the extension change and now the locked-
+  file retry, all of which are about disk. The seam leaves ~1,300 and ~2,300; the second is
+  over the ~2,100 target, so § The extension change (788) is the natural third piece if it
+  needs one — it is about *naming and collisions* rather than about the rewrite order, and
+  the material that pushed the file over budget landed in § The video_reextract job and
+  § The extension change both.
+- **Watch for:** the two halves cross-reference each other constantly — § The video_reextract
+  job cites "§ What gets skipped, and why" and "§ The extension change" by name, and § The
+  contract is what `docs/dev/video-reextract-ui.md` reads against. `docs/dev/video.md`'s
+  § Where things live points `backend/routers/videos.py` and `backend/schemas/video.py` at
+  this file for pass 2; both rows need splitting the same way. PM-021's write-up and
+  CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
+  in the job half.
+
 ## docs/video.md
 
 - **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and

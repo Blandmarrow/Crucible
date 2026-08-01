@@ -16,6 +16,11 @@ export default function PaneContainer({ node, isOnly = false }: Props) {
     return (
       <PaneContext.Provider value={{ paneId: node.id, view: node.view }}>
         <div
+          // A pane has no accessible name of its own — its content supplies one
+          // — so this is how an e2e spec addresses "the other pane" to make it
+          // active. The click handler below is what the active-pane key guards
+          // (VideoStrip, ImageDetailPage) are read against.
+          data-testid="pane-leaf"
           style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
           onClick={() => setActivePaneId(node.id)}
         >

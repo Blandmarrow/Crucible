@@ -1,10 +1,10 @@
 // Selector policy: prefer getByRole / getByLabel / getByText. Reach for a
 // data-testid only when a control is genuinely ambiguous by role/text; any new
 // testid goes into frontend/src in the SAME commit as the spec that needs it.
-// There are 14 today, and the shape of the exceptions is the policy: tiles
-// addressed by id (`select-*`, `dataset-card-*`, `gallery-tile`) and the
-// extraction modal's drag handles (`crop-handle-*`, `trim-*`), which have no
-// accessible name to match on.
+// There are 15 today, and the shape of the exceptions is the policy: tiles
+// addressed by id (`select-*`, `dataset-card-*`, `gallery-tile`), the
+// extraction modal's drag handles (`crop-handle-*`, `trim-*`), and the split
+// panes (`pane-leaf`) — none of which have an accessible name to match on.
 //
 // These helpers cover SETUP that is not itself under test (creating a dataset,
 // seeding an image) via the API, so a UI journey starts from a known state

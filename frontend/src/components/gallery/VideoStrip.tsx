@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Film, Scissors, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { videosApi } from "../../api/videos";
+import { usePaneContext } from "../../contexts/PaneContext";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { usePaneStore } from "../../store/paneStore";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import { videoExtractJobKey } from "../../hooks/useVideoExtractJobs";
@@ -47,6 +49,11 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
   // The *image* selection, read only to stand down from the Delete key — see the
   // effect below. The strip still never writes to this store.
   const imageSelectionCount = useSelectionStore((s) => s.count);
+  // For the Delete binding's active-pane guard. Read here rather than passed
+  // down: GalleryPage consumes neither, so a prop would exist only to thread
+  // these two values through it.
+  const paneCtx = usePaneContext();
+  const activePaneId = usePaneStore((s) => s.activePaneId);
   // Shift-click range anchors — the same pair GalleryPage keeps, resolved here
   // against the strip's own order and its own set.
   const lastSelectedId = useRef<string | null>(null);
@@ -132,13 +139,24 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
   });
 
   // Delete opens the confirm. Beyond SelectionToolbar's guards (text fields, any
-  // open modal) there are two more: a focused <video> owns its own keys, and the
-  // *image* selection wins outright — with both kinds selected Delete keeps its
-  // existing image behaviour, so only one confirm can ever open.
+  // open modal) there are three more: only the *active* pane responds, a focused
+  // <video> owns its own keys, and the *image* selection wins outright — with
+  // both kinds selected Delete keeps its existing image behaviour.
+  //
+  // The pane guard is what keeps one keypress from opening two confirms:
+  // `splitPane` clones the current view, so two gallery panes mount two strips,
+  // and a gallery pane beside an ImageDetailPage gives one of each. The
+  // `paneCtx &&` short-circuit is load-bearing — in non-pane mode (the default)
+  // `paneCtx` is null, and an unconditional compare would kill the binding
+  // outright. Same idiom as VideoDetailPage/ImageDetailPage.
+  //
+  // `SelectionToolbar`'s own Delete binding is knowingly unguarded; that is
+  // pre-existing and out of scope here.
   useEffect(() => {
     if (selected.size === 0) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete") return;
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
       if (showExtract || showDeleteConfirm) return;
       if (imageSelectionCount > 0) return;
       const target = e.target as HTMLElement;
@@ -151,7 +169,7 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected, showExtract, showDeleteConfirm, imageSelectionCount]);
+  }, [selected, showExtract, showDeleteConfirm, imageSelectionCount, paneCtx, activePaneId]);
 
   // An image-only dataset looks exactly as it did before this component existed.
   if (!videos || videos.length === 0) return null;

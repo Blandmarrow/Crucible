@@ -41,7 +41,10 @@ not a see-also, and says which part of the file it owns.
 | `frontend/src/components/common/NumberField.tsx` | `docs/dev/video-extract-controls.md` § NumberField for the full draft contract; CLAUDE.md carries the one-line rule |
 | `frontend/src/components/video/ReextractFramesForm.tsx` | `docs/dev/video-reextract-ui.md` § ReextractFramesForm |
 | `frontend/src/components/video/ReextractFramesModal.tsx` | `docs/dev/video-reextract-ui.md` § ReextractFramesModal — and § The three entry points |
+| `frontend/src/utils/videoPlayback.ts` | `docs/dev/video-ui.md` — the shared playback classifier: `playbackErrorMessage` and `browserPlaybackHint` |
+| `frontend/src/components/video/UnplayableOverlay.tsx` | `docs/dev/video-ui.md` — it renders what that classifier returns, over the poster |
 | `frontend/e2e/video-extract.spec.ts` | `docs/dev/video-extract-controls.md` § End-to-end coverage |
+| `frontend/e2e/video-delete.spec.ts` | `docs/dev/video-ui.md` § VideoStrip — the Delete button, the image-selection precedence rule and the split-view pane guard |
 
 Every path above is inline code ending in a file extension, so `scripts/check_docs.py`
 verifies it resolves — a moved or deleted module breaks the check rather than silently

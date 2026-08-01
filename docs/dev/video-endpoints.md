@@ -100,12 +100,20 @@ silently re-registers, undoing the delete.
 
 ## Locked files: the 409
 
-Both mutations go through `utils.unlink_retrying` / `rename_retrying` rather than
+Delete and rename — the two mutations *this* section covers, and not the router's whole
+inventory — go through `utils.unlink_retrying` / `rename_retrying` rather than
 `Path.unlink` / `Path.rename`. On Windows a file another handle holds open cannot be
 unlinked or renamed at all, and the handle is usually **this app's own**: `FileResponse`
 keeps the file open for the whole body send, and a browser under `preload="metadata"` holds
 its range request open to resume a seek. The helpers retry briefly and then raise
 `FileInUseError`, which `backend/main.py` turns into a **409** naming the actionable step.
+
+A third site in this router is converted and is **not** a 409: pass 2's in-place frame
+overwrite (`utils.replace_retrying` inside `_run_reextraction::_rewrite`). A job cannot
+answer a status code, so there the lock is caught, counted as one `failed` frame with
+`is_fault=True`, and the run carries on — see `docs/dev/video-reextract.md`. Three further
+sites in the video code are deliberately **exempt**; `CLAUDE.md` § Key invariants names them
+and why.
 POSIX unlinks an open file happily, so no test here reaches the failing branch without the
 monkeypatch in `test_video_locked_files_http.py`; the frontend half — unmounting the
 `<video>` before the request goes out — is in `docs/dev/video-ui.md`, and the whole class is

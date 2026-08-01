@@ -350,7 +350,17 @@ export default function FileBrowserPage() {
 
   const renameMutation = useMutation({
     mutationFn: ({ path, name }: { path: string; name: string }) => filesystemApi.rename(path, name),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["fs-list"] }); setRenamingPath(null); },
+    onSuccess: (_data, { path }) => {
+      qc.invalidateQueries({ queryKey: ["fs-list"] });
+      setRenamingPath(null);
+      // The preview panel holds a whole `FsEntry`, not a path it re-reads — so
+      // after a rename it names a file that no longer exists, and the player
+      // remounting once `released` drops requests a path that 404s. The browser
+      // reports that as MEDIA_ERR_SRC_NOT_SUPPORTED, which is the main
+      // real-world trigger for the codec message `playbackErrorMessage` used to
+      // assert unconditionally.
+      setSelectedEntry((prev) => (prev && prev.path === path ? null : prev));
+    },
     // The rename 409s carry the reason (a dataset's own folder, part of its
     // layout, holds registered rows) — surface it, or the guards are API-only.
     onError: (e) => toast.error(apiErrorDetail(e, "Rename failed")),
@@ -612,11 +622,16 @@ export default function FileBrowserPage() {
       {selectedEntry && (
         <PreviewPanel
           entry={selectedEntry}
-          // Any modal open means a mutation is being decided on — rename, delete
-          // or import. Unmount the player so it is not still holding the file
-          // when the request goes out (PM-021); `modal` is the whole set, which
-          // costs a preview nobody is looking at while a dialog covers it.
-          released={modal !== null}
+          // A pending mutation against this file means the player must let go of
+          // it first (PM-021). Two sources, because rename is not a modal: the
+          // `modal` set is import | mkdir | delete, while rename fires straight
+          // from the inline `RenameInput` under `renamingPath`. Missing that
+          // second one left `POST /filesystem/rename` racing the open
+          // `/filesystem/preview` — and `filesystem.py` is unconverted, so on
+          // Windows that is a 500, not the 409 `videos.py` now returns.
+          // Deliberately coarse: it costs a preview nobody is looking at while a
+          // dialog covers it, or while a filename is being typed.
+          released={modal !== null || renamingPath !== null}
           onClose={() => setSelectedEntry(null)}
         />
       )}

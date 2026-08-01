@@ -76,12 +76,28 @@ invalidations mirror `VideoDetailPage`'s `deleteMutation` exactly — `["videos"
 
 **The Delete key belongs to the image selection whenever there is one.** The strip's
 `keydown` effect carries `SelectionToolbar`'s guards (text fields and contentEditable, any
-open modal) plus two of its own: a focused `VIDEO` element owns its keys, and the effect
-stands down entirely when `useSelectionStore((s) => s.count) > 0`. That last rule is what
-keeps one keypress from opening two confirms — with both kinds selected, Delete keeps its
-existing image meaning. `VideoDetailPage` carries the same binding and the same precedence
-rule, since a split view can have both pages live at once. `frontend/e2e/video-delete.spec.ts`
-pins both the button and the precedence.
+open modal) plus three of its own: only the active pane responds, a focused `VIDEO` element
+owns its keys, and the effect stands down entirely when
+`useSelectionStore((s) => s.count) > 0`. That last rule settles what one keypress *means*
+when both kinds are selected — Delete keeps its existing image meaning — but it only ever
+governs one pane's worth of state.
+
+**Two confirms are prevented by the pane guard, not by that rule.** `splitPane` clones the
+current view, so two gallery panes mount two `VideoStrip`s, each with its own local
+selection, and a gallery pane beside an `ImageDetailPage` gives one of each. The line is
+`if (paneCtx && paneCtx.paneId !== activePaneId) return;` as the handler's second statement,
+with both values in the deps — the same idiom `VideoDetailPage` and `ImageDetailPage` use
+for their arrow keys, and now for `ImageDetailPage`'s Delete too. The `paneCtx &&`
+short-circuit is load-bearing: outside split-pane mode (the default) `paneCtx` is `null`,
+and an unconditional compare would kill the binding entirely. `VideoStrip` reads
+`usePaneContext()` and `usePaneStore((s) => s.activePaneId)` itself rather than taking a
+prop, since `GalleryPage` consumes neither. `SelectionToolbar`'s own Delete binding is
+knowingly **unguarded** — pre-existing, and untouched by this.
+
+`frontend/e2e/video-delete.spec.ts` pins the button, the precedence rule, and the split-view
+case (select in one gallery pane, activate the other, assert zero dialogs; activate back,
+assert one). Panes are addressed there by the `pane-leaf` testid on `PaneContainer`'s leaf
+container.
 
 **The card is a `<div role="button" tabIndex={0}>`, not a `<button>`.** A checkbox is an
 interactive control and cannot legally nest inside a button, so Enter/Space are
@@ -127,16 +143,24 @@ aborts the request outright. That request is the problem — Firefox holds it op
 Windows the app's own handle is what makes the delete or rename fail
 (`docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`). The backend
 retry covers only the teardown race; this covers the rest. Cancelling the dialog remounts
-the player. `FileBrowserPage`'s `PreviewPanel` takes the same `released` prop, set whenever
-any modal is open (`docs/dev/file-browser.md`).
+the player. `FileBrowserPage`'s `PreviewPanel` takes the same `released` prop, set from a
+modal **or** its inline rename (`docs/dev/file-browser.md`).
 
 `utils/videoPlayback.ts` is the shared classifier. `playbackErrorMessage(el, {filename,
 codecLabel})` reads `el.error.code` and returns **null for `MEDIA_ERR_ABORTED`** — the
 release above produces exactly that, and an overlay there would accuse the app of a failure
-it performed itself — a network message for code 2, and for decode/unsupported the real
-explanation: the browser has no decoder, and probing, posters, shot detection and frame
-extraction all still work on the file. Firefox renders those two codes as *"the file is
-corrupt"*, which is its own string and not a fact about the bytes. `VideoDetailPage` stores
+it performed itself — and a network message for code 2. Firefox renders decode/unsupported
+as *"the file is corrupt"*, which is its own string and not a fact about the bytes.
+
+**Decode/unsupported has two messages, and which one it returns is earned.** Code 4
+(`MEDIA_ERR_SRC_NOT_SUPPORTED`) is not only a codec verdict: browsers report a 404, 403 or
+500 on the source that way, not as `MEDIA_ERR_NETWORK` — code 2 fires only once loading has
+begun — so a file renamed or deleted out from under an open player lands here. The confident
+wording (*"the file itself is fine"*, naming the codec) is returned only when the same
+`codecMatches` / `UNPLAYABLE_CONTAINERS` checks `browserPlaybackHint` uses fire, i.e. when
+stored metadata predicted this exact failure. Otherwise the message names both
+possibilities — no decoder, or the file could not be loaded — and promises nothing about the
+file beyond the true part, that probing and extraction read it directly. `VideoDetailPage` stores
 the result on `onError` (reset on `video.id` change) and renders
 `components/video/UnplayableOverlay.tsx` over the poster; the sibling
 `browserPlaybackHint(codecLabel, filename)` predicts the same failure from stored metadata

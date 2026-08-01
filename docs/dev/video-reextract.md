@@ -189,7 +189,7 @@ wrapper verbatim, including its three load-bearing details — see
    `version_service.protect_file_before_overwrite` and an immediate `commit()` — mandatory
    per that function's docstring, and the eighth *router* call site
    (`docs/dev/versioning-service.md`).
-5. `os.replace` into place (below).
+5. `utils.replace_retrying` into place (below).
 6. Row update: `filename`/`file_path` if the suffix changed, plus `width`, `height`,
    `file_size_bytes`, `format`, `phash`, `updated_at` (what busts
    `imagesApi.thumbnailUrlVersioned`) and a `reextract` entry appended to
@@ -210,7 +210,7 @@ Steps 6 and 7 used to be the other way round, with the thumbnail between them. T
 PM-013: `generate_thumbnail` catches nothing, so an unwritable `thumbnails/` raised out of
 the job, the row rolled back, and the frame was left named `.jpg` on a `.png` that had
 already been written — `GET /images/{id}/file` 404s and a later rescan adopts the orphan.
-**Nothing fallible may sit between the `os.replace` and the commit that describes it** —
+**Nothing fallible may sit between the replace and the commit that describes it** —
 CLAUDE.md § Key invariants, with the incident and the other three sites it was fixed at in
 `docs/dev/postmortems/PM-013-fs-mutation-before-the-commit.md`. The
 epilogue is safe to read `img` after the commit only because `AsyncSessionLocal` sets
@@ -220,7 +220,12 @@ Steps 2–8 sit inside a `try`/`finally` that unlinks the temp. The name carries
 extension and sits in `images/`, so a survivor is a file `rescan_dataset` would adopt as a
 new image. The `finally` reads the **live** `tmp` binding — it is rebound to the written
 path after the render, because `_write_frame` may have fallen back to PNG — and
-`missing_ok=True` makes it a no-op once `os.replace` has consumed it. A `SIGKILL` is still
+`missing_ok=True` makes it a no-op once the replace has consumed it. That unlink is itself
+wrapped in `try`/`except OSError`: a raise from a `finally` would discard the frame's return
+value and kill the job, which is the outcome the outcome-tuple exists to prevent, and the
+temp was written milliseconds ago — exactly when an AV scanner is holding it. Plain
+`try`/`except` rather than `unlink_retrying`, because awaiting inside a `finally` during a
+`CancelledError` unwind loses the cleanup altogether. A `SIGKILL` is still
 outside what a `finally` covers, and so is a failing step 7 — the one window that cannot be
 ordered away. Both leave the same residue and only that: an orphan file at the new suffix,
 with the row and the original still intact (see § The extension change). Accepted, not
@@ -241,13 +246,32 @@ disk still publishes its progress event before `require_free_space` raises out o
 A circuit breaker mirroring `EXTRACT_MAX_CONSECUTIVE_FAILURES` aborts a run whose video has
 gone unreadable mid-job; frames already rewritten stay, and the job ends `failed`, not
 `cancelled`. `_rewrite` returns `(reason, is_fault)` rather than a bare reason so the
-breaker can tell a decode fault from a refusal — see § The extension change. Cancellation
+breaker can tell a decode fault from a refusal — see § The extension change. **`is_fault` is
+a prediction that the next frame will fail the same way, not a severity or readability
+claim**: it belongs to a condition that will still hold a millisecond later. `False` is for a
+refusal specific to *this* frame. Cancellation
 keeps everything already written: the files are real and their COW backups exist.
 
 ## The extension change
 
 When `format` matches the frame's current suffix — the common case — step 5 is just
-`os.replace(tmp, img.file_path)`: atomic, no rename, nothing derived moves.
+`replace_retrying(tmp, img.file_path)`: atomic, no rename, nothing derived moves. It is
+`replace_retrying` and **not** `rename_retrying`, and the distinction is load-bearing rather
+than stylistic: `target == src_path` on every same-format run, and `Path.rename` is
+`MoveFileW` without `REPLACE_EXISTING`, so it raises `FileExistsError` on Windows while
+clobbering silently on POSIX — the swap would pass CI and break every same-suffix
+re-extraction on the one platform PM-021 is about.
+
+The retry is there because `GET /images/{id}/file` serves this exact path, so an open detail
+pane is a Windows lock on the file being overwritten. A surviving lock is caught as
+`FileInUseError` — narrowly, since a broad `except OSError` would report `ENOSPC` or `EROFS`
+as "open in another program" on every frame — and returns `("failed", …, is_fault=True)`.
+True rather than False because the breaker is 10 *consecutive* failures, so one locked frame
+among good ones can never abort a run, while with `False` a systemic lock would pay a
+full-res decode *and* a whole-file copy into `.versions/objects/` per frame for zero
+rewrites and end "completed, 0 rewritten". The failed state needs no rollback: the COW hook
+recorded the hash of the original, which is still on disk untouched, so a re-run's
+`file_hash IS NULL` probe skips the backup and `_edited_in_place` still returns False.
 
 When the suffix differs (`clip_s0001_00.jpg` → `.png`), **the stem is unchanged, and that is
 what makes this cheap.** Three things are derived from an image's filename:
@@ -272,7 +296,10 @@ on Windows if any process holds the file open — `GET /images/{id}/file` stream
 path while the job runs, and the job holds no `busy` lock), so unlinking before the commit
 would put a fallible call inside the forbidden window. Ordering it after also makes a
 failing commit survivable: the row still names the `.jpg`, the `.jpg` still exists, `/file`
-still 200s, and the residue is an orphan `.png`. The two files coexist briefly, which the
+still 200s, and the residue is an orphan `.png`. It stays a plain `unlink`, one of the three
+sites deliberately exempt from the retrying helpers (named in CLAUDE.md): by the time it
+runs the row already names a file that exists, so a lock costs only an orphan a rescan can
+adopt and there is nothing a retry could save. The two files coexist briefly, which the
 endpoint's disk preflight already budgets for — it estimates `× 2.0` for PNG precisely
 because a second copy of each frame is live during the swap.
 

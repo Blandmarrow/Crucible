@@ -84,12 +84,25 @@ export function playbackErrorMessage(
   }
   // 3 / 4 — MEDIA_ERR_DECODE and MEDIA_ERR_SRC_NOT_SUPPORTED. Firefox calls both
   // of these "corrupt"; neither is a claim about the bytes on disk.
+  //
+  // But nor is code 4 a claim about the *codec*. Browsers report a 404, a 403 or
+  // a 500 on the source as MEDIA_ERR_SRC_NOT_SUPPORTED, not as
+  // MEDIA_ERR_NETWORK — code 2 only fires once loading has begun — so a file
+  // that has been renamed or deleted out from under an open player lands here.
+  // The strong wording is therefore earned only when the stored metadata
+  // predicted this failure; otherwise the message names both possibilities and
+  // makes no promise about the file.
   const ext = extensionOf(opts.filename);
   const codec = (opts.codecLabel ?? "").trim();
-  const detail = codec && ext
-    ? `${codec} in ${ext} is not a format this browser can decode.`
-    : ext
-      ? `${ext} is not a format this browser can decode.`
-      : "This browser has no decoder for this format.";
-  return `Your browser can't play this video. ${detail} The file itself is fine — probing, posters, shot detection and frame extraction all still work.`;
+  const predicted = codecMatches(opts.codecLabel) || UNPLAYABLE_CONTAINERS.has(ext);
+  if (predicted) {
+    const detail = codec && ext
+      ? `${codec} in ${ext} is not a format this browser can decode.`
+      : ext
+        ? `${ext} is not a format this browser can decode.`
+        : "This browser has no decoder for this format.";
+    return `Your browser can't play this video. ${detail} The file itself is fine — probing, posters, shot detection and frame extraction all still work.`;
+  }
+  const what = ext ? `this ${ext} file` : "this video";
+  return `Your browser couldn't play ${what} — either it has no decoder for the format, or the file couldn't be loaded (it may have been renamed, moved or deleted). Probing, posters, shot detection and frame extraction read the file directly and are unaffected.`;
 }

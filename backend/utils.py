@@ -362,12 +362,33 @@ class FileInUseError(OSError):
 # FILE_SHARE_DELETE, which Python's open() does not request — and Crucible is
 # often that other handle itself, because Starlette's FileResponse keeps the
 # file open for the whole body send and a browser can hold a range request open
-# indefinitely. POSIX allows both, so nothing in CI or a dev container can see
-# this; the retry is the only reason a delete issued while the player is tearing
-# down succeeds. ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33) are
-# the Windows codes; EACCES/EBUSY cover the POSIX-shaped equivalents.
+# indefinitely. A native POSIX filesystem allows both, so nothing in CI or a dev
+# container can see this; the retry is the only reason a delete issued while the
+# player is tearing down succeeds.
+#
+# ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33) are the Windows
+# codes. The errnos are **not** a POSIX afterthought and must not be narrowed to
+# Windows — both halves of the set are load-bearing on their own:
+#   - EACCES is the *workhorse on Windows*. CPython's PC/errmap.h maps
+#     ERROR_ACCESS_DENIED (5) onto it, and that is what MoveFileEx returns when
+#     the destination is open.
+#   - EBUSY is how the Linux cifs client spells a host-side sharing violation
+#     (`ERRbadshare`/STATUS_SHARING_VIOLATION → -EBUSY in
+#     fs/smb/client/netmisc.c), which is the SMB-share case: the Windows box
+#     serving the mount holds the handle, and the lock clears the same way.
+#   - ETXTBSY is that same cifs mapping *before* it was changed in 2013 — the
+#     remap commit cites `unlink` as the operation it was wrong for — so it is
+#     here for an older client only, and is unreachable otherwise.
+# WSL2 /mnt/*, Docker bind mounts and CIFS shares are all places Crucible users
+# keep video, and a lock there arrives through one of these three and genuinely
+# clears within the backoff.
+#
+# The set is deliberately wider than "definitely a lock": a real EACCES (an ACL,
+# a read-only parent) costs ~0.75 s of backoff and then reports the same
+# FileInUseError, which is why the message names the folder possibility too
+# rather than asserting a cause nothing here checked.
 _LOCKED_WINERRORS = (32, 33)
-_LOCKED_ERRNOS = (errno.EACCES, errno.EBUSY)
+_LOCKED_ERRNOS = (errno.EACCES, errno.EBUSY, errno.ETXTBSY)
 _LOCK_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)  # ~0.75 s worst case; zero cost when the first try wins
 
 
@@ -401,8 +422,15 @@ async def _retry_locked(op: Callable[[], None], description: str, attempts: int)
             if attempt == attempts - 1:
                 break
             await asyncio.sleep(_LOCK_RETRY_DELAYS[min(attempt, len(_LOCK_RETRY_DELAYS) - 1)])
+    # Hedged on purpose. Nothing above *checked* why the call failed — even on
+    # Windows this fires for an ACL or Controlled Folder Access denial, and on
+    # POSIX for a read-only parent — so the message names both possibilities and
+    # then names the step that actually helps. "another program" is load-bearing
+    # wording: docs/video.md promises it and test_video_locked_files_http.py
+    # asserts it.
     raise FileInUseError(
-        f"{description} is open in a preview or another program. Close it and try again."
+        f"{description} is open in another program, or its folder does not allow "
+        f"the change. Close any preview or player showing it, then try again."
     ) from last
 
 
@@ -414,6 +442,23 @@ async def unlink_retrying(path: Path, *, missing_ok: bool = True, attempts: int 
 async def rename_retrying(src: Path, dst: Path, *, attempts: int = 5) -> None:
     """`src.rename(dst)`, retrying while the file is locked; raises FileInUseError if it stays locked."""
     await _retry_locked(lambda: src.rename(dst), f"'{src.name}'", attempts)
+
+
+async def replace_retrying(src: Path, dst: Path, *, attempts: int = 5) -> None:
+    """`src.replace(dst)`, retrying while the file is locked; raises FileInUseError if it stays locked.
+
+    A third helper rather than a flag on `rename_retrying`, because the two are
+    not interchangeable on Windows: `Path.rename` is `MoveFileW` *without*
+    `MOVEFILE_REPLACE_EXISTING` and raises `FileExistsError` the moment the
+    destination exists — which is the normal case for an in-place overwrite, and
+    a failure that would pass on POSIX (where `rename` clobbers silently) while
+    breaking every such rewrite on Windows. `Path.replace` is the overwriting
+    form on both platforms.
+
+    `dst` names the description, not `src`: the caller's `src` is a uuid temp the
+    user has never seen, while `dst` is the file they are looking at.
+    """
+    await _retry_locked(lambda: src.replace(dst), f"'{dst.name}'", attempts)
 
 
 class InsufficientDiskSpaceError(RuntimeError):

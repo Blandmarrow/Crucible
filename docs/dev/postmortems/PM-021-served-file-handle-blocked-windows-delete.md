@@ -45,9 +45,16 @@ released in a `finally`, and the ffmpeg frame generator is wrapped in `contextli
 **Flag any code that deletes, renames, moves or overwrites a file the app also serves
 bytes for.** Two things are needed and neither is sufficient alone:
 
-1. The mutation goes through `utils.unlink_retrying` / `rename_retrying`, so a lock that is
-   merely a socket-teardown race clears within the backoff and anything longer becomes a
-   409 the user can act on — never a 500.
+1. The mutation goes through `utils.unlink_retrying` / `rename_retrying` /
+   `replace_retrying`, so a lock that is merely a socket-teardown race clears within the
+   backoff and anything longer becomes a 409 the user can act on — never a 500. Pick the
+   helper by the call being replaced: `replace_retrying` is the overwriting form, and
+   `rename_retrying` is not a substitute for it (`Path.rename` refuses an existing
+   destination on Windows and clobbers silently on POSIX — a swap that would pass CI and
+   break only on Windows, this postmortem's own shape). Where the caller is a job rather
+   than a route there is no status code to answer with, so it catches `FileInUseError`
+   itself — narrowly, since a broad `except OSError` would report `ENOSPC` as "open in
+   another program".
 2. **The client releases the file first.** Unmount the `<video>`/`<img>`/iframe that is
    holding the request; do not merely clear `src`, which leaves the element attached and
    fires a spurious `error` event. A retry alone cannot help while the element is still
@@ -57,7 +64,8 @@ The corollary for reviewers: **"the tests pass" says nothing about file-locking 
 because the whole failure class is invisible on POSIX. Any new destructive filesystem path
 has to be reasoned about for Windows explicitly. The class is not video-specific — image
 delete, `POST /filesystem/delete` and `POST /filesystem/rename` all serve bytes for the
-paths they mutate and have the same exposure; only the video routes are converted so far.
+paths they mutate and have the same exposure; only the video routes and pass 2's frame
+overwrite are converted so far.
 
 ### Why it wasn't caught the first time
 
@@ -70,25 +78,43 @@ anything fallible before the commit?", never "can this file be locked right now?
 
 ### Fix
 
-- `backend/utils.py`: `FileInUseError`, `unlink_retrying`, `rename_retrying` — a locked
-  failure (`winerror` 32/33, `errno` EACCES/EBUSY) retries on a 0.05/0.1/0.2/0.4 s
-  `asyncio.sleep` backoff; every other `OSError` propagates untouched.
+- `backend/utils.py`: `FileInUseError`, `unlink_retrying`, `rename_retrying`,
+  `replace_retrying` — a locked failure (`winerror` 32/33, `errno` EACCES/EBUSY/ETXTBSY)
+  retries on a 0.05/0.1/0.2/0.4 s `asyncio.sleep` backoff; every other `OSError` propagates
+  untouched. The errno half is **not** a POSIX afterthought to be narrowed away: `EACCES` is
+  what `ERROR_ACCESS_DENIED` becomes through CPython's `PC/errmap.h`, which is what
+  `MoveFileEx` returns for an open destination, and `EBUSY`/`ETXTBSY` are how the Linux cifs
+  client spells a host-side sharing violation now and before the 2013 remap — the case that
+  matters for the SMB shares, WSL2 `/mnt/*` and bind mounts users keep video on. The message
+  is hedged for the same reason it is wide: nothing here checks *why* the call failed.
 - `backend/main.py`: an app-level handler mapping `FileInUseError` → **409** with a detail
   naming the actionable step, so the `filesystem.py` sites inherit it when converted.
-- `backend/routers/videos.py`: both mutations converted. `delete_video` splits the two
+- `backend/routers/videos.py`: three sites converted. `delete_video` splits the two
   columns — a locked `file_path` propagates (before `db.delete`, so row and file both
   survive), a locked `poster_path` is logged and the delete continues, because a poster is
   never a gate and 409-ing there would abandon a video file already gone.
+  Pass 2's in-place frame overwrite (`_run_reextraction::_rewrite`) uses `replace_retrying`
+  and, being a job, counts a surviving lock as one `failed` frame with `is_fault=True`
+  rather than letting a `WinError 32` kill the run.
+- Three sites are deliberately **exempt** and are named in `CLAUDE.md` so a later sweep does
+  not "finish the conversion": `_delete_previous_frames`, `_rewrite`'s superseded-original
+  unlink, and `video_service.generate_poster`'s poster replace. All three already log and
+  continue, and a lock costs only a re-derivable artefact.
 - `VideoDetailPage` unmounts the player while a delete confirm or rename is open, showing
-  the poster in its place; `FileBrowserPage`'s `PreviewPanel` does the same whenever a modal
-  is open.
+  the poster in its place; `FileBrowserPage`'s `PreviewPanel` does the same for a modal
+  **or** its inline rename — the rename was missed first time round precisely because it is
+  not a modal, and `filesystem.py` is unconverted, so it 500s rather than 409s.
 - `backend/tests/test_video_locked_files_http.py` monkeypatches `Path.unlink`/`Path.rename`
   to raise `PermissionError` with `winerror = 32` — the only way the branch is reachable
   here — and pins the 409, the surviving row, the retry count, the transient-lock success
-  and the poster carve-out.
+  and the poster carve-out. A `_PatchedReplace` sibling covers the re-extraction site:
+  patching `Path.replace`, the call `replace_retrying` actually makes, since patching
+  `os.replace` would leave the test green while proving nothing.
 
 ### Status & date
 
-MITIGATED — the video routes are converted; `routers/images.py` and `routers/filesystem.py`
-still call `Path.unlink`/`shutil.move` directly and carry the same exposure.
+MITIGATED — the video routes and pass 2's frame overwrite are converted; `routers/images.py`
+and `routers/filesystem.py` still call `Path.unlink`/`shutil.move` directly and carry the
+same exposure. The client half is unimplemented for re-extraction, where the exposure is
+only the teardown race (see `docs/dev/video-reextract-ui.md`).
 Last reviewed for staleness: 2026-08-01.

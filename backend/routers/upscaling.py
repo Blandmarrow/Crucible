@@ -103,7 +103,13 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             # Detect model scale for naming (heuristic from filename)
             from backend.ml.upscaler import _detect_scale
             raw_scale = _detect_scale(Path(model_path).stem)
-            scale_suffix = f"_up{raw_scale}x" if raw_scale else "_upscale"
+            # Scale 1 is a restoration model (denoise / deblur / JPEG artifacts),
+            # not an upscaler, so the suffix says so rather than claiming "_up1x".
+            scale_suffix = (
+                "_1x" if raw_scale == 1
+                else f"_up{raw_scale}x" if raw_scale
+                else "_upscale"
+            )
 
             last_image_id: str | None = None
 

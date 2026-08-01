@@ -9,10 +9,14 @@ logger = logging.getLogger(__name__)
 
 _extra_arches_installed = False
 
+# The leading boundary stays strict on purpose: it is what keeps `Model_v1x`,
+# `my1xmodel` and `Box4` from matching. `HAT-L_SRx4_ImageNet-pretrain` therefore
+# returns None, which is accepted — relaxing the boundary would make `Box4`
+# detect as 4x. The trailing side is only a "not another digit" lookahead so a
+# letter may follow the x (`4xNomos8kSCHAT-L`, `RealESRGAN_x4plus`).
 _SCALE_RE = re.compile(
-    r"(?:^|[_\-\s])([2-8])x(?:[_\-\s]|$)"   # 4x-, _4x_, 4x at boundary
-    r"|(?:^|[_\-\s])x([2-8])(?:[_\-\s]|$)"   # -x4_, x4_
-    r"|(?:^|[_\-\s])X([2-8])(?:[_\-\s]|$)",  # _X4_
+    r"(?:^|[_\-\s])([1-8])x(?![0-9])"    # 4x-, _4x_, 4xNomos8k, 1xDeJPG
+    r"|(?:^|[_\-\s])x([1-8])(?![0-9])",  # _x4, _x4plus, _X4_ (IGNORECASE)
     re.IGNORECASE,
 )
 
@@ -20,7 +24,7 @@ _SCALE_RE = re.compile(
 def _detect_scale(name: str) -> int | None:
     m = _SCALE_RE.search(name)
     if m:
-        val = m.group(1) or m.group(2) or m.group(3)
+        val = m.group(1) or m.group(2)
         return int(val)
     return None
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Maximize2 } from "lucide-react";
 import toast from "react-hot-toast";
-import { upscalingApi } from "../../api/upscaling";
+import { upscalingApi, upscaleModelLabel } from "../../api/upscaling";
 import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
 
@@ -111,7 +111,7 @@ export default function UpscaleForm({ datasetId, imageIds, subfolder, qualityFla
             <option value="">— select a model —</option>
             {models.map((m) => (
               <option key={m.path} value={m.path}>
-                {m.name}{m.scale ? ` (${m.scale}×)` : ""}
+                {upscaleModelLabel(m)}
               </option>
             ))}
           </select>

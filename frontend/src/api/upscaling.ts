@@ -6,6 +6,14 @@ export interface UpscaleModelInfo {
   scale: number | null;
 }
 
+/** Dropdown label for an upscale model: "name (4×)", or "name (1× restore)" for
+ *  a 1x restoration model (denoise / deblur / JPEG artifacts). Bare name when
+ *  the filename heuristic found no scale. */
+export function upscaleModelLabel(m: UpscaleModelInfo): string {
+  if (!m.scale) return m.name;
+  return `${m.name} (${m.scale}×${m.scale === 1 ? " restore" : ""})`;
+}
+
 export interface UpscaleRunRequest {
   dataset_id: string;
   image_ids?: string[];

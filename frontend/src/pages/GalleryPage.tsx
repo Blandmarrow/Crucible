@@ -10,7 +10,7 @@ import {
   type DragEndEvent, type DragStartEvent, type CollisionDetection,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { imagesApi, type UploadResult } from "../api/images";
+import { imagesApi, type ImageFilterParams, type UploadResult } from "../api/images";
 import type { ImageListItem, SubfolderInfo } from "../types";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -109,7 +109,7 @@ function loadSavedState(datasetId: string) {
 export default function GalleryPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
-  const { selectAll, clear, count, toggle, replaceRange, selectedIds, datasetByImageId } = useSelectionStore();
+  const { selectAll, clear, toggle, replaceRange, selectedIds, datasetByImageId } = useSelectionStore();
 
   const pageSize = useMemo(getGalleryPageSize, []);
 
@@ -465,6 +465,26 @@ export default function GalleryPage() {
       })))
     : undefined;
 
+  // One description of "the current view", shared by the grid, the count and
+  // select-all. Built here rather than inline in the list `queryFn` so the offer
+  // ("select all 1,240 matching filters") can never name a different set of
+  // images than the button then grabs.
+  const filterParams = useMemo<ImageFilterParams>(() => ({
+    dataset_id: datasetId!,
+    captioned: captionedFilter,
+    search: search || undefined,
+    quality_flag: qualityFilter || undefined,
+    score_filters: scoreFiltersParam,
+    subfolder: activeSubfolder,
+    source_video_id: frameVideoId || undefined,
+    detection_label: detectionLabel || undefined,
+    license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
+    license_filter:
+      licenseFilter && licenseFilter !== MISSING_LICENSE
+        ? JSON.stringify([licenseFilter])
+        : undefined,
+  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]);
+
   const imagesQueryKey = useMemo(
     () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
     [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
@@ -474,29 +494,78 @@ export default function GalleryPage() {
     queryKey: imagesQueryKey,
     queryFn: () =>
       imagesApi.list({
-        dataset_id: datasetId!,
+        ...filterParams,
         page,
         limit: pageSize,
         sort: sortOpt.sort,
         order: sortOpt.order,
-        captioned: captionedFilter,
-        search: search || undefined,
-        quality_flag: qualityFilter || undefined,
-        score_filters: scoreFiltersParam,
-        subfolder: activeSubfolder,
-        source_video_id: frameVideoId || undefined,
-        detection_label: detectionLabel || undefined,
-        license_missing: licenseFilter === MISSING_LICENSE ? true : undefined,
-        license_filter:
-          licenseFilter && licenseFilter !== MISSING_LICENSE
-            ? JSON.stringify([licenseFilter])
-            : undefined,
       }),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
   });
 
+  // How many images the filters match in total. The key nests under the
+  // `["images", datasetId]` prefix every gallery mutation already invalidates
+  // (TanStack matches by prefix), so a delete refreshes this the same way it
+  // refreshes the grid — a sibling key like `["images-count", …]` would go stale
+  // behind the user's back. No collision with the list key: its third element is
+  // the page *number*, and `setQueryData` optimistic updates still address the
+  // full list key. Paging and sort are absent on purpose — neither changes how
+  // many images match.
+  const { data: totalCount, isPlaceholderData: countIsStale } = useQuery({
+    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
+    queryFn: () => imagesApi.count(filterParams).then((r) => r.count),
+    enabled: !!datasetId,
+    placeholderData: keepPreviousData,
+  });
+
   imagesRef.current = images;
+
+  // ── Select all matching filters ───────────────────────────────────────────
+  // `count === images.length` used to drive the toolbar button's label, which
+  // reads "Select all" the moment a whole-view selection is active (the count
+  // exceeds the page). The question the button asks is only ever about this
+  // page, so ask it about this page.
+  const pageAllSelected = images.length > 0 && images.every((i) => selectedIds.has(i.id));
+  // The selection store is module-global, so in a split-pane setup it can hold
+  // ids from another dataset — comparing its raw `count` to this view's total
+  // would flip the row to "all selected" on someone else's selection.
+  const selectedHere = useMemo(
+    () => [...selectedIds].filter((id) => datasetByImageId.get(id) === datasetId).length,
+    [selectedIds, datasetByImageId, datasetId]
+  );
+  const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere >= totalCount;
+  const [selectingAll, setSelectingAll] = useState(false);
+
+  const selectAllMatching = useCallback(() => {
+    setSelectingAll(true);
+    imagesApi
+      .listIds({ ...filterParams, sort: sortOpt.sort, order: sortOpt.order })
+      .then((r) => {
+        selectAll(r.ids, datasetId ?? "");
+        if (r.truncated) {
+          toast(
+            `Selected the first ${r.ids.length.toLocaleString()} of ${r.count.toLocaleString()} — ` +
+            "too many to select at once",
+            { icon: "⚠️" }
+          );
+        } else {
+          toast.success(`Selected ${r.ids.length.toLocaleString()} image${r.ids.length !== 1 ? "s" : ""}`);
+        }
+      })
+      .catch((err) => toast.error(apiErrorDetail(err, "Could not select all matching images")))
+      .finally(() => setSelectingAll(false));
+  }, [filterParams, sortOpt, selectAll, datasetId]);
+
+  const totalPages = totalCount !== undefined ? Math.max(1, Math.ceil(totalCount / pageSize)) : undefined;
+  // Reachable by deleting the tail of a dataset while parked on its last page.
+  // Gated on the count being current: with `keepPreviousData` a pane that has
+  // just switched datasets briefly holds the *previous* dataset's total, and
+  // clamping against that would yank the user to an unrelated page.
+  useEffect(() => {
+    if (countIsStale || totalPages === undefined) return;
+    if (page > totalPages) setPage(totalPages);
+  }, [countIsStale, totalPages, page]);
 
   const handleSelect = useCallback((id: string, shiftKey: boolean, isCheckbox: boolean) => {
     if (shiftKey && isCheckbox && lastSelectedId.current !== null) {
@@ -1247,12 +1316,12 @@ export default function GalleryPage() {
 
         <button
           className="btn ghost sm"
-          onClick={() => count === images.length ? clear() : selectAll(images.map(i => i.id), datasetId ?? "")}
+          onClick={() => pageAllSelected ? clear() : selectAll(images.map(i => i.id), datasetId ?? "")}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
             <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
           </svg>
-          {count === images.length && images.length > 0 ? "Deselect all" : "Select all"}
+          {pageAllSelected ? "Deselect all" : "Select all"}
         </button>
 
         {isCustomOrder && (
@@ -1517,6 +1586,37 @@ export default function GalleryPage() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
+        {/* Select-all-matching offer. Appears once the whole page is selected and
+            there is more behind the filters than fits on it — Gmail's pattern,
+            because "Select all" can only ever mean the page it is next to. */}
+        {pageAllSelected && totalCount !== undefined && totalCount > images.length && (
+          <div
+            data-testid="select-all-matching"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              flexWrap: "wrap", marginBottom: 12, padding: "7px 12px",
+              borderRadius: "var(--r-md)", border: "1px solid var(--line)",
+              background: "var(--surface-1)", fontSize: 12, color: "var(--fg-mute)",
+            }}
+          >
+            {allMatchingSelected ? (
+              <>
+                <span>All {totalCount.toLocaleString()} matching images selected —</span>
+                <button className="link-btn" onClick={() => clear()}>Clear selection</button>
+              </>
+            ) : (
+              <>
+                <span>All {images.length.toLocaleString()} on this page selected —</span>
+                <button className="link-btn" disabled={selectingAll} onClick={selectAllMatching}>
+                  {selectingAll
+                    ? "Selecting…"
+                    : `Select all ${totalCount.toLocaleString()} matching filters`}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {isLoading ? (
           <div style={{ textAlign: "center", marginTop: 80, color: "var(--fg-mute)" }}>Loading…</div>
         ) : images.length === 0 ? (
@@ -1553,14 +1653,24 @@ export default function GalleryPage() {
           })()
         )}
 
-        {/* Pagination */}
-        {(page > 1 || images.length === pageSize) && (
-          <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 24 }}>
-            {page > 1 && <button className="btn" onClick={() => setPage(p => p - 1)}>← Previous</button>}
-            <span style={{ alignSelf: "center", fontSize: 12, color: "var(--fg-mute)" }}>Page {page}</span>
-            {images.length === pageSize && <button className="btn" onClick={() => setPage(p => p + 1)}>Next →</button>}
-          </div>
-        )}
+        {/* Pagination. `totalPages` comes from the count query; the old
+            "a full page means there is probably another" heuristic stays as the
+            fallback for the first paint, so the row does not flicker in. */}
+        {(() => {
+          const hasNext = totalPages !== undefined ? page < totalPages : images.length === pageSize;
+          if (page <= 1 && !hasNext) return null;
+          return (
+            <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 24 }}>
+              {page > 1 && <button className="btn" onClick={() => setPage(p => p - 1)}>← Previous</button>}
+              <span style={{ alignSelf: "center", fontSize: 12, color: "var(--fg-mute)" }}>
+                {totalPages !== undefined && totalCount !== undefined
+                  ? `Page ${page} of ${totalPages} · ${totalCount.toLocaleString()} image${totalCount !== 1 ? "s" : ""}`
+                  : `Page ${page}`}
+              </span>
+              {hasNext && <button className="btn" onClick={() => setPage(p => p + 1)}>Next →</button>}
+            </div>
+          );
+        })()}
 
         {/* Selection bar (sticky bottom within scroll area) */}
         <SelectionToolbar datasetId={datasetId!} subfolders={subfolders} />

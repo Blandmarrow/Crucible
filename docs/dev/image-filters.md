@@ -3,11 +3,12 @@
 The image listing endpoint (`backend/routers/images.py::list_images`) carries a long tail of
 filter params beyond `dataset_id`/`subfolder` — score ranges, quality flags, dimensions and
 format, detection and mask predicates, caption length, license and frame lineage. They are one
-shared contract with four consumers, which is why they live in their own file: the gallery's
+shared contract with six consumers, which is why they live in their own file: the gallery's
 filter bar (`docs/dev/gallery.md` § Gallery filters), the Statistics page's bar click-through
 into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
-(`docs/dev/video-ui.md`), and the license filters shared with export
-(`docs/dev/provenance.md`, `docs/dev/export-licensing.md`).
+(`docs/dev/video-ui.md`), the license filters shared with export
+(`docs/dev/provenance.md`, `docs/dev/export-licensing.md`), and the two endpoints in
+§ The same filters over the whole result set below.
 
 Every param is optional and additive (AND), and an **absent** value is *no filter*, never
 "match nothing". A *falsy* one is not the same thing: several params are gated on
@@ -16,6 +17,8 @@ below says so — `license_missing=false` selects images that *have* a license,
 `captioned=false` selects uncaptioned ones, `detection_label_exact=""` matches detections
 whose label is empty, and `subfolder=""` is the dataset root. Check the row rather than
 assuming.
+
+## The parameter table
 
 **`GET /images/` filter extensions** (in `backend/routers/images.py`):
 
@@ -43,3 +46,51 @@ assuming.
 | `source_video_id` | `str` | Frame lineage: only images extracted from that video, wherever curation has since filed them. A plain indexed equality on `Image.source_video_id` (no join, no `EXISTS`), applied right after the subfolder block. Truthiness-gated, so `""` is no filter; no allowlist — the value is an opaque uuid and an unknown one correctly returns zero rows. See `docs/dev/gallery.md` § Gallery filters and `docs/dev/video-ui.md` |
 | `license_missing` | `bool` | `true` = only images whose effective license is `""`; `false` = only images that have one. This is the Licenses panel's unlicensed click-through |
 | `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range — **pure SQL** over the persisted `func.coalesce(Image.caption_token_count, 0)` column (`min` inclusive, `max` exclusive), so ordinary `ORDER BY`/`OFFSET`/`LIMIT` paging applies; no `tiktoken` in the request path. See `docs/dev/gallery.md` § Gallery filters |
+
+## The same filters over the whole result set
+
+Two sibling endpoints answer *how many* and *which ids* the same filters match, so the gallery
+can offer "select all 1,240 matching filters" instead of one page at a time
+(`docs/dev/gallery.md` § Gallery image selection). Both are pure reads over the identical
+`where` chain.
+
+| Route | Returns |
+|---|---|
+| `GET /images/count` | `{"count": n}` — `select(func.count(Image.id))` plus the filters. No ordering, no paging |
+| `GET /images/ids` | `{"ids": [...], "count": n, "truncated": bool}` — the ids in the grid's own order, capped at `SELECT_ALL_ID_CAP` (20,000, a module constant in `routers/images.py`) |
+
+`/ids` takes `sort`/`order` as well as the filters, so a truncated response is *the first
+20,000 in the order the user is looking at* rather than an arbitrary slice. It fetches
+`cap + 1` rows and only trims when the extra row comes back; over the cap it runs the count
+query so `count` is the true total (the UI can say "the first 20,000 of 84,113") while under
+it `count` is just `len(ids)` and there is no second query. The cap bounds the response *and*
+every batch request body that follows from the selection.
+
+**The parameters are one declaration, not three copies.** `ImageFilterParams` in
+`backend/schemas/image.py` holds `dataset_id` plus the whole filter tail; `ImageIdsParams`
+subclasses it to add `sort`/`order`, and `ImageListParams` adds `page`/`limit` on top of
+that. Each route takes exactly one `Annotated[…, Query()]` model, and `routers/images.py`
+applies them through two helpers: `_apply_image_filters(q, f)` (the whole `where` chain, plus
+the `score_field` and `quality_flag` 400s, so bad input is rejected identically everywhere)
+and `_apply_image_ordering(q, sort, order)`. The filter helper takes any select shape — the
+license block's `join(Dataset, …)` carries a `select(func.count(Image.id))` as happily as a
+`select(Image)` — and the ordering split is safe because `where` clauses accumulate
+order-independently, even though the ordering block used to sit *between* two filter blocks.
+
+Two traps are worth stating, because both fail quietly:
+
+- **Route order.** `GET /{image_id}` is declared later in the same router, so `count` and
+  `ids` must stay above it or FastAPI matches them as an image id.
+- **A query model must be a route's *sole* query parameter.** FastAPI only unpacks a Pydantic
+  model into real query params in the `len(fields) == 1` branch of
+  `dependencies/utils.py::request_params_to_args`. One scalar `sort: str = "created_at"`
+  declared beside it turns the whole model back into a single required query param literally
+  named after the argument — the route still starts, still generates an OpenAPI document, and
+  rejects every real request. That is why paging and ordering are model subclasses rather than
+  plain arguments.
+
+`backend/tests/test_image_select_all_scope.py` is the guard: it compares both endpoints
+against `GET /images/` paged to exhaustion across a dozen filter shapes and several sorts,
+and reads `app.openapi()` back to assert the three query-param sets are nested (`/count` ⊂
+`/ids` ⊂ `/`). A filter re-declared on `list_images` alone fails CI there rather than in a
+user's selection.

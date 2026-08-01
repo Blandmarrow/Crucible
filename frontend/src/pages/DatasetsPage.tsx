@@ -25,6 +25,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import ImportFolderModal from "../components/common/ImportFolderModal";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { useJobStore } from "../store/jobStore";
+import { invalidateDatasetContentScope } from "../constants/queryKeys";
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -346,14 +347,7 @@ export default function DatasetsPage() {
   }, [importJobProgress?.status, importJobId, qc]);
 
   const invalidateDatasetCaches = useCallback((datasetId: string) => {
-    qc.invalidateQueries({ queryKey: ["datasets"] });
-    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-    qc.invalidateQueries({ queryKey: ["images", datasetId] });
-    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    invalidateDatasetContentScope(qc, datasetId);
     // Both callers (rescan and import) can add Video rows now, and the preview
     // strip's counts come off `["dataset", id]` — so leaving this out desynced
     // the card's video count from the video list any pane opened next.

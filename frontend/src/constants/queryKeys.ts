@@ -33,3 +33,40 @@ export function invalidateProvenanceScope(qc: QueryClient) {
     qc.invalidateQueries({ queryKey: key });
   }
 }
+
+/**
+ * Every dataset-scoped query whose data is derived from the image rows.
+ *
+ * Adding *or* removing rows moves all of them together: the dataset card and
+ * header counts, the subfolder list, and the four Stats queries are all counts
+ * or aggregates over the same rows the gallery lists. Split view means several
+ * are mounted at once, and the global `staleTime` is 30 s — so a writer that
+ * invalidates only `["images"]` leaves visibly wrong numbers on screen until
+ * something unrelated triggers a refetch.
+ *
+ * The copies of this list had already drifted apart before it was extracted
+ * (`ImageDetailPage`'s delete was missing `["dataset", id]`). Following the
+ * `invalidateDetectionQueries` precedent, the helper carries only the shared
+ * set: a caller with extras (`videos`, `licenses-in-use`, `image`) invalidates
+ * them alongside the call rather than passing an options bag.
+ *
+ * `datasetId` is allowed to be undefined because every call site interpolates a
+ * possibly-undefined pane id — `["images", undefined]` matches nothing, which
+ * is the existing behaviour.
+ */
+const DATASET_CONTENT_SCOPE = [
+  "images",
+  "dataset",
+  "subfolders",
+  "dataset-stats",
+  "tag-stats",
+  "score-values",
+  "tag-cooccurrence",
+] as const;
+
+export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string | undefined) {
+  qc.invalidateQueries({ queryKey: ["datasets"] });
+  for (const k of DATASET_CONTENT_SCOPE) {
+    qc.invalidateQueries({ queryKey: [k, datasetId] });
+  }
+}

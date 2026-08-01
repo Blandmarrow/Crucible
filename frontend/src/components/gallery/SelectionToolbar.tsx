@@ -33,6 +33,7 @@ import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
+import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
 interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
@@ -237,14 +238,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const deleteMutation = useMutation({
     mutationFn: () => imagesApi.batchDelete(ids),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      invalidateDatasetContentScope(qc, datasetId);
       clear();
       setShowDeleteConfirm(false);
       toast.success(`Deleted ${ids.length} images`);

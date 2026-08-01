@@ -15,6 +15,7 @@ import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 interface QualityWorkflow {
@@ -383,9 +384,15 @@ export default function QualityPage() {
   // walks the plan in batches of RESOLVE_BATCH_GROUPS so a 138-group run is a
   // handful of bounded requests with reportable progress, and a failure halfway
   // reports what already landed instead of a bare error.
+  //
+  // `bulk` says who started the run, and only a bulk run writes `bulkProgress`:
+  // the label it drives sits on the two top-row buttons, so a single card's
+  // *Keep first* relabelling them `Resolving 0/1…` was a run claiming progress
+  // it does not own. Per-group buttons stay disabled by `resolveBusy`, which is
+  // a genuine busy state either way.
   const resolveMutation = useMutation({
-    mutationFn: async (plans: DuplicateImage[][]) => {
-      setBulkProgress({ done: 0, total: plans.length });
+    mutationFn: async ({ plans, bulk }: { plans: DuplicateImage[][]; bulk: boolean }) => {
+      if (bulk) setBulkProgress({ done: 0, total: plans.length });
       let done = 0;
       for (let i = 0; i < plans.length; i += RESOLVE_BATCH_GROUPS) {
         const batch = plans.slice(i, i + RESOLVE_BATCH_GROUPS);
@@ -398,7 +405,7 @@ export default function QualityPage() {
           throw new PartialResolveError(done, plans.length, err);
         }
         done += batch.length;
-        setBulkProgress({ done, total: plans.length });
+        if (bulk) setBulkProgress({ done, total: plans.length });
       }
       return { groups: plans.length, images: plannedDeletions(plans) };
     },
@@ -417,11 +424,14 @@ export default function QualityPage() {
       const inner = err instanceof PartialResolveError ? err.inner : err;
       toast.error(apiErrorDetail(inner, "Failed to resolve duplicates"));
     },
-    // Invalidate on both outcomes: a partial run deleted real rows.
+    // Invalidate on both outcomes: a partial run deleted real rows. A bulk run
+    // deletes hundreds of them, so the dataset counters and the four stats
+    // queries are exactly as stale as the gallery list — hence the shared scope
+    // rather than the lone `["images"]` this carried when it resolved one group.
     onSettled: () => {
       setBulkProgress(null);
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      invalidateDatasetContentScope(qc, datasetId);
     },
   });
 
@@ -572,7 +582,7 @@ export default function QualityPage() {
         timestamps: ordered.slice(1).map((i) => i.source_timestamp_ms),
       });
     } else {
-      resolveMutation.mutate([ordered]);
+      resolveMutation.mutate({ plans: [ordered], bulk: false });
     }
   };
 
@@ -946,7 +956,12 @@ export default function QualityPage() {
           danger
           onCancel={() => setPendingResolve(null)}
           onConfirm={() => {
-            resolveMutation.mutate(pendingResolve.plans);
+            // One dialog serves both paths, so the run's owner rides on the
+            // pending resolution rather than on which button opened it.
+            resolveMutation.mutate({
+              plans: pendingResolve.plans,
+              bulk: pendingResolve.kind === "bulk",
+            });
             setPendingResolve(null);
           }}
         />

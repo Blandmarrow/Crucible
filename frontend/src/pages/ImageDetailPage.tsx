@@ -40,6 +40,7 @@ import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { useTokenCount } from "../utils/tokenCount";
+import { invalidateDatasetContentScope } from "../constants/queryKeys";
 
 interface Wd14ModelInfo { id: string; name: string; }
 
@@ -654,13 +655,7 @@ export default function ImageDetailPage() {
     mutationFn: () => imagesApi.batchDelete([imageId!]),
     onSuccess: () => {
       if (!datasetId) return;
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      invalidateDatasetContentScope(qc, datasetId);
       qc.removeQueries({ queryKey: ["image", imageId] });
       if (imageId) removeNavId(datasetId, imageId);
       setShowDeleteConfirm(false);

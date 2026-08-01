@@ -18,9 +18,15 @@ PM-009 that left the dataset *inconsistent* rather than merely wrong.
 `.bmp` only. `.avif` is in `IMAGE_EXTENSIONS` too, but AVIF is a build-time
 Pillow feature rather than a version guarantee, so a fixture in that format may
 not be readable here.
+
+Slightly outside that scope, the file also pins the copy-mode *name* the scale
+heuristic produces (§ New-file naming) — the model filename is a request field,
+so the suffix chain and the widened `_detect_scale` regex are exercised through
+the real router here rather than being asserted anywhere else.
 """
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image
@@ -84,10 +90,10 @@ def _is_upscaled(path) -> bool:
     return all(abs(a - b) <= 24 for a, b in zip(frame_colour(path), UPSCALED))
 
 
-async def _run_upscale(env, ds_id, image_id, replace):
+async def _run_upscale(env, ds_id, image_id, replace, model: str = MODEL):
     r = await env.client.post(f"{API}/upscaling/run", json={
         "dataset_id": ds_id, "image_ids": [image_id],
-        "model_path": MODEL, "replace": replace,
+        "model_path": model, "replace": replace,
     })
     assert r.status_code == 200, r.text
     return await wait_for_job(env, r.json()["job_id"], timeout=60)
@@ -381,6 +387,46 @@ def test_upscale_copy_across_two_datasets_does_not_share_one_thumbnail_stem_set(
                 assert derived[0].filename == f"{name}_up2x_001.jpg"
                 assert _is_upscaled(derived[0].thumbnail_path), \
                     frame_colour(derived[0].thumbnail_path)
+
+    run(scenario())
+
+
+# ── New-file naming ───────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("model, expected", [
+    # Scale 1 is a restoration model, not an upscaler, so it gets its own suffix
+    # rather than an absurd "_up1x" — and openmodeldb's separator-free names are
+    # what the widened regex was widened for.
+    ("1xDeJPG_SRFormer_light.pth", "plain_1x.png"),
+    ("4xNomos8kSCHAT-L.pth", "plain_up4x.png"),
+    # No detectable scale: the fallback suffix, which says nothing about factor.
+    ("SwinIR-M.pth", "plain_upscale.png"),
+])
+def test_upscale_copy_names_the_new_file_from_the_detected_scale(
+    tmp_path, monkeypatch, model, expected
+):
+    """`model_path` is a request field and the router runs `_detect_scale` over
+    its stem, so the model *filename* drives the name — this goes through the
+    real heuristic end to end, not just the suffix chain. A `.png` source keeps
+    the assertion about the suffix alone; the fallback-extension interaction is
+    covered by the `shot_up2x_001.png` case above."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "plain.png")
+
+            job = await _run_upscale(env, ds["id"], img["id"], replace=False, model=model)
+            assert job["status"] == "completed", job
+
+            async with env.Session() as db:
+                rows = (await db.execute(select(Image))).scalars().all()
+            new = [r for r in rows if r.id != img["id"]]
+            assert len(new) == 1, [r.filename for r in rows]
+            derived = new[0]
+            assert derived.filename == expected
+            assert Path(derived.file_path).exists()
+            assert Path(derived.thumbnail_path).exists()
 
     run(scenario())
 

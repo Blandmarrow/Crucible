@@ -71,34 +71,6 @@ staleness sweep while still recording the seam.
   file mirrors no user doc, so the naming convention gives no name for free — `database.md`
   is a proposal, not a constraint.
 
-## docs/dev/scoring.md
-
-- **Moves:** a three-way split. § `scores_stale` — the bit that qualifies every score above
-  (1,331 words, the largest section) to one new file, and § Duplicate detection +
-  § Style similarity (981 + 435) to another. The base file keeps § The scorers and their
-  columns, § The failure contract, § Flag thresholds and § Frontend coverage (~1,250).
-- **New files:** docs/dev/scores-stale.md (mirrors docs/scoring.md § Stale scores) and
-  docs/dev/image-similarity.md
-- **Why here:** three subjects wear one title, and a reader arrives for exactly one.
-  *Per-image measurement* — which scorer writes which column, what a failure writes, what
-  each threshold flags. *The staleness bit* — a different lifecycle entirely: one writer in
-  `utils.py`, one clear predicate in `routers/quality.py`, three rendered surfaces, and a
-  set/clear symmetry argument that has nothing to say about how a score is computed.
-  *Image-to-image comparison* — pHash duplicate grouping and CLIP/DINOv2 style similarity,
-  which are about relationships between images rather than properties of one. A two-way
-  split cannot reach the 60% target from 4,030 words whichever seam it picks (2,699 or
-  2,614); this three-way lands all three files near 1,300.
-- **Watch for:** § `scores_stale` is the most cross-referenced section in `docs/dev/` —
-  `docs/dev/shared-utilities.md` *and* CLAUDE.md § Key invariants both point at it by `§`, as do
-  `docs/dev/bulk-image-jobs.md` (twice), `docs/dev/video-reextract.md`,
-  `docs/dev/image-detail.md`, `docs/dev/export.md` and `docs/dev/versioning-service.md`, so
-  grep `scores_stale` across `docs/` and `CLAUDE.md` rather than trusting that list. Its
-  prose also cites § Duplicate detection for the cv2-in-CI fact, which becomes a cross-file
-  pointer the checker cannot verify — and § Duplicate detection is itself referenced from
-  `docs/dev/statistics.md` and `docs/dev/gallery.md`. The `luminance_score` paragraph in
-  § The scorers and their columns stays behind but names `VersionImageState` mirroring, a
-  fact § `scores_stale` also leans on; leave a pointer, not a copy.
-
 ## docs/dev/gallery.md
 
 - **Moves:** § Drag images onto subfolders (1,253 words — more than a third of the file)
@@ -116,6 +88,80 @@ staleness sweep while still recording the seam.
   `docs/dev/datasets-page.md` at the subfolder sidebar — both stay behind, so check you
   have not repointed them by reflex. The drag sections also reference
   `docs/dev/frontend-core.md` § SelectionToolbar in both directions.
+
+## docs/dev/file-browser.md
+
+- **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
+  (395), § Still open (148) and the two short sections that exist only to serve them,
+  § Name collisions (55) and § DB sync (119)
+- **New file:** docs/dev/file-browser-mutations.md
+- **Why here:** the file is a read surface and a write surface bolted together. Everything
+  moving is about *mutating the filesystem and keeping the DB in step* — the structural-folder
+  refusals, the 409s, the orphan bookkeeping, the versioning hook, the collision rules. What
+  stays is *browsing*: the eight endpoints' listing side, path safety, the three-panel page
+  and its preview panel. A reader working on the preview never needs the move/rename
+  semantics and vice versa. § Still open travels **with** the mutations rather than staying:
+  it is a list of open holes in `/move`, `/rename` and `/delete` specifically, and it cites
+  § `POST /move` by name. That lands ~2,800 moving and ~825 staying (§ Endpoints, § Path
+  safety, § Frontend, intro) out of 3,652. The moving half is at 80% of budget rather than
+  the 60% target, recorded honestly as the cost of the only coherent seam: this is one
+  router, and two endpoint sections carry three-quarters of its words. A second seam between
+  move/rename and delete does **not** help — § `POST /delete` is 395 words, so splitting it
+  off leaves the move/rename file at ~2,400 and buys a third file for nothing.
+- **Watch for:** § `POST /rename` carries a `### Directory branch` subsection that travels
+  with it. § Frontend describes the page as a whole and stays, but its two PM-021 paragraphs
+  (the `released` prop and the `<video>` unmount) are about the rename and delete mutations —
+  decide with the file open whether they travel. § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
+  `docs/dev/video-endpoints.md` § Serving bytes; § `POST /delete` is cited from
+  `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
+  from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are
+  `§`-level pointers the checker cannot verify. The user doc it mirrors is
+  `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
+  gives no name for free.
+
+## docs/dev/video-reextract.md
+
+- **Moves:** § Target resolution — one function, two callers (873 words) and § The contract
+  (444), i.e. the whole request-side half
+- **New file:** docs/dev/video-reextract-endpoints.md
+- **Why here:** the file is two subjects wearing one name. *Deciding which frames to
+  re-extract* is `_resolve_reextract_targets` and the two endpoints that share it — pure
+  request/response, no filesystem — and it is what a reader arrives for when they are
+  changing the preview's accounting or a skip reason. *Rewriting a frame in place* is the
+  job: `_rewrite`'s step order, the PM-013 window, the extension change and now the locked-
+  file retry, all of which are about disk. The seam leaves ~1,300 and ~2,300; the second is
+  over the ~2,100 target, so § The extension change (788) is the natural third piece if it
+  needs one — it is about *naming and collisions* rather than about the rewrite order, and
+  the material that pushed the file over budget landed in § The video_reextract job and
+  § The extension change both.
+- **Watch for:** the two halves cross-reference each other constantly — § The video_reextract
+  job cites "§ What gets skipped, and why" and "§ The extension change" by name, and § The
+  contract is what `docs/dev/video-reextract-ui.md` reads against. `docs/dev/video.md`'s
+  § Where things live points `backend/routers/videos.py` and `backend/schemas/video.py` at
+  this file for pass 2; both rows need splitting the same way. PM-021's write-up and
+  CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
+  in the job half.
+
+## docs/video.md
+
+- **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and
+  § Re-extracting at full resolution (503)
+- **New file:** docs/video-extraction.md
+- **Why here:** two user tasks share one page. *Holding videos* — adding them, the strip,
+  the player, rename and delete, what plays in a browser and what does not — is what a user
+  does before they have decided to extract anything, and § Browsing them grew again when
+  strip delete and the unplayable message landed. *Turning a video into frames* is the
+  two-step dialog, the progress rows, and pass 2, which a user reads once they are committed.
+  The seam leaves ~1,000 and ~1,740; the second is over the ~1,500 target, so consider moving
+  § Re-extracting at full resolution to its own file or leaving it behind with § Browsing them
+  — it is the one section that is about *curated frames* rather than about the dialog.
+- **Watch for:** this is a user doc, so the inbound links are markdown links from
+  `README.md` (three of them, plus the Docs table row), `docs/gallery.md` (five), and
+  `docs/features.md`'s index row — a new file needs its own README Docs-table row and a
+  `docs/features.md` row, not prose. Several of those links point at the *page*, not a
+  section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
+  docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
+  which is where the mirror-the-user-doc naming convention points.
 
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →

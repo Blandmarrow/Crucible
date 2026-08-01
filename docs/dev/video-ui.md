@@ -57,6 +57,48 @@ strip's behaviour for users. With a selection, the header grows
 changes (adjusted during render, so a stale selection is never painted; the anchors are
 left alone because an id from the previous dataset simply misses `indexOf`).
 
+### Deleting from the strip
+
+The selection bar carries `N selected · Extract frames · Delete · Clear`, and `Delete`
+opens a `ConfirmDialog` stating the Phase 0 contract — the videos and their posters go, the
+extracted frames keep their files and lose only the link back. Deliberately **without** a
+frame count: `VideoDetailPage` gets one from `GET /videos/{id}/frames-summary`, but a bulk
+confirm would need one request per video to say the same sentence. The mutation is a
+sequential loop over `videosApi.delete` — there is no bulk route, a strip-sized selection is
+a handful of clips, and each `DELETE` runs its own `refresh_stats`. It never rejects: both
+halves come back, successes are counted into one toast and the first failure's
+`apiErrorDetail` is shown verbatim so a 409 from a locked file (`docs/dev/video-endpoints.md`
+§ Locked files) reaches the user with its wording intact. What failed stays selected. The
+invalidations mirror `VideoDetailPage`'s `deleteMutation` exactly — `["videos", datasetId]`,
+`["datasets"]`, `["dataset-stats", datasetId]`, `["images", datasetId]`, `["image"]`,
+`["video-frames"]`, plus `removeQueries(["video", id])` and
+`clearPersisted(videoExtractJobKey(id))` per deleted id.
+
+**The Delete key belongs to the image selection whenever there is one.** The strip's
+`keydown` effect carries `SelectionToolbar`'s guards (text fields and contentEditable, any
+open modal) plus three of its own: only the active pane responds, a focused `VIDEO` element
+owns its keys, and the effect stands down entirely when
+`useSelectionStore((s) => s.count) > 0`. That last rule settles what one keypress *means*
+when both kinds are selected — Delete keeps its existing image meaning — but it only ever
+governs one pane's worth of state.
+
+**Two confirms are prevented by the pane guard, not by that rule.** `splitPane` clones the
+current view, so two gallery panes mount two `VideoStrip`s, each with its own local
+selection, and a gallery pane beside an `ImageDetailPage` gives one of each. The line is
+`if (paneCtx && paneCtx.paneId !== activePaneId) return;` as the handler's second statement,
+with both values in the deps — the same idiom `VideoDetailPage` and `ImageDetailPage` use
+for their arrow keys, and now for `ImageDetailPage`'s Delete too. The `paneCtx &&`
+short-circuit is load-bearing: outside split-pane mode (the default) `paneCtx` is `null`,
+and an unconditional compare would kill the binding entirely. `VideoStrip` reads
+`usePaneContext()` and `usePaneStore((s) => s.activePaneId)` itself rather than taking a
+prop, since `GalleryPage` consumes neither. `SelectionToolbar`'s own Delete binding is
+knowingly **unguarded** — pre-existing, and untouched by this.
+
+`frontend/e2e/video-delete.spec.ts` pins the button, the precedence rule, and the split-view
+case (select in one gallery pane, activate the other, assert zero dialogs; activate back,
+assert one). Panes are addressed there by the `pane-leaf` testid on `PaneContainer`'s leaf
+container.
+
 **The card is a `<div role="button" tabIndex={0}>`, not a `<button>`.** A checkbox is an
 interactive control and cannot legally nest inside a button, so Enter/Space are
 re-implemented by hand. This is **not** `ImageCard`'s shape — that is a bare `<div>` with no
@@ -90,6 +132,43 @@ same summary: *"N extracted frame(s) keep their files but lose their link back t
 video."* It falls back to the count-free wording at zero. `DELETE /videos/{id}` never
 touches `Image` rows and that is not what a user expects, so the number is what makes the
 sentence a fact rather than a claim.
+
+### Releasing the player, and the unplayable overlay
+
+`playerReleased = showDeleteConfirm || renameMode` **unmounts** the `<video>` and shows the
+poster in its place. Unmounting rather than clearing `src`: an empty `src` leaves the
+element attached and fires a spurious `error` event into the overlay below, while unmounting
+aborts the request outright. That request is the problem — Firefox holds it open under
+`preload="metadata"` and Starlette keeps the file open for the whole body send, so on
+Windows the app's own handle is what makes the delete or rename fail
+(`docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`). The backend
+retry covers only the teardown race; this covers the rest. Cancelling the dialog remounts
+the player. `FileBrowserPage`'s `PreviewPanel` takes the same `released` prop, set from a
+modal **or** its inline rename (`docs/dev/file-browser.md`).
+
+`utils/videoPlayback.ts` is the shared classifier. `playbackErrorMessage(el, {filename,
+codecLabel})` reads `el.error.code` and returns **null for `MEDIA_ERR_ABORTED`** — the
+release above produces exactly that, and an overlay there would accuse the app of a failure
+it performed itself — and a network message for code 2. Firefox renders decode/unsupported
+as *"the file is corrupt"*, which is its own string and not a fact about the bytes.
+
+**Decode/unsupported has two messages, and which one it returns is earned.** Code 4
+(`MEDIA_ERR_SRC_NOT_SUPPORTED`) is not only a codec verdict: browsers report a 404, 403 or
+500 on the source that way, not as `MEDIA_ERR_NETWORK` — code 2 fires only once loading has
+begun — so a file renamed or deleted out from under an open player lands here. The confident
+wording (*"the file itself is fine"*, naming the codec) is returned only when the same
+`codecMatches` / `UNPLAYABLE_CONTAINERS` checks `browserPlaybackHint` uses fire, i.e. when
+stored metadata predicted this exact failure. Otherwise the message names both
+possibilities — no decoder, or the file could not be loaded — and promises nothing about the
+file beyond the true part, that probing and extraction read it directly. `VideoDetailPage` stores
+the result on `onError` (reset on `video.id` change) and renders
+`components/video/UnplayableOverlay.tsx` over the poster; the sibling
+`browserPlaybackHint(codecLabel, filename)` predicts the same failure from stored metadata
+and renders a note under the Video Info panel's Codec row, so the warning is visible *before*
+anyone presses play. The hint flags `.mkv`/`.avi` containers and the codecs no browser
+carries (HEVC, ProRes, MPEG-4 part 2, Motion JPEG, Windows Media, Theora); AV1 is
+deliberately absent, since current browsers decode it in `.mp4`/`.webm` and an `.mkv`
+carrying it is already caught by the container rule.
 
 Route registration follows the six-site pattern in `docs/dev/panes-routing.md`
 (§ Route-level code splitting). The `/datasets/:id/video/:vid` regex in `routeToView` sits

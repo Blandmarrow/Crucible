@@ -39,6 +39,19 @@ mirror guard described in CLAUDE.md § Key invariants plus behavioural round-tri
 snapshot/restore, both `duplicate_dataset` branches, cross-dataset copy and move, and video
 delete.
 
+`test_video_locked_files_http.py` is the odd one out: every test in it exists only because
+the behaviour it pins **cannot happen on this runner**. Windows refuses to unlink, rename or
+overwrite a file another handle holds open; POSIX does all three happily. So the module
+monkeypatches `Path.unlink`, `Path.rename` and `Path.replace` to raise `PermissionError`
+with `winerror = 32`, leaving `errno` at EPERM so the *Windows* branch of
+`utils._is_locked_error` is what fires rather than the POSIX one that would match anyway. It
+covers the delete and rename 409s, the poster carve-out, a lock that clears inside the
+backoff, and pass 2's frame overwrite — which is a job and so reports a `failed` frame with
+`is_fault=True` instead of a status code. Patch the call the code actually makes
+(`Path.replace`, not `os.replace`) or the test proves nothing. Attempt counts are asserted
+against `len(utils._LOCK_RETRY_DELAYS) + 1` rather than the literal 5, so tuning the backoff
+is not a test failure.
+
 `test_frames_from_video_filter.py` pins the `GET /images/?source_video_id=` gallery filter
 (`docs/dev/video-ui.md` § the lineage row) on the two properties that are its reason to
 exist: the filter survives a frame **moved out of its extraction subfolder**, because the
@@ -88,6 +101,16 @@ extraction branches sat unexecuted because every fixture here is short and 25 fp
 were under-asserted; each was unreachable, so no test could have failed on them. They are
 grouped here because the next one will be found the same way — by intersecting a coverage
 run with the branch diff, not by reading.
+
+A **fourth category** joins them, and it is not about fixtures: a branch unreachable by
+*platform*. The locked-file paths are Windows-only, and nothing about a fixture can change
+that — the monkeypatch in `test_video_locked_files_http.py` is the only way in, and what it
+proves is the plumbing (the retry fires, the error is classified, the frame is counted),
+never the platform behaviour underneath. A green run here is not evidence the Windows path
+works; that was PM-021's lesson about itself. Two branches are left untested on purpose for
+the same reason: `_retry_locked`'s POSIX errno arm, whose real trigger cannot be reproduced
+on the runner, and `rename_video`'s TOCTOU `FileNotFoundError` arm, which is unreachable
+behind its own `exists()` pre-check and carries a comment saying so.
 
 - **The telecine pass** (`probe_samples`) — gated on ~29.97/30 fps. Fixed by
   `mp4_telecine_bytes` above, paired with a 25 fps control so the test can tell detection

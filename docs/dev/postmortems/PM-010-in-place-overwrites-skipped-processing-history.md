@@ -112,7 +112,7 @@ block's dict is field-for-field identical to what it built before, which matters
 Two things made the move worth doing beyond tidiness. The helper now also sets
 `Image.scores_stale`, so the two columns that describe an in-place rewrite can never drift
 apart — a site that recorded the edit and left the scores looking trustworthy would be the
-same class of silent gap this entry is about (`docs/dev/scoring.md` § `scores_stale`). And
+same class of silent gap this entry is about (`docs/dev/scores-stale.md`). And
 the enforcement § Generalizable rule called for is real: `backend/tests/test_scores_stale.py`
 walks `backend/routers/*.py` and `backend/services/*.py` for any
 `… .processing_history = … + …` list-concat and fails if one exists outside `utils.py`. It

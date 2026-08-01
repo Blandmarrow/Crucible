@@ -12,9 +12,12 @@ import JobProgressBar from "../components/common/JobProgressBar";
 import LicenseBadge from "../components/common/LicenseBadge";
 import ExtractFramesModal from "../components/video/ExtractFramesModal";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
+import UnplayableOverlay from "../components/video/UnplayableOverlay";
 import { extractPhaseLabel, useVideoExtractJobs, videoExtractJobKey } from "../hooks/useVideoExtractJobs";
+import { useSelectionStore } from "../store/selectionStore";
 import { clearPersisted } from "../utils/persistentState";
 import { formatDuration } from "../utils/duration";
+import { browserPlaybackHint, playbackErrorMessage } from "../utils/videoPlayback";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { safeExternalUrl } from "../utils/url";
 import type { Video } from "../types";
@@ -46,6 +49,15 @@ export default function VideoDetailPage() {
   // The subfolder whose frames pass 2 is being asked about — `null` is closed,
   // and `""` is the dataset root, a real subfolder throughout the codebase.
   const [reextractSubfolder, setReextractSubfolder] = useState<string | null>(null);
+  // What the <video> element said when it gave up, already turned into prose by
+  // `playbackErrorMessage` — null both for "fine" and for the aborts our own
+  // teardown causes.
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+  // Delete stands down while images are selected elsewhere (a split-view
+  // GalleryPage keeps SelectionToolbar's identical binding alive), so exactly
+  // one confirm can ever open. Same precedence rule VideoStrip follows.
+  const imageSelectionCount = useSelectionStore((s) => s.count);
 
   // Live for this video whether or not the modal is open — the job outlives the
   // window that started it, and the persisted id survives a reload too.
@@ -103,7 +115,18 @@ export default function VideoDetailPage() {
     setRenameFor(videoId);
     setRenameMode(false);
     setRenameStem("");
+    // The previous video's failure says nothing about this one.
+    setPlaybackError(null);
   }
+
+  // The `<video>` is unmounted, not merely `src`-cleared, whenever a mutation
+  // is pending against the file. Clearing `src` leaves the element attached and
+  // fires a spurious `error` event into the overlay above; unmounting aborts the
+  // request outright, which is the point — Firefox holds the range request open
+  // under `preload="metadata"` and Starlette's FileResponse keeps the file open
+  // for the whole body send, so on Windows the app's own handle is what makes
+  // `os.unlink`/`MoveFileEx` fail (PM-021). Cancelling the dialog remounts it.
+  const playerReleased = showDeleteConfirm || renameMode;
 
   // Arrow-key navigation. Two guards beyond the usual: this pane must be the
   // active one in split view, and the <video> element must not have focus —
@@ -125,6 +148,27 @@ export default function VideoDetailPage() {
     return () => window.removeEventListener("keydown", handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prevId, nextId, showDeleteConfirm, showExtract, reextractSubfolder, paneCtx, activePaneId, datasetId]);
+
+  // Delete opens the confirm — the same binding VideoStrip and SelectionToolbar
+  // carry, so the key means one thing everywhere. Unlike the arrows above it is
+  // *not* guarded on a focused <video>: Delete is not a playback control.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete") return;
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
+      if (showDeleteConfirm || showExtract || reextractSubfolder !== null || renameMode) return;
+      if (imageSelectionCount > 0) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" || target.isContentEditable
+      ) return;
+      e.preventDefault();
+      setShowDeleteConfirm(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showDeleteConfirm, showExtract, reextractSubfolder, renameMode, imageSelectionCount, paneCtx, activePaneId]);
 
   const renameMutation = useMutation({
     mutationFn: () => videosApi.rename(videoId!, renameStem),
@@ -183,6 +227,7 @@ export default function VideoDetailPage() {
 
   const provenance = (video.provenance ?? {}) as Record<string, string | undefined>;
   const sourceUrl = safeExternalUrl(provenance.source_url);
+  const playbackHint = browserPlaybackHint(video.codec_label, video.filename);
 
   return (
     <div className="flex h-full">
@@ -211,19 +256,40 @@ export default function VideoDetailPage() {
         </div>
 
         <div className="flex-1 min-h-0 flex items-center justify-center p-4" style={{ background: "var(--surface-0)" }}>
-          {/* preload="metadata" so opening the page does not pull a whole clip
-              off disk; the poster covers the frame until playback starts.
-              Pointed at the endpoint regardless of `has_poster`, same as
-              VideoStrip: it cuts one on demand, so a row that has never had a
-              poster gets one here rather than showing a blank frame. */}
-          <video
-            key={video.id}
-            controls
-            preload="metadata"
-            src={videosApi.fileUrl(video.id)}
-            poster={videosApi.posterUrlVersioned(video.id, video.updated_at)}
-            style={{ maxWidth: "100%", maxHeight: "100%", outline: "none" }}
-          />
+          <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", display: "flex" }}>
+            {playerReleased ? (
+              // The poster in the player's place, so releasing the file handle
+              // does not blank the frame the user is deciding about.
+              <img
+                src={videosApi.posterUrlVersioned(video.id, video.updated_at)}
+                alt={video.filename}
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
+              />
+            ) : (
+              /* preload="metadata" so opening the page does not pull a whole clip
+                 off disk; the poster covers the frame until playback starts.
+                 Pointed at the endpoint regardless of `has_poster`, same as
+                 VideoStrip: it cuts one on demand, so a row that has never had a
+                 poster gets one here rather than showing a blank frame. */
+              <video
+                key={video.id}
+                controls
+                preload="metadata"
+                src={videosApi.fileUrl(video.id)}
+                poster={videosApi.posterUrlVersioned(video.id, video.updated_at)}
+                onError={(e) =>
+                  setPlaybackError(
+                    playbackErrorMessage(e.currentTarget, {
+                      filename: video.filename,
+                      codecLabel: video.codec_label,
+                    }),
+                  )
+                }
+                style={{ maxWidth: "100%", maxHeight: "100%", outline: "none" }}
+              />
+            )}
+            {playbackError && <UnplayableOverlay message={playbackError} />}
+          </div>
         </div>
       </div>
 
@@ -241,6 +307,15 @@ export default function VideoDetailPage() {
             <span>{video.fps ? video.fps.toFixed(2) : "—"}</span>
             <span className="text-gray-500">Codec</span>
             <span>{video.codec_label || "—"}</span>
+            {/* Predicted from the stored codec/container, so it shows *before*
+                anyone presses play — the overlay only appears once the element
+                has already failed, by which time the user has read Firefox's
+                "corrupt" claim. */}
+            {playbackHint && (
+              <span className="col-span-2" style={{ color: "var(--warn)", fontSize: 11, lineHeight: 1.45 }}>
+                {playbackHint}
+              </span>
+            )}
             <span className="text-gray-500">Size</span>
             <span>{formatSize(video.file_size_bytes)}</span>
             <span className="text-gray-500">Filename</span>

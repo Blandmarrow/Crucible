@@ -87,6 +87,15 @@ Three entry points, all opening that one modal:
   `{videoId, subfolder}`, which is the only scope that panel has and the reason the request
   accepts it. `null` is closed and `""` is the dataset root, a real subfolder.
 
+**PM-021's client half is not implemented here**, deliberately. A re-extract rewrites frame
+files the open detail pane is displaying, and nothing unmounts the `<img>` before the job
+starts — but an `<img>` consumes its response body to completion, so the handle is gone by
+the time the picture is on screen, unlike a `<video preload="metadata">` that holds its range
+request open indefinitely. The remaining exposure is the teardown race alone, which is
+exactly what the server-side backoff in `replace_retrying` covers
+(`docs/dev/video-reextract.md`). Do not "fix" this by unmounting the image: it would blank
+the pane for the whole run and buy nothing.
+
 ## What TopBar invalidates
 
 `ExtractFramesModal` and `useVideoExtractJobs` (`docs/dev/video-extract-ui.md`) are **not**

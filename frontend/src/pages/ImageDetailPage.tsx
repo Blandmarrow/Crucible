@@ -383,10 +383,16 @@ export default function ImageDetailPage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
+  // Delete opens the confirm. Guarded on the active pane like the arrow keys
+  // above: `splitPane` clones the current view, so without it one keypress opens
+  // a confirm in every pane showing an image — or one here and one in a gallery
+  // pane's VideoStrip. `paneCtx &&` is load-bearing: outside split-pane mode it
+  // is null and an unconditional compare would kill the binding.
   useEffect(() => {
     const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Delete") return;
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
       if (anyModalOpen) return;
@@ -395,7 +401,7 @@ export default function ImageDetailPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showDetectModal, showDeleteConfirm, formModalOpen]);
+  }, [showDetectModal, showDeleteConfirm, formModalOpen, paneCtx, activePaneId]);
 
   const { data: image, isLoading: imageLoading, isError: imageError } = useQuery({
     queryKey: ["image", imageId],

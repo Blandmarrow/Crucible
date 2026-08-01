@@ -36,13 +36,14 @@ except ImportError:
 # torch.distributed: Windows doesn't support process stream redirects; logged via logging not warnings
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import init_db
+from backend.utils import FileInUseError
 
 if settings.hf_token:
     os.environ.setdefault("HF_TOKEN", settings.hf_token)
@@ -115,6 +116,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(FileInUseError)
+async def file_in_use_handler(request: Request, exc: FileInUseError):
+    """A file the app could not delete or rename because something holds it open.
+
+    App-level rather than per-route so every site that adopts
+    `utils.unlink_retrying`/`rename_retrying` inherits the translation — the
+    `filesystem.py` routes have the same exposure and are not converted yet.
+    409 (not 500): the request was well-formed and retrying later can work.
+    """
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 
 PREFIX = "/api/v1"
 app.include_router(datasets.router, prefix=PREFIX)

@@ -34,7 +34,7 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
   - **Rescan reads the dataset's own `images/` folder only, and does not search inside subfolders you create there.** Dropping files into that folder and rescanning is the supported way to add them from outside the app. Rearranging a dataset's files into a layout of your own afterwards is not supported: rescan will report them missing even though the files are fine, and the fix is to move them back. The File Browser refuses to make that layout for you → [details](workspace.md#file-browser)
 - **Import captions** — a per-card button opens a folder-path dialog that matches each `.txt` file to an image by filename and overwrites its caption
 - **Drag a `.txt` onto an image** — dropping a text file on a gallery card, or on the caption box in the detail view, sets that image's caption
-- **Videos** are held as *sources* rather than gallery images — stored in their own folder, counted separately from images, and turned into frames on demand → [details](video.md)
+- **Videos** are held as *sources* rather than gallery images — stored in their own folder, counted separately from images, and turned into frames on demand. Select cards in the **Videos** strip to extract frames from them or delete them; the Delete key works there too, but defers to the image selection whenever there is one → [details](video.md)
 
 A folder import copies every file into the dataset, so it checks first that the drive has room for them. If it does not, the import fails immediately — with the free and required sizes in the job's error — instead of stopping partway through with some images copied and some not.
 

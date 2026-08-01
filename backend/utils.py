@@ -1,9 +1,11 @@
+import asyncio
+import errno
 import json
 import logging
 import re
 import shutil
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -345,6 +347,118 @@ def unique_filename_with_thumb(
     db_names.add(candidate)
     planned_thumb_stems.add(Path(candidate).stem)
     return candidate
+
+
+class FileInUseError(OSError):
+    """Raised by `unlink_retrying`/`rename_retrying` — carries a message meant for the user.
+
+    `backend/main.py` translates it to a 409; routers should let it propagate
+    rather than catching it, except where the mutation is deliberately
+    non-fatal (a poster is never a gate).
+    """
+
+
+# Windows refuses to unlink or rename a file another handle has open without
+# FILE_SHARE_DELETE, which Python's open() does not request — and Crucible is
+# often that other handle itself, because Starlette's FileResponse keeps the
+# file open for the whole body send and a browser can hold a range request open
+# indefinitely. A native POSIX filesystem allows both, so nothing in CI or a dev
+# container can see this; the retry is the only reason a delete issued while the
+# player is tearing down succeeds.
+#
+# ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33) are the Windows
+# codes. The errnos are **not** a POSIX afterthought and must not be narrowed to
+# Windows — both halves of the set are load-bearing on their own:
+#   - EACCES is the *workhorse on Windows*. CPython's PC/errmap.h maps
+#     ERROR_ACCESS_DENIED (5) onto it, and that is what MoveFileEx returns when
+#     the destination is open.
+#   - EBUSY is how the Linux cifs client spells a host-side sharing violation
+#     (`ERRbadshare`/STATUS_SHARING_VIOLATION → -EBUSY in
+#     fs/smb/client/netmisc.c), which is the SMB-share case: the Windows box
+#     serving the mount holds the handle, and the lock clears the same way.
+#   - ETXTBSY is that same cifs mapping *before* it was changed in 2013 — the
+#     remap commit cites `unlink` as the operation it was wrong for — so it is
+#     here for an older client only, and is unreachable otherwise.
+# WSL2 /mnt/*, Docker bind mounts and CIFS shares are all places Crucible users
+# keep video, and a lock there arrives through one of these three and genuinely
+# clears within the backoff.
+#
+# The set is deliberately wider than "definitely a lock": a real EACCES (an ACL,
+# a read-only parent) costs ~0.75 s of backoff and then reports the same
+# FileInUseError, which is why the message names the folder possibility too
+# rather than asserting a cause nothing here checked.
+_LOCKED_WINERRORS = (32, 33)
+_LOCKED_ERRNOS = (errno.EACCES, errno.EBUSY, errno.ETXTBSY)
+_LOCK_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4)  # ~0.75 s worst case; zero cost when the first try wins
+
+
+def _is_locked_error(exc: OSError) -> bool:
+    """True when `exc` means 'another handle holds this file', not a real failure."""
+    if getattr(exc, "winerror", None) in _LOCKED_WINERRORS:
+        return True
+    return exc.errno in _LOCKED_ERRNOS
+
+
+async def _retry_locked(op: Callable[[], None], description: str, attempts: int) -> None:
+    """Run `op`, retrying on a locked-file OSError with a short backoff.
+
+    Any other OSError propagates unchanged, so callers keep their existing
+    FileNotFoundError branches. `asyncio.sleep` rather than `time.sleep`
+    because every caller is an async route — a blocking sleep would stall the
+    event loop, and with it the very response whose socket teardown we are
+    waiting on.
+    """
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    last: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            op()
+            return
+        except OSError as exc:
+            if not _is_locked_error(exc):
+                raise
+            last = exc
+            if attempt == attempts - 1:
+                break
+            await asyncio.sleep(_LOCK_RETRY_DELAYS[min(attempt, len(_LOCK_RETRY_DELAYS) - 1)])
+    # Hedged on purpose. Nothing above *checked* why the call failed — even on
+    # Windows this fires for an ACL or Controlled Folder Access denial, and on
+    # POSIX for a read-only parent — so the message names both possibilities and
+    # then names the step that actually helps. "another program" is load-bearing
+    # wording: docs/video.md promises it and test_video_locked_files_http.py
+    # asserts it.
+    raise FileInUseError(
+        f"{description} is open in another program, or its folder does not allow "
+        f"the change. Close any preview or player showing it, then try again."
+    ) from last
+
+
+async def unlink_retrying(path: Path, *, missing_ok: bool = True, attempts: int = 5) -> None:
+    """`path.unlink`, retrying while the file is locked; raises FileInUseError if it stays locked."""
+    await _retry_locked(lambda: path.unlink(missing_ok=missing_ok), f"'{path.name}'", attempts)
+
+
+async def rename_retrying(src: Path, dst: Path, *, attempts: int = 5) -> None:
+    """`src.rename(dst)`, retrying while the file is locked; raises FileInUseError if it stays locked."""
+    await _retry_locked(lambda: src.rename(dst), f"'{src.name}'", attempts)
+
+
+async def replace_retrying(src: Path, dst: Path, *, attempts: int = 5) -> None:
+    """`src.replace(dst)`, retrying while the file is locked; raises FileInUseError if it stays locked.
+
+    A third helper rather than a flag on `rename_retrying`, because the two are
+    not interchangeable on Windows: `Path.rename` is `MoveFileW` *without*
+    `MOVEFILE_REPLACE_EXISTING` and raises `FileExistsError` the moment the
+    destination exists — which is the normal case for an in-place overwrite, and
+    a failure that would pass on POSIX (where `rename` clobbers silently) while
+    breaking every such rewrite on Windows. `Path.replace` is the overwriting
+    form on both platforms.
+
+    `dst` names the description, not `src`: the caller's `src` is a uuid temp the
+    user has never seen, while `dst` is the file they are looking at.
+    """
+    await _retry_locked(lambda: src.replace(dst), f"'{dst.name}'", attempts)
 
 
 class InsufficientDiskSpaceError(RuntimeError):

@@ -641,7 +641,7 @@ def test_a_score_the_job_cannot_refresh_does_not_block_the_clear(tmp_path, monke
     Its writer is a Core bulk `update(Image)` with no per-row load, so it can
     never evaluate the clear predicate — and if the column counted toward the
     predicate, the bit would be permanently un-clearable on any dataset that has
-    ever run style similarity. See `docs/dev/scoring.md`.
+    ever run style similarity. See `docs/dev/scores-stale.md`.
     """
     _patch_scorers(monkeypatch)
 

@@ -1,12 +1,19 @@
-import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Film, Scissors } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, Film, Scissors, Trash2 } from "lucide-react";
+import toast from "react-hot-toast";
 import { videosApi } from "../../api/videos";
+import { usePaneContext } from "../../contexts/PaneContext";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { usePaneStore } from "../../store/paneStore";
+import { useSelectionStore } from "../../store/selectionStore";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
+import { videoExtractJobKey } from "../../hooks/useVideoExtractJobs";
+import { apiErrorDetail } from "../../utils/apiError";
 import { formatDuration } from "../../utils/duration";
 import { VIDEO_STRIP_COLLAPSED_KEY } from "../../constants/storage";
-import { datasetScopedKey } from "../../utils/persistentState";
+import { clearPersisted, datasetScopedKey } from "../../utils/persistentState";
+import ConfirmDialog from "../common/ConfirmDialog";
 import ExtractFramesModal from "../video/ExtractFramesModal";
 import GalleryCheckbox from "./GalleryCheckbox";
 import type { Video } from "../../types";
@@ -38,6 +45,15 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKey) === "true");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showExtract, setShowExtract] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // The *image* selection, read only to stand down from the Delete key — see the
+  // effect below. The strip still never writes to this store.
+  const imageSelectionCount = useSelectionStore((s) => s.count);
+  // For the Delete binding's active-pane guard. Read here rather than passed
+  // down: GalleryPage consumes neither, so a prop would exist only to thread
+  // these two values through it.
+  const paneCtx = usePaneContext();
+  const activePaneId = usePaneStore((s) => s.activePaneId);
   // Shift-click range anchors — the same pair GalleryPage keeps, resolved here
   // against the strip's own order and its own set.
   const lastSelectedId = useRef<string | null>(null);
@@ -65,8 +81,95 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
   if (selectionFor !== datasetId) {
     setSelectionFor(datasetId);
     setSelected(new Set());
+    setShowDeleteConfirm(false);
     setCollapsed(localStorage.getItem(storageKey) === "true");
   }
+
+  /** Delete the selected videos, one request each.
+   *
+   *  Sequential rather than concurrent and with no bulk endpoint: a strip-sized
+   *  selection is a handful of clips, and each `DELETE /videos/{id}` runs its own
+   *  `refresh_stats`. Never rejects — a partial failure is the normal outcome
+   *  worth reporting (a locked file 409s on Windows), so both halves come back
+   *  in the result and the caller decides what to say.
+   */
+  const deleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const deleted: string[] = [];
+      const errors: string[] = [];
+      const failedIds: string[] = [];
+      for (const id of ids) {
+        try {
+          await videosApi.delete(id);
+          deleted.push(id);
+        } catch (err) {
+          failedIds.push(id);
+          errors.push(apiErrorDetail(err, "Delete failed"));
+        }
+      }
+      return { deleted, failedIds, errors };
+    },
+    onSuccess: ({ deleted, failedIds, errors }) => {
+      for (const id of deleted) {
+        qc.removeQueries({ queryKey: ["video", id] });
+        // The video is gone, so is any extraction job for it — leaving the key
+        // behind means every future mount re-fetches a dead id and 404s on it.
+        clearPersisted(videoExtractJobKey(id));
+      }
+      if (deleted.length > 0) {
+        // Mirrors VideoDetailPage's deleteMutation. `images`/`image` because the
+        // frames survive with their lineage cut, so every payload that carried a
+        // source_video_id for these videos is now wrong.
+        qc.invalidateQueries({ queryKey: ["videos", datasetId] });
+        qc.invalidateQueries({ queryKey: ["datasets"] });
+        qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+        qc.invalidateQueries({ queryKey: ["images", datasetId] });
+        qc.invalidateQueries({ queryKey: ["image"] });
+        qc.invalidateQueries({ queryKey: ["video-frames"] });
+        toast.success(`${deleted.length} video${deleted.length === 1 ? "" : "s"} deleted`);
+      }
+      // The first detail verbatim, so a 409 from a locked file reaches the user
+      // with its actionable wording intact rather than as "3 failed".
+      if (errors.length > 0) toast.error(errors[0]);
+      setShowDeleteConfirm(false);
+      // What failed stays selected, so retrying is one keypress rather than a
+      // fresh selection.
+      setSelected(new Set(failedIds));
+    },
+  });
+
+  // Delete opens the confirm. Beyond SelectionToolbar's guards (text fields, any
+  // open modal) there are three more: only the *active* pane responds, a focused
+  // <video> owns its own keys, and the *image* selection wins outright — with
+  // both kinds selected Delete keeps its existing image behaviour.
+  //
+  // The pane guard is what keeps one keypress from opening two confirms:
+  // `splitPane` clones the current view, so two gallery panes mount two strips,
+  // and a gallery pane beside an ImageDetailPage gives one of each. The
+  // `paneCtx &&` short-circuit is load-bearing — in non-pane mode (the default)
+  // `paneCtx` is null, and an unconditional compare would kill the binding
+  // outright. Same idiom as VideoDetailPage/ImageDetailPage.
+  //
+  // `SelectionToolbar`'s own Delete binding is knowingly unguarded; that is
+  // pre-existing and out of scope here.
+  useEffect(() => {
+    if (selected.size === 0) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete") return;
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
+      if (showExtract || showDeleteConfirm) return;
+      if (imageSelectionCount > 0) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" || target.tagName === "VIDEO" || target.isContentEditable
+      ) return;
+      e.preventDefault();
+      setShowDeleteConfirm(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, showExtract, showDeleteConfirm, imageSelectionCount, paneCtx, activePaneId]);
 
   // An image-only dataset looks exactly as it did before this component existed.
   if (!videos || videos.length === 0) return null;
@@ -133,6 +236,15 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
             >
               <Scissors size={13} /> Extract frames
             </button>
+            <button
+              className="btn ghost sm"
+              style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--bad)" }}
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deleteMutation.isPending}
+              title="Delete the selected videos (Delete)"
+            >
+              <Trash2 size={13} /> Delete
+            </button>
             <button className="btn ghost sm" onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}
@@ -156,6 +268,24 @@ export default function VideoStrip({ datasetId }: { datasetId: string | undefine
             />
           ))}
         </div>
+      )}
+
+      {showDeleteConfirm && selectedVideos.length > 0 && (
+        <ConfirmDialog
+          danger
+          title={`Delete ${selectedVideos.length} video${selectedVideos.length === 1 ? "" : "s"}?`}
+          // The Phase 0 contract, stated because it is not what a user expects:
+          // DELETE /videos/{id} never touches Image rows. Deliberately with no
+          // frame count — VideoDetailPage gets one from GET /frames-summary, but
+          // a bulk confirm would need one request per video to say the same thing.
+          message={
+            `Delete ${selectedVideos.length === 1 ? `"${selectedVideos[0].filename}"` : `${selectedVideos.length} videos`} and their posters from disk. ` +
+            "Extracted frames keep their files and lose only their link back to the video."
+          }
+          confirmLabel="Delete"
+          onConfirm={() => deleteMutation.mutate(selectedVideos.map((v) => v.id))}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
       )}
 
       {showExtract && selectedVideos.length > 0 && (

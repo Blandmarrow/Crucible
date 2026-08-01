@@ -122,8 +122,9 @@ class ImageFilterParams(BaseModel):
     three param sets still match, so that drift fails CI.
 
     Deliberately **not** `extra="forbid"`: unknown query params have always been
-    ignored here, and the frontend sends one params object — paging and sort
-    included — to all three endpoints.
+    ignored on this route, and forbidding them would turn a stale bookmarked
+    gallery URL — or a param added to the frontend ahead of the backend — into a
+    422 across all three endpoints at once.
     """
     dataset_id: str
     captioned: bool | None = None

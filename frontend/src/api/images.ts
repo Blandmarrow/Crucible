@@ -98,10 +98,17 @@ export interface ImageListParams {
   license_missing?: boolean;
 }
 
-/** What "the current view" means, minus which slice of it is on screen — the
- *  mirror of the backend's `ImageFilterParams`. `count` and `listIds` take this
- *  so they cannot describe a different set of images than the grid does. */
-export type ImageFilterParams = Omit<ImageListParams, "page" | "limit">;
+/** What "the current view" means, minus which slice of it is on screen and minus
+ *  how it is ordered — the mirror of the backend's `ImageFilterParams`, which
+ *  excludes `sort`/`order` on purpose because `/count` must not care how the
+ *  matches are ordered. `count` takes this so it cannot describe a different set
+ *  of images than the grid does. */
+export type ImageFilterParams = Omit<ImageListParams, "page" | "limit" | "sort" | "order">;
+
+/** The filters plus the grid's ordering — the mirror of the backend's
+ *  `ImageIdsParams`, which subclasses `ImageFilterParams` for the same reason:
+ *  a truncated select-all has to be the first N *in the order on screen*. */
+export type ImageIdsParams = ImageFilterParams & Pick<ImageListParams, "sort" | "order">;
 
 /** `GET /images/ids`. `count` is the true total even when the response was
  *  trimmed, so a truncated selection can say "the first 20,000 of 84,113". */
@@ -133,7 +140,7 @@ export const imagesApi = {
     client.get<{ count: number }>("/images/count", { params }).then((r) => r.data),
   /** Every matching id, in the order the grid is showing them, capped server-side
    *  (`truncated`). Feeds "select all N matching filters". */
-  listIds: (params: ImageFilterParams) =>
+  listIds: (params: ImageIdsParams) =>
     client.get<ImageIdsResult>("/images/ids", { params }).then((r) => r.data),
   get: (id: string) => client.get<ImageDetail>(`/images/${id}`).then((r) => r.data),
   delete: (id: string) => client.delete(`/images/${id}`),

@@ -534,7 +534,15 @@ export default function GalleryPage() {
     () => [...selectedIds].filter((id) => datasetByImageId.get(id) === datasetId).length,
     [selectedIds, datasetByImageId, datasetId]
   );
-  const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere >= totalCount;
+  // The row asserts *set identity* — that what is selected is exactly what the
+  // filters match — and approximates it by cardinality. `===`, never `>=`:
+  // filters do not clear the selection, so after taking the offer and then
+  // narrowing to a subfolder the selection is a strict superset of the match
+  // set, and `>=` would render "All 3 matching images selected" over a
+  // selection of 8. Equality also reverts to the offer when a delete leaves
+  // stale ids (9 selected vs 8 matching). Still an approximation: a
+  // same-cardinality but different match set reads as complete.
+  const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere === totalCount;
   const [selectingAll, setSelectingAll] = useState(false);
 
   const selectAllMatching = useCallback(() => {

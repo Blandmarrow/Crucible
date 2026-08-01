@@ -158,7 +158,13 @@ def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flag
 # Cap on `GET /images/ids`. It bounds the response *and* every batch request
 # body that follows from the selection it hands back — a 200k-id POST is a
 # different problem from a 200k-id GET, and this is the one place both are
-# bounded.
+# bounded. The six endpoints that consume such a selection still bind every id
+# in one statement — an unchunked `Image.id.in_(...)` over the whole list, in
+# `batch_delete` (695, 718), `batch/resize` (1266), `batch/crop` (1367),
+# `batch/move-subfolder` (1900), `batch/move-dataset` (1974) and
+# `batch/copy-dataset` (2134) — so the cap also has to stay under SQLite's
+# 32,766 bind-parameter ceiling. 20,000 is twice `utils.chunked`'s default with
+# a 1.6× margin to that ceiling; raising it means chunking those six first.
 SELECT_ALL_ID_CAP = 20_000
 
 

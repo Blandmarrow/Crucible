@@ -9,6 +9,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | Class | Purpose |
 |---|---|
 | `.btn` + variants — both compound (`.btn.primary`, `.btn.ghost`, `.btn.danger`, `.btn.sm`) and hyphenated (`.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`, `.btn-sm`) forms are defined; the hyphenated forms are the more common outside the comfy components | Button variants |
+| `.link-btn` | Action that reads as a link inside a sentence — inherits `font: inherit` rather than being a `.btn` variant, so it sits on the embedding line's baseline. The gallery's select-all-matching offer |
 | `.input`, `.select`, `.checkbox` | Form controls |
 | `.panel`, `.panel-h`, `.panel-b` | Card container with header/body sections |
 | `.form-row` | 2-col grid (200px label + 1fr control) used in CaptioningPage and ExportPage |

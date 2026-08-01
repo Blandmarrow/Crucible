@@ -128,6 +128,19 @@ After a scoring run that includes duplicate detection, the Score images page gro
 
 Both buttons ask for confirmation on a group whose frames all came from one video — see below.
 
+Long groups show their first ten images with a **+N more** button to reveal the rest, and the list itself shows 25 groups at a time with a **Show 25 more** button below it.
+
+### Clearing many groups at once
+
+A scoring run over a big dataset can produce a hundred or more groups, so the top of the panel carries the same two actions over every group at once:
+
+- **Keep best in N groups** — applies *Keep best* to each. Groups where nothing has an aesthetic score are **skipped**, not resolved by some other rule; the button says how many it is skipping, and disables itself if that is all of them
+- **Keep first in N groups** — applies *Keep first* to each
+
+Next to them are three filters — **All**, **From one video**, and **Mixed or no video** — so you can clear the safe groups en masse and hand-check the risky ones. They appear only when at least one group is entirely frames from a single video. **The filter decides what the bulk buttons cover**: the count in each button is the number of groups matching the active filter, including the ones further down the list than you have scrolled, not the ones currently on screen.
+
+Bulk actions always ask for confirmation. The dialog states how many images will be deleted across how many groups, which one it keeps in each, how many of those groups are entirely frames from one video, and how many were skipped for having no score. A run over many groups reports progress in the button, and if it fails partway it tells you how many groups it got through — the ones already resolved stay resolved.
+
 ### Duplicates that came from the same video
 
 A perceptual hash cannot tell a held animation cel or a stretch of recycled footage from a redundant copy, so frames extracted from one video often land in the same group legitimately. When every frame in a group came from the same video, Crucible says so above the thumbnails and names the video, and each thumbnail shows its timestamp and shot number so you can check before deleting. Groups that mix sources label each frame with its own video instead.

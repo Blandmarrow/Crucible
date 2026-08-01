@@ -12,6 +12,7 @@ These pin the shape the fix returns: root prepended and marked `kept`, members i
 `created_at` order, and the flag still off the root.
 """
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -301,6 +302,68 @@ def test_a_frame_whose_video_was_deleted_reports_no_name(tmp_path):
                 f"{API}/quality/duplicates/{ds['id']}")).json()["groups"][0]
             assert all(m["source_video_name"] is None for m in group)
             assert [m["source_timestamp_ms"] for m in group] == [1000, 2000]
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Bulk resolution
+#
+# The Quality page's bulk bar resolves every group matching the active filter in
+# one run, batched 40 groups per call — so `keep_ids`/`delete_ids` arrive with
+# hundreds of entries where the endpoint had only ever seen a handful. Every
+# `IN (...)` here is `chunked()` for that reason.
+# ---------------------------------------------------------------------------
+
+
+def test_many_groups_resolve_in_one_call(tmp_path):
+    """One POST carrying every group's survivor and every group's copies: the
+    deleted rows and their files go, each survivor's `is_duplicate`/`duplicate_of`
+    is cleared *and visible from a fresh session* (the flags mutation reassigns a
+    copied dict, so an in-place edit would silently skip the UPDATE), and the
+    listing is empty afterwards."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            groups = [
+                await _seed_group(env, ds["id"], [f"g{g}_{i}.png" for i in range(3)])
+                for g in range(4)
+            ]
+
+            listed = (await env.client.get(
+                f"{API}/quality/duplicates/{ds['id']}")).json()["groups"]
+            assert len(listed) == 4
+
+            keep_ids = [g[0]["id"] for g in groups]
+            delete_ids = [m["id"] for g in groups for m in g[1:]]
+            assert len(delete_ids) == 8
+
+            # The paths are read before the delete so the unlink can be asserted.
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Image).where(Image.id.in_(delete_ids)))).scalars().all()
+                deleted_paths = [Path(r.file_path) for r in rows]
+            assert deleted_paths and all(p.exists() for p in deleted_paths)
+
+            r = await env.client.post(f"{API}/quality/duplicates/resolve", json={
+                "keep_ids": keep_ids,
+                "delete_ids": delete_ids,
+            })
+            assert r.status_code == 204, r.text
+
+            assert not any(p.exists() for p in deleted_paths)
+            async with env.Session() as db:
+                remaining = (await db.execute(
+                    select(Image).where(Image.dataset_id == ds["id"])
+                )).scalars().all()
+                assert sorted(row.id for row in remaining) == sorted(keep_ids)
+                for row in remaining:
+                    flags = row.quality_flags or {}
+                    assert "is_duplicate" not in flags, flags
+                    assert "duplicate_of" not in flags, flags
+
+            assert (await env.client.get(
+                f"{API}/quality/duplicates/{ds['id']}")).json()["groups"] == []
 
     run(scenario())
 

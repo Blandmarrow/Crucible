@@ -71,34 +71,6 @@ staleness sweep while still recording the seam.
   file mirrors no user doc, so the naming convention gives no name for free — `database.md`
   is a proposal, not a constraint.
 
-## docs/dev/scoring.md
-
-- **Moves:** a three-way split. § `scores_stale` — the bit that qualifies every score above
-  (1,331 words, the largest section) to one new file, and § Duplicate detection +
-  § Style similarity (981 + 435) to another. The base file keeps § The scorers and their
-  columns, § The failure contract, § Flag thresholds and § Frontend coverage (~1,250).
-- **New files:** docs/dev/scores-stale.md (mirrors docs/scoring.md § Stale scores) and
-  docs/dev/image-similarity.md
-- **Why here:** three subjects wear one title, and a reader arrives for exactly one.
-  *Per-image measurement* — which scorer writes which column, what a failure writes, what
-  each threshold flags. *The staleness bit* — a different lifecycle entirely: one writer in
-  `utils.py`, one clear predicate in `routers/quality.py`, three rendered surfaces, and a
-  set/clear symmetry argument that has nothing to say about how a score is computed.
-  *Image-to-image comparison* — pHash duplicate grouping and CLIP/DINOv2 style similarity,
-  which are about relationships between images rather than properties of one. A two-way
-  split cannot reach the 60% target from 4,030 words whichever seam it picks (2,699 or
-  2,614); this three-way lands all three files near 1,300.
-- **Watch for:** § `scores_stale` is the most cross-referenced section in `docs/dev/` —
-  `docs/dev/shared-utilities.md` *and* CLAUDE.md § Key invariants both point at it by `§`, as do
-  `docs/dev/bulk-image-jobs.md` (twice), `docs/dev/video-reextract.md`,
-  `docs/dev/image-detail.md`, `docs/dev/export.md` and `docs/dev/versioning-service.md`, so
-  grep `scores_stale` across `docs/` and `CLAUDE.md` rather than trusting that list. Its
-  prose also cites § Duplicate detection for the cv2-in-CI fact, which becomes a cross-file
-  pointer the checker cannot verify — and § Duplicate detection is itself referenced from
-  `docs/dev/statistics.md` and `docs/dev/gallery.md`. The `luminance_score` paragraph in
-  § The scorers and their columns stays behind but names `VersionImageState` mirroring, a
-  fact § `scores_stale` also leans on; leave a pointer, not a copy.
-
 ## docs/dev/gallery.md
 
 - **Moves:** § Drag images onto subfolders (1,253 words — more than a third of the file)
@@ -120,19 +92,26 @@ staleness sweep while still recording the seam.
 ## docs/dev/file-browser.md
 
 - **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
-  (395) and the two short sections that exist only to serve them, § Name collisions and
-  § DB sync
+  (395), § Still open (148) and the two short sections that exist only to serve them,
+  § Name collisions (55) and § DB sync (119)
 - **New file:** docs/dev/file-browser-mutations.md
 - **Why here:** the file is a read surface and a write surface bolted together. Everything
   moving is about *mutating the filesystem and keeping the DB in step* — the structural-folder
   refusals, the 409s, the orphan bookkeeping, the versioning hook, the collision rules. What
   stays is *browsing*: the eight endpoints' listing side, path safety, the three-panel page
   and its preview panel. A reader working on the preview never needs the move/rename
-  semantics and vice versa. The seam leaves ~2,955 and ~570 words, which is the problem —
-  it does **not** reach the 60% target, so the moving half likely wants a further seam
-  between move/rename (which share `_move_or_rename`'s DB-sync core) and delete. Decide that
-  with the file open.
-- **Watch for:** § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
+  semantics and vice versa. § Still open travels **with** the mutations rather than staying:
+  it is a list of open holes in `/move`, `/rename` and `/delete` specifically, and it cites
+  § `POST /move` by name. That lands ~2,800 moving and ~825 staying (§ Endpoints, § Path
+  safety, § Frontend, intro) out of 3,652. The moving half is at 80% of budget rather than
+  the 60% target, recorded honestly as the cost of the only coherent seam: this is one
+  router, and two endpoint sections carry three-quarters of its words. A second seam between
+  move/rename and delete does **not** help — § `POST /delete` is 395 words, so splitting it
+  off leaves the move/rename file at ~2,400 and buys a third file for nothing.
+- **Watch for:** § `POST /rename` carries a `### Directory branch` subsection that travels
+  with it. § Frontend describes the page as a whole and stays, but its two PM-021 paragraphs
+  (the `released` prop and the `<video>` unmount) are about the rename and delete mutations —
+  decide with the file open whether they travel. § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
   `docs/dev/video-endpoints.md` § Serving bytes; § `POST /delete` is cited from
   `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
   from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are

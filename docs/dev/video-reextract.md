@@ -42,7 +42,7 @@ endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.
 `backend/utils.py::record_in_place`, which sets `Image.scores_stale` alongside the
 `processing_history` entry **for any frame that carries a score**, so a re-extracted frame
 that had been scored wears a badge in the gallery and on its detail page until a re-score
-clears it (`docs/dev/scoring.md` § `scores_stale`). A triage frame is commonly *unscored* —
+clears it (`docs/dev/scores-stale.md`). A triage frame is commonly *unscored* —
 the whole point of pass 1 is to get frames cheap and cull them later — so in practice
 re-extraction often leaves the bit `False` and writes only the history entry. That entry is
 unconditional, and it is the one this doc's skip rule below depends on. The

@@ -44,7 +44,7 @@ _TECHNICAL_SCORE_COLUMNS = frozenset({
 # *set* universe (`utils.score_columns` — it is a measurement of those pixels),
 # which leaves one corner written down rather than fixed: a row carrying only
 # `style_similarity_score` is marked, then cleared by any later run that measured
-# something. See `docs/dev/scoring.md`.
+# something. See `docs/dev/scores-stale.md`.
 _UNREFRESHABLE_SCORE_COLUMNS = frozenset({"style_similarity_score"})
 
 # Every score column the quality job is able to refresh — the universe the

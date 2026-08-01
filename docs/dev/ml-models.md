@@ -2,7 +2,7 @@
 
 This file covers the ML model lifecycle (loading, VRAM management, device abstraction), the model ID registry used by captioning and quality scoring, image upscaling, and LUT color grading.
 
-The two subsystems that consume these models have their own files: `docs/dev/detection.md` (object detection) and `docs/dev/scoring.md` (quality scorers, flags, style similarity).
+The two subsystems that consume these models have their own files: `docs/dev/detection.md` (object detection) and `docs/dev/scoring.md` (quality scorers and flags), the latter with `docs/dev/image-similarity.md` for duplicate detection and style similarity.
 
 ### ML model management
 

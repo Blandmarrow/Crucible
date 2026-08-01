@@ -102,6 +102,10 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   return (
     <div
       data-testid="gallery-tile"
+      // Selection is otherwise only a border and a glow, which no e2e assertion
+      // can read — and the thing worth asserting is that a page's selection
+      // survives paging away and back.
+      data-selected={selected ? "true" : "false"}
       style={{
         border: captionDragOver ? "1px solid var(--accent)" : selected ? "1px solid var(--accent)" : "1px solid var(--line)",
         boxShadow: selected ? "0 0 0 1px var(--accent), 0 0 24px -8px var(--accent-glow)" : "none",

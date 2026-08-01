@@ -109,7 +109,7 @@ function loadSavedState(datasetId: string) {
 export default function GalleryPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
-  const { selectAll, clear, toggle, replaceRange, selectedIds, datasetByImageId } = useSelectionStore();
+  const { selectMany, deselectMany, clearDataset, clear, toggle, replaceRange, selectedIds, datasetByImageId } = useSelectionStore();
 
   const pageSize = useMemo(getGalleryPageSize, []);
 
@@ -522,10 +522,10 @@ export default function GalleryPage() {
   imagesRef.current = images;
 
   // ── Select all matching filters ───────────────────────────────────────────
-  // `count === images.length` used to drive the toolbar button's label, which
-  // reads "Select all" the moment a whole-view selection is active (the count
-  // exceeds the page). The question the button asks is only ever about this
-  // page, so ask it about this page.
+  // Whether *this page* is covered — which is a question about the visible ids,
+  // never about `count`: the selection routinely runs past the page (the whole
+  // filter set, or another subfolder's images gathered earlier), so comparing a
+  // total against `images.length` would answer a different question.
   const pageAllSelected = images.length > 0 && images.every((i) => selectedIds.has(i.id));
   // The selection store is module-global, so in a split-pane setup it can hold
   // ids from another dataset — comparing its raw `count` to this view's total
@@ -541,7 +541,10 @@ export default function GalleryPage() {
   // set, and `>=` would render "All 3 matching images selected" over a
   // selection of 8. Equality also reverts to the offer when a delete leaves
   // stale ids (9 selected vs 8 matching). Still an approximation: a
-  // same-cardinality but different match set reads as complete.
+  // same-cardinality but different match set reads as complete. Every bulk
+  // select being additive makes the superset case ordinary rather than rare —
+  // gathering two subfolders in turn produces one — so the row offers again
+  // instead of claiming, which is the honest branch of the two.
   const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere === totalCount;
   const [selectingAll, setSelectingAll] = useState(false);
 
@@ -550,7 +553,7 @@ export default function GalleryPage() {
     imagesApi
       .listIds({ ...filterParams, sort: sortOpt.sort, order: sortOpt.order })
       .then((r) => {
-        selectAll(r.ids, datasetId ?? "");
+        selectMany(r.ids, datasetId ?? "");
         if (r.truncated) {
           toast(
             `Selected the first ${r.ids.length.toLocaleString()} of ${r.count.toLocaleString()} — ` +
@@ -563,7 +566,28 @@ export default function GalleryPage() {
       })
       .catch((err) => toast.error(apiErrorDetail(err, "Could not select all matching images")))
       .finally(() => setSelectingAll(false));
-  }, [filterParams, sortOpt, selectAll, datasetId]);
+  }, [filterParams, sortOpt, selectMany, datasetId]);
+
+  // The toolbar button's caret menu. Only worth showing when the filters match
+  // more than one page — with everything on screen, "all matching" and "this
+  // page" are the same click.
+  const hasMoreThanPage = totalCount !== undefined && totalCount > images.length;
+  const [selectMenuOpen, setSelectMenuOpen] = useState(false);
+  const selectMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (selectMenuRef.current && !selectMenuRef.current.contains(e.target as Node)) setSelectMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectMenuOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [selectMenuOpen]);
+  useEffect(() => { if (!hasMoreThanPage) setSelectMenuOpen(false); }, [hasMoreThanPage]);
 
   const totalPages = totalCount !== undefined ? Math.max(1, Math.ceil(totalCount / pageSize)) : undefined;
   // Reachable by deleting the tail of a dataset while parked on its last page.
@@ -1322,15 +1346,79 @@ export default function GalleryPage() {
           </button>
         )}
 
-        <button
-          className="btn ghost sm"
-          onClick={() => pageAllSelected ? clear() : selectAll(images.map(i => i.id), datasetId ?? "")}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
-          </svg>
-          {pageAllSelected ? "Deselect all" : "Select all"}
-        </button>
+        {/* "Select all" means every image the filters match — the dataset, or the
+            subfolder if one is active — not the page that happens to be on screen.
+            Page-only lives in the caret menu, because wanting exactly the visible
+            50 is the rarer intent and the one that has an alternative (drag or
+            shift-click). Both are additive: see `selectMany` in the store. */}
+        <div ref={selectMenuRef} style={{ position: "relative", display: "flex" }}>
+          <button
+            className="btn ghost sm"
+            data-testid="select-all-btn"
+            disabled={selectingAll || images.length === 0}
+            title={pageAllSelected
+              ? "Deselect every image selected in this dataset"
+              : hasMoreThanPage
+                ? `Select all ${totalCount!.toLocaleString()} images matching the current filters`
+                : "Select every image matching the current filters"}
+            onClick={() => pageAllSelected ? clearDataset(datasetId ?? "") : selectAllMatching()}
+            style={hasMoreThanPage ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
+            </svg>
+            {selectingAll ? "Selecting…" : pageAllSelected ? "Deselect all" : "Select all"}
+          </button>
+          {hasMoreThanPage && (
+            <button
+              className="btn ghost sm"
+              data-testid="select-all-menu-btn"
+              aria-label="Select all options"
+              aria-expanded={selectMenuOpen}
+              onClick={() => setSelectMenuOpen((o) => !o)}
+              style={{ padding: "0 5px", marginLeft: -1, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+            >
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6l5 5 5-5"/>
+              </svg>
+            </button>
+          )}
+          {selectMenuOpen && (
+            <div
+              data-testid="select-all-menu"
+              style={{
+                position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
+                background: "var(--surface-2)", border: "1px solid var(--line-2)",
+                borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+                minWidth: 210, padding: "4px 0", whiteSpace: "nowrap",
+              }}
+            >
+              {[
+                {
+                  label: `All ${totalCount?.toLocaleString()} matching filters`,
+                  onClick: selectAllMatching,
+                },
+                pageAllSelected
+                  ? { label: `Deselect this page (${images.length})`, onClick: () => deselectMany(images.map(i => i.id)) }
+                  : { label: `This page only (${images.length})`, onClick: () => selectMany(images.map(i => i.id), datasetId ?? "") },
+              ].map((a) => (
+                <button
+                  key={a.label}
+                  onClick={() => { a.onClick(); setSelectMenuOpen(false); }}
+                  style={{
+                    display: "block", width: "100%", padding: "7px 14px", fontSize: 13,
+                    background: "none", border: "none", color: "var(--fg)",
+                    cursor: "pointer", textAlign: "left",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {isCustomOrder && (
           <button
@@ -1347,6 +1435,12 @@ export default function GalleryPage() {
         )}
 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {/* The prefix is not decoration: this select is the Upload button's
+              destination and changes nothing until a file is uploaded, so beside
+              the selection controls a bare "(root)" reads as if it scopes them. */}
+          {subfolders.length > 0 && (
+            <span style={{ fontSize: 12, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>Upload to:</span>
+          )}
           {subfolders.length > 0 && (
             <select
               className="select"
@@ -1595,8 +1689,10 @@ export default function GalleryPage() {
           onDrop={handleDrop}
         >
         {/* Select-all-matching offer. Appears once the whole page is selected and
-            there is more behind the filters than fits on it — Gmail's pattern,
-            because "Select all" can only ever mean the page it is next to. */}
+            there is more behind the filters than fits on it — Gmail's pattern.
+            The toolbar button reaches the whole set directly now, so this row is
+            the follow-up for the paths that select a page: "This page only" from
+            the caret menu, a drag, a shift-click range, or checking every tile. */}
         {pageAllSelected && totalCount !== undefined && totalCount > images.length && (
           <div
             data-testid="select-all-matching"
@@ -1610,7 +1706,9 @@ export default function GalleryPage() {
             {allMatchingSelected ? (
               <>
                 <span>All {totalCount.toLocaleString()} matching images selected —</span>
-                <button className="link-btn" onClick={() => clear()}>Clear selection</button>
+                {/* This dataset's ids only: the store is module-global, so a bare
+                    `clear()` here would empty the other pane's selection too. */}
+                <button className="link-btn" onClick={() => clearDataset(datasetId ?? "")}>Clear selection</button>
               </>
             ) : (
               <>

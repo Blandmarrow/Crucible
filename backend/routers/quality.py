@@ -2,6 +2,7 @@ import asyncio
 import base64
 import functools
 import logging
+from datetime import datetime
 from typing import Literal
 
 import numpy as np
@@ -15,10 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
-from backend.models import BackgroundJob, Image, Video
+from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
+from backend.models.style_run import REFERENCE_IDS_STORED_MAX
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
-from backend.services.dataset_service import refresh_stats
+from backend.services.dataset_service import get_style_distribution, refresh_stats
 from backend.utils import chunked, contained_path, normalize_subfolder, score_columns
 from backend.workers.job_queue import job_queue
 
@@ -450,11 +452,61 @@ async def embed_references(files: list[UploadFile] = File(...)):
     return {"embeddings": embeddings}
 
 
+async def _record_style_run(body: StyleSimilarityRequest, db: AsyncSession, result: dict) -> None:
+    """Upsert the dataset's style-run descriptor from a run that has already committed.
+
+    Select-then-write rather than an `on_conflict` construct (there is none
+    anywhere in `backend/`), and swallow-and-log: the scoring itself is already
+    durable by the time this runs, so per `CLAUDE.md`'s post-commit epilogue rule a
+    failure here costs the run's *description*, not the run.
+
+    A **scoped** run (`image_ids` set — the SelectionToolbar path) overwrites the
+    descriptor anyway and records `scoped_image_count`. It is the most recent run
+    and its references do describe the most recently written values; the count is
+    what lets the UI qualify the rest of the dataset instead of hiding the feature.
+    """
+    try:
+        run = (await db.execute(
+            select(StyleSimilarityRun).where(StyleSimilarityRun.dataset_id == body.dataset_id)
+        )).scalar_one_or_none()
+        if run is None:
+            run = StyleSimilarityRun(dataset_id=body.dataset_id)
+            db.add(run)
+        run.embedding_type = body.embedding_type
+        run.dino_layer = body.dino_layer
+        run.reference_image_ids = list(body.reference_image_ids[:REFERENCE_IDS_STORED_MAX])
+        run.reference_count = len(body.reference_image_ids)
+        run.external_reference_count = len(body.reference_embeddings)
+        run.scored_count = int(result.get("updated") or 0)
+        run.skipped_count = int(result.get("skipped") or 0)
+        run.scoped_image_count = len(body.image_ids) if body.image_ids else None
+        run.updated_at = datetime.utcnow()
+        await db.commit()
+    except Exception:  # noqa: BLE001 — a lost descriptor must never fail a committed run
+        logger.exception("Failed to record style-similarity run descriptor for dataset %s", body.dataset_id)
+        await db.rollback()
+
+
 @router.post("/style-similarity")
 async def compute_style_similarity(
     body: StyleSimilarityRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    """Score every candidate image against the reference set, then record what did it.
+
+    A thin wrapper on purpose. `_score_style_similarity` has six success returns
+    (one per branch), so writing the descriptor inline would be six drift-prone
+    call sites; doing it here makes the write **success-only for free**, since
+    every failure path in that function raises `HTTPException` and so never reaches
+    this line. That matters: a run that raised must not overwrite a descriptor
+    that still correctly describes the values in the column.
+    """
+    result = await _score_style_similarity(body, db)
+    await _record_style_run(body, db, result)
+    return result
+
+
+async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession) -> dict:
     from backend.ml.similarity_scorer import compute_style_similarity as _cosine_sim
     from backend.ml.similarity_scorer import compute_combined_similarity
 
@@ -730,6 +782,48 @@ async def compute_style_similarity(
         return {"updated": updated, "skipped": total_images - updated}
 
     raise HTTPException(status_code=422, detail=f"Unknown embedding_type '{body.embedding_type}'. Use 'clip', 'dino', 'combined', or 'dino_all_layers'.")
+
+
+@router.get("/style-similarity/{dataset_id}")
+async def style_similarity_distribution(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """The dataset's style-score distribution, plus what produced those scores.
+
+    `style_similarity_score` is a raw cosine whose scale depends entirely on the
+    mode that made it, so the number alone is unreadable. The quantiles let a
+    client place one image inside its own dataset's distribution — mode-invariant
+    by construction — and `run` says which mode that was.
+
+    Twenty-one breakpoints, every 5th percentile: ±2.5 pp worst case for ~200
+    bytes. 101 is more resolution than a 4-px meter can spend, and deciles are
+    visibly chunky exactly where style matching cares (the top of the range).
+
+    **Dataset-wide, with no `subfolder` parameter.** The same image must read the
+    same in a filtered pane, an unfiltered pane and on the detail page.
+    `StyleSimilarityRequest` has no subfolder concept either, and
+    `ix_images_dataset_similarity` makes the ordered scan covering.
+
+    Like its sibling `aesthetic_coverage`, an unknown dataset gets an empty
+    payload rather than a 404 — the caller is a gallery card, not a navigation.
+    """
+    dist = await get_style_distribution(db, dataset_id)
+    run = (await db.execute(
+        select(StyleSimilarityRun).where(StyleSimilarityRun.dataset_id == dataset_id)
+    )).scalar_one_or_none()
+
+    return {
+        **dist,
+        "run": None if run is None else {
+            "embedding_type": run.embedding_type,
+            "dino_layer": run.dino_layer,
+            "reference_image_ids": run.reference_image_ids or [],
+            "reference_count": run.reference_count,
+            "external_reference_count": run.external_reference_count,
+            "scored_count": run.scored_count,
+            "skipped_count": run.skipped_count,
+            "scoped_image_count": run.scoped_image_count,
+            "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+        },
+    }
 
 
 @router.get("/duplicates/{dataset_id}")

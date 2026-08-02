@@ -34,3 +34,33 @@ export function formatFramePosition(ms: number | null | undefined): string {
   const millis = Math.round(ms) % 1000;
   return `${formatDuration(Math.floor(ms / 1000) * 1000)}.${String(millis).padStart(3, "0")}`;
 }
+
+/** How long ago a timestamp was, in words: "just now", "12m ago", "3h ago", "5d ago".
+ *
+ *  Null/unparseable is "—", the same contract as its two siblings above.
+ *
+ *  Four hand-rolled copies of this arithmetic exist in the codebase
+ *  (`QualityPage`, `SyncCanvasModal`, `SidebarVersionPanel`, `LogsPage`), which is
+ *  why a fifth was not written: `QualityPage`'s is converted in the same change
+ *  that added this. The other three are a known seam, left alone here because
+ *  each renders a slightly different granularity and converting them is a
+ *  behaviour change to three screens, not a refactor.
+ */
+export function formatTimeAgo(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  // Every timestamp in this DB is written by `datetime.utcnow()` and serialized
+  // without an offset, and `new Date("…T12:00:00")` reads a bare string as *local*
+  // time. Left alone, a browser at UTC+3 sees every event three hours in the
+  // future and reports "just now" forever. Append the designator when the string
+  // carries none of its own.
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  const then = new Date(hasZone ? iso : `${iso}Z`).getTime();
+  if (!Number.isFinite(then)) return "—";
+  // A server clock marginally ahead of the browser's must not read "in 3 seconds".
+  const mins = Math.max(0, Math.floor((Date.now() - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}

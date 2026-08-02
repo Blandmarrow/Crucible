@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
 import { qualityApi, type DuplicateGroup, type DuplicateImage } from "../api/quality";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { formatFramePosition } from "../utils/duration";
+import { formatFramePosition, formatTimeAgo } from "../utils/duration";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
@@ -13,11 +13,13 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, styleModeLabel, type StyleMode } from "../constants/styleModes";
 import { AESTHETIC_MODELS, aestheticModelLabel, type AestheticModel } from "../constants/aestheticModels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
+import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
 interface QualityWorkflow {
   runAesthetic: boolean;
@@ -32,7 +34,7 @@ interface QualityWorkflow {
   runDino: boolean;
   runNsfw: boolean;
   runDinoLayers: boolean;
-  embeddingType: "clip" | "dino" | "combined";
+  embeddingType: StyleMode;
   dinoLayer: number | "all" | null;
 }
 
@@ -269,7 +271,7 @@ export default function QualityPage() {
   const [runNsfw, setRunNsfw] = useState(workflow.runNsfw);
   const [jobLabel, setJobLabel] = useState("");
   const [runDinoLayers, setRunDinoLayers] = useState(workflow.runDinoLayers);
-  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">(workflow.embeddingType);
+  const [embeddingType, setEmbeddingType] = useState<StyleMode>(workflow.embeddingType);
   const [dinoLayer, setDinoLayer] = useState<number | "all" | null>(workflow.dinoLayer);
 
   // Remembered "filters" config — per-dataset.
@@ -364,14 +366,13 @@ export default function QualityPage() {
     staleTime: 60_000,
   });
   const lastScoringJob = jobs?.find((j) => j.job_type === "quality_score" && j.status === "completed");
-  const lastRunLabel = lastScoringJob?.finished_at
-    ? (() => {
-        const diff = Date.now() - new Date(lastScoringJob.finished_at).getTime();
-        const mins = Math.floor(diff / 60000);
-        if (mins < 60) return `${mins}m ago`;
-        return `${Math.floor(mins / 60)}h ago`;
-      })()
-    : null;
+  // `formatTimeAgo` rather than the inline copy this used to hold — it is the same
+  // arithmetic, and it also fixes the bare-timestamp timezone read described there.
+  const lastRunLabel = lastScoringJob?.finished_at ? formatTimeAgo(lastScoringJob.finished_at) : null;
+
+  // The style-score distribution behind the panel's "Current scores" line. Same
+  // query key as the gallery meter's, so the two share one cache entry.
+  const styleDistribution = useStyleDistribution(datasetId);
 
   const { data: duplicates } = useQuery({
     queryKey: ["duplicates", datasetId],
@@ -514,8 +515,13 @@ export default function QualityPage() {
         ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
         : `Style similarity scored for ${data.updated} images`;
       toast.success(msg);
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      // The lone `["images", datasetId]` this replaces left two surfaces stale: the
+      // Stats page's style histogram, which reads `["score-values"]` and so sat on
+      // pre-run numbers until something else invalidated it, and the new
+      // distribution the gallery meter and the detail block both read.
+      invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["image"] });
+      qc.invalidateQueries({ queryKey: ["style-distribution", datasetId] });
     },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));
@@ -849,12 +855,20 @@ export default function QualityPage() {
             <div className="form-row">
               <div className="lbl-col">
                 <h4>Embedding model</h4>
-                <p>CLIP for general images; DINOv2 for object-shape similarity; CLIP + DINOv2 blends both (0.38 × CLIP + 0.62 × DINOv2). All require embeddings computed first.</p>
+                <p>{STYLE_MODES.find((m) => m.value === embeddingType)?.desc} {STYLE_MODE_NOTE}</p>
               </div>
               <div className="row-flex">
-                <button className={`btn sm${embeddingType === "clip" ? " primary" : ""}`} onClick={() => setEmbeddingType("clip")}>CLIP</button>
-                <button className={`btn sm${embeddingType === "dino" ? " primary" : ""}`} onClick={() => setEmbeddingType("dino")} disabled={externalRefFiles.length > 0}>DINOv2</button>
-                <button className={`btn sm${embeddingType === "combined" ? " primary" : ""}`} onClick={() => setEmbeddingType("combined")} disabled={externalRefFiles.length > 0}>CLIP + DINOv2</button>
+                {STYLE_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    className={`btn sm${embeddingType === m.value ? " primary" : ""}`}
+                    onClick={() => setEmbeddingType(m.value)}
+                    disabled={m.value !== "clip" && externalRefFiles.length > 0}
+                    title={m.desc}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -862,7 +876,7 @@ export default function QualityPage() {
               <div className="form-row">
                 <div className="lbl-col">
                   <h4>DINOv2 layer</h4>
-                  <p>Each transformer block captures increasingly abstract features. "Final" uses the pre-computed <span className="mono">dino_embedding</span>. All others require per-layer embeddings. "All layers" scores each layer independently and stores results for comparison in the image detail view.</p>
+                  <p>{DINO_LAYER_NOTE} Layer 12 uses the pre-computed <span className="mono">dino_embedding</span>; every other layer requires per-layer embeddings.</p>
                 </div>
                 <select
                   className="select"
@@ -932,6 +946,27 @@ export default function QualityPage() {
                 </button>
               </div>
             </div>
+
+            {/* What the last run actually produced, read from the refetched
+                distribution rather than from the POST response — the endpoint
+                returns counts, and the two numbers worth seeing after a run are
+                where the middle of the dataset landed and where the good end
+                starts. The raw cosine's scale differs per mode, so these are the
+                only figures that let one run be compared against the last. */}
+            {styleDistribution && styleDistribution.scored > 1 && (
+              <div className="form-row">
+                <div className="lbl-col">
+                  <h4>Current scores</h4>
+                  <p>Across the {styleDistribution.scored} scored image{styleDistribution.scored === 1 ? "" : "s"} in this dataset.
+                    {styleDistribution.run && ` Last scored with ${styleModeLabel(styleDistribution.run.embedding_type)}${styleDistribution.run.dino_layer != null ? `, layer ${styleDistribution.run.dino_layer}` : ""} ${formatTimeAgo(styleDistribution.run.updated_at)}.`}</p>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                  <span>Median <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[10]?.toFixed(4)}</span></span>
+                  <span>Top 10% above <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[18]?.toFixed(4)}</span></span>
+                  <span>Range <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[0]?.toFixed(4)}–{styleDistribution.quantiles[20]?.toFixed(4)}</span></span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

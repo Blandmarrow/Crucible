@@ -24,6 +24,7 @@ import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import ProvenancePanel from "../components/image/ProvenancePanel";
+import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel } from "../types";
 import { type ProviderOut } from "../api/providers";
@@ -41,6 +42,7 @@ import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
+import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
 interface Wd14ModelInfo { id: string; name: string; }
 
@@ -63,11 +65,26 @@ function formatSize(bytes: number | null) {
 
 interface CropArea { x: number; y: number; width: number; height: number; }
 
+/** The twelve per-layer DINOv2 cosines, on a **fixed 0–1 axis**.
+ *
+ *  It used to normalise each bar to the largest score *within the image*, so one
+ *  bar always read 100% however poor the match — and since layers 1–8 compress
+ *  every image into 0.90–0.99 (the Phase-0 gate's per-layer sweep, see
+ *  `backend/scripts/style_gate_report.md`), the panel rendered twelve near-full
+ *  bars for a picture that matched nothing. A fixed axis with stated end labels is
+ *  the fix: the bar lengths now mean the same thing here as they do in the next
+ *  image.
+ *
+ *  Layers 1–9 are de-emphasised rather than hidden — the numbers are stored data
+ *  and this is the only place to see them — and layer 12 is marked, because that
+ *  is the one written to `style_similarity_score`.
+ */
+const DINO_MEANINGFUL_LAYER = 10;
+
 function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
   const [open, setOpen] = useState(true);
   const layers = Array.from({ length: 12 }, (_, i) => String(i + 1))
     .filter((k) => scores[k] !== undefined);
-  const maxScore = Math.max(...layers.map((k) => scores[k]));
 
   return (
     <div style={{ marginTop: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
@@ -85,15 +102,27 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {layers.map((k) => {
             const score = scores[k];
-            const pct = maxScore > 0 ? (score / maxScore) * 100 : 0;
+            // Fixed axis, not `score / maxScore`: a bar's length is the cosine
+            // itself, comparable across images and across layers.
+            const pct = Math.max(0, Math.min(1, score)) * 100;
             const label = DINO_LAYER_LABELS[k] ?? `Layer ${k}`;
+            const weak = Number(k) < DINO_MEANINGFUL_LAYER;
+            const stored = k === "12";
             return (
-              <div key={k} style={{ display: "grid", gridTemplateColumns: "20px 1fr auto", alignItems: "center", gap: 6 }}>
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "20px 1fr auto", alignItems: "center", gap: 6, opacity: weak ? 0.45 : 1 }}>
                 <span style={{ fontSize: 10, color: "var(--fg)", textAlign: "right", fontFamily: "monospace" }}>{k}</span>
                 <div style={{ position: "relative", height: 14, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }} title={label}>
-                  <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${pct}%`, background: "var(--accent)", borderRadius: 3, transition: "width .3s" }} />
+                  <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${pct}%`, background: weak ? "var(--fg-mute)" : "var(--accent)", borderRadius: 3, transition: "width .3s" }} />
                   <span style={{ position: "absolute", left: 4, top: 0, lineHeight: "14px", fontSize: 9, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", maxWidth: "calc(100% - 8px)" }}>
                     {label}
+                    {stored && (
+                      <span
+                        style={{ marginLeft: 6, fontSize: 8, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--fg-dim)" }}
+                        title="Layer 12 is the value written to style_similarity_score — the score every other screen shows."
+                      >
+                        stored
+                      </span>
+                    )}
                   </span>
                 </div>
                 <span style={{ fontSize: 10, color: "var(--fg)", fontFamily: "monospace", minWidth: 32, textAlign: "right" }}>
@@ -102,6 +131,16 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
               </div>
             );
           })}
+          <div style={{ display: "grid", gridTemplateColumns: "20px 1fr auto", gap: 6, fontSize: 9, color: "var(--fg-dim)", fontFamily: "monospace" }}>
+            <span />
+            <span style={{ display: "flex", justifyContent: "space-between" }}><span>0</span><span>1.0</span></span>
+            <span style={{ minWidth: 32 }} />
+          </div>
+          <p style={{ fontSize: 10, color: "var(--fg-dim)", margin: "4px 0 0", lineHeight: 1.4 }}>
+            Fixed 0–1 axis. Layers 1–9 are dimmed because they discriminate weakly:
+            every image scores 0.90–0.99 on layers 1–8, so the ordering there has no
+            cut point in it. Usable spread appears at layers 10–12.
+          </p>
         </div>
       )}
     </div>
@@ -414,6 +453,11 @@ export default function ImageDetailPage() {
     // only to add the 404 short-circuit, not to retry more.
     retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
+
+  // Unconditional here, unlike the gallery card: the detail page is where a user
+  // goes *to* read this score, so the block renders regardless of the gallery
+  // meter preference. Same query key, so it shares the gallery's cache entry.
+  const styleDistribution = useStyleDistribution(datasetId);
 
   const { data: captionData } = useQuery({
     queryKey: ["caption", imageId],
@@ -1590,13 +1634,21 @@ export default function ImageDetailPage() {
                 <span>{(image.luminance_score * 100).toFixed(0)}%</span>
               </>
             )}
-            {image.style_similarity_score !== null && image.style_similarity_score !== undefined && (
-              <>
-                <span className="text-gray-500">Style match</span>
-                <span>{(image.style_similarity_score * 100).toFixed(0)}%</span>
-              </>
-            )}
           </div>
+
+          {/* Style match. Below the grid rather than a row inside it: the grid is a
+              two-column list of one-line facts, and a raw cosine needs a percentile,
+              the run that produced it and its references before it means anything. */}
+          <StyleMatchPanel
+            score={image.style_similarity_score}
+            stale={image.scores_stale}
+            distribution={styleDistribution}
+            datasetId={datasetId}
+            imageId={image.id}
+            onOpenImage={(refId) =>
+              paneGo(`/datasets/${datasetId}/image/${refId}`, { page: "image-detail", datasetId: datasetId!, imageId: refId })
+            }
+          />
 
           {/* Frame lineage. Without it, a frame moved out of its extraction
               subfolder can no longer say where it came from. */}

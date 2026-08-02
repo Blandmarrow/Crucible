@@ -158,6 +158,8 @@ export default function SettingsPage() {
   // re-render its cards the moment the toggle flips.
   const galleryLicenseBadge = useUiPrefsStore((s) => s.galleryLicenseBadge);
   const setGalleryLicenseBadge = useUiPrefsStore((s) => s.setGalleryLicenseBadge);
+  const galleryStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
+  const setGalleryStyleMeter = useUiPrefsStore((s) => s.setGalleryStyleMeter);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -586,6 +588,29 @@ export default function SettingsPage() {
                   }}
                 />
                 Show each image's effective source license on its gallery card
+              </label>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Style match meter on cards</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                A thin bar under each thumbnail showing where that image's style-similarity score
+                falls within this dataset's own scores. The raw score is a cosine whose scale depends
+                on which embedding model produced it, so a percentile is the only reading that means
+                the same thing in every mode. Images with no style score show nothing, and switching
+                this off stops the gallery asking for the distribution at all.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }} data-testid="style-meter-toggle">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={galleryStyleMeter}
+                  onChange={(e) => {
+                    setGalleryStyleMeter(e.target.checked);
+                    toast.success("Preference saved");
+                  }}
+                />
+                Show the style match meter on gallery cards
               </label>
             </div>
 

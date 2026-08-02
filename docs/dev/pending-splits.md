@@ -177,28 +177,36 @@ staleness sweep while still recording the seam.
   mirror-the-user-doc naming convention gives no name for free — image-processing-models.md
   is a proposal, not a constraint.
 
-## docs/scoring.md
+## docs/dev/image-similarity.md
 
-- **Moves:** § Duplicate resolution and its two subsections, § Clearing many groups at once
-  and § Duplicates that came from the same video (~700 words together)
-- **New file:** docs/duplicates.md
-- **Why here:** the page documents two different user tasks that merely share a screen.
-  *Measuring images* is the scoring run, the model picker, what each scorer produces, style
-  similarity, quality flags and stale scores — read before you press the button. *Resolving
-  duplicates* is what you do to the panel that appears afterwards: it deletes files, it has
-  its own bulk bar, its own confirm dialogs and its own same-source hazard, and a reader
-  arrives at it from the gallery's duplicate badge rather than from the scoring flow. The
-  seam leaves ~1,990 and ~700. The staying half is over the ~1,500 target, so if it needs a
-  second seam, § Style similarity (~570 words with its mode table) is the candidate — it is
-  a separate CPU-only workflow with its own collapsible section and its own concepts.
-- **Watch for:** the moved sections are referenced by `docs/gallery.md` and `docs/video.md`
-  (the same-source frames hazard), and the dev-side mirror is split across
-  `docs/dev/image-similarity.md` (pHash grouping, the duplicates panel) and
-  `docs/dev/scoring.md` — so the new user doc mirrors `image-similarity.md`, not
-  `scoring.md`, and the naming convention gives no name for free. A new user doc needs its
-  own README Docs-table row and a `docs/features.md` index row. The mixed-aesthetic-model
-  refusal lands in the moved half but is explained in § Choosing the aesthetic model, which
-  stays — that becomes a cross-file `§` pointer the checker cannot verify.
+- **Moves:** § Style similarity in full — its mode table, § What the modes are actually
+  worth, § Making the score readable — the run descriptor and the percentile, and every
+  subsection under it (2,437 words, more than half the file)
+- **New file:** docs/dev/style-similarity.md (mirrors docs/scoring.md § Style similarity,
+  whose own second seam names the same subject)
+- **Why here:** the file has been two subsystems under one title since it was written, and
+  its own `# Title` says so — "duplicates **and** style". They share nothing but the word
+  *similarity*: duplicates are pHash Hamming distance, a grouping pass inside the technical
+  scorer, and a destructive resolution UI; style is CLIP/DINOv2 cosines, a synchronous
+  CPU-only endpoint, a run descriptor table, a percentile contract and three rendered
+  meters. A reader arrives for exactly one. Splitting there leaves ~2,300 and ~2,440 — both
+  over the ~2,100 target, which is the honest cost of a file that is two full subsystems
+  rather than one that grew a tail. If the style half needs a second seam it is between the
+  *scoring* (modes, gate findings, all-layers vectorization) and the *reading* (descriptor,
+  endpoint, percentile, surfaces) — the § Making the score readable heading is already that
+  line.
+- **Watch for:** the duplicates half is cited from `docs/dev/scoring.md`,
+  `docs/dev/bulk-ops.md` and `docs/dev/video.md`; the style half from
+  `docs/dev/scores-stale.md` (§ The clear predicate, in both directions),
+  `docs/dev/statistics.md` (the `"style"` cache slot), `docs/dev/gallery.md` (the card
+  meter), `docs/dev/image-detail.md` (the Style match block and the layer breakdown) and
+  `docs/dev/persistence.md` (the meter key). CLAUDE.md's Documentation Map row names both
+  subjects and has to become two rows. `backend/scripts/style_gate_report.md` is the source
+  the gate findings summarise and points back here by name. Several of these are `§`-level
+  pointers the checker cannot verify — grep `image-similarity.md` across `docs/`,
+  `CLAUDE.md` and `backend/scripts/` before and after. The user doc the new file mirrors is
+  a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
+  first and produces a docs/style-similarity.md, the names line up for free.
 
 ## docs/video.md
 
@@ -220,6 +228,12 @@ staleness sweep while still recording the seam.
   section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
   docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
+
+`docs/scoring.md` → `docs/duplicates.md` was executed on 2026-08-02, at the start of the
+session that appended the style-similarity percentile material to § Style similarity — the
+seam held as recorded, and the staying half landed at ~2,100 words. That half is still over
+the 2,500 user budget's 60% target, so its recorded second seam stands: § Style similarity
+is now the largest section and is a separate CPU-only workflow with its own concepts.
 
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →

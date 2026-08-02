@@ -33,6 +33,7 @@ import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
+import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
 interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
@@ -75,7 +76,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showStyleSection, setShowStyleSection] = useState(false);
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set());
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
-  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">("clip");
+  const [embeddingType, setEmbeddingType] = useState<StyleMode>("clip");
   const [dinoLayer, setDinoLayer] = useState<number | "all" | null>("all");
   const [scoreJobLabel, setScoreJobLabel] = useState("");
   const [scoreJobId, setScoreJobId] = useState<string | null>(null);
@@ -393,8 +394,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
         : `Style similarity scored for ${data.updated} images`;
       toast.success(msg);
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      // Same widening as QualityPage's copy: `["score-values"]` (the Stats style
+      // histogram) was never invalidated by a style run, and the distribution the
+      // card meter reads is new. See the note there.
+      invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["image"] });
+      qc.invalidateQueries({ queryKey: ["style-distribution", datasetId] });
     },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));
@@ -823,18 +828,26 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>
-                      CLIP for general images; DINOv2 for object-shape similarity; CLIP + DINOv2 blends both. All require embeddings computed first.
+                      {STYLE_MODES.find((m) => m.value === embeddingType)?.desc} {STYLE_MODE_NOTE}
                     </div>
                     <div className="row-flex">
-                      <button className={`btn sm${embeddingType === "clip" ? " primary" : ""}`} onClick={() => setEmbeddingType("clip")}>CLIP</button>
-                      <button className={`btn sm${embeddingType === "dino" ? " primary" : ""}`} onClick={() => setEmbeddingType("dino")} disabled={externalRefFiles.length > 0}>DINOv2</button>
-                      <button className={`btn sm${embeddingType === "combined" ? " primary" : ""}`} onClick={() => setEmbeddingType("combined")} disabled={externalRefFiles.length > 0}>CLIP + DINOv2</button>
+                      {STYLE_MODES.map((m) => (
+                        <button
+                          key={m.value}
+                          className={`btn sm${embeddingType === m.value ? " primary" : ""}`}
+                          onClick={() => setEmbeddingType(m.value)}
+                          disabled={m.value !== "clip" && externalRefFiles.length > 0}
+                          title={m.desc}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
                   {(embeddingType === "dino" || embeddingType === "combined") && externalRefFiles.length === 0 && (
                     <div>
-                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>DINOv2 layer</div>
+                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }} title={DINO_LAYER_NOTE}>DINOv2 layer</div>
                       <select
                         className="select w-full"
                         value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}

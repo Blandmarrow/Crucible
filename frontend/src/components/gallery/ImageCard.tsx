@@ -241,7 +241,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
           <div
             data-testid="style-meter"
             data-style-percentile={String(Math.round(stylePct))}
-            title={styleMatchTitle({ percentile: stylePct, score: image.style_similarity_score, run: styleDist?.run, stale: image.scores_stale })}
+            title={styleMatchTitle({ percentile: stylePct, score: image.style_similarity_score, distribution: styleDist, stale: image.scores_stale })}
             style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 4, zIndex: 2, background: "rgba(7,9,11,.55)" }}
           >
             <div style={{

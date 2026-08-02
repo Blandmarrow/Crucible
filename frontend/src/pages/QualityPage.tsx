@@ -20,6 +20,7 @@ import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persis
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
+import { quantileAt } from "../utils/percentile";
 
 interface QualityWorkflow {
   runAesthetic: boolean;
@@ -518,10 +519,10 @@ export default function QualityPage() {
       // The lone `["images", datasetId]` this replaces left two surfaces stale: the
       // Stats page's style histogram, which reads `["score-values"]` and so sat on
       // pre-run numbers until something else invalidated it, and the new
-      // distribution the gallery meter and the detail block both read.
+      // distribution the gallery meter and the detail block both read — that one
+      // now rides the shared scope, since it is an aggregate over the same rows.
       invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["image"] });
-      qc.invalidateQueries({ queryKey: ["style-distribution", datasetId] });
     },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));
@@ -961,9 +962,13 @@ export default function QualityPage() {
                     {styleDistribution.run && ` Last scored with ${styleModeLabel(styleDistribution.run.embedding_type)}${styleDistribution.run.dino_layer != null ? `, layer ${styleDistribution.run.dino_layer}` : ""} ${formatTimeAgo(styleDistribution.run.updated_at)}.`}</p>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                  <span>Median <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[10]?.toFixed(4)}</span></span>
-                  <span>Top 10% above <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[18]?.toFixed(4)}</span></span>
-                  <span>Range <span className="mono" style={{ color: "var(--fg)" }}>{styleDistribution.quantiles[0]?.toFixed(4)}–{styleDistribution.quantiles[20]?.toFixed(4)}</span></span>
+                  {/* Breakpoints by percentile, never by index: `quantileAt`
+                      derives the index from the payload's own `quantile_step`, so
+                      a change to `STYLE_QUANTILE_STEP` cannot relabel the max as
+                      the median here. */}
+                  <span>Median <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 50)?.toFixed(4)}</span></span>
+                  <span>Top 10% above <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 90)?.toFixed(4)}</span></span>
+                  <span>Range <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 0)?.toFixed(4)}–{quantileAt(styleDistribution, 100)?.toFixed(4)}</span></span>
                 </div>
               </div>
             )}

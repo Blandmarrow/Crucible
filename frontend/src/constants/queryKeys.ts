@@ -53,6 +53,12 @@ export function invalidateProvenanceScope(qc: QueryClient) {
  * `datasetId` is allowed to be undefined because every call site interpolates a
  * possibly-undefined pane id — `["images", undefined]` matches nothing, which
  * is the existing behaviour.
+ *
+ * `style-distribution` belongs here for the same reason as the Stats aggregates:
+ * a percentile is an aggregate over exactly these rows, so deleting or importing
+ * images moves every card's meter. It costs nothing when nobody is looking, since
+ * the query is `enabled`-gated on the gallery meter preference and an invalidation
+ * of a key with no observer never refetches.
  */
 const DATASET_CONTENT_SCOPE = [
   "images",
@@ -62,6 +68,7 @@ const DATASET_CONTENT_SCOPE = [
   "tag-stats",
   "score-values",
   "tag-cooccurrence",
+  "style-distribution",
 ] as const;
 
 export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string | undefined) {

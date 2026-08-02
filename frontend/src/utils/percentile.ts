@@ -1,4 +1,4 @@
-import type { StyleRunDescriptor } from "../api/quality";
+import type { StyleDistribution, StyleRunDescriptor } from "../api/quality";
 import { styleModeLabel } from "../constants/styleModes";
 
 /**
@@ -63,7 +63,49 @@ export function percentileOf(score: number | null | undefined, quantiles: number
   return 100;
 }
 
-/** "Top 8%" / "Bottom 3%" / "Median" — a percentile read the way a person says it. */
+/**
+ * The breakpoint at percentile `p` — the payload's own answer to "what score sits
+ * at the median / the top 10% line?".
+ *
+ * The index is derived from `quantile_step` rather than hardcoded, because
+ * `STYLE_QUANTILE_STEP` is a backend constant a caller cannot see: at step 5 the
+ * median is `quantiles[10]`, at step 10 it is `quantiles[5]`, and a literal index
+ * would silently relabel the max as the median if that constant ever moved. Falls
+ * back to the spacing the array itself implies when the field is absent or zero,
+ * and clamps, so an out-of-range `p` yields an edge breakpoint rather than
+ * `undefined`.
+ *
+ * Returns undefined only when there are no breakpoints at all (nothing scored).
+ */
+export function quantileAt(distribution: StyleDistribution | undefined, p: number): number | undefined {
+  const quantiles = distribution?.quantiles;
+  if (!quantiles || quantiles.length === 0) return undefined;
+  const step = distribution?.quantile_step || 100 / Math.max(1, quantiles.length - 1);
+  const i = Math.round(p / step);
+  return quantiles[Math.max(0, Math.min(quantiles.length - 1, i))];
+}
+
+/**
+ * Whether the run behind this distribution left older scores in place — the only
+ * case in which a percentile really does mix two runs.
+ *
+ * `scoped_image_count != null` alone is too coarse: gallery *Select all matching
+ * filters* sends every image id, so a run that covered the whole dataset is
+ * recorded as scoped and would carry a caveat about nothing. `scored_count >=
+ * scored` says the run wrote at least as many scores as the dataset currently
+ * carries, so no score from an earlier run survives to mix with.
+ *
+ * Deliberately a test over the *current* payload rather than a boolean frozen at
+ * run time: images come and go afterwards, and re-evaluating on every read is what
+ * lets the verdict correct itself when they do.
+ */
+export function isPartialScopeRun(distribution: StyleDistribution | undefined): boolean {
+  const run = distribution?.run;
+  if (!run || run.scoped_image_count == null) return false;
+  return run.scored_count < (distribution?.scored ?? 0);
+}
+
+/** "Top 8%" / "Bottom 3%" — a percentile read the way a person says it. */
 export function percentileLabel(p: number): string {
   const top = Math.max(1, Math.round(100 - p));
   const bottom = Math.max(1, Math.round(p));
@@ -80,10 +122,13 @@ export function percentileLabel(p: number): string {
 export function styleMatchTitle(opts: {
   percentile: number | null;
   score: number | null | undefined;
-  run: StyleRunDescriptor | null | undefined;
+  /** The whole payload, not just its `run`, because the scoped caveat is a test
+   *  over both (see `isPartialScopeRun`). Both call sites already hold it. */
+  distribution: StyleDistribution | undefined;
   stale?: boolean;
 }): string {
-  const { percentile, score, run, stale } = opts;
+  const { percentile, score, distribution, stale } = opts;
+  const run: StyleRunDescriptor | null | undefined = distribution?.run;
   const parts: string[] = [];
 
   if (percentile != null) {
@@ -100,7 +145,7 @@ export function styleMatchTitle(opts: {
     const layer = run.dino_layer != null ? `, layer ${run.dino_layer}` : "";
     const refs = run.reference_count + run.external_reference_count;
     parts.push(`Scored with ${mode}${layer} against ${refs} reference${refs === 1 ? "" : "s"}`);
-    if (run.scoped_image_count != null) {
+    if (isPartialScopeRun(distribution)) {
       parts.push(
         `That run covered only ${run.scoped_image_count} selected image${run.scoped_image_count === 1 ? "" : "s"} — ` +
         "the rest of the dataset still carries scores from an earlier run, so these numbers may not be comparable.",

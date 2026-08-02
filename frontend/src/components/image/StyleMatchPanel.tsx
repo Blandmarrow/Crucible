@@ -4,7 +4,7 @@ import { imagesApi } from "../../api/images";
 import type { StyleDistribution } from "../../api/quality";
 import { styleModeLabel } from "../../constants/styleModes";
 import { formatTimeAgo } from "../../utils/duration";
-import { percentileOf, percentileLabel, styleMatchTitle } from "../../utils/percentile";
+import { isPartialScopeRun, percentileOf, percentileLabel, styleMatchTitle } from "../../utils/percentile";
 
 /** How many reference thumbnails render before the "+N more" chip takes over. */
 const REFERENCE_TILES_SHOWN = 8;
@@ -48,12 +48,17 @@ export default function StyleMatchPanel({ score, stale, distribution, datasetId,
 
   const run = distribution?.run ?? null;
   const pct = percentileOf(score, distribution?.quantiles);
-  const title = styleMatchTitle({ percentile: pct, score, run, stale });
+  const title = styleMatchTitle({ percentile: pct, score, distribution, stale });
 
   const shownRefs = (run?.reference_image_ids ?? []).slice(0, REFERENCE_TILES_SHOWN);
-  // Covers both overflow past the strip *and* the server-side cap on how many ids
-  // the descriptor stores, since `reference_count` is the true number either way.
-  const moreRefs = (run?.reference_count ?? 0) - shownRefs.length;
+  // What the strip actually renders: a reference deleted since the run 404s its
+  // thumbnail and drops out (see `missingRefs`).
+  const visibleRefs = shownRefs.filter((refId) => !missingRefs.has(refId));
+  // Counted against the tiles on screen, so a dropped tile moves into the chip
+  // rather than vanishing from both. Covers overflow past the strip *and* the
+  // server-side cap on how many ids the descriptor stores, since `reference_count`
+  // is the true number of references either way.
+  const moreRefs = (run?.reference_count ?? 0) - visibleRefs.length;
   const totalRefs = (run?.reference_count ?? 0) + (run?.external_reference_count ?? 0);
 
   return (
@@ -109,7 +114,7 @@ export default function StyleMatchPanel({ score, stale, distribution, datasetId,
         )}
       </div>
 
-      {run?.scoped_image_count != null && (
+      {run?.scoped_image_count != null && isPartialScopeRun(distribution) && (
         <p style={{ fontSize: 11, color: "var(--warn)", margin: "6px 0 0", lineHeight: 1.4 }}>
           That run covered only {run.scoped_image_count} selected image
           {run.scoped_image_count === 1 ? "" : "s"}. The rest of this dataset still carries scores from an
@@ -119,11 +124,11 @@ export default function StyleMatchPanel({ score, stale, distribution, datasetId,
 
       {/* Reference thumbnails. A tile whose thumbnail 404s drops out (see
           `missingRefs` above), and the whole strip disappears when they all do.
-          `+N more` keeps counting from `reference_count`, which is the truth about
-          the run whether or not the images still exist. */}
-      {shownRefs.some((refId) => !missingRefs.has(refId)) && (
+          `+N more` counts everything `reference_count` knows about that is not on
+          screen, so the run's true reference total is always tiles + chip. */}
+      {visibleRefs.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8, alignItems: "center" }}>
-          {shownRefs.filter((refId) => !missingRefs.has(refId)).map((refId) => (
+          {visibleRefs.map((refId) => (
             <button
               key={refId}
               className="icon-btn"

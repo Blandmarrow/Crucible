@@ -119,7 +119,7 @@ So Crucible reports a **percentile** instead — where an image falls among that
 
 Two caveats the page states rather than hides:
 
-- **A run scored from the gallery selection covers only that selection.** The rest of the dataset keeps its scores from an earlier run, so the percentile mixes two runs. The Style match block says so in amber when that is the case.
+- **A run scored from a selection can leave older scores in place.** The rest of the dataset keeps its scores from an earlier run, so the percentile mixes two runs. The Style match block says so in amber — but only when scores from an earlier run really do survive, not merely because the run started from a selection. Selecting everything in the gallery and scoring it covers the whole dataset, and gets no note.
 - **A dataset scored before Crucible recorded run details, or duplicated from another dataset, has no run to report.** The meter and the raw score still work — the percentile comes from the dataset's own scores either way — but the block says the mode and references are unknown.
 
 A dataset with only one scored image, or with every score identical, gets no meter: there is nothing to rank against, so only the raw number is shown.

@@ -47,7 +47,9 @@ test('the gallery style meter preference persists across a reload', async ({ pag
   await page.getByRole('button', { name: 'Gallery' }).click()
   await expect(page.getByTestId('style-meter-toggle').getByRole('checkbox')).not.toBeChecked()
 
-  // Restore, so the default state is what a following spec sees.
+  // Flip it back — an assertion that the toggle works in both directions, not a
+  // cleanup step: every test gets its own browser context, so this spec's
+  // `localStorage` never reaches another one.
   await page.getByTestId('style-meter-toggle').getByRole('checkbox').check()
   await expect(page.getByTestId('style-meter-toggle').getByRole('checkbox')).toBeChecked()
 })

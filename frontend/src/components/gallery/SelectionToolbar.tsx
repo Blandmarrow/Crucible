@@ -396,10 +396,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(msg);
       // Same widening as QualityPage's copy: `["score-values"]` (the Stats style
       // histogram) was never invalidated by a style run, and the distribution the
-      // card meter reads is new. See the note there.
+      // card meter reads rides the shared scope. See the note there.
       invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["image"] });
-      qc.invalidateQueries({ queryKey: ["style-distribution", datasetId] });
     },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, err instanceof Error ? err.message : "Style similarity scoring failed"));

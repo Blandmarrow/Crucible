@@ -13,9 +13,11 @@ import { qualityApi, type StyleDistribution } from "../api/quality";
  * with the meter switched off never fires the request at all, rather than fetching
  * a payload nothing renders.
  *
- * The key `["style-distribution", datasetId]` is invalidated by every screen that
- * finishes a style run — the Score page's Style similarity panel and the gallery
- * `SelectionToolbar`'s.
+ * The key `["style-distribution", datasetId]` rides `DATASET_CONTENT_SCOPE`
+ * (constants/queryKeys.ts), so both screens that finish a style run refresh it —
+ * the Score page's Style similarity panel and the gallery `SelectionToolbar`'s —
+ * and so does every writer that adds or removes image rows, which move the
+ * distribution just as much.
  */
 export function useStyleDistribution(
   datasetId: string | undefined | null,

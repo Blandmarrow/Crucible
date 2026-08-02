@@ -124,9 +124,15 @@ Three decisions worth not re-deriving:
 `scoped_image_count` rather than declining to write: it is the most recent run and its
 references do describe the most recently written values. The count is what lets consumers
 qualify the rest — the UI shows an amber note on the detail block and a tooltip clause on
-the card rather than hiding the feature. Consumers test `scoped_image_count !== null`
-client-side, **not** a server-computed boolean, which would go stale the next time an image
-is deleted.
+the card rather than hiding the feature. The predicate lives client-side in
+`percentile.ts::isPartialScopeRun` and is two parts, **not** `scoped_image_count !== null`
+alone: gallery *Select all matching filters* sends every image id, so a run covering
+everything is recorded as scoped and the one-part test put a caveat about nothing on every
+image. The second part is `run.scored_count < distribution.scored` — the run wrote fewer
+scores than the dataset now carries, so something older survives to mix with. It is a
+freshness test over the current payload rather than a server-computed boolean for the same
+reason the count is not one: it re-evaluates on every read and so self-corrects as images
+come and go, where a stored flag would go stale the next time one is deleted.
 
 #### `GET /quality/style-similarity/{dataset_id}`
 
@@ -205,8 +211,9 @@ pixels).
   cosine stays visible throughout: this work makes the number readable, it does not hide it.
   Reference tiles hide themselves `onError` — references can be deleted after a run and
   `reference_image_ids` is deliberately not kept in sync, so a broken-image icon would be the
-  *expected* state. `+N more` covers both overflow and the `REFERENCE_IDS_STORED_MAX`
-  truncation. If the image being viewed was itself a reference its tile is ringed: a
+  *expected* state. `+N more` counts against the tiles **actually rendered**, not against the
+  pre-filter slice, so a hidden tile moves into the chip instead of disappearing from both;
+  it covers overflow past the strip and the `REFERENCE_IDS_STORED_MAX` truncation alike. If the image being viewed was itself a reference its tile is ringed: a
   reference scores ~1.0 against its own centroid and would otherwise look like a
   suspiciously perfect match.
 - **The gallery preference** is `GALLERY_STYLE_METER_KEY`, **on** by default and therefore
@@ -228,11 +235,14 @@ stored data and this is the only place to see them.
 
 #### Invalidation
 
-Both style-run call sites (`QualityPage`, `SelectionToolbar`) now run
-`invalidateDatasetContentScope(qc, datasetId)` plus `["image"]` and
-`["style-distribution", datasetId]`. This also fixed a pre-existing bug: the lone
-`["images", datasetId]` they used to issue never invalidated `["score-values"]`, so the
-Stats page's style histogram sat stale after every run.
+Both style-run call sites (`QualityPage`, `SelectionToolbar`) run
+`invalidateDatasetContentScope(qc, datasetId)` plus `["image"]`. This also fixed a
+pre-existing bug: the lone `["images", datasetId]` they used to issue never invalidated
+`["score-values"]`, so the Stats page's style histogram sat stale after every run.
+`["style-distribution", datasetId]` is **inside** that shared scope rather than a line each
+call site remembers: the payload is an aggregate over the image rows, so a delete or an
+import moves every card's percentile too, and a third style-run caller would otherwise have
+to know about the extra line.
 
 #### The shared mode copy
 

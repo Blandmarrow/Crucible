@@ -378,7 +378,11 @@ class ModelManager:
 
         logger.info("Loading aesthetic predictor...")
 
-        weights_path = settings.models_cache_dir / "aesthetic_predictor_v2_5.pth"
+        # LAION's sac+logos+ava1-l14-linearMSE MLP head. The filename used to read
+        # "aesthetic_predictor_v2_5.pth", which names a different model entirely —
+        # Aesthetic Predictor V2.5 is a SigLIP-based predictor, and its own head
+        # checkpoint really is called that.
+        weights_path = settings.models_cache_dir / "laion_aesthetic_sac_logos_ava1_l14.pth"
 
         if job_id and loop:
             from backend.ml.download_progress import emit_sync, is_hf_cached

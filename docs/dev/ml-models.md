@@ -25,7 +25,7 @@ Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|
 | `florence2*` | `ml/florence_captioner.py` |
-| `paligemma2` | `ml/paligemma_captioner.py` (gated: needs an `HF_TOKEN` from Settings → API Keys or `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448). `_load_paligemma2_sync` deliberately passes **no** `token=` — it reads the ambient env var like the other eight loaders, so the DB→runtime path has one mechanism rather than two |
+| `paligemma2` | `ml/paligemma_captioner.py` (gated: needs an `HF_TOKEN` from Settings → API Keys or `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448). `_load_paligemma2_sync` deliberately passes **no** `token=` — it reads the ambient env var like the other nine hub loaders, so the DB→runtime path has one mechanism rather than two |
 | `joycaption_alpha` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-alpha-two-hf-llava`; Llama 3.1 8B + SigLIP via `LlavaForConditionalGeneration`; ~17 GB VRAM; 12 styles; custom prompt supported) |
 | `joycaption_beta` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-beta-one-hf-llava`; Llama 3.1 8B + SigLIP2; otherwise identical to alpha) |
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |

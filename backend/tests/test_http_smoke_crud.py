@@ -199,8 +199,9 @@ def test_settings_thresholds_roundtrip(tmp_path):
 
 
 def test_settings_secrets_roundtrip(tmp_path, monkeypatch):
-    # monkeypatch, not a bare PATCH: this endpoint writes os.environ["HF_TOKEN"], which
-    # would otherwise leak into the rest of the session. Depth lives in
+    # A precondition, not cleanup: start from "no ambient token" whatever the shell
+    # exports. Restoring the variable afterwards is api_env's job — this endpoint writes
+    # os.environ["HF_TOKEN"] itself, which monkeypatch cannot undo. Depth lives in
     # test_settings_secrets.py; this is the shallow shape check.
     monkeypatch.delenv("HF_TOKEN", raising=False)
 

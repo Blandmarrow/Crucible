@@ -37,6 +37,8 @@ except ImportError:
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,8 +47,8 @@ from backend.config import settings
 from backend.database import init_db
 from backend.utils import FileInUseError
 
-# Project the .env/OS-env HF_TOKEN into the process environment, where the eight HuggingFace
-# loaders that pass no token= will find it. Stays here, between the config and router
+# Project the .env/OS-env HF_TOKEN into the process environment, where the ten HuggingFace-hub
+# loaders — none of which pass token= — will find it. Stays here, between the config and router
 # imports, so it applies in contexts that never run the lifespan (notably conftest.api_env).
 # row=None means "DB not consulted"; the lifespan re-runs this against the DB below.
 from backend.services.secrets_service import sync_env
@@ -151,6 +153,38 @@ async def file_in_use_handler(request: Request, exc: FileInUseError):
     409 (not 500): the request was well-formed and retrying later can work.
     """
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    """422 without the rejected value echoed back.
+
+    FastAPI's default handler returns each error entry verbatim, and pydantic puts the
+    input it refused in `input` — so `PATCH /settings/secrets` with an over-long
+    `hf_token`, or `POST /providers` with a bad `api_key`, answered with the submitted
+    secret in the response body. Dropping `input` (and `ctx`, which carries the same
+    value for some error types) is what makes "the plaintext appears in no response" a
+    property of the app rather than of the happy path.
+
+    App-level rather than per-route, on the same reasoning as the `FileInUseError`
+    handler above: a secret can reach a validation error through any endpoint that grows
+    one, and a per-route defence is a rule every future route has to remember.
+
+    Nothing is lost. `msg` already restates what `ctx` holds — pydantic renders a
+    `value_error` as `"Value error, <the ValueError's text>"` and a constraint failure as
+    `"String should have at most 500 characters"` — and `loc` still names the field, which
+    is all `frontend/src/utils/apiError.ts` reads. `jsonable_encoder` matches FastAPI's
+    own default: `loc` arrives as a tuple, and a couple of entries are hand-built outside
+    pydantic.
+
+    Scope: rejected *values* only. A secret reaching a 500 traceback or a log line is a
+    different exposure and this handler does not touch it.
+    """
+    detail = [
+        {k: v for k, v in e.items() if k not in ("input", "ctx")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detail)})
 
 
 PREFIX = "/api/v1"

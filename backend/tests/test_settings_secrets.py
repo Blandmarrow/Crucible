@@ -1,10 +1,17 @@
 """Request-level tests for GET/PATCH /settings/secrets and the HF_TOKEN projection.
 
-**Environment hygiene is this module's own responsibility.** `conftest.api_env` restores
-only `settings.datasets_dir` by hand and does no env save/restore at all, so anything here
-that writes `os.environ["HF_TOKEN"]` or `settings.hf_token` without `monkeypatch` leaks into
-every later test in the session — including ones that load real models. Every case below
-goes through `monkeypatch.setenv`/`delenv`/`setattr`.
+**`conftest.api_env` owns the `HF_TOKEN` restore**, alongside the module globals it already
+snapshots. It has to: the endpoint under test writes `os.environ["HF_TOKEN"]` itself, via
+`secrets_service.sync_env`, and `monkeypatch` can only undo writes *it* made — so a test
+that saves a token has no way to clean up after the code it is exercising. Five cases here
+leaked a fabricated (or the developer's real) token into the rest of the session before that
+restore existed.
+
+`monkeypatch` still appears throughout, for the other half of the job: `setattr(settings, …)`
+and the `delenv` calls that establish "no ambient token" as the *starting* state. Those are
+preconditions, not cleanup — do not add a trailing `delenv` after `run(scenario())` to
+"tidy up". `delitem` on a key that is present records the current value on monkeypatch's
+undo stack, so such a line re-creates the very variable it appears to remove.
 
 The three secrets resolve DB-first: a non-empty column wins, otherwise the value pydantic
 read from `.env`/the OS environment at import (recorded on the `settings` singleton, which
@@ -61,8 +68,8 @@ def test_saving_masks_the_value_and_reports_db_source(tmp_path, monkeypatch):
 def test_saving_assigns_the_environment_variable(tmp_path, monkeypatch):
     """Assignment, not setdefault — this case fails if anyone reintroduces setdefault.
 
-    The eight HuggingFace loaders that pass no `token=` read the ambient variable, so a
-    saved token that does not land here reaches exactly one loader.
+    All ten HuggingFace-hub loaders read the ambient variable and none pass `token=`, so a
+    saved token that does not land here reaches no loader at all.
     """
     monkeypatch.setattr(settings, "hf_token", "")
     monkeypatch.setenv("HF_TOKEN", "stale-value-from-earlier")
@@ -191,7 +198,34 @@ def test_startup_seeding_reprojects_the_saved_token(tmp_path, monkeypatch):
             assert os.environ["HF_TOKEN"] == "hf_persisted77"
 
     run(scenario())
-    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+
+def test_rejected_value_is_not_echoed_in_the_422(tmp_path, monkeypatch):
+    """A refused secret must not come back in the error body.
+
+    FastAPI's default validation handler returns pydantic's error entries verbatim,
+    including the `input` it rejected — so an over-long token was answered with the token.
+    `main.validation_handler` strips that. The response must still be usable: 422, and
+    `loc`/`msg` naming the field, which is all `utils/apiError.ts` reads.
+
+    Not specific to this endpoint — `OpenAIProviderCreate.api_key` had the same exposure,
+    which is why the handler is app-level. Any new secret-carrying field inherits it.
+    """
+    monkeypatch.setattr(settings, "hf_token", "")
+    secret = "hf_" + "x" * 600
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.patch(f"{API}/settings/secrets", json={"hf_token": secret})
+            assert r.status_code == 422, r.text
+            assert secret not in r.text
+            assert "xxxxxxxxxx" not in r.text  # nor any prefix of it
+            entry = r.json()["detail"][0]
+            assert entry["loc"][-1] == "hf_token"
+            assert "500 characters" in entry["msg"]
+            assert "input" not in entry
+
+    run(scenario())
 
 
 def test_mask_secret_boundaries():

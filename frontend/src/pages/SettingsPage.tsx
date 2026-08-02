@@ -290,6 +290,13 @@ export default function SettingsPage() {
     onError: (e: unknown) => toast.error(apiErrorDetail(e, "Failed to save key")),
   });
 
+  // One mutation drives all three rows, so a bare `isPending` greys out the two rows the
+  // user did not touch. `variables` is the in-flight body, and every call sends exactly one
+  // key — the same `Object.keys(body)[0]` idiom onSuccess uses to name the field. No state.
+  const pendingSecret = secretsMutation.isPending
+    ? (Object.keys(secretsMutation.variables ?? {})[0] as SecretKey | undefined)
+    : undefined;
+
   // Providers state
 
   const { data: providers = [], refetch: refetchProviders } = useQuery({
@@ -393,7 +400,7 @@ export default function SettingsPage() {
                   }
                   secret={secrets.hf_token}
                   envVar="HF_TOKEN"
-                  busy={secretsMutation.isPending}
+                  busy={pendingSecret === "hf_token"}
                   onSave={(v) => secretsMutation.mutate({ hf_token: v })}
                   onClear={() => secretsMutation.mutate({ hf_token: "" })}
                 />
@@ -402,7 +409,7 @@ export default function SettingsPage() {
                   help="Raises the rate limit for Gelbooru tag lookups on the Booru page. Both this and the user ID are required — with either missing, lookups stay anonymous."
                   secret={secrets.gelbooru_api_key}
                   envVar="GELBOORU_API_KEY"
-                  busy={secretsMutation.isPending}
+                  busy={pendingSecret === "gelbooru_api_key"}
                   onSave={(v) => secretsMutation.mutate({ gelbooru_api_key: v })}
                   onClear={() => secretsMutation.mutate({ gelbooru_api_key: "" })}
                 />
@@ -411,7 +418,7 @@ export default function SettingsPage() {
                   help="The numeric user ID that goes with the API key above, from your Gelbooru account options page."
                   secret={secrets.gelbooru_user_id}
                   envVar="GELBOORU_USER_ID"
-                  busy={secretsMutation.isPending}
+                  busy={pendingSecret === "gelbooru_user_id"}
                   onSave={(v) => secretsMutation.mutate({ gelbooru_user_id: v })}
                   onClear={() => secretsMutation.mutate({ gelbooru_user_id: "" })}
                 />

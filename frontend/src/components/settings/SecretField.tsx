@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { Secret } from "../../api/settings";
 
 interface Props {
@@ -21,11 +21,18 @@ interface Props {
  * Save and Clear are never overloaded onto one control. Blank means "keep the current value"
  * everywhere else in this app (the LLM provider form does exactly that), so Save is disabled
  * on an empty draft and clearing gets its own button, which sends an explicit "".
+ *
+ * The row is addressable by accessible name from the outside: `useId` + `<label htmlFor>`
+ * for the input (the `ProvenanceFields` pattern), and `role="group"` + `aria-label` on the
+ * root so a test can scope to one row's Save/Clear without walking the DOM — three rows
+ * carry identically-named buttons.
  */
 export default function SecretField({
   label, help, secret, envVar, placeholder, busy, onSave, onClear,
 }: Props) {
   const [draft, setDraft] = useState("");
+  // Unique per instance: three of these are mounted at once.
+  const uid = useId();
 
   function save() {
     const value = draft.trim();
@@ -44,14 +51,22 @@ export default function SecretField({
     );
 
   return (
-    <div>
-      <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>{label}</div>
+    <div role="group" aria-label={label}>
+      <label
+        htmlFor={`${uid}-secret`}
+        style={{ display: "block", fontWeight: 500, fontSize: 13, marginBottom: 6 }}
+      >
+        {label}
+      </label>
       <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>{help}</p>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input
+          id={`${uid}-secret`}
           className="input"
           type="password"
-          autoComplete="off"
+          // Not "off": Chrome ignores that on a password input and offers to save the key
+          // to the browser's password manager. "new-password" is the value it honours.
+          autoComplete="new-password"
           placeholder={placeholder ?? "Leave blank to keep the current value"}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

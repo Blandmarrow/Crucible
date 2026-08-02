@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test'
 
 // Change a quality threshold, save, reload, and confirm it persisted server-side.
-// The Quality Thresholds fields are the one place in the app with real
-// label/input associations, so getByLabel is reliable here.
+// getByLabel works here because the Quality Thresholds fields carry real label/input
+// associations — as do the API Keys rows below, since SecretField adopted the same
+// `useId` + `htmlFor` pattern.
 test('a quality threshold persists across reload', async ({ page }) => {
   await page.goto('/settings')
   await page.getByRole('button', { name: 'Quality Thresholds' }).click()
@@ -24,8 +25,10 @@ test('an API key saves and clears', async ({ page }) => {
   await page.goto('/settings')
   await page.getByRole('button', { name: 'API Keys' }).click()
 
-  const row = page.locator('div').filter({ hasText: /^Gelbooru user ID$/ }).first().locator('..')
-  await row.getByPlaceholder('Leave blank to keep the current value').fill('e2e-user-9876')
+  // The row is a labelled group, so scoping to it needs no DOM walk — which matters
+  // because all three rows carry a "Save" button with the same accessible name.
+  const row = page.getByRole('group', { name: 'Gelbooru user ID' })
+  await row.getByLabel('Gelbooru user ID').fill('e2e-user-9876')
   await row.getByRole('button', { name: 'Save', exact: true }).click()
 
   await expect(row.getByText(/Saved here/)).toBeVisible()

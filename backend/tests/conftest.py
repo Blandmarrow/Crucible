@@ -29,6 +29,7 @@ restored afterwards.
 import asyncio
 import importlib.util
 import io
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,12 @@ from backend.config import settings
 from backend.database import Base, get_db
 
 API = "/api/v1"
+
+# Sentinel for "the variable was absent", which is not the same state as "" — clearing an
+# override pops HF_TOKEN rather than blanking it, and
+# test_settings_secrets.py::test_clearing_with_no_env_value_removes_the_variable asserts on
+# exactly that distinction. `os.environ.get(var, "")` would erase it.
+_ENV_UNSET = object()
 
 # The per-test cv2 guard, defined once. Modules that need a decodable video for
 # only *some* of their tests import this rather than declaring an identical
@@ -88,6 +95,14 @@ class ApiEnv:
 
 @asynccontextmanager
 async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
+    # Snapshotted *before* the import below, not beside the module globals further down:
+    # `backend.main` calls `secrets_service.sync_env(None)` at import, so the very first
+    # api_env in a session projects `settings.hf_token` — the developer's real .env value,
+    # or whatever the test monkeypatched onto the singleton — into a variable that may
+    # have been absent. That write happens on the import line, and a snapshot taken after
+    # it would record the leak as the value to restore.
+    prev_hf_token = os.environ.get("HF_TOKEN", _ENV_UNSET)
+
     from backend.main import app
 
     datasets_dir = tmp_path / "datasets"
@@ -175,6 +190,13 @@ async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
         app.dependency_overrides.pop(get_db, None)
         settings.datasets_dir = prev_datasets_dir
         database.AsyncSessionLocal = prev_session_local
+        # Runs before `monkeypatch.undo()`: `api_env` exits inside the test body while
+        # monkeypatch unwinds at teardown, so where a test also recorded HF_TOKEN with
+        # monkeypatch, that recorded value is what this restore just wrote back.
+        if prev_hf_token is _ENV_UNSET:
+            os.environ.pop("HF_TOKEN", None)
+        else:
+            os.environ["HF_TOKEN"] = prev_hf_token
         await engine.dispose()
 
 

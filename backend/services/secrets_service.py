@@ -18,13 +18,16 @@ monkeypatches it), so "immutable" is a chosen invariant rather than something th
 enforces. It holds because a cleared override has to fall back to what ``.env`` said, and
 the only surviving record of that is the singleton. Write the DB, not the singleton.
 
-**Why a runtime env projection is needed at all.** Eight of the nine HuggingFace loaders in
-this codebase pass no ``token=`` and rely on the ambient ``HF_TOKEN`` variable
-(``aesthetic_scorer``, ``wd14_tagger``, ``sam2_predictor``, and model_manager's Florence-2 /
-LLaVA / DINOv2 / NSFW loaders). ``_load_paligemma2_sync`` is sync and runs in an executor
-thread, so it cannot await an ``AsyncSession`` to read the DB itself. The env var is
-therefore the de-facto carrier, and this assignment is load-bearing: without it a token
-saved in the DB would reach exactly one loader. ``huggingface_hub``'s
+**Why a runtime env projection is needed at all.** All **ten** HuggingFace-hub loaders in
+this codebase pass no ``token=`` and rely on the ambient ``HF_TOKEN`` variable:
+``aesthetic_scorer``, ``wd14_tagger``, ``sam2_predictor``'s *two* (GroundingDINO and SAM2),
+and model_manager's Florence-2, PaliGemma-2, LLaVA, DINOv2, NSFW and tag-embedder loaders.
+(The tag embedder's MiniLM repo is public and needs no token, but it reads the same variable,
+so it is in the list; SAM3 is not — it loads a local checkpoint, never the hub.) Every one of
+them is sync and runs in an executor thread, so none can await an ``AsyncSession`` to read
+the DB itself. The env var is therefore the de-facto carrier, and this assignment is
+load-bearing: without it a token saved in the DB would reach no loader at all.
+``huggingface_hub``'s
 ``_get_token_from_environment()`` re-reads ``os.environ`` on every call and caches nothing,
 so a mid-process assignment reaches every subsequent download with no restart.
 """
@@ -39,6 +42,12 @@ from backend.services.threshold_service import get_thresholds
 
 # The DB column names, which are also the backend.config.Settings field names — one string
 # indexes both stores. Order is the display order in Settings -> API Keys.
+#
+# `threshold_service.DEFAULTS` names the same three and is the one duplicate left standing:
+# this module imports `threshold_service`, so deriving DEFAULTS from this constant would
+# make the two import each other. The SecretsOut/SecretsUpdate schemas in routers/settings.py
+# also name them, and must — a pydantic model cannot be built from a tuple of strings and
+# still give each field its own type and `max_length`.
 SECRET_FIELDS = ("hf_token", "gelbooru_api_key", "gelbooru_user_id")
 
 # Only hf_token has ambient consumers that read the process environment directly; the two

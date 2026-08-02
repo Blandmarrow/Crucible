@@ -205,7 +205,7 @@ class ModelManager:
         from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
 
         # PaliGemma-2 is a gated repo and needs a HuggingFace token. It is not passed here:
-        # like the other eight loaders in this codebase, it relies on the ambient HF_TOKEN
+        # like the other nine hub loaders in this codebase, it relies on the ambient HF_TOKEN
         # environment variable, which services/secrets_service.py::sync_env writes from the
         # .env chain at import and from the DB at startup and on every Settings -> API Keys
         # save. Passing token= as well would mean the DB->runtime path had to be correct in

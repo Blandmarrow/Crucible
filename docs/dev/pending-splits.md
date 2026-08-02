@@ -58,9 +58,11 @@ staleness sweep while still recording the seam.
   the *running process* — the lifespan hook, production frontend serving, the server
   control endpoints and the restart loop, SSE, job cancellation, the retention sweep, and
   the open `JobQueue.stop()` hang. A reader arrives for exactly one of the two and there
-  is no overlap between them. Splitting there leaves ~1,785 and ~1,720 words, both close
-  to the 60% target, which is why the seam is here and not between § Database and
-  everything else.
+  is no overlap between them. Splitting there leaves ~2,130 and ~1,720 words, both close
+  to the 60% target (2,100), which is why the seam is here and not between § Database and
+  everything else. The process half has since grown by § App-level exception handlers, so
+  it is the one with no headroom left — if a third subject appears, re-check the seam
+  before assuming this one still holds.
 - **Watch for:** the § Database prose is cited from several directions and every one of
   these is a `§`-level pointer the checker cannot verify — `docs/dev/video.md` and
   `docs/dev/video-extract.md` (the frame-lineage FK and `ix_images_source_video_id`),

@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models.threshold_settings import ThresholdSettings
 from backend.schemas import mask_secret
-from backend.services.secrets_service import resolve_secret, secret_source, sync_env
+from backend.services.secrets_service import (
+    SECRET_FIELDS,
+    resolve_secret,
+    secret_source,
+    sync_env,
+)
 from backend.services.threshold_service import DEFAULTS, get_thresholds
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -131,7 +136,7 @@ def _secrets_out(row: ThresholdSettings | None) -> SecretsOut:
                 masked=mask_secret(resolve_secret(row, field)),
                 source=secret_source(row, field),
             )
-            for field in ("hf_token", "gelbooru_api_key", "gelbooru_user_id")
+            for field in SECRET_FIELDS
         }
     )
 

@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
 import { qualityApi, type DuplicateGroup, type DuplicateImage } from "../api/quality";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { formatFramePosition } from "../utils/duration";
+import { formatFramePosition, formatTimeAgo } from "../utils/duration";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { datasetsApi } from "../api/datasets";
 import { imagesApi } from "../api/images";
@@ -13,20 +13,29 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
+import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, styleModeLabel, type StyleMode } from "../constants/styleModes";
+import { AESTHETIC_MODELS, aestheticModelLabel, type AestheticModel } from "../constants/aestheticModels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
+import { useStyleDistribution } from "../hooks/useStyleDistribution";
+import { quantileAt } from "../utils/percentile";
 
 interface QualityWorkflow {
   runAesthetic: boolean;
+  /** Which model writes `aesthetic_score`. A per-run choice with a sticky
+   *  default, riding in this already-global blob beside `embeddingType` — no DB
+   *  setting and no per-dataset override, because it is a property of the run,
+   *  not of the dataset. */
+  aestheticModel: AestheticModel;
   runTechnical: boolean;
   runWatermark: boolean;
   runEmbeddings: boolean;
   runDino: boolean;
   runNsfw: boolean;
   runDinoLayers: boolean;
-  embeddingType: "clip" | "dino" | "combined";
+  embeddingType: StyleMode;
   dinoLayer: number | "all" | null;
 }
 
@@ -39,6 +48,9 @@ interface QualityWorkflow {
  *  all of them. The caller disables the button entirely when nothing is scored.
  */
 function rankForKeepBest(group: DuplicateGroup): DuplicateImage[] {
+  // Deliberately unaware of `aesthetic_model`: this is a pure, null-safe sort
+  // and it is correct *within* one scale. Ranking across two incomparable
+  // scales is refused at the caller, where the unscored refusal already lives.
   return [...group].sort((a, b) => {
     const as = a.aesthetic_score, bs = b.aesthetic_score;
     if (as == null && bs == null) return 0;
@@ -72,6 +84,11 @@ interface DupGroupMeta {
   rootId: string;
   shared: { id: string; name: string | null } | null;
   anyScored: boolean;
+  /** Two or more distinct `aesthetic_model` markers among the group's scored
+   *  members. *Keep best* must refuse: it ranks by `aesthetic_score` and then
+   *  **deletes** everything below the top, so comparing a LAION 6.2 against a
+   *  V2.5 6.2 destroys images on a number that means two different things. */
+  mixedModels: boolean;
   anyLineage: boolean;
 }
 
@@ -103,6 +120,7 @@ type PendingResolve =
       plans: DuplicateImage[][];
       sameSource: number;
       skipped: number;
+      skippedMixed: number;
     };
 
 /** Total images a plan deletes — every member of every group but the survivor. */
@@ -153,6 +171,13 @@ function resolveConfirmCopy(p: PendingResolve): { title: string; message: string
       `${p.skipped === 1 ? "is" : "are"} skipped: nothing in ` +
       `${p.skipped === 1 ? "it" : "them"} has an aesthetic score, so there is no best to keep.`;
   }
+  if (p.skippedMixed > 0) {
+    message +=
+      ` ${p.skippedMixed} group${p.skippedMixed === 1 ? "" : "s"} ` +
+      `${p.skippedMixed === 1 ? "is" : "are"} skipped for holding scores from two different ` +
+      `aesthetic models, whose scales are not comparable. Re-score ${p.skippedMixed === 1 ? "it" : "them"} ` +
+      `with one model to include ${p.skippedMixed === 1 ? "it" : "them"}.`;
+  }
   return {
     title: `Resolve ${groups} duplicate group${groups === 1 ? "" : "s"}?`,
     message,
@@ -196,6 +221,7 @@ class PartialResolveError extends Error {
 
 const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
   runAesthetic: true,
+  aestheticModel: "laion",
   runTechnical: true,
   runWatermark: false,
   runEmbeddings: false,
@@ -219,7 +245,9 @@ const QUALITY_FILTERS_DEFAULTS: QualityFilters = {
 };
 
 const SCORING_OPTIONS = [
-  { key: "aesthetic", label: "Aesthetic score · LAION", desc: "CLIP-based aesthetic predictor (1–10). Trained on human ratings.", vram: "GPU · 2.1 GB" },
+  // No model in the label: the producer is a choice now, made in the sub-row
+  // below the grid rather than baked into the checkbox's name.
+  { key: "aesthetic", label: "Aesthetic score", desc: "Learned aesthetic predictor (1–10). Trained on human ratings.", vram: "GPU · 2.1 GB" },
   { key: "technical", label: "Technical · OpenCV", desc: "Blur, noise, near-uniform, color, saturation, brightness, pHash duplicates.", vram: "CPU only" },
   { key: "watermark", label: "Watermark detection", desc: "CLIP zero-shot classification for text overlays and logos.", vram: "GPU · 2.1 GB" },
   { key: "embeddings", label: "Style embeddings · CLIP", desc: "Required for the style-similarity workflow below.", vram: "GPU · 2.1 GB" },
@@ -236,6 +264,7 @@ export default function QualityPage() {
   // Remembered "workflow" config — global, shared across all datasets.
   const [workflow] = useState(() => loadPersisted(QUALITY_WORKFLOW_KEY, QUALITY_WORKFLOW_DEFAULTS));
   const [runAesthetic, setRunAesthetic] = useState(workflow.runAesthetic);
+  const [aestheticModel, setAestheticModel] = useState<AestheticModel>(workflow.aestheticModel);
   const [runTechnical, setRunTechnical] = useState(workflow.runTechnical);
   const [runWatermark, setRunWatermark] = useState(workflow.runWatermark);
   const [runEmbeddings, setRunEmbeddings] = useState(workflow.runEmbeddings);
@@ -243,7 +272,7 @@ export default function QualityPage() {
   const [runNsfw, setRunNsfw] = useState(workflow.runNsfw);
   const [jobLabel, setJobLabel] = useState("");
   const [runDinoLayers, setRunDinoLayers] = useState(workflow.runDinoLayers);
-  const [embeddingType, setEmbeddingType] = useState<"clip" | "dino" | "combined">(workflow.embeddingType);
+  const [embeddingType, setEmbeddingType] = useState<StyleMode>(workflow.embeddingType);
   const [dinoLayer, setDinoLayer] = useState<number | "all" | null>(workflow.dinoLayer);
 
   // Remembered "filters" config — per-dataset.
@@ -285,8 +314,10 @@ export default function QualityPage() {
   }, [embeddingType]);
 
   // Persist the "workflow" config (scoring toggles/style settings) — global, debounced.
+  // No new storage key: `loadPersisted`'s shallow merge onto the defaults means
+  // a blob written before `aestheticModel` existed still reads back with it.
   useDebouncedPersist(QUALITY_WORKFLOW_KEY, {
-    runAesthetic, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw,
+    runAesthetic, aestheticModel, runTechnical, runWatermark, runEmbeddings, runDino, runNsfw,
     runDinoLayers, embeddingType, dinoLayer,
   });
 
@@ -321,6 +352,7 @@ export default function QualityPage() {
     if (jobProgress?.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
+      qc.invalidateQueries({ queryKey: ["aesthetic-coverage", datasetId] });
       setActiveJobId(null);
     }
   }, [jobProgress?.status, datasetId, qc]);
@@ -335,20 +367,35 @@ export default function QualityPage() {
     staleTime: 60_000,
   });
   const lastScoringJob = jobs?.find((j) => j.job_type === "quality_score" && j.status === "completed");
-  const lastRunLabel = lastScoringJob?.finished_at
-    ? (() => {
-        const diff = Date.now() - new Date(lastScoringJob.finished_at).getTime();
-        const mins = Math.floor(diff / 60000);
-        if (mins < 60) return `${mins}m ago`;
-        return `${Math.floor(mins / 60)}h ago`;
-      })()
-    : null;
+  // `formatTimeAgo` rather than the inline copy this used to hold — it is the same
+  // arithmetic, and it also fixes the bare-timestamp timezone read described there.
+  const lastRunLabel = lastScoringJob?.finished_at ? formatTimeAgo(lastScoringJob.finished_at) : null;
+
+  // The style-score distribution behind the panel's "Current scores" line. Same
+  // query key as the gallery meter's, so the two share one cache entry.
+  const styleDistribution = useStyleDistribution(datasetId);
 
   const { data: duplicates } = useQuery({
     queryKey: ["duplicates", datasetId],
     queryFn: () => qualityApi.duplicates(datasetId!),
     enabled: !!datasetId,
   });
+
+  // Per-model aesthetic coverage, in this page's own subfolder scope. Its own
+  // endpoint rather than a field on the Stats aggregation: it has to follow the
+  // scope select and refetch on every finished scoring job, and this page
+  // otherwise makes three light queries.
+  const { data: aestheticCoverage } = useQuery({
+    queryKey: ["aesthetic-coverage", datasetId, activeSubfolder ?? null],
+    queryFn: () => qualityApi.aestheticCoverage(datasetId!, activeSubfolder),
+    enabled: !!datasetId,
+  });
+  const coverageByModel = Object.entries(aestheticCoverage?.by_model ?? {});
+  // Rows another model already scored — exactly what the re-score offer targets,
+  // and the same predicate the server applies for `only_mismatched`.
+  const mismatchedCount = coverageByModel
+    .filter(([marker]) => marker !== aestheticModel)
+    .reduce((n, [, count]) => n + count, 0);
 
   // The duplicate scan's radius is a setting, so the group header has to read it
   // rather than restate a number: it was hardcoded to "< 6" while the default is
@@ -360,12 +407,17 @@ export default function QualityPage() {
     staleTime: 60_000,
   });
 
+  // `onlyMismatched` is the re-score offer: same run, narrowed selection. A
+  // mutation variable rather than a second mutation, so the two buttons cannot
+  // drift on which checks they run or which model they run them with.
   const scoreMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: ({ onlyMismatched = false }: { onlyMismatched?: boolean } = {}) =>
       qualityApi.score({
         dataset_id: datasetId!,
         subfolder: activeSubfolder,
         run_aesthetic: runAesthetic,
+        aesthetic_model: aestheticModel,
+        only_mismatched: onlyMismatched || undefined,
         run_technical: runTechnical,
         run_watermark: runWatermark,
         run_embeddings: runEmbeddings,
@@ -376,6 +428,9 @@ export default function QualityPage() {
       }),
     onSuccess: (data) => {
       if (data.job_id) { setActiveJobId(data.job_id); toast.success("Quality scoring started"); }
+      // `{job_id: null}` when the scope matched nothing — the ordinary answer for
+      // a re-score offer whose mismatch count raced to zero.
+      else toast(data.message ?? "No images matched");
     },
     onError: () => toast.error("Failed to start scoring"),
   });
@@ -461,7 +516,12 @@ export default function QualityPage() {
         ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
         : `Style similarity scored for ${data.updated} images`;
       toast.success(msg);
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      // The lone `["images", datasetId]` this replaces left two surfaces stale: the
+      // Stats page's style histogram, which reads `["score-values"]` and so sat on
+      // pre-run numbers until something else invalidated it, and the new
+      // distribution the gallery meter and the detail block both read — that one
+      // now rides the shared scope, since it is an aggregate over the same rows.
+      invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["image"] });
     },
     onError: (err: unknown) => {
@@ -482,6 +542,7 @@ export default function QualityPage() {
     if (datasetId) clearPersisted(datasetScopedKey(QUALITY_FILTERS_PREFIX, datasetId));
 
     setRunAesthetic(QUALITY_WORKFLOW_DEFAULTS.runAesthetic);
+    setAestheticModel(QUALITY_WORKFLOW_DEFAULTS.aestheticModel);
     setRunTechnical(QUALITY_WORKFLOW_DEFAULTS.runTechnical);
     setRunWatermark(QUALITY_WORKFLOW_DEFAULTS.runWatermark);
     setRunEmbeddings(QUALITY_WORKFLOW_DEFAULTS.runEmbeddings);
@@ -506,6 +567,8 @@ export default function QualityPage() {
       rootId: group[0].id,
       shared: sharedSourceVideo(group),
       anyScored: group.some((m) => m.aesthetic_score != null),
+      mixedModels:
+        new Set(group.map((m) => m.aesthetic_model).filter(Boolean)).size > 1,
       anyLineage: group.some((m) => m.source_video_id != null),
     })),
     [duplicates],
@@ -535,10 +598,18 @@ export default function QualityPage() {
     // first — "best" is meaningless there, and silently keeping whichever image
     // came first and calling it best is the bug rankForKeepBest exists to fix.
     const scored = filteredGroups.filter((g) => g.anyScored);
+    // A mixed-model group is skipped, not a reason to kill the whole bar:
+    // disabling *Keep best* because 1 of 300 groups holds two scales would push
+    // users to resolve by hand in the gallery — the same argument the
+    // same-source confirm dialog makes. Counted separately from `skipped` so the
+    // dialog can say which reason applied. *Keep first* reads no score and is
+    // untouched.
+    const rankable = scored.filter((g) => !g.mixedModels);
     return {
-      best: scored.map((g) => rankForKeepBest(g.group)),
-      bestSameSource: scored.filter((g) => g.shared != null).length,
+      best: rankable.map((g) => rankForKeepBest(g.group)),
+      bestSameSource: rankable.filter((g) => g.shared != null).length,
       skipped: filteredGroups.length - scored.length,
+      skippedMixed: scored.length - rankable.length,
       first: filteredGroups.map((g) => g.group),
       firstSameSource: filteredGroups.filter((g) => g.shared != null).length,
     };
@@ -564,6 +635,7 @@ export default function QualityPage() {
       plans,
       sameSource: mode === "best" ? bulkPlans.bestSameSource : bulkPlans.firstSameSource,
       skipped: mode === "best" ? bulkPlans.skipped : 0,
+      skippedMixed: mode === "best" ? bulkPlans.skippedMixed : 0,
     });
   };
 
@@ -648,7 +720,7 @@ export default function QualityPage() {
             style={{ width: 180, fontSize: 12 }}
             title="Optional name shown in the job queue"
           />
-          <button className="btn primary" onClick={() => scoreMutation.mutate()} disabled={isRunning}>
+          <button className="btn primary" onClick={() => scoreMutation.mutate({})} disabled={isRunning}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
             </svg>
@@ -674,6 +746,81 @@ export default function QualityPage() {
               );
             })}
           </div>
+
+          {/* The aesthetic model picker — a sub-row *under* the grid, not a
+              control inside the aesthetic row. That row is a `<label>` wrapping
+              its checkbox with `cursor: pointer`, so a select nested in it would
+              toggle the checkbox on every click, and `.model-row` is a tight flex
+              row in a two-column grid with no space for a per-model VRAM figure.
+              The DINOv2-layer select makes exactly this move.
+
+              Deliberately not a `<label>`: the e2e `scorer()` locator matches
+              `label` by text, and a second one containing "Aesthetic" would make
+              it ambiguous. */}
+          {runAesthetic && (
+            <div
+              style={{
+                marginTop: 8, padding: "10px 12px", background: "var(--surface-2)",
+                border: "1px solid var(--line)", borderRadius: "var(--r-sm)",
+                display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <div className="mr-name">Aesthetic model</div>
+                <div className="mr-desc">
+                  {AESTHETIC_MODELS.find((m) => m.value === aestheticModel)?.desc}
+                  {" "}The two scales are <strong>not</strong> comparable — every score is
+                  stored with the model that made it.
+                </div>
+              </div>
+              <select
+                className="select"
+                aria-label="Aesthetic model"
+                value={aestheticModel}
+                onChange={(e) => setAestheticModel(e.target.value as AestheticModel)}
+                disabled={isRunning}
+                style={{ fontSize: 12 }}
+              >
+                {AESTHETIC_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <span className="mr-vram">
+                {AESTHETIC_MODELS.find((m) => m.value === aestheticModel)?.vram}
+              </span>
+            </div>
+          )}
+
+          {/* Per-model coverage in the active scope, plus the re-score offer.
+              Two literal buttons rather than one with a mode: *Run scoring*
+              covers never-scored images, this covers rows another model
+              measured. */}
+          {runAesthetic && aestheticCoverage && coverageByModel.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span>
+                Aesthetic coverage: {aestheticCoverage.scored} scored
+                {aestheticCoverage.unscored > 0 && `, ${aestheticCoverage.unscored} unscored`}
+                {" — "}
+                {coverageByModel
+                  .map(([marker, count]) => `${count} by ${aestheticModelLabel(marker)}`)
+                  .join(", ")}
+              </span>
+              {mismatchedCount > 0 && (
+                <button
+                  className="btn sm"
+                  disabled={isRunning}
+                  onClick={() => scoreMutation.mutate({ onlyMismatched: true })}
+                  title={
+                    `Re-scores only the ${mismatchedCount} image${mismatchedCount === 1 ? "" : "s"} ` +
+                    `in this scope scored by a different model. Never-scored images are not included — ` +
+                    `use Run scoring for those.`
+                  }
+                >
+                  Re-score {mismatchedCount} with {AESTHETIC_MODELS.find((m) => m.value === aestheticModel)?.label}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Progress */}
           {jobProgress && (
@@ -709,12 +856,20 @@ export default function QualityPage() {
             <div className="form-row">
               <div className="lbl-col">
                 <h4>Embedding model</h4>
-                <p>CLIP for general images; DINOv2 for object-shape similarity; CLIP + DINOv2 blends both (0.38 × CLIP + 0.62 × DINOv2). All require embeddings computed first.</p>
+                <p>{STYLE_MODES.find((m) => m.value === embeddingType)?.desc} {STYLE_MODE_NOTE}</p>
               </div>
               <div className="row-flex">
-                <button className={`btn sm${embeddingType === "clip" ? " primary" : ""}`} onClick={() => setEmbeddingType("clip")}>CLIP</button>
-                <button className={`btn sm${embeddingType === "dino" ? " primary" : ""}`} onClick={() => setEmbeddingType("dino")} disabled={externalRefFiles.length > 0}>DINOv2</button>
-                <button className={`btn sm${embeddingType === "combined" ? " primary" : ""}`} onClick={() => setEmbeddingType("combined")} disabled={externalRefFiles.length > 0}>CLIP + DINOv2</button>
+                {STYLE_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    className={`btn sm${embeddingType === m.value ? " primary" : ""}`}
+                    onClick={() => setEmbeddingType(m.value)}
+                    disabled={m.value !== "clip" && externalRefFiles.length > 0}
+                    title={m.desc}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -722,7 +877,7 @@ export default function QualityPage() {
               <div className="form-row">
                 <div className="lbl-col">
                   <h4>DINOv2 layer</h4>
-                  <p>Each transformer block captures increasingly abstract features. "Final" uses the pre-computed <span className="mono">dino_embedding</span>. All others require per-layer embeddings. "All layers" scores each layer independently and stores results for comparison in the image detail view.</p>
+                  <p>{DINO_LAYER_NOTE} Layer 12 uses the pre-computed <span className="mono">dino_embedding</span>; every other layer requires per-layer embeddings.</p>
                 </div>
                 <select
                   className="select"
@@ -762,18 +917,61 @@ export default function QualityPage() {
                 <h4>Action</h4>
                 <p>Score writes <span className="mono">style_similarity_score</span> per image. CPU-only, runs immediately.</p>
               </div>
-              <button
-                className="btn primary"
-                onClick={() => similarityMutation.mutate()}
-                disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                  <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
-                </svg>
-                Score similarity
-                {(selectedRefIds.size + externalRefFiles.length) > 0 && ` · ${selectedRefIds.size + externalRefFiles.length} refs`}
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  className="btn primary"
+                  onClick={() => similarityMutation.mutate()}
+                  disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
+                  </svg>
+                  Score similarity
+                  {(selectedRefIds.size + externalRefFiles.length) > 0 && ` · ${selectedRefIds.size + externalRefFiles.length} refs`}
+                </button>
+                {/* The picker's selection is React state and the ids are never rendered, so
+                    an offline harness has no way to receive them. Dataset refs only —
+                    dragged-in local files have no image id to copy. */}
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const ids = Array.from(selectedRefIds).join(",");
+                    navigator.clipboard.writeText(ids)
+                      .then(() => toast.success(`Copied ${selectedRefIds.size} reference ID${selectedRefIds.size === 1 ? "" : "s"}`))
+                      .catch(() => toast.error("Could not copy to the clipboard"));
+                  }}
+                  disabled={selectedRefIds.size === 0}
+                  title="Copy the selected dataset reference image IDs as a comma-separated list"
+                >
+                  Copy reference IDs
+                </button>
+              </div>
             </div>
+
+            {/* What the last run actually produced, read from the refetched
+                distribution rather than from the POST response — the endpoint
+                returns counts, and the two numbers worth seeing after a run are
+                where the middle of the dataset landed and where the good end
+                starts. The raw cosine's scale differs per mode, so these are the
+                only figures that let one run be compared against the last. */}
+            {styleDistribution && styleDistribution.scored > 1 && (
+              <div className="form-row">
+                <div className="lbl-col">
+                  <h4>Current scores</h4>
+                  <p>Across the {styleDistribution.scored} scored image{styleDistribution.scored === 1 ? "" : "s"} in this dataset.
+                    {styleDistribution.run && ` Last scored with ${styleModeLabel(styleDistribution.run.embedding_type)}${styleDistribution.run.dino_layer != null ? `, layer ${styleDistribution.run.dino_layer}` : ""} ${formatTimeAgo(styleDistribution.run.updated_at)}.`}</p>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                  {/* Breakpoints by percentile, never by index: `quantileAt`
+                      derives the index from the payload's own `quantile_step`, so
+                      a change to `STYLE_QUANTILE_STEP` cannot relabel the max as
+                      the median here. */}
+                  <span>Median <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 50)?.toFixed(4)}</span></span>
+                  <span>Top 10% above <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 90)?.toFixed(4)}</span></span>
+                  <span>Range <span className="mono" style={{ color: "var(--fg)" }}>{quantileAt(styleDistribution, 0)?.toFixed(4)}–{quantileAt(styleDistribution, 100)?.toFixed(4)}</span></span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -810,13 +1008,17 @@ export default function QualityPage() {
               <button
                 className="btn sm primary"
                 disabled={resolveBusy || bulkPlans.best.length === 0}
-                title={
+                title={[
                   bulkPlans.best.length === 0
-                    ? "No image in these groups has an aesthetic score — run scoring first, or use Keep first."
-                    : bulkPlans.skipped > 0
-                      ? `Skips ${bulkPlans.skipped} group${bulkPlans.skipped === 1 ? "" : "s"} with no aesthetic score — there is no best to keep there.`
-                      : undefined
-                }
+                    ? "No group here can be ranked — run scoring first, or use Keep first."
+                    : null,
+                  bulkPlans.skipped > 0
+                    ? `Skips ${bulkPlans.skipped} group${bulkPlans.skipped === 1 ? "" : "s"} with no aesthetic score — there is no best to keep there.`
+                    : null,
+                  bulkPlans.skippedMixed > 0
+                    ? `Skips ${bulkPlans.skippedMixed} group${bulkPlans.skippedMixed === 1 ? "" : "s"} holding scores from two different aesthetic models — those scales are not comparable.`
+                    : null,
+                ].filter(Boolean).join(" ") || undefined}
                 onClick={() => startBulk("best")}
               >
                 {bulkLabel(`Keep best in ${bulkPlans.best.length} group${bulkPlans.best.length === 1 ? "" : "s"}`)}
@@ -838,7 +1040,10 @@ export default function QualityPage() {
             )}
 
             {filteredGroups.slice(0, visibleGroups).map((meta) => {
-              const { group, rootId, shared, anyScored, anyLineage } = meta;
+              const { group, rootId, shared, anyScored, mixedModels, anyLineage } = meta;
+              // Named in the tooltip rather than gestured at: "two different
+              // models" tells a user nothing they can act on.
+              const groupModels = [...new Set(group.map((m) => m.aesthetic_model).filter(Boolean))] as string[];
               // A 36-member group is unreadable and expensive; show the first
               // ten behind a toggle. `group[0]` — the image the scan kept, and
               // the one every resolution keeps — is always in that slice.
@@ -898,6 +1103,14 @@ export default function QualityPage() {
                           </span>
                         )}
                         {img.aesthetic_score != null && <span className="mono" style={{ fontSize: 11, color: "var(--good)" }}>{img.aesthetic_score.toFixed(1)}</span>}
+                        {/* Only in a mixed group, and only under the score it
+                            qualifies: this is what makes the disabled *Keep
+                            best* explain itself outside a tooltip. */}
+                        {mixedModels && img.aesthetic_model && (
+                          <span className="mono" style={{ fontSize: 9.5, color: "var(--warn)", textAlign: "center", maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis" }} title={aestheticModelLabel(img.aesthetic_model)}>
+                            {img.aesthetic_model}
+                          </span>
+                        )}
                       </div>
                     ))}
                     {group.length > DUP_COLLAPSE_AT && (
@@ -917,8 +1130,18 @@ export default function QualityPage() {
                     // "Best" is meaningless with nothing scored: the old code
                     // silently kept whichever member came first and called it
                     // best. Say so instead of pretending.
-                    disabled={!anyScored || resolveBusy}
-                    title={anyScored ? undefined : "No image in this group has an aesthetic score — run scoring first, or use Keep first."}
+                    // Two refusals, one button. Mixed models is the sharper of
+                    // them: ranking a LAION score against a V2.5 one and then
+                    // deleting everything below the top destroys images on a
+                    // number that means two different things.
+                    disabled={!anyScored || mixedModels || resolveBusy}
+                    title={
+                      !anyScored
+                        ? "No image in this group has an aesthetic score — run scoring first, or use Keep first."
+                        : mixedModels
+                          ? `Scored by ${groupModels.map(aestheticModelLabel).join(" and ")}, whose scales are not comparable. Re-score this group with one model, or use Keep first.`
+                          : undefined
+                    }
                     onClick={() => resolveGroup(meta, "best")}
                   >Keep best</button>
                   {/* group[0] is the image the scan kept — see get_duplicates.

@@ -483,7 +483,9 @@ def _patch_scorers(monkeypatch, *, technical=True, aesthetic=True, watermark=Tru
 
     aesthetic_mod = types.ModuleType("backend.ml.aesthetic_scorer")
 
-    async def score_images_batch(paths, model, job_id=None):
+    # `model` is the marker the router will store, not the weights — mirroring
+    # the real signature, whose second parameter is the per-model handle.
+    async def score_images_batch(paths, model_handle, job_id=None, model="laion"):
         return _cut([0.75] * len(paths)) if aesthetic else []
 
     async def score_images_watermark(paths, model, job_id=None, watermark_threshold=0.5):

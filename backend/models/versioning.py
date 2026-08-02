@@ -86,6 +86,10 @@ class VersionImageState(Base):
     # so a snapshot is the only record of an old one. All ten are mirrored.
     nsfw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Not bookkeeping, and so not a `captioned_by`-style exemption: without this
+    # mirror a restore writes a snapshot's LAION score onto a row whose marker
+    # still reads "v2_5", silently disarming a guard that gates image *deletion*.
+    aesthetic_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     uniformity_score: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -47,6 +47,7 @@ ML_DIR = Path(__file__).resolve().parents[1] / "ml"
 # which is the only kind of guard that helps.
 INFERENCE_MODULES = [
     "aesthetic_scorer.py",
+    "aesthetic_v2_5_scorer.py",
     "dino_scorer.py",
     "florence_captioner.py",
     "joycaption_captioner.py",

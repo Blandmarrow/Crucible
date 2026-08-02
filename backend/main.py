@@ -37,6 +37,8 @@ except ImportError:
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,8 +47,13 @@ from backend.config import settings
 from backend.database import init_db
 from backend.utils import FileInUseError
 
-if settings.hf_token:
-    os.environ.setdefault("HF_TOKEN", settings.hf_token)
+# Project the .env/OS-env HF_TOKEN into the process environment, where the ten HuggingFace-hub
+# loaders — none of which pass token= — will find it. Stays here, between the config and router
+# imports, so it applies in contexts that never run the lifespan (notably conftest.api_env).
+# row=None means "DB not consulted"; the lifespan re-runs this against the DB below.
+from backend.services.secrets_service import sync_env
+
+sync_env(None)
 from backend.routers import booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
@@ -58,6 +65,7 @@ _background_tasks: set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
+    await _seed_secret_env()
     await mark_interrupted_jobs()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
@@ -69,6 +77,23 @@ async def lifespan(app: FastAPI):
     _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
     await job_queue.stop()
+
+
+async def _seed_secret_env() -> None:
+    """Re-project HF_TOKEN from the DB, so a token saved in Settings survives a restart.
+
+    Must run after init_db() — the DB has to exist to be read — and is awaited rather than
+    fired-and-forgotten, since a model load must not race it. One indexed single-row read.
+    Never fatal: a failure here leaves the .env value that import time already projected.
+    """
+    from backend.database import AsyncSessionLocal
+    from backend.services.secrets_service import sync_env_from_db
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await sync_env_from_db(session)
+    except Exception:
+        logging.getLogger(__name__).exception("Secret environment seeding failed")
 
 
 async def _startup_db_maintenance() -> None:
@@ -128,6 +153,38 @@ async def file_in_use_handler(request: Request, exc: FileInUseError):
     409 (not 500): the request was well-formed and retrying later can work.
     """
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    """422 without the rejected value echoed back.
+
+    FastAPI's default handler returns each error entry verbatim, and pydantic puts the
+    input it refused in `input` — so `PATCH /settings/secrets` with an over-long
+    `hf_token`, or `POST /providers` with a bad `api_key`, answered with the submitted
+    secret in the response body. Dropping `input` (and `ctx`, which carries the same
+    value for some error types) is what makes "the plaintext appears in no response" a
+    property of the app rather than of the happy path.
+
+    App-level rather than per-route, on the same reasoning as the `FileInUseError`
+    handler above: a secret can reach a validation error through any endpoint that grows
+    one, and a per-route defence is a rule every future route has to remember.
+
+    Nothing is lost. `msg` already restates what `ctx` holds — pydantic renders a
+    `value_error` as `"Value error, <the ValueError's text>"` and a constraint failure as
+    `"String should have at most 500 characters"` — and `loc` still names the field, which
+    is all `frontend/src/utils/apiError.ts` reads. `jsonable_encoder` matches FastAPI's
+    own default: `loc` arrives as a tuple, and a couple of entries are hand-built outside
+    pydantic.
+
+    Scope: rejected *values* only. A secret reaching a 500 traceback or a log line is a
+    different exposure and this handler does not touch it.
+    """
+    detail = [
+        {k: v for k, v in e.items() if k not in ("input", "ctx")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detail)})
 
 
 PREFIX = "/api/v1"

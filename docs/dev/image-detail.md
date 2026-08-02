@@ -43,6 +43,25 @@ The **AI Generate** collapsible (`showAi` state, gated `enabled: showAi`) uses t
 
 Images and datasets carry `source_name` / `source_url` / `license` / `attribution`, with NULL on the image meaning *inherit the dataset default*. The gallery reads the **effective** license (`ImageListItem.license`) for its badge and offers `license_filter` / `license_missing`; `ImageDetailPage` renders `components/image/ProvenancePanel.tsx`, and the selection toolbar's bulk action uses `components/gallery/SetProvenanceModal.tsx`. Ingest capture (import/rescan/upload), the derived-image rule, cross-dataset materialization and the full API surface are in `docs/dev/provenance.md`.
 
+### Style match & the DINOv2 layer breakdown
+
+Two blocks below the flat scores grid, both about `style_similarity_score` and both owned by
+`docs/dev/image-similarity.md` § Making the score readable — read it before changing either.
+What matters at this page's level:
+
+- **`components/image/StyleMatchPanel.tsx`** replaced a bare `Style match 62%` row *inside*
+  the scores grid. It mounts below the grid rather than in it because the grid is a
+  two-column list of one-line facts and this needs three rows, a meter and a reference-
+  thumbnail strip. It renders nothing when the image has no style score, keeps the raw
+  cosine visible beside the percentile, and takes a `distribution` from
+  `useStyleDistribution(datasetId)` — called here **unconditionally**, unlike on the gallery
+  card, since the detail page is where a user comes to read this number and the gallery
+  meter preference should not hide it. Same query key, so the two share one cache entry.
+- **`DinoLayerBreakdown`** (local to `ImageDetailPage.tsx`) renders `dino_layer_scores` on a
+  **fixed 0–1 axis**. It used to normalise each bar to the largest score within the image,
+  which made one bar read 100% however poor the match; the layers-1–9 de-emphasis and the
+  layer-12 `stored` marker landed in the same change.
+
 ### AI generation metadata
 
 Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Included in both `ImageOut` and `ImageListItem` schemas.

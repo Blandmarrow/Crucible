@@ -24,6 +24,7 @@ export const GALLERY_DEFAULT_SORT_KEY    = "gallery-default-sort";    // number 
 export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" | "captioned" | "uncaptioned"
 export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
+export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -96,4 +97,15 @@ export function getGalleryDefaultQualityFilter(): string {
  *  are single-source, where a badge on every card is pure noise. */
 export function getGalleryLicenseBadge(): boolean {
   return localStorage.getItem(GALLERY_LICENSE_BADGE_KEY) === "true";
+}
+
+/** Whether gallery cards show the style-match percentile meter. **On** by
+ *  default, hence `!== "false"` rather than `=== "true"` — the absent key must
+ *  mean on, the same read `CAPTION_DEFAULT_STRIP_REFS_KEY` uses.
+ *
+ *  Unlike the license badge, this costs nothing on a dataset that has never been
+ *  style-scored: an unscored card renders no meter at all, and the hook behind it
+ *  is gated on this flag so the request is not even made when it is off. */
+export function getGalleryStyleMeter(): boolean {
+  return localStorage.getItem(GALLERY_STYLE_METER_KEY) !== "false";
 }

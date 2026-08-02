@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from backend.models import Dataset, Image, Video
+from backend.models import Dataset, Image, StyleSimilarityRun, Video
 from backend.services.caption_service import _write_txt_sidecar
 from backend.services.image_service import (
     extract_generation_metadata,
@@ -297,6 +297,99 @@ def _p95(sorted_vals: list[float]) -> float:
         return 0.0
     idx = int(len(sorted_vals) * 0.95)
     return sorted_vals[min(idx, len(sorted_vals) - 1)]
+
+
+# Percentile step for `_style_quantiles`, and the count that follows from it.
+STYLE_QUANTILE_STEP = 5
+STYLE_QUANTILE_COUNT = 100 // STYLE_QUANTILE_STEP + 1  # 21: 0, 5, …, 95, 100
+
+
+def _style_quantiles(sorted_vals: list[float]) -> list[float]:
+    """21 breakpoints (every 5th percentile) over an already-sorted score list.
+
+    Nearest-rank scaled by ``n - 1``, so q0 and q100 are exactly min and max —
+    which is what the client's clamp is defined against: a score at or below q0
+    reads as the 0th percentile and one at or above q100 as the 100th, with no
+    off-by-one band at either end.
+
+    Deliberately **not** unified with `_p95` above, which scales by ``n`` (a
+    different, also-correct convention) and has its own pinned tests. Two
+    conventions with two call sites beats one shared helper whose behaviour has to
+    change for one of them.
+
+    Fewer scored images than breakpoints is normal and yields repeated values; the
+    client's percentile lookup is written for exactly that (it answers with the low
+    edge of a flat run) and for the all-identical case, where every breakpoint is
+    the same number and the meter is suppressed entirely.
+    """
+    if not sorted_vals:
+        return []
+    n = len(sorted_vals)
+    return [
+        sorted_vals[min(round((n - 1) * (i * STYLE_QUANTILE_STEP) / 100), n - 1)]
+        for i in range(STYLE_QUANTILE_COUNT)
+    ]
+
+
+async def _style_validator(db: AsyncSession, dataset_id: str) -> tuple:
+    """Cache validator for `get_style_distribution`: the image half plus the run row's mtime.
+
+    The image half alone would suffice — a style run writes the score column
+    through `db.execute(update(Image), [...])`, and that executemany *does* apply
+    `Image.updated_at`'s Python-side `onupdate` per row, so the run always moves
+    the validator. But the payload embeds a row from a *different* table, and
+    watching that table too is one cheap `max()` against a one-row-per-dataset
+    table.
+    """
+    row = (await db.execute(
+        select(func.max(StyleSimilarityRun.updated_at)).where(
+            StyleSimilarityRun.dataset_id == dataset_id
+        )
+    )).scalar()
+    return (*await _image_validator(db, dataset_id, None), row)
+
+
+async def get_style_distribution(db: AsyncSession, dataset_id: str) -> dict:
+    """`{scored, total, quantiles, quantile_step}` for one dataset's style scores.
+
+    Dataset-wide, never subfolder-scoped: the percentile a card shows must not
+    depend on which pane it is rendered in. `ix_images_dataset_similarity` covers
+    the ordered scan, so the ORDER BY costs no sort.
+
+    Cached in `_stats_cache` under a third slot (`"style"`, beside `"stats"` and
+    `"scores"`) because a gallery page fires this once per dataset per mount and
+    the two existing slots are keyed on payloads far heavier than this one. Note
+    the budget effect on `_STATS_CACHE_MAX` recorded in `docs/dev/statistics.md`.
+    """
+    cache_key = (dataset_id, None, "style")
+    validator = await _style_validator(db, dataset_id)
+    cached = _stats_cache_get(cache_key, validator)
+    if cached is not None:
+        return cached
+
+    total, scored = (await db.execute(
+        select(func.count(Image.id), func.count(Image.style_similarity_score))
+        .where(Image.dataset_id == dataset_id)
+    )).one()
+
+    rows = (await db.execute(
+        select(Image.style_similarity_score)
+        .where(Image.dataset_id == dataset_id, Image.style_similarity_score.isnot(None))
+        .order_by(Image.style_similarity_score)
+    )).all()
+
+    def _collect() -> list[float]:
+        return _style_quantiles([float(r[0]) for r in rows])
+
+    quantiles = await asyncio.get_running_loop().run_in_executor(None, _collect)
+    payload = {
+        "scored": scored,
+        "total": total,
+        "quantiles": quantiles,
+        "quantile_step": STYLE_QUANTILE_STEP,
+    }
+    _stats_cache_put(cache_key, validator, payload)
+    return payload
 
 
 async def create_dataset(
@@ -1419,6 +1512,19 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "technical": cov_row.technical,
         "watermark": cov_row.watermark,
     }
+    # Per-producer aesthetic coverage, under a **reserved `aesthetic_*` prefix**.
+    # Flat keys in the same `dict[str, int]` rather than a nested field: no schema
+    # change, and the CSV export of this dict picks them up for free. The set is
+    # open-ended by design (a future learned head writes `head:{uuid}`), which is
+    # why the frontend renders it as a breakdown line rather than adding fixed
+    # entries to its `coverageDefs` list. These sum to `score_cov["aesthetic"]`:
+    # every non-NULL score carries a non-NULL marker (migration a5e1b7c3d9f0).
+    for marker, count in (await db.execute(
+        select(Image.aesthetic_model, func.count(Image.id))
+        .where(*_base_where, Image.aesthetic_model.isnot(None))
+        .group_by(Image.aesthetic_model)
+    )).all():
+        score_cov[f"aesthetic_{marker}"] = count
 
     # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
     def _flag_sum(json_key: str):
@@ -1646,7 +1752,8 @@ async def duplicate_dataset(
             Image.original_filename, Image.subfolder, Image.is_auto_named,
             Image.width, Image.height, Image.file_size_bytes, Image.format,
             Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
-            Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.blur_score,
+            Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.aesthetic_model,
+            Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.luminance_score, Image.style_similarity_score,
             Image.scores_stale, Image.dino_layer_scores,
@@ -1811,6 +1918,7 @@ async def duplicate_dataset(
                     quality_flags=row.quality_flags,
                     nsfw_score=row.nsfw_score,
                     aesthetic_score=row.aesthetic_score,
+                    aesthetic_model=row.aesthetic_model,
                     blur_score=row.blur_score,
                     noise_score=row.noise_score,
                     uniformity_score=row.uniformity_score,
@@ -1917,6 +2025,7 @@ async def duplicate_dataset(
                     format=state.format,
                     nsfw_score=state.nsfw_score,
                     aesthetic_score=state.aesthetic_score,
+                    aesthetic_model=state.aesthetic_model,
                     blur_score=state.blur_score,
                     noise_score=state.noise_score,
                     uniformity_score=state.uniformity_score,

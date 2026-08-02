@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
-import { settingsApi, type Thresholds } from "../api/settings";
+import { settingsApi, type Thresholds, type SecretKey, type SecretsUpdate } from "../api/settings";
 import { comfyApi } from "../api/comfy";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
 import { captioningApi } from "../api/captioning";
@@ -23,6 +23,7 @@ import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
+import SecretField from "../components/settings/SecretField";
 
 type ModelOption = { id: string; label: string; group: string };
 
@@ -157,6 +158,8 @@ export default function SettingsPage() {
   // re-render its cards the moment the toggle flips.
   const galleryLicenseBadge = useUiPrefsStore((s) => s.galleryLicenseBadge);
   const setGalleryLicenseBadge = useUiPrefsStore((s) => s.setGalleryLicenseBadge);
+  const galleryStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
+  const setGalleryStyleMeter = useUiPrefsStore((s) => s.setGalleryStyleMeter);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -231,7 +234,7 @@ export default function SettingsPage() {
       form.versioning_mode !== thresholds.versioning_mode ||
       form.auto_rescan_on_open !== thresholds.auto_rescan_on_open);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers" | "comfyui">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers" | "comfyui" | "secrets">("gallery");
 
   // Gallery checkbox size lives in uiPrefsStore (not local state) so dragging the
   // slider re-renders gallery cards live, including a GalleryPage in another pane.
@@ -261,6 +264,40 @@ export default function SettingsPage() {
     staleTime: Infinity,
     enabled: activeTab === "captioning",
   });
+
+  // Secrets (API Keys tab). Its own query key — never ["settings","thresholds"], which six
+  // other screens cache — and gated on the tab so secrets never go over the wire for anyone
+  // who does not open it, following the ["captioning-models"] lazy-tab pattern above.
+  const { data: secrets } = useQuery({
+    queryKey: ["settings", "secrets"],
+    queryFn: settingsApi.getSecrets,
+    enabled: activeTab === "secrets",
+  });
+
+  const secretsMutation = useMutation({
+    mutationFn: (body: SecretsUpdate) => settingsApi.updateSecrets(body),
+    // Invalidate rather than write the response into the cache: the fresh GET is also a
+    // client-side guard against ever holding a value that came back from a write.
+    onSuccess: (data, body) => {
+      qc.invalidateQueries({ queryKey: ["settings", "secrets"] });
+      const key = Object.keys(body)[0] as SecretKey | undefined;
+      if (key && body[key] === "") {
+        // The toast comes from the *response* — only it knows whether clearing the override
+        // revealed an inherited .env value or left the secret unset entirely.
+        toast.success(data[key].source === "env" ? "Cleared — using the .env value" : "Cleared");
+      } else {
+        toast.success("Saved");
+      }
+    },
+    onError: (e: unknown) => toast.error(apiErrorDetail(e, "Failed to save key")),
+  });
+
+  // One mutation drives all three rows, so a bare `isPending` greys out the two rows the
+  // user did not touch. `variables` is the in-flight body, and every call sends exactly one
+  // key — the same `Object.keys(body)[0]` idiom onSuccess uses to name the field. No state.
+  const pendingSecret = secretsMutation.isPending
+    ? (Object.keys(secretsMutation.variables ?? {})[0] as SecretKey | undefined)
+    : undefined;
 
   // Providers state
 
@@ -336,7 +373,62 @@ export default function SettingsPage() {
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
         <button className={`tab${activeTab === "providers" ? " active" : ""}`} onClick={() => setActiveTab("providers")}>LLM Providers</button>
         <button className={`tab${activeTab === "comfyui" ? " active" : ""}`} onClick={() => setActiveTab("comfyui")}>ComfyUI</button>
+        <button className={`tab${activeTab === "secrets" ? " active" : ""}`} onClick={() => setActiveTab("secrets")}>API Keys</button>
       </div>
+
+      {activeTab === "secrets" && (
+        <div className="panel">
+          <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <p style={{ fontSize: 12.5, color: "var(--fg-mute)", margin: 0 }}>
+              Keys saved here override the matching values in <code style={{ fontSize: 11 }}>.env</code>;
+              clearing one goes back to the <code style={{ fontSize: 11 }}>.env</code> value. They are
+              stored unencrypted in the local database, the same as LLM provider keys.
+            </p>
+
+            {!secrets && <div style={{ fontSize: 12.5, color: "var(--fg-dim)" }}>Loading…</div>}
+
+            {secrets && (
+              <>
+                <SecretField
+                  label="HuggingFace token"
+                  help={
+                    <>
+                      Needed to download gated models such as PaliGemma-2. Create one at{" "}
+                      <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                        huggingface.co/settings/tokens
+                      </a>
+                      . A change applies to the next model download — a download already running keeps the old token.
+                    </>
+                  }
+                  secret={secrets.hf_token}
+                  envVar="HF_TOKEN"
+                  busy={pendingSecret === "hf_token"}
+                  onSave={(v) => secretsMutation.mutate({ hf_token: v })}
+                  onClear={() => secretsMutation.mutate({ hf_token: "" })}
+                />
+                <SecretField
+                  label="Gelbooru API key"
+                  help="Raises the rate limit for Gelbooru tag lookups on the Booru page. Both this and the user ID are required — with either missing, lookups stay anonymous."
+                  secret={secrets.gelbooru_api_key}
+                  envVar="GELBOORU_API_KEY"
+                  busy={pendingSecret === "gelbooru_api_key"}
+                  onSave={(v) => secretsMutation.mutate({ gelbooru_api_key: v })}
+                  onClear={() => secretsMutation.mutate({ gelbooru_api_key: "" })}
+                />
+                <SecretField
+                  label="Gelbooru user ID"
+                  help="The numeric user ID that goes with the API key above, from your Gelbooru account options page."
+                  secret={secrets.gelbooru_user_id}
+                  envVar="GELBOORU_USER_ID"
+                  busy={pendingSecret === "gelbooru_user_id"}
+                  onSave={(v) => secretsMutation.mutate({ gelbooru_user_id: v })}
+                  onClear={() => secretsMutation.mutate({ gelbooru_user_id: "" })}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {activeTab === "comfyui" && (
         <div className="panel">
@@ -496,6 +588,29 @@ export default function SettingsPage() {
                   }}
                 />
                 Show each image's effective source license on its gallery card
+              </label>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Style match meter on cards</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                A thin bar under each thumbnail showing where that image's style-similarity score
+                falls within this dataset's own scores. The raw score is a cosine whose scale depends
+                on which embedding model produced it, so a percentile is the only reading that means
+                the same thing in every mode. Images with no style score show nothing, and switching
+                this off stops the gallery asking for the distribution at all.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }} data-testid="style-meter-toggle">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={galleryStyleMeter}
+                  onChange={(e) => {
+                    setGalleryStyleMeter(e.target.checked);
+                    toast.success("Preference saved");
+                  }}
+                />
+                Show the style match meter on gallery cards
               </label>
             </div>
 

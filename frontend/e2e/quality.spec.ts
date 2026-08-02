@@ -34,18 +34,35 @@ test('quality page renders its panels and scopes to a subfolder', async ({ page,
   // Default scoring selection: aesthetic + technical on, the rest off.
   const scorer = (label: string) =>
     page.locator('label').filter({ hasText: label }).getByRole('checkbox')
-  await expect(scorer('Aesthetic score · LAION')).toBeChecked()
+  await expect(scorer('Aesthetic score')).toBeChecked()
   await expect(scorer('Technical · OpenCV')).toBeChecked()
   await expect(scorer('NSFW detection · Marqo')).not.toBeChecked()
+
+  // The aesthetic model picker: a per-run choice with a sticky default. It is a
+  // sub-row rather than a control inside the checkbox's `<label>`, which is what
+  // keeps `scorer('Aesthetic score')` above unambiguous.
+  const model = page.getByLabel('Aesthetic model')
+  await expect(model).toHaveValue('laion')
+  await model.selectOption('v2_5')
 
   // The per-layer DINOv2 option is conditional on DINOv2 itself being selected.
   await expect(page.getByText('DINOv2 per-layer embeds')).toHaveCount(0)
   await scorer('DINOv2 embeddings').check()
   await expect(page.getByText('DINOv2 per-layer embeds')).toBeVisible()
 
-  // Subfolder scope.
-  const scope = page.locator('select').first()
+  // Subfolder scope. Matched by its content, not by DOM order: `.first()`
+  // survived only by coincidence, and the page now renders a second select.
+  const scope = page.locator('select').filter({ hasText: 'All subfolders' })
   await expect(scope).toContainText('sub (1)')
   await scope.selectOption('sub')
   await expect(scope).toHaveValue('sub')
+
+  // The picker is sticky: it rides the same global QUALITY_WORKFLOW blob as the
+  // scoring toggles, so a reload keeps it…
+  await page.reload()
+  await expect(page.getByLabel('Aesthetic model')).toHaveValue('v2_5')
+
+  // …and *Reset to defaults* puts it back to LAION.
+  await page.getByRole('button', { name: 'Reset to defaults' }).click()
+  await expect(page.getByLabel('Aesthetic model')).toHaveValue('laion')
 })

@@ -50,6 +50,15 @@ export interface ExportPreview {
   stale_scores_count: number;
   /** How many of those survive the *current* filters and actually ship. */
   stale_scores_will_export: number;
+  /** Which models produced the aesthetic scores in scope, as `{marker: count}` —
+   *  `{}` when nothing is scored. Two or more keys means two non-comparable
+   *  scales in one column, which `aesthetic_min` cannot see. A dict rather than
+   *  a bool because the skew ("1,204 by LAION, 766 by V2.5") is what says
+   *  whether the threshold is over- or under-including. */
+  aesthetic_models: Record<string, number>;
+  /** The same breakdown restricted to what actually ships under the current
+   *  filters. */
+  aesthetic_models_will_export: Record<string, number>;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }

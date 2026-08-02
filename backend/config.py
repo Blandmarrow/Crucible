@@ -60,9 +60,13 @@ class Settings(BaseSettings):
                 "Set MAX_VRAM_MB to 1000 or higher in .env."
             )
         if not self.hf_token:
+            # Only says the .env/OS-env chain is empty. This validator runs at import,
+            # before any DB read, so it cannot see a token saved in Settings -> API Keys —
+            # which takes precedence and is projected into os.environ at startup by
+            # services/secrets_service.py.
             logger.debug(
-                "HF_TOKEN is not set. PaliGemma-2 downloads will fail. "
-                "Set HF_TOKEN in .env if you plan to use PaliGemma-2."
+                "HF_TOKEN is not set in .env or the environment. Gated downloads such as "
+                "PaliGemma-2 will fail unless a token is saved in Settings -> API Keys."
             )
         # Warn about keys in the .env file that don't match any known setting.
         # We parse the file directly so that regular OS env vars are not flagged.

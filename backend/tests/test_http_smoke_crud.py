@@ -198,6 +198,29 @@ def test_settings_thresholds_roundtrip(tmp_path):
     run(scenario())
 
 
+def test_settings_secrets_roundtrip(tmp_path, monkeypatch):
+    # A precondition, not cleanup: start from "no ambient token" whatever the shell
+    # exports. Restoring the variable afterwards is api_env's job — this endpoint writes
+    # os.environ["HF_TOKEN"] itself, which monkeypatch cannot undo. Depth lives in
+    # test_settings_secrets.py; this is the shallow shape check.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            assert (await env.client.get(f"{API}/settings/secrets")).status_code == 200
+
+            r = await env.client.patch(f"{API}/settings/secrets", json={"gelbooru_user_id": "4242"})
+            assert r.status_code == 200, r.text
+            body = (await env.client.get(f"{API}/settings/secrets")).json()
+            assert body["gelbooru_user_id"] == {"masked": "****", "source": "db"}
+
+            # Over the column length is a 422, not a truncation.
+            assert (await env.client.patch(
+                f"{API}/settings/secrets", json={"hf_token": "x" * 501})).status_code == 422
+
+    run(scenario())
+
+
 # --- jobs ----------------------------------------------------------------
 
 

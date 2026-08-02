@@ -11,6 +11,8 @@ import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { useStyleDistribution } from "../../hooks/useStyleDistribution";
+import { percentileOf, styleMatchTitle } from "../../utils/percentile";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -98,6 +100,12 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const showLicense = useUiPrefsStore((s) => s.galleryLicenseBadge);
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
+
+  // Style-match meter. On by default, and the pref gates the *request* as well as
+  // the render — TanStack dedupes the per-card call down to one per dataset.
+  const showStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
+  const styleDist = useStyleDistribution(datasetId, showStyleMeter);
+  const stylePct = showStyleMeter ? percentileOf(image.style_similarity_score, styleDist?.quantiles) : null;
 
   return (
     <div
@@ -213,6 +221,40 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
             {sc !== null ? sc.toFixed(1) : "—"}
           </span>
         </div>
+
+        {/* Style-match meter — a 4px strip along the bottom edge of the thumbnail.
+            Length is the image's percentile within this dataset's own style scores;
+            the fill is a single `--accent` and never bands by colour, because a low
+            style match means *different*, not *defective*, and the card already
+            spends red/amber on NSFW, blurry, near-uniform and aesthetic.
+
+            z-index 2 sits under the flag cluster, checkbox and aesthetic badge (all
+            z 3, all inset 8px so the strip clears them anyway) and under the
+            caption-drop overlay at z 4, which must cover everything. No
+            `pointerEvents: "none"` — that would kill the `title`, which carries the
+            mode, the reference count and the mixed-scope caveat.
+
+            Null percentile renders *nothing*: an unscored image, an unloaded
+            payload and an all-identical distribution are all "not measured", and a
+            zero-length bar would read as "0th percentile" instead. */}
+        {stylePct !== null && (
+          <div
+            data-testid="style-meter"
+            data-style-percentile={String(Math.round(stylePct))}
+            title={styleMatchTitle({ percentile: stylePct, score: image.style_similarity_score, distribution: styleDist, stale: image.scores_stale })}
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 4, zIndex: 2, background: "rgba(7,9,11,.55)" }}
+          >
+            <div style={{
+              height: "100%",
+              // Never zero: a bottom-percentile image still shows a sliver, so
+              // "worst match in the dataset" is distinguishable from "switched off".
+              width: `${Math.max(2, stylePct)}%`,
+              background: image.scores_stale ? "var(--fg-mute)" : "var(--accent)",
+              opacity: image.scores_stale ? 0.5 : 1,
+              transition: "width .2s",
+            }} />
+          </div>
+        )}
       </div>
 
       {/* Footer */}

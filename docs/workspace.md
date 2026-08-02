@@ -106,7 +106,7 @@ A three-panel filesystem explorer built into the app:
 
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:
 
-- Searches **Safebooru** (SFW) or **Gelbooru** (requires API key + user ID in `.env`)
+- Searches **Safebooru** (SFW) or **Gelbooru** (requires an API key + user ID, set in Settings → API Keys or in `.env`)
 - Shows tag name, category (character / artist / copyright / general / meta), and post count
 - Configurable result limit (20 / 50 / 100); results cached for 5 minutes
 - Copy individual tags or the full list to clipboard

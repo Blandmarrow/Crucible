@@ -13,6 +13,7 @@ import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
+import { aestheticModelLabel } from "../constants/aestheticModels";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
@@ -899,6 +900,53 @@ export default function ExportPage() {
                         <>
                           , and any flag-based exclusion may be dropping or keeping the wrong
                           images. Re-run quality scoring to refresh them.
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Mixed aesthetic models — advisory only, and shown whenever
+                      more than one marker is present rather than only when
+                      `aesthetic_min` is on: the gallery's aesthetic sort reads
+                      the same column, so a mixed dataset is worth saying either
+                      way. The second sentence is the one that depends on the
+                      filter. Never blocks, never changes `will_export`, and has
+                      no exclusion row — a mixed column is a fact about the data,
+                      not an exclusion the export applied. */}
+                  {Object.keys(preview.aesthetic_models).length > 1 && (
+                    <div
+                      style={{
+                        marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 12, color: "var(--warn)",
+                      }}
+                    >
+                      Aesthetic scores in this dataset come from more than one model
+                      {" — "}
+                      {Object.entries(preview.aesthetic_models)
+                        .map(([m, n]) => `${n.toLocaleString()} by ${aestheticModelLabel(m)}`)
+                        .join(", ")}
+                      . The scales are not comparable.
+                      {filterAesthetic && (
+                        <>
+                          {" "}The minimum-score filter applies one threshold to all of them, so it is
+                          over- or under-including depending on which model scored each image
+                          {/* `> 0`, not `> 1`: the extreme instance of one
+                              threshold cutting two scales unequally is a
+                              threshold that eliminates one model's images
+                              *entirely*, which leaves exactly one surviving key
+                              — the case where "900 by LAION still export" is the
+                              most actionable number the box can carry, since it
+                              is also saying the other model lost all of them.
+                              The outer box is already gated on the whole-scope
+                              dict having more than one key, so this only renders
+                              inside an already-mixed dataset. */}
+                          {Object.keys(preview.aesthetic_models_will_export).length > 0
+                            ? ` (${Object.entries(preview.aesthetic_models_will_export)
+                                .map(([m, n]) => `${n.toLocaleString()} by ${aestheticModelLabel(m)}`)
+                                .join(", ")} still export)`
+                            : ""}
+                          . Re-score with one model on the Score images page to make it meaningful.
                         </>
                       )}
                     </div>

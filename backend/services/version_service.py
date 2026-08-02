@@ -423,6 +423,7 @@ async def create_snapshot(
             quality_flags=img.quality_flags,
             nsfw_score=img.nsfw_score,
             aesthetic_score=img.aesthetic_score,
+            aesthetic_model=img.aesthetic_model,
             blur_score=img.blur_score,
             noise_score=img.noise_score,
             uniformity_score=img.uniformity_score,
@@ -495,6 +496,10 @@ _DIFF_COLS = (
     VersionImageState.quality_flags,
     VersionImageState.nsfw_score,
     VersionImageState.aesthetic_score,
+    # Mutable like `scores_stale`, not immutable like lineage: a re-score with a
+    # different model flips it, and which model produced a number is exactly the
+    # kind of difference the diff exists to show.
+    VersionImageState.aesthetic_model,
     VersionImageState.blur_score,
     VersionImageState.noise_score,
     VersionImageState.uniformity_score,
@@ -536,7 +541,7 @@ _HEAVY_DIFF_FIELDS = frozenset({"dino_layer_scores", "generation_metadata", "sou
 # and a test asserts this one is a subset of the columns above.
 _DIFF_COMPARE_FIELDS = (
     "caption_text", "quality_flags", "subfolder",
-    "nsfw_score", "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "nsfw_score", "aesthetic_score", "aesthetic_model", "blur_score", "noise_score", "uniformity_score",
     "watermark_score", "color_score", "saturation_score", "luminance_score",
     "style_similarity_score", "scores_stale",
     "dino_layer_scores", "generation_metadata", "processing_history",
@@ -935,6 +940,7 @@ async def restore_snapshot(
         img.subfolder = state.subfolder
         img.nsfw_score = state.nsfw_score
         img.aesthetic_score = state.aesthetic_score
+        img.aesthetic_model = state.aesthetic_model
         img.blur_score = state.blur_score
         img.noise_score = state.noise_score
         img.uniformity_score = state.uniformity_score

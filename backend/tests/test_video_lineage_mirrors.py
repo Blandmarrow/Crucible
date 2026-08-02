@@ -58,6 +58,19 @@ LINEAGE = ("source_video_id", "source_timestamp_ms", "source_shot_index")
 # score is covered the moment it is added.
 SCORE_COLUMNS = {c.key for c in Image.__table__.columns if c.key.endswith("_score")}
 
+# Columns that *qualify* a score without being one — they say something about how
+# a score should be read, so a rebuild path that carries the number and drops
+# these presents it under the wrong terms. `aesthetic_model` is the first: a
+# LAION score inherited under a "v2_5" marker is worse than no marker at all,
+# because two consumers act destructively on the value and one of them deletes
+# images. They cannot be found by the `*_score` suffix, so they announce
+# themselves in the column's own `info` — a new one is enrolled by declaring
+# `info={"qualifies": "<score column>"}` on the model and nothing else.
+SCORE_QUALIFIERS = {c.key for c in Image.__table__.columns if "qualifies" in c.info}
+
+# What every field-by-field rebuild path must carry.
+CARRIED_COLUMNS = SCORE_COLUMNS | SCORE_QUALIFIERS
+
 # Columns that live on `Image` and deliberately have no `VersionImageState`
 # counterpart. Every entry needs a reason, because the default answer for a new
 # column is "mirror it" — a snapshot restore writes back exactly what the mirror
@@ -268,14 +281,41 @@ def test_every_rebuild_path_carries_every_score():
     mismatched: dict[str, dict[str, str]] = {}
     for label, kwargs in _score_carriers().items():
         carried = {k: src for k, src in kwargs.items() if src}
-        gone = sorted(SCORE_COLUMNS - set(carried))
+        gone = sorted(CARRIED_COLUMNS - set(carried))
         if gone:
             missing[label] = gone
-        wrong = {k: src[1] for k, src in carried.items() if k in SCORE_COLUMNS and src[1] != k}
+        wrong = {k: src[1] for k, src in carried.items() if k in CARRIED_COLUMNS and src[1] != k}
         if wrong:
             mismatched[label] = wrong
     assert not missing, f"score columns dropped by a rebuild path: {missing}"
     assert not mismatched, f"score columns copied from the wrong attribute: {mismatched}"
+
+
+def test_every_score_qualifier_names_a_real_score_column():
+    """`info={"qualifies": "aesthetic_score"}` is the whole enrolment mechanism,
+    so a typo in it silently un-enrols the column from the guard above rather
+    than failing anywhere."""
+    bad = {
+        c.key: c.info["qualifies"]
+        for c in Image.__table__.columns
+        if "qualifies" in c.info and c.info["qualifies"] not in SCORE_COLUMNS
+    }
+    assert not bad, (
+        f"these columns qualify something that is not a score column: {bad} "
+        f"(known scores: {sorted(SCORE_COLUMNS)})"
+    )
+    # A qualifier that *is* a score would be enrolled twice and, worse, seeded
+    # with a float by the behavioural helpers below.
+    assert SCORE_QUALIFIERS.isdisjoint(SCORE_COLUMNS)
+    # …and the filter above passes *vacuously* on an empty set, which is exactly
+    # what an `info=` dropped in passing (adding `index=True`, say) produces:
+    # `CARRIED_COLUMNS` collapses back to `SCORE_COLUMNS` and
+    # `test_every_rebuild_path_carries_every_score` stops guarding the marker,
+    # with the whole suite still green. So the known members are named.
+    assert "aesthetic_model" in SCORE_QUALIFIERS, (
+        "aesthetic_model lost its info={'qualifies': ...} on backend/models/image.py, "
+        "which silently un-enrols it from test_every_rebuild_path_carries_every_score"
+    )
 
 
 def test_not_mirrored_has_no_stale_entries():

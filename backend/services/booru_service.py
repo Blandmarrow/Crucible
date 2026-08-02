@@ -58,7 +58,12 @@ async def search_safebooru(query: str, limit: int = 20) -> list[dict]:
 
 
 async def search_gelbooru(query: str, limit: int = 20, api_key: str = "", user_id: str = "") -> list[dict]:
-    cache_key = f"gelbooru:{query}:{limit}"
+    # Namespaced by *whether* the request is authenticated, not by which credentials: a key
+    # changes the rate limit, not the response content, so distinguishing key-A from key-B
+    # buys nothing, and a raw credential in a process-global dict key would survive into any
+    # future debug dump. The flag alone fixes the real symptom — without it, saving a key in
+    # Settings served the stale anonymous entry for five minutes and the save looked broken.
+    cache_key = f"gelbooru:{int(bool(api_key and user_id))}:{query}:{limit}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached

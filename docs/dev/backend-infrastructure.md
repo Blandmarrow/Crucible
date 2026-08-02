@@ -18,6 +18,21 @@ This file covers production frontend serving, server shutdown/restart control, d
 
 `backend/tests/test_spa_fallback_containment.py` pins both. Note it drives the second one through a hand-built ASGI scope rather than the httpx client: httpx parses `//foo` as a URL *authority* and never sends it as a path, so an httpx-based test for that vector passes against the unguarded handler and proves nothing. uvicorn applies no such reinterpretation. The module skips when `frontend/dist` is absent, since `main.py` registers the whole block only when it exists.
 
+### App-level exception handlers
+
+Two `@app.exception_handler` registrations sit in `backend/main.py` between the CORS middleware and the router includes. Both are app-level for the same reason: the exposure they close belongs to a *class* of route, not to one route, and a per-route defence is a rule every future route has to remember.
+
+| Exception | Answer | Why here |
+|---|---|---|
+| `utils.FileInUseError` | 409 with the message as `detail` | Every site adopting `utils.unlink_retrying`/`rename_retrying` inherits the translation, including the `filesystem.py` routes that are not converted yet. 409 not 500 — the request was well-formed and a later retry can work. See CLAUDE.md § *A file the app is still serving...* and `docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md` |
+| `RequestValidationError` | 422 with `input` and `ctx` stripped from every error entry | FastAPI's default handler returns pydantic's entries verbatim, and pydantic puts the value it *refused* in `input` — so a rejected secret came back in the response body |
+
+**The 422 redaction.** `PATCH /settings/secrets` with an over-long `hf_token` echoed the submitted token, directly contradicting the property `docs/dev/settings.md` § API Keys states and `test_settings_secrets.py` asserts. `POST`/`PATCH /providers` had the same shape via `OpenAIProviderCreate/Update.api_key`. Stripping `input` (and `ctx`, which carries the same value for some error types) makes "the plaintext appears in no response" a property of the app rather than of the paths someone remembered to check.
+
+Nothing is lost by the strip: pydantic renders a `value_error` as `"Value error, "` + the `ValueError`'s own text and a constraint failure as `"String should have at most 500 characters"`, so `msg` already restates what `ctx` held, and `loc` still names the field — which is all `frontend/src/utils/apiError.ts` reads (it dispatches on the *shape* of `detail`, never on the status). `jsonable_encoder` is required and matches FastAPI's own default: `loc` arrives as a tuple, and a couple of entries are hand-built outside pydantic. The one cost is that a test passing `r.text` as a pytest failure message no longer prints the rejected value.
+
+Scope is rejected *values* only. A secret reaching a 500 traceback or a log line is a different exposure and neither handler touches it.
+
 ### Server control endpoints
 
 Three endpoints are registered directly in `backend/main.py` (not via a router), immediately before the frontend-serving block:

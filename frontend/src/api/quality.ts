@@ -4,6 +4,11 @@ export interface DuplicateImage {
   id: string;
   filename: string;
   aesthetic_score: number | null;
+  /** Which model produced `aesthetic_score`: "laion" | "v2_5" (or a future
+   *  `head:{uuid}`). Non-null exactly when the score is. Two markers inside one
+   *  group mean two non-comparable scales, and *Keep best* — which deletes —
+   *  must refuse rather than rank across them. */
+  aesthetic_model: string | null;
   updated_at: string;
   created_at: string;
   /** True for the one image in the group the scan kept — the group's first
@@ -25,12 +30,59 @@ export interface DuplicateImage {
 
 export type DuplicateGroup = DuplicateImage[];
 
+/** What produced the style scores currently stored in a dataset.
+ *
+ *  One per dataset, overwritten by every successful run — so it describes the
+ *  values in `style_similarity_score` right now, not a history. Null on a dataset
+ *  scored before run tracking existed, and on a clone (`duplicate_dataset` does
+ *  not carry it, because the reference ids would point at the source dataset's
+ *  images). */
+export interface StyleRunDescriptor {
+  /** "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers" —
+   *  read through `styleModeLabel`, which renders an unknown value verbatim. */
+  embedding_type: string;
+  dino_layer: number | null;
+  /** Capped at 64 server-side; `reference_count` is the true number. Deliberately
+   *  not kept in sync with `images`, so an id here may no longer resolve. */
+  reference_image_ids: string[];
+  reference_count: number;
+  external_reference_count: number;
+  scored_count: number;
+  skipped_count: number;
+  /** Non-null when the run covered a selection rather than the whole dataset, in
+   *  which case the rest of the dataset still carries scores from an earlier run
+   *  this descriptor does not describe. */
+  scoped_image_count: number | null;
+  updated_at: string | null;
+}
+
+/** The dataset's style-score distribution — what makes one raw cosine readable.
+ *
+ *  `quantiles` holds 21 breakpoints, every 5th percentile, ascending, with q0 and
+ *  q100 exactly min and max. It is empty when nothing is scored, and may repeat
+ *  values when fewer images are scored than there are breakpoints; `percentileOf`
+ *  handles both. Dataset-wide and never subfolder-scoped, so one image reads the
+ *  same in every pane. */
+export interface StyleDistribution {
+  scored: number;
+  total: number;
+  quantiles: number[];
+  quantile_step: number;
+  run: StyleRunDescriptor | null;
+}
+
 export const qualityApi = {
   score: (params: {
     dataset_id: string;
     subfolder?: string;
     image_ids?: string[];
     run_aesthetic: boolean;
+    /** Which model writes `aesthetic_score`. Omitted = "laion", matching the
+     *  server default; an unknown value is a 422. */
+    aesthetic_model?: "laion" | "v2_5";
+    /** Re-score only rows a *different* model already scored. Never-scored rows
+     *  are excluded — plain scoring covers those. */
+    only_mismatched?: boolean;
     run_technical: boolean;
     run_watermark?: boolean;
     run_embeddings?: boolean;
@@ -39,7 +91,22 @@ export const qualityApi = {
     run_nsfw?: boolean;
     label?: string;
   }) =>
-    client.post<{ job_id: string; total: number }>("/quality/score", params).then((r) => r.data),
+    // `job_id` is null with a `message` when the scope matched no images — the
+    // ordinary answer for a re-score offer whose mismatch count raced to zero,
+    // not an error.
+    client
+      .post<{ job_id: string | null; total?: number; message?: string }>("/quality/score", params)
+      .then((r) => r.data),
+
+  /** Per-model aesthetic coverage within one subfolder scope. `by_model` sums to
+   *  `scored`: every stored score carries a marker. */
+  aestheticCoverage: (dataset_id: string, subfolder?: string) =>
+    client
+      .get<{ scored: number; unscored: number; by_model: Record<string, number> }>(
+        `/quality/aesthetic-coverage/${dataset_id}`,
+        { params: subfolder ? { subfolder } : undefined },
+      )
+      .then((r) => r.data),
 
   /** Groups are led by the image the scan kept (`kept: true`); the rest are the
    *  removable copies, in `created_at` order. See `get_duplicates`. */
@@ -70,4 +137,10 @@ export const qualityApi = {
     dino_layer?: number;
   }) =>
     client.post<{ updated: number; skipped: number }>("/quality/style-similarity", params).then((r) => r.data),
+
+  /** The dataset's style-score distribution plus its run descriptor. An unknown
+   *  dataset returns an empty payload rather than 404 — the caller is a gallery
+   *  card, not a navigation. */
+  styleDistribution: (dataset_id: string) =>
+    client.get<StyleDistribution>(`/quality/style-similarity/${dataset_id}`).then((r) => r.data),
 };

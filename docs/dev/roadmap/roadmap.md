@@ -30,7 +30,6 @@ three threads and deletes the entire new-score-column checklist for the head its
 
 | # | Stage | Depends on | Notes |
 |---|---|---|---|
-| 0 | **Phase 0 gate** (§4) | — | No code. Its scope shrank; see §4. |
 | 1 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
 | 2 | **Aesthetic model picker** (§2) | — | Marker layer + V2.5. Independent of §1. |
 | 3 | **The learned head** (§3) | 1, 2 | The expensive one. |
@@ -269,8 +268,12 @@ meaning.
   and the frontend renders it bucketed into the same four words as authored ratings, marked
   as predicted. One stored number, one vocabulary. Predicted ratings are shown in the
   Gallery **by default**.
-- **Embeddings**: start with what is already cached — DINOv2-base and CLIP. The three
-  existing `embedding_type` modes give a free A/B. Do **not** add SigLIP embeddings for v1.
+- **Embeddings**: start with what is already cached — DINOv2-base and CLIP. Do **not** add
+  SigLIP embeddings for v1. An earlier draft claimed the three existing `embedding_type`
+  modes give a free three-way A/B; the Phase 0 gate measured them and they do not —
+  `combined` is DINOv2 with a slight CLIP tilt (Spearman ρ 0.98, 18 of 20 top images
+  shared). **CLIP vs DINOv2 is the only real axis**, and it is a two-way A/B. See
+  `docs/dev/image-similarity.md` § What the modes are actually worth.
 - **Scope**: a global base head plus optional per-dataset overrides. An override **wins
   outright** where it exists (a hard switch, chosen for predictability). Because that lets a
   head fit from 300 ratings outrank one fit from 1,200, the heads table must show each
@@ -312,23 +315,6 @@ Four tiles, three of which are nearly free:
 
 `source_video_id` is an indexed FK that already means "same shot", which is the spec's
 `source_group` constraint at no cost.
-
-## 4. Phase 0 gate — still unrun, now narrower
-
-`compute_style_similarity` in `backend/ml/similarity_scorer.py` **is** the spec's centroid
-baseline, step for step: stack references → mean → L2-renormalise → cosine. Embeddings are
-already L2-normalised at store time in both `aesthetic_scorer.py` and `dino_scorer.py`. It is
-exposed at `POST /quality/style-similarity`, writes `style_similarity_score`, is indexed, and
-has a reference-picker UI on QualityPage.
-
-**The gate**: surface top-20 and bottom-20 by that score, in all three embedding modes
-(`dino`, `clip`, `combined`), and judge whether the ordering matches the user's sense of
-style quality.
-
-Its scope shrank on 2026-08-02. It no longer decides whether to build the feature — stage 1
-is worth having regardless, and the head's target is *aesthetic quality*, not style match.
-It now answers the narrower question of whether the existing baseline already handles
-**style** matching well enough that style never needs a head of its own. Still free.
 
 ## 5. DINOv3 — deferred, opt-in only
 

@@ -762,17 +762,35 @@ export default function QualityPage() {
                 <h4>Action</h4>
                 <p>Score writes <span className="mono">style_similarity_score</span> per image. CPU-only, runs immediately.</p>
               </div>
-              <button
-                className="btn primary"
-                onClick={() => similarityMutation.mutate()}
-                disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                  <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
-                </svg>
-                Score similarity
-                {(selectedRefIds.size + externalRefFiles.length) > 0 && ` · ${selectedRefIds.size + externalRefFiles.length} refs`}
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  className="btn primary"
+                  onClick={() => similarityMutation.mutate()}
+                  disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
+                  </svg>
+                  Score similarity
+                  {(selectedRefIds.size + externalRefFiles.length) > 0 && ` · ${selectedRefIds.size + externalRefFiles.length} refs`}
+                </button>
+                {/* The picker's selection is React state and the ids are never rendered, so
+                    an offline harness has no way to receive them. Dataset refs only —
+                    dragged-in local files have no image id to copy. */}
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const ids = Array.from(selectedRefIds).join(",");
+                    navigator.clipboard.writeText(ids)
+                      .then(() => toast.success(`Copied ${selectedRefIds.size} reference ID${selectedRefIds.size === 1 ? "" : "s"}`))
+                      .catch(() => toast.error("Could not copy to the clipboard"));
+                  }}
+                  disabled={selectedRefIds.size === 0}
+                  title="Copy the selected dataset reference image IDs as a comma-separated list"
+                >
+                  Copy reference IDs
+                </button>
+              </div>
             </div>
           </div>
         )}

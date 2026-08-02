@@ -69,9 +69,10 @@ compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it
 
 A collapsible section at the bottom of the page scores how close each image is to a set of reference images — the tool for keeping a training set stylistically consistent. Because it compares embeddings that already exist, it is CPU-only and runs immediately rather than queueing a job.
 
-- **Embedding model** — *CLIP* for general images, *DINOv2* for object-shape similarity, or *CLIP + DINOv2* to blend both (0.38 × CLIP + 0.62 × DINOv2). All require the matching embeddings to have been computed first.
-- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. *Final* uses the standard embedding; the rest require per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view.
+- **Embedding model** — *CLIP* for general images, *DINOv2* for object-shape similarity, or *CLIP + DINOv2* to blend both (0.38 × CLIP + 0.62 × DINOv2). All require the matching embeddings to have been computed first. **Start with CLIP**: when this was measured against a deliberately out-of-style control set, CLIP matched the *look* — lighting and palette — most closely, while DINOv2 leaned toward subject and framing and ranked differently-lit shots of the same character highly.
+- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. *Final* uses the standard embedding; the rest require per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view. Layers below about 10 pack every image into a very narrow score range (0.90–0.99 in testing), so they are hard to filter on even when the ordering is sensible — prefer the final layer unless you are exploring.
 - **Reference images** — pick them from the dataset, or drag in local files from outside it. Local files are always embedded with CLIP, so choosing them restricts the run to the CLIP model.
+- **Copy reference IDs** — beside *Score similarity*, copies the selected dataset references' image IDs to the clipboard as a comma-separated list, for pasting into a script or an API call. Dragged-in local files have no ID and are not included.
 
 Scoring writes a `style_similarity_score` per image, which the gallery and Statistics page can then filter and chart on.
 
@@ -81,7 +82,7 @@ Scoring writes a `style_similarity_score` per image, which the gallery and Stati
 |---|---|
 | `clip` | Cosine similarity of CLIP ViT-L-14 embeddings |
 | `dino` | Cosine similarity of DINOv2 final-layer (or any of 12 layers) embeddings |
-| `combined` | Weighted blend: 38% CLIP + 62% DINOv2 — best overall style consistency signal |
+| `combined` | Weighted blend: 38% CLIP + 62% DINOv2. Tracks `dino` closely rather than giving a genuinely third opinion |
 | `dino_all_layers` / `combined_all_layers` | Score each of the 12 DINOv2 layers independently and store all results |
 
 ## Quality flags

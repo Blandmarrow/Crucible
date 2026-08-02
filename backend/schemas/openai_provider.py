@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
-from backend.schemas import UtcDatetime
+from backend.schemas import UtcDatetime, mask_secret
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
@@ -57,8 +57,7 @@ class OpenAIProviderOut(BaseModel):
 
     @classmethod
     def from_orm_row(cls, row: object) -> "OpenAIProviderOut":
-        key: str = getattr(row, "api_key", "") or ""
-        masked = ("*" * max(0, len(key) - 4) + key[-4:]) if len(key) > 4 else ("*" * len(key))
+        masked = mask_secret(getattr(row, "api_key", ""))
         return cls(
             id=row.id,
             name=row.name,

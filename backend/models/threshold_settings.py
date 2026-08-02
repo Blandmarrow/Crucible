@@ -20,3 +20,11 @@ class ThresholdSettings(Base):
     auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
+
+    # Secrets, editable from Settings -> API Keys. The column names MUST equal the
+    # backend.config.Settings field names of the same secrets: secrets_service uses one
+    # `field` string for both getattr(row, field) and getattr(settings, field). ""
+    # is the not-set sentinel (never NULL) and means "inherit the .env/OS-env value".
+    hf_token: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    gelbooru_api_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+    gelbooru_user_id: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")

@@ -202,9 +202,14 @@ class ModelManager:
     ) -> ModelEntry:
         import torch
         from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
-        from backend.config import settings
         from backend.ml.download_progress import emit_sync, is_hf_cached, progress_tqdm_patch
 
+        # PaliGemma-2 is a gated repo and needs a HuggingFace token. It is not passed here:
+        # like the other eight loaders in this codebase, it relies on the ambient HF_TOKEN
+        # environment variable, which services/secrets_service.py::sync_env writes from the
+        # .env chain at import and from the DB at startup and on every Settings -> API Keys
+        # save. Passing token= as well would mean the DB->runtime path had to be correct in
+        # two mechanisms, only one of which the other loaders exercise.
         model_name = "google/paligemma2-3b-pt-448"
         logger.info("Loading %s...", model_name)
 
@@ -219,7 +224,6 @@ class ModelManager:
         self._evict_lru(6000)
 
         vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
-        tok_kwargs = {"token": settings.hf_token} if settings.hf_token else {}
         _pg_dtype = _device.safe_dtype_for_device(torch.bfloat16)
         _active_device = _device.get_device()
 
@@ -227,15 +231,15 @@ class ModelManager:
         # layers on CUDA device 0. It does not work on MPS or CPU — load without
         # it on those backends and move the model manually after from_pretrained.
         if _active_device == "cuda":
-            kwargs: dict = {"torch_dtype": _pg_dtype, "device_map": "cuda", **tok_kwargs}
+            kwargs: dict = {"torch_dtype": _pg_dtype, "device_map": "cuda"}
         else:
-            kwargs = {"torch_dtype": _pg_dtype, **tok_kwargs}
+            kwargs = {"torch_dtype": _pg_dtype}
 
         processor = None
         model = None
         try:
             with progress_tqdm_patch(job_id, loop, f"Downloading {model_name}...", dataset_id):
-                processor = AutoProcessor.from_pretrained(model_name, **tok_kwargs)
+                processor = AutoProcessor.from_pretrained(model_name)
                 model = PaliGemmaForConditionalGeneration.from_pretrained(model_name, **kwargs)
             if _active_device != "cuda":
                 model = model.to(_active_device)

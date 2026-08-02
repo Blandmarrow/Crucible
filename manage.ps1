@@ -619,7 +619,8 @@ function Cmd-Setup {
     if (-not (Test-Path "$ROOT\.env")) {
         Copy-Item "$ROOT\.env.example" "$ROOT\.env"
         Write-Host ""
-        Write-Host "  Created .env from .env.example. Edit it to add your HF_TOKEN if you plan to use PaliGemma-2." -ForegroundColor Yellow
+        Write-Host "  Created .env from .env.example. Edit it to add your HF_TOKEN if you plan to use PaliGemma-2," -ForegroundColor Yellow
+        Write-Host "  or set it later from Settings -> API Keys in the running app." -ForegroundColor Yellow
     }
 
     Warn-IfCpuOnlyTorch

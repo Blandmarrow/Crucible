@@ -45,8 +45,13 @@ from backend.config import settings
 from backend.database import init_db
 from backend.utils import FileInUseError
 
-if settings.hf_token:
-    os.environ.setdefault("HF_TOKEN", settings.hf_token)
+# Project the .env/OS-env HF_TOKEN into the process environment, where the eight HuggingFace
+# loaders that pass no token= will find it. Stays here, between the config and router
+# imports, so it applies in contexts that never run the lifespan (notably conftest.api_env).
+# row=None means "DB not consulted"; the lifespan re-runs this against the DB below.
+from backend.services.secrets_service import sync_env
+
+sync_env(None)
 from backend.routers import booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
@@ -58,6 +63,7 @@ _background_tasks: set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
+    await _seed_secret_env()
     await mark_interrupted_jobs()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
@@ -69,6 +75,23 @@ async def lifespan(app: FastAPI):
     _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
     await job_queue.stop()
+
+
+async def _seed_secret_env() -> None:
+    """Re-project HF_TOKEN from the DB, so a token saved in Settings survives a restart.
+
+    Must run after init_db() — the DB has to exist to be read — and is awaited rather than
+    fired-and-forgotten, since a model load must not race it. One indexed single-row read.
+    Never fatal: a failure here leaves the .env value that import time already projected.
+    """
+    from backend.database import AsyncSessionLocal
+    from backend.services.secrets_service import sync_env_from_db
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await sync_env_from_db(session)
+    except Exception:
+        logging.getLogger(__name__).exception("Secret environment seeding failed")
 
 
 async def _startup_db_maintenance() -> None:

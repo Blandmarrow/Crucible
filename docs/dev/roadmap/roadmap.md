@@ -3,7 +3,9 @@
 Scoped in design sessions on 2026-08-01 and 2026-08-02, not yet implemented. The 2026-08-02
 session collapsed what were three separate threads (V2.5, the marker layer, the learned
 style head) into **one feature shipping in three stages**, and added a manual rating column
-that was in none of them. Two threads remain independent: DINOv3 (§5) and the token UI (§6).
+that was in none of them. One thread remains independent: DINOv3 (§5). The token UI (§6)
+**shipped on 2026-08-02** and its section is deleted per the lifecycle rule below; its
+durable rationale now lives in `docs/dev/settings.md` § API Keys tab.
 
 **Lifecycle**: this file is transient, like the video arc's `roadmap.md` (retired in
 `dd53b13`) and the detection/SAM 3 roadmap (retired in `f31a9dc`). When a stage lands, move
@@ -28,17 +30,32 @@ three threads and deletes the entire new-score-column checklist for the head its
 
 ## Sequencing
 
-| # | Stage | Depends on | Notes |
-|---|---|---|---|
-| 1 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
-| 2 | **Aesthetic model picker** (§2) | — | Marker layer + V2.5. Independent of §1. |
-| 3 | **The learned head** (§3) | 1, 2 | The expensive one. |
-| — | Token UI (§6) | — | Small, self-contained, unblocks gated models. |
-| — | DINOv3 (§5) | 2, 6 | Lowest priority, still deferred. |
+**Section numbers are stable identities, not an order.** Everything below refers to a piece
+of work as §N, and those numbers never move; the build order is this table alone, set on
+2026-08-02.
 
-Stage 1 leads because it is a hard prerequisite for stage 3 *and* stands on its own: if it
-turns out nobody rates anything, that is discovered for the price of a column rather than
-after building a trainer.
+| Order | Stage | Depends on | Notes |
+|---|---|---|---|
+| ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
+| 2 | **Aesthetic model picker** (§2) | — | Marker layer + V2.5. Independent of §1. |
+| 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
+| 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
+| — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
+
+**§6 led on a code reason, not just its size**, and that reason is now settled: it removed
+the last reader of `settings.hf_token` inside `backend/ml/model_manager.py`. §2 adds new
+model-loading code to that same module, and it now inherits a module with **no** HF-token
+plumbing at all — `_load_paligemma2_sync` passes no `token=` and, like the other eight
+loaders, relies on the ambient `HF_TOKEN` that `services/secrets_service.py::sync_env`
+maintains. A new loader in §2 should do the same and read nothing from the singleton.
+(One assumption in the original §6 was wrong and is worth not repeating: the `settings`
+singleton is **not** frozen — it is a plain mutable pydantic instance. Nothing may assign to
+it, but that is a chosen invariant, not something the type enforces.)
+
+**§1 no longer leads, but its own argument is unchanged**: it is a hard prerequisite for §3
+*and* stands alone, so if it turns out nobody rates anything, that is discovered for the
+price of a column rather than after building a trainer. Nothing in §2 touches the rating
+column, so moving it third costs it nothing.
 
 ## Decisions overturned on 2026-08-02
 
@@ -54,7 +71,8 @@ Recorded so they are not reintroduced by someone reading an older draft:
   head's output whether or not anyone wires them. The protection moves from the column to
   the consumer — see § The marker is a safety device.
 - **Pairwise labeling is cut.** Tier sort only; see § Why tier sort.
-- **Scope is global-with-override**, not per-dataset.
+- **Scope is global-with-override**, not per-dataset. This was decided about §3's *head*;
+  §2's model selection was never covered by it — see § Still open.
 - **Labeling is not the expensive part any more.** The previous estimate ("an 800-pair
   labeling UI, likely more work than everything else combined") assumed pairwise. Tier sort
   over a rating column that already exists is a fraction of it.
@@ -115,7 +133,7 @@ Cheap to get wrong twice, so recorded explicitly.
   of this file asserted. Per *decision* the two are comparable. The real argument for tier
   sort is information per decision, not speed — see § Why tier sort.
 
-## 1. Stage 1 — the rating column
+## 1. The rating column — third
 
 Read `docs/dev/gallery.md`, `docs/dev/image-filters.md`, `docs/dev/bulk-ops.md`,
 `docs/dev/export.md` and `docs/dev/versioning-service.md`.
@@ -168,7 +186,7 @@ and the export is 89% short of what was meant. This is precisely the failure the
 own population against the unrated count *before* it runs ("214 match · 1,715 unrated and
 therefore excluded"), not that the filter is withheld.
 
-## 2. Stage 2 — the aesthetic model picker
+## 2. The aesthetic model picker — second
 
 Read `docs/dev/scoring.md` and `docs/dev/ml-models.md`.
 
@@ -204,7 +222,7 @@ Since no carve-out is available, every consumer that discards or deletes must re
 marker and refuse or warn on a mixed set. The StatsPage histogram and gallery sort are the
 benign consumers and need only to render the marker.
 
-## 3. Stage 3 — the learned head
+## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
 embeddings). Read `docs/dev/image-similarity.md`, `docs/dev/scores-stale.md` and
@@ -218,8 +236,7 @@ under a single dataset. The per-dataset half is the picker from §2, a panel on 
 Score images page. One new routed page, not two; note the *seventh* site in
 `docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
 
-The page exists from stage 1 (rating queue, history, bulk work) and grows a **Train** tab in
-stage 3.
+The page exists from §1 (rating queue, history, bulk work) and grows a **Train** tab in §3.
 
 ### Why tier sort
 
@@ -340,55 +357,17 @@ Touchpoints when it happens: `model_name` in `backend/ml/model_manager.py`,
 `docs/dev/image-similarity.md`, the scorer row in `docs/dev/scoring.md`, and the
 DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spec.ts`.
 
-## 6. Token management UI
-
-Read `docs/dev/settings.md`. This is the smallest thread and has an exact in-repo precedent.
-
-**Decided — precedence**: DB value wins when non-empty, otherwise fall back to the existing
-OS-env/`.env` chain. Conventional 12-factor says env beats everything; that is wrong here,
-because a token typed into a field being silently overridden by an env var is the most
-confusing possible failure. Show the source in the UI ("inherited from `.env`") so precedence
-is readable rather than remembered.
-
-**Decided — empty means inherit, not "no token."** Clearing the field stops overriding; it
-does not blank the token. This matches the house convention: `CLAUDE.md`'s provenance rule
-has `resolve_provenance` coalesce on *falsiness*, so `""` means inherit there too.
-
-**Decided — scope**: `hf_token`, `gelbooru_api_key`, `gelbooru_user_id`. Not
-`ollama_base_url` or `max_vram_mb` — those are not secrets and do not want masked handling.
-
-**Decided — no encryption at rest**, plus one line of honest copy. Encrypting with the key
-beside the ciphertext is theatre, and the DB already holds provider API keys in plaintext.
-
-Implementation notes:
-
-- `ThresholdSettings` is the sanctioned home — `docs/dev/settings.md` states it is the
-  catch-all single-row table for app-wide server-side settings.
-- Copy `OpenAIProviderOut`'s masked-out / write-only shape exactly.
-- `settings` is a frozen import-time singleton, so `settings.hf_token` cannot see a DB
-  change. Read through a service accessor, as `threshold_service.get_thresholds()` does.
-- On save, use `os.environ["HF_TOKEN"] = value` — **assignment**, not `setdefault`, which
-  will not overwrite what `backend/main.py` already put there. New downloads then pick it up
-  with no restart.
-- **Clearing is the awkward path**: it must actively restore the `.env`/env-var value, or
-  the override lingers in the process until a restart. Worth a test.
-- **Pin the mask-echo case in a test.** If the form round-trips `api_key_masked` into a
-  PATCH, the literal asterisks are saved as the token and it fails invisibly.
-  `OpenAIProviderUpdate` dodges this via `exclude_none=True` plus null-for-unchanged.
-
-Security context: the API is unauthenticated and binds `0.0.0.0`, so this is a new
-LAN-writable surface. It does not make things worse — `GET /filesystem/list` already takes an
-arbitrary path and `/roots` enumerates drives, so `.env` is already reachable, and the
-provider tab already accepts LAN-writable keys. Masked-read plus write-only is strictly
-better than a plaintext GET.
-
-User-facing docs are part of this change, per `CLAUDE.md`: `README.md` currently documents
-`HF_TOKEN=hf_...` in `.env`, and `docs/dev/settings.md` says the page has seven tabs.
-
 ## Still open
 
-Carried forward from the 2026-08-02 session; none blocks stage 1.
+The first blocks §2 and so is now the nearest open question; the rest are carried forward
+from the 2026-08-02 session and none of them blocks §2 or §1.
 
+- **Where the aesthetic model selection lives.** §2 says a quality run with "Aesthetic"
+  checked runs *the dataset's* selected model, while § Decisions overturned settles scope as
+  global-with-override. That decision was taken about §3's head, so §2 needs its own answer —
+  and it is what the marker migration and the per-model `score_coverage` shape hang off.
+  Default to matching §3 (a global selection with an optional per-dataset override) so the
+  two stages share one scope concept rather than teaching the user two.
 - How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
   per-user or per-install? Larger is more stable and costs re-rating it every session.
 - Restoring an old snapshot reinstates ratings as of that snapshot, overwriting any given
@@ -400,7 +379,9 @@ Carried forward from the 2026-08-02 session; none blocks stage 1.
 
 - A stem-keyed weights cache file named for a model it does not contain (§2).
 - Two embedding spaces sharing a byte-identical blob size (§5).
-- A masked secret echoed back as its own new value (§6).
+- A masked secret echoed back as its own new value (§6, shipped) — closed structurally
+  rather than by convention: the read shape nests (`{masked, source}`) while the write shape
+  is plain strings, so echoing a GET into a PATCH is a **422**, not a silent save.
 - **Reusing `scores_stale` for ratings** (§1) — different clear predicates, so a routine
   re-score would mark stale ratings trustworthy.
 - **Synthetic pairs counted at face value** (§3) — 800 tier decisions yield ~128,000 pairs

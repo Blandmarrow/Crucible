@@ -588,7 +588,8 @@ cmd_setup() {
         cp "$ROOT/.env.example" "$ROOT/.env"
         echo ""
         echo "  Created .env from .env.example."
-        echo "  Edit it to add your HF_TOKEN if you plan to use PaliGemma-2."
+        echo "  Edit it to add your HF_TOKEN if you plan to use PaliGemma-2,"
+        echo "  or set it later from Settings -> API Keys in the running app."
     fi
 
     echo ""

@@ -17,6 +17,13 @@ DEFAULTS = dict(
     auto_rescan_on_open=False,
     comfyui_url="",
     comfy_workflow_dir="",
+    # Secrets: "" means "no DB override, inherit the .env/OS-env value". These belong in
+    # DEFAULTS even though "" is also the server_default, because get_thresholds builds a
+    # *transient* ThresholdSettings(**DEFAULTS) when no row exists, and an unset attribute
+    # on a transient object reads None rather than "".
+    hf_token="",
+    gelbooru_api_key="",
+    gelbooru_user_id="",
 )
 
 

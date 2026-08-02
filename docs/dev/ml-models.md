@@ -19,13 +19,13 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 
 **`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`) — evicts all ML models from VRAM without restarting. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Call after quality scoring so scoring models don't occupy VRAM when no longer needed.
 
-`HF_TOKEN` from `.env` is injected into `os.environ` early in `main.py` so all `hf_hub_download` calls pick it up automatically.
+`HF_TOKEN` is written into `os.environ` by `backend/services/secrets_service.py::sync_env`, its only writer, so every loader that passes no `token=` picks it up: early in `main.py` from the `.env`/OS-env chain, again in the lifespan from the DB, and on every `PATCH /settings/secrets`. A token saved in Settings → API Keys therefore applies to the next download with no restart — `huggingface_hub` re-reads the variable on every call. See `docs/dev/settings.md` § API Keys tab for the precedence rules.
 
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|
 | `florence2*` | `ml/florence_captioner.py` |
-| `paligemma2` | `ml/paligemma_captioner.py` (needs `HF_TOKEN` in `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448) |
+| `paligemma2` | `ml/paligemma_captioner.py` (gated: needs an `HF_TOKEN` from Settings → API Keys or `.env`; accept license at huggingface.co/google/paligemma2-3b-pt-448). `_load_paligemma2_sync` deliberately passes **no** `token=` — it reads the ambient env var like the other eight loaders, so the DB→runtime path has one mechanism rather than two |
 | `joycaption_alpha` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-alpha-two-hf-llava`; Llama 3.1 8B + SigLIP via `LlavaForConditionalGeneration`; ~17 GB VRAM; 12 styles; custom prompt supported) |
 | `joycaption_beta` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-beta-one-hf-llava`; Llama 3.1 8B + SigLIP2; otherwise identical to alpha) |
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
@@ -53,7 +53,7 @@ Two inference-adjacent sites deliberately stay outside `open_rgb`: `ml/lut_proce
 
 **Target resolution preprocessing**: `CaptionJobRequest` accepts optional `target_width` / `target_height`. When set, `ml/image_utils.py::preprocess_for_caption()` center-crops each image to the target aspect ratio and resizes it to the exact target resolution before inference. This ensures captions describe the composition the model will actually see at training time. All captioners (Florence-2, PaliGemma-2, JoyCaption, Ollama) call this utility; Ollama's existing `max_px` scale-down runs afterward on the already-cropped image. Omitting both fields leaves behavior unchanged.
 
-**Config validation** (`backend/config.py`): `@model_validator(mode="after")` enforces at startup: (1) `max_vram_mb < 1000` → `ValueError` (fail fast); (2) empty `hf_token` → debug-level warning (not hard error); (3) unrecognised `.env` keys → WARNING log; `extra="ignore"` retained so OS env vars are never flagged. `config.py` still declares `watermark_threshold` for legacy `.env` compatibility but the quality router reads all six flag thresholds (blur, noise, uniformity, watermark, duplicate, NSFW) from the `threshold_settings` DB table instead.
+**Config validation** (`backend/config.py`): `@model_validator(mode="after")` enforces at startup: (1) `max_vram_mb < 1000` → `ValueError` (fail fast); (2) an `hf_token` absent from the `.env`/OS-env chain → debug-level warning, worded to note it may still be set in Settings → API Keys, since the validator runs before any DB read and cannot see one saved there; (3) unrecognised `.env` keys → WARNING log; `extra="ignore"` retained so OS env vars are never flagged. `config.py` still declares `watermark_threshold` for legacy `.env` compatibility but the quality router reads all six flag thresholds (blur, noise, uniformity, watermark, duplicate, NSFW) from the `threshold_settings` DB table instead.
 
 **TorchDynamo is disabled** (`TORCHDYNAMO_DISABLE=1` set in `main.py`). Triton is unavailable on Windows and single-image inference gains nothing from `torch.compile`, so it is disabled for the entire process. Do not remove this without re-testing all ML inference paths on Windows.
 

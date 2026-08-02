@@ -242,6 +242,10 @@ GELBOORU_API_KEY=...      # Optional — Safebooru works without a key
 GELBOORU_USER_ID=...
 ```
 
+All three can also be set from **Settings → API Keys** once the app is running, with no
+restart. A key saved there takes precedence over the `.env` value; clearing it falls back.
+See [docs/settings.md](docs/settings.md).
+
 ---
 
 ## Usage

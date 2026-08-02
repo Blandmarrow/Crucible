@@ -34,6 +34,7 @@ import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
+import { invalidateDatasetContentScope } from "../constants/queryKeys";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -397,14 +398,7 @@ export default function GalleryPage() {
 
   useEffect(() => {
     if (!rescanJobId || rescanProgress?.status !== "completed") return;
-    qc.invalidateQueries({ queryKey: ["images", datasetId] });
-    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-    qc.invalidateQueries({ queryKey: ["datasets"] });
-    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    invalidateDatasetContentScope(qc, datasetId);
     // A rescan adopts clips out of videos/ too, and its toast reports the count.
     // Without this the header badge updates (it reads `dataset.video_count`) but
     // `VideoStrip` keeps its pre-rescan list for the 30 s staleTime — the page
@@ -440,14 +434,7 @@ export default function GalleryPage() {
 
   useEffect(() => {
     if (!importJobId || importProgress?.status !== "completed") return;
-    qc.invalidateQueries({ queryKey: ["images", datasetId] });
-    qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-    qc.invalidateQueries({ queryKey: ["datasets"] });
-    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    invalidateDatasetContentScope(qc, datasetId);
     // An import is a provenance writer: a scraper sidecar is the largest source
     // of new `other:` licenses, and they are unpickable until this refetches.
     qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });

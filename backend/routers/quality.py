@@ -735,12 +735,17 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/duplicates/resolve", status_code=204)
 async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(get_db)):
+    # Every `IN (...)` here is `chunked()`: the Quality page's bulk bar resolves
+    # every filtered group in one call, so `delete_ids` is a few thousand rows on
+    # a large dataset rather than the handful this endpoint was first written for.
     if body.delete_ids:
-        result = await db.execute(
-            select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
-            .where(Image.id.in_(body.delete_ids))
-        )
-        rows = result.all()
+        rows = []
+        for chunk in chunked(body.delete_ids):
+            result = await db.execute(
+                select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
+                .where(Image.id.in_(chunk))
+            )
+            rows.extend(result.all())
         dataset_ids = {r.dataset_id for r in rows}
         for did in dataset_ids:
             ensure_not_busy(did)
@@ -763,7 +768,8 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
             if t is not None:
                 files_to_delete.append(t)
 
-        await db.execute(delete(Image).where(Image.id.in_(body.delete_ids)))
+        for chunk in chunked(body.delete_ids):
+            await db.execute(delete(Image).where(Image.id.in_(chunk)))
         await db.commit()
 
         for f in files_to_delete:
@@ -772,9 +778,15 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         for did in dataset_ids:
             await refresh_stats(db, did)
 
-    for img_id in body.keep_ids:
-        img = await db.get(Image, img_id)
-        if img:
+    # One batched load per chunk rather than a `db.get` per id — a bulk resolve
+    # keeps one survivor per group, so this loop is as long as the group count.
+    # The copy-then-reassign stays exactly as it was: SQLAlchemy compares JSON
+    # columns by equality, so mutating `img.quality_flags` in place and
+    # reassigning the same dict skips the UPDATE (the CLAUDE.md invariant, pinned
+    # by `test_quality_flags_persistence_http.py`).
+    for chunk in chunked(body.keep_ids):
+        res = await db.execute(select(Image).where(Image.id.in_(chunk)))
+        for img in res.scalars().all():
             flags = dict(img.quality_flags or {})
             flags.pop("is_duplicate", None)
             flags.pop("duplicate_of", None)

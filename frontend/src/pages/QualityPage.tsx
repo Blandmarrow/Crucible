@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -15,6 +15,7 @@ import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 interface QualityWorkflow {
@@ -60,36 +61,137 @@ function sharedSourceVideo(group: DuplicateGroup): { id: string; name: string | 
   return { id: first, name: group[0].source_video_name };
 }
 
-/** A duplicate-group resolution held for the confirm dialog. */
-interface PendingResolve {
-  mode: "best" | "first";
-  keep: string[];
-  del: string[];
-  videoName: string | null;
-  timestamps: (number | null)[];
+/** Everything a group card and the bulk bar need, derived once per payload.
+ *
+ *  `rootId` is `group[0].id` — the scan's kept image, unique per group and stable
+ *  across refetches, so it serves as the React key *and* the expand key. The
+ *  array index would be neither.
+ */
+interface DupGroupMeta {
+  group: DuplicateGroup;
+  rootId: string;
+  shared: { id: string; name: string | null } | null;
+  anyScored: boolean;
+  anyLineage: boolean;
 }
 
-/** The confirm copy for a same-source resolution — written once for both buttons.
+/** Which groups the panel shows, and what the bulk buttons therefore cover.
+ *
+ *  A clean partition rather than overlapping predicates: every group is in
+ *  exactly one of `video` / `other`, so the two chip counts always sum to the
+ *  `all` count and a bulk run over each in turn touches every group once.
+ */
+type DupFilter = "all" | "video" | "other";
+
+/** A duplicate resolution held for the confirm dialog — one group or a bulk run.
+ *
+ *  Both variants carry `plans`: one ordered member array per group, where
+ *  `plans[i][0]` survives and the rest are deleted. That is exactly what the
+ *  mutation takes, so the two paths differ only in what the dialog says.
+ */
+type PendingResolve =
+  | {
+      kind: "group";
+      mode: "best" | "first";
+      plans: DuplicateImage[][];
+      videoName: string | null;
+      timestamps: (number | null)[];
+    }
+  | {
+      kind: "bulk";
+      mode: "best" | "first";
+      plans: DuplicateImage[][];
+      sameSource: number;
+      skipped: number;
+    };
+
+/** Total images a plan deletes — every member of every group but the survivor. */
+function plannedDeletions(plans: DuplicateImage[][]): number {
+  return plans.reduce((n, g) => n + g.length - 1, 0);
+}
+
+/** The confirm copy for a resolution — written once for all four buttons.
  *
  *  The hazard the dialog exists for — a held animation cel or recycled footage
  *  hashing identical to a redundant copy — is a property of the *group*, not of
  *  the ranking heuristic, so *Keep first* deletes exactly the same N−1 frames on
  *  one click and earns the same beat of friction. Only the survivor clause
- *  differs; a second hardcoded message block would drift the caveat.
+ *  differs; a second hardcoded message block would drift the caveat, and that
+ *  argument holds harder over 138 groups than over one.
  */
 function resolveConfirmCopy(p: PendingResolve): { title: string; message: string } {
-  const n = p.del.length;
   const survivor = p.mode === "best"
     ? "keeps the highest-scoring one"
     : "keeps the one the duplicate scan picked, which is not necessarily the best";
+  if (p.kind === "group") {
+    const n = plannedDeletions(p.plans);
+    return {
+      title: "Delete frames from one video?",
+      message:
+        `Every image in this group was extracted from ${p.videoName ?? "the same video"}. ` +
+        `This deletes ${n} frame${n === 1 ? "" : "s"} at ` +
+        `${p.timestamps.map((t) => formatFramePosition(t)).join(", ")} and ${survivor}. ` +
+        `Held animation cels and recycled footage hash the same as a redundant copy, so these may be distinct shots.`,
+    };
+  }
+  // Bulk always confirms, even with no same-source group among them: it is a
+  // many-image irreversible delete over groups the user has not read.
+  const groups = p.plans.length;
+  const n = plannedDeletions(p.plans);
+  let message =
+    `This deletes ${n} image${n === 1 ? "" : "s"} across ` +
+    `${groups} group${groups === 1 ? "" : "s"} and ${survivor} in each. This cannot be undone.`;
+  if (p.sameSource > 0) {
+    message +=
+      ` ${p.sameSource} of them ${p.sameSource === 1 ? "is" : "are"} made up entirely of frames from ` +
+      `one video — held animation cels and recycled footage hash the same as a redundant copy, ` +
+      `so those may be distinct shots.`;
+  }
+  if (p.skipped > 0) {
+    message +=
+      ` ${p.skipped} group${p.skipped === 1 ? "" : "s"} ` +
+      `${p.skipped === 1 ? "is" : "are"} skipped: nothing in ` +
+      `${p.skipped === 1 ? "it" : "them"} has an aesthetic score, so there is no best to keep.`;
+  }
   return {
-    title: "Delete frames from one video?",
-    message:
-      `Every image in this group was extracted from ${p.videoName ?? "the same video"}. ` +
-      `This deletes ${n} frame${n === 1 ? "" : "s"} at ` +
-      `${p.timestamps.map((t) => formatFramePosition(t)).join(", ")} and ${survivor}. ` +
-      `Held animation cels and recycled footage hash the same as a redundant copy, so these may be distinct shots.`,
+    title: `Resolve ${groups} duplicate group${groups === 1 ? "" : "s"}?`,
+    message,
   };
+}
+
+/** Groups per `resolveDuplicates` call in a bulk run.
+ *
+ *  Each group is independent, so partial application is coherent — this is not a
+ *  transaction that must land whole. Batching keeps the request bounded (the
+ *  endpoint's versioning hook copies bytes per deleted row when versioning is
+ *  on) and makes progress reportable.
+ */
+const RESOLVE_BATCH_GROUPS = 40;
+
+/** How many members of a big group are shown before the `+N more` toggle. */
+const DUP_COLLAPSE_AT = 10;
+
+/** Group cards rendered per page of the duplicates panel. */
+const DUP_PAGE_SIZE = 25;
+
+/** A bulk resolve that failed after some batches had already been applied.
+ *
+ *  Carries the batch count so the toast can say what survived rather than
+ *  reporting a bare error over work that partly succeeded.
+ */
+class PartialResolveError extends Error {
+  // Assigned in the body rather than declared as constructor parameter
+  // properties — `erasableSyntaxOnly` is on, and those are not erasable.
+  done: number;
+  total: number;
+  inner: unknown;
+  constructor(done: number, total: number, inner: unknown) {
+    super("duplicate resolution failed partway through");
+    this.name = "PartialResolveError";
+    this.done = done;
+    this.total = total;
+    this.inner = inner;
+  }
 }
 
 const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
@@ -152,12 +254,20 @@ export default function QualityPage() {
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set(filters.selectedRefIds));
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(filters.activeSubfolder ?? undefined);
-  // Pending resolution of a same-source group, held for the confirm dialog —
-  // from either button. Same-source only: refusing outright would break the
-  // legitimate case (two genuinely redundant frames from one shot) and push
-  // users to work around it in the gallery, so the fix is a beat of friction,
-  // not a block.
+  // Pending resolution held for the confirm dialog. Per-group: same-source only
+  // — refusing outright would break the legitimate case (two genuinely redundant
+  // frames from one shot) and push users to work around it in the gallery, so
+  // the fix is a beat of friction, not a block. Bulk: always.
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(null);
+  // Duplicates panel triage state — deliberately *not* persisted. It is
+  // ephemeral: which slice of groups you are working through right now, reset
+  // the moment the panel is refetched. Putting it in the dataset-scoped
+  // QUALITY_FILTERS blob would drag in the storage-key registry rules for no
+  // benefit.
+  const [dupFilter, setDupFilter] = useState<DupFilter>("all");
+  const [visibleGroups, setVisibleGroups] = useState(DUP_PAGE_SIZE);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -201,6 +311,10 @@ export default function QualityPage() {
     setActiveSubfolder(next.activeSubfolder ?? undefined);
     setShowStyleSection(next.showStyleSection);
     setSelectedRefIds(new Set(next.selectedRefIds));
+    // A new dataset is a new duplicates list — start at the top of it. The
+    // ephemeral triage state below rides along here rather than in an effect of
+    // its own, which would be a second `setState`-in-an-effect for one fact.
+    setVisibleGroups(DUP_PAGE_SIZE);
   }, [datasetId]);
 
   useEffect(() => {
@@ -266,12 +380,58 @@ export default function QualityPage() {
     onError: () => toast.error("Failed to start scoring"),
   });
 
+  // One mutation for both paths: a single-group resolve is a plan of one. It
+  // walks the plan in batches of RESOLVE_BATCH_GROUPS so a 138-group run is a
+  // handful of bounded requests with reportable progress, and a failure halfway
+  // reports what already landed instead of a bare error.
+  //
+  // `bulk` says who started the run, and only a bulk run writes `bulkProgress`:
+  // the label it drives sits on the two top-row buttons, so a single card's
+  // *Keep first* relabelling them `Resolving 0/1…` was a run claiming progress
+  // it does not own. Per-group buttons stay disabled by `resolveBusy`, which is
+  // a genuine busy state either way.
   const resolveMutation = useMutation({
-    mutationFn: ({ keep, del }: { keep: string[]; del: string[] }) => qualityApi.resolveDuplicates(keep, del),
-    onSuccess: () => {
+    mutationFn: async ({ plans, bulk }: { plans: DuplicateImage[][]; bulk: boolean }) => {
+      if (bulk) setBulkProgress({ done: 0, total: plans.length });
+      let done = 0;
+      for (let i = 0; i < plans.length; i += RESOLVE_BATCH_GROUPS) {
+        const batch = plans.slice(i, i + RESOLVE_BATCH_GROUPS);
+        try {
+          await qualityApi.resolveDuplicates(
+            batch.map((g) => g[0].id),
+            batch.flatMap((g) => g.slice(1).map((m) => m.id)),
+          );
+        } catch (err) {
+          throw new PartialResolveError(done, plans.length, err);
+        }
+        done += batch.length;
+        if (bulk) setBulkProgress({ done, total: plans.length });
+      }
+      return { groups: plans.length, images: plannedDeletions(plans) };
+    },
+    onSuccess: ({ groups, images }) => {
+      toast.success(
+        groups === 1
+          ? "Duplicates resolved"
+          : `Resolved ${groups} groups · ${images} image${images === 1 ? "" : "s"} deleted`,
+      );
+    },
+    onError: (err: unknown) => {
+      if (err instanceof PartialResolveError && err.done > 0) {
+        toast.error(`Resolved ${err.done} of ${err.total} groups before failing`);
+        return;
+      }
+      const inner = err instanceof PartialResolveError ? err.inner : err;
+      toast.error(apiErrorDetail(inner, "Failed to resolve duplicates"));
+    },
+    // Invalidate on both outcomes: a partial run deleted real rows. A bulk run
+    // deletes hundreds of them, so the dataset counters and the four stats
+    // queries are exactly as stale as the gallery list — hence the shared scope
+    // rather than the lone `["images"]` this carried when it resolved one group.
+    onSettled: () => {
+      setBulkProgress(null);
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      toast.success("Duplicates resolved");
+      invalidateDatasetContentScope(qc, datasetId);
     },
   });
 
@@ -339,7 +499,101 @@ export default function QualityPage() {
     toast.success("Configuration reset to defaults");
   }
 
-  const dupGroups = duplicates?.groups ?? [];
+  // Per-group facts derived once per payload instead of inside the render map.
+  const groupMeta = useMemo<DupGroupMeta[]>(
+    () => (duplicates?.groups ?? []).map((group) => ({
+      group,
+      rootId: group[0].id,
+      shared: sharedSourceVideo(group),
+      anyScored: group.some((m) => m.aesthetic_score != null),
+      anyLineage: group.some((m) => m.source_video_id != null),
+    })),
+    [duplicates],
+  );
+  const videoGroupCount = groupMeta.filter((g) => g.shared != null).length;
+
+  // The chip row hides when no group is same-source, so a filter left on "video"
+  // after switching datasets would strand an empty list with no way back. Fixed
+  // by *deriving* the filter rather than correcting the stored one in an effect:
+  // there is then no render in which the panel is filtered by a chip it is not
+  // showing. `dupFilter` keeps its value for when video groups reappear.
+  const activeDupFilter: DupFilter = videoGroupCount === 0 ? "all" : dupFilter;
+
+  const filteredGroups = useMemo(
+    () => (activeDupFilter === "all"
+      ? groupMeta
+      : groupMeta.filter((g) => (activeDupFilter === "video" ? g.shared != null : g.shared == null))),
+    [groupMeta, activeDupFilter],
+  );
+
+  // The bulk plans, over the *filtered* set — every matching group, not just the
+  // ones paged into view. Same superset trap as gallery select-all: the button
+  // label and the confirm dialog both have to state this count, never the
+  // rendered one.
+  const bulkPlans = useMemo(() => {
+    // *Keep best* skips a group with nothing scored rather than falling back to
+    // first — "best" is meaningless there, and silently keeping whichever image
+    // came first and calling it best is the bug rankForKeepBest exists to fix.
+    const scored = filteredGroups.filter((g) => g.anyScored);
+    return {
+      best: scored.map((g) => rankForKeepBest(g.group)),
+      bestSameSource: scored.filter((g) => g.shared != null).length,
+      skipped: filteredGroups.length - scored.length,
+      first: filteredGroups.map((g) => g.group),
+      firstSameSource: filteredGroups.filter((g) => g.shared != null).length,
+    };
+  }, [filteredGroups]);
+
+  /** Switch chip. A new chip is a new list, so paging restarts with it. */
+  const pickDupFilter = (next: DupFilter) => {
+    setDupFilter(next);
+    setVisibleGroups(DUP_PAGE_SIZE);
+  };
+
+  const resolveBusy = resolveMutation.isPending;
+  const bulkLabel = (base: string) =>
+    (resolveBusy && bulkProgress ? `Resolving ${bulkProgress.done}/${bulkProgress.total}…` : base);
+
+  /** Queue a bulk run over every group matching the active chip. */
+  const startBulk = (mode: "best" | "first") => {
+    const plans = mode === "best" ? bulkPlans.best : bulkPlans.first;
+    if (plans.length === 0) return;
+    setPendingResolve({
+      kind: "bulk",
+      mode,
+      plans,
+      sameSource: mode === "best" ? bulkPlans.bestSameSource : bulkPlans.firstSameSource,
+      skipped: mode === "best" ? bulkPlans.skipped : 0,
+    });
+  };
+
+  /** Resolve a single group. Both buttons route through here: one ordered array
+   *  yields the survivor, the deletions and their timestamps, so `plans` and
+   *  `timestamps` cannot desynchronise the way two independent `.slice(1)`
+   *  passes could. */
+  const resolveGroup = (meta: DupGroupMeta, mode: "best" | "first") => {
+    const ordered = mode === "best" ? rankForKeepBest(meta.group) : meta.group;
+    if (meta.shared) {
+      setPendingResolve({
+        kind: "group",
+        mode,
+        plans: [ordered],
+        videoName: meta.shared.name,
+        timestamps: ordered.slice(1).map((i) => i.source_timestamp_ms),
+      });
+    } else {
+      resolveMutation.mutate({ plans: [ordered], bulk: false });
+    }
+  };
+
+  const toggleGroupExpanded = (rootId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(rootId)) next.delete(rootId); else next.add(rootId);
+      return next;
+    });
+  };
+
   const isRunning = scoreMutation.isPending || jobProgress?.status === "running";
   const checkMap: Record<string, [boolean, (v: boolean) => void]> = {
     aesthetic: [runAesthetic, setRunAesthetic],
@@ -525,36 +779,77 @@ export default function QualityPage() {
       </div>
 
       {/* Duplicates */}
-      {dupGroups.length > 0 && (
+      {groupMeta.length > 0 && (
         <div className="panel">
           <div className="panel-h">
             <h3>Duplicate groups</h3>
-            <span className="badge warn dot">{dupGroups.length} groups</span>
+            <span className="badge warn dot">{groupMeta.length} groups</span>
           </div>
           <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {dupGroups.map((group, gi) => {
-              const shared = sharedSourceVideo(group);
-              const anyScored = group.some((m) => m.aesthetic_score != null);
-              const anyLineage = group.some((m) => m.source_video_id != null);
-              // Both buttons route through here: one ordered array yields the
-              // survivor, the deletions and their timestamps, so `del` and
-              // `timestamps` cannot desynchronise the way two independent
-              // `.slice(1).map(...)` passes could.
-              const resolve = (mode: "best" | "first", ordered: DuplicateImage[]) => {
-                const keep = [ordered[0].id];
-                const del = ordered.slice(1).map((i) => i.id);
-                if (shared) {
-                  setPendingResolve({
-                    mode, keep, del,
-                    videoName: shared.name,
-                    timestamps: ordered.slice(1).map((i) => i.source_timestamp_ms),
-                  });
-                } else {
-                  resolveMutation.mutate({ keep, del });
+            {/* Triage bar. The chips scope what is *shown*; the bulk buttons act
+                on everything the active chip matches — including the groups
+                below the fold — so their counts read from `filteredGroups` and
+                never from the rendered slice. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {/* Only worth showing when the partition is non-trivial; with no
+                  same-source group the three chips are noise. */}
+              {videoGroupCount > 0 && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className={`btn sm${activeDupFilter === "all" ? " primary" : ""}`} onClick={() => pickDupFilter("all")}>
+                    All ({groupMeta.length})
+                  </button>
+                  <button className={`btn sm${activeDupFilter === "video" ? " primary" : ""}`} onClick={() => pickDupFilter("video")}>
+                    From one video ({videoGroupCount})
+                  </button>
+                  <button className={`btn sm${activeDupFilter === "other" ? " primary" : ""}`} onClick={() => pickDupFilter("other")}>
+                    Mixed or no video ({groupMeta.length - videoGroupCount})
+                  </button>
+                </div>
+              )}
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn sm primary"
+                disabled={resolveBusy || bulkPlans.best.length === 0}
+                title={
+                  bulkPlans.best.length === 0
+                    ? "No image in these groups has an aesthetic score — run scoring first, or use Keep first."
+                    : bulkPlans.skipped > 0
+                      ? `Skips ${bulkPlans.skipped} group${bulkPlans.skipped === 1 ? "" : "s"} with no aesthetic score — there is no best to keep there.`
+                      : undefined
                 }
-              };
+                onClick={() => startBulk("best")}
+              >
+                {bulkLabel(`Keep best in ${bulkPlans.best.length} group${bulkPlans.best.length === 1 ? "" : "s"}`)}
+              </button>
+              <button
+                className="btn sm"
+                disabled={resolveBusy || bulkPlans.first.length === 0}
+                title="Keeps the image the duplicate scan picked in every group shown by the active filter."
+                onClick={() => startBulk("first")}
+              >
+                {bulkLabel(`Keep first in ${bulkPlans.first.length} group${bulkPlans.first.length === 1 ? "" : "s"}`)}
+              </button>
+            </div>
+
+            {filteredGroups.length === 0 && (
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0" }}>
+                No duplicate group matches this filter.
+              </p>
+            )}
+
+            {filteredGroups.slice(0, visibleGroups).map((meta) => {
+              const { group, rootId, shared, anyScored, anyLineage } = meta;
+              // A 36-member group is unreadable and expensive; show the first
+              // ten behind a toggle. `group[0]` — the image the scan kept, and
+              // the one every resolution keeps — is always in that slice.
+              const expanded = expandedGroups.has(rootId);
+              const shown = expanded ? group : group.slice(0, DUP_COLLAPSE_AT);
               return (
-              <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "center", padding: 12, background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
+              // `minmax(0, 1fr)`, not `1fr`: a bare `1fr` track refuses to shrink
+              // below its content, so a wide group pushed the action column off
+              // the right edge of the pane — unreachable exactly when the group
+              // was biggest.
+              <div key={rootId} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 14, alignItems: "center", padding: 12, background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)" }}>
                 <div>
                   <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 8 }}>
                     {group.length} similar images
@@ -577,12 +872,13 @@ export default function QualityPage() {
                       check the timestamps before deleting.
                     </div>
                   )}
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                    {group.map((img) => (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start" }}>
+                    {shown.map((img) => (
                       <div key={img.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                         <img
                           src={imagesApi.thumbnailUrlVersioned(img.id, img.updated_at)}
                           alt={img.filename}
+                          loading="lazy"
                           title={img.kept ? "Kept by the scan — the other copies point at this one" : undefined}
                           style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", border: img.kept ? "2px solid var(--good)" : "1px solid var(--line-2)" }}
                         />
@@ -604,6 +900,15 @@ export default function QualityPage() {
                         {img.aesthetic_score != null && <span className="mono" style={{ fontSize: 11, color: "var(--good)" }}>{img.aesthetic_score.toFixed(1)}</span>}
                       </div>
                     ))}
+                    {group.length > DUP_COLLAPSE_AT && (
+                      <button
+                        className="btn sm"
+                        style={{ width: 64, height: 64, padding: 4, fontSize: 11, lineHeight: 1.25, whiteSpace: "normal" }}
+                        onClick={() => toggleGroupExpanded(rootId)}
+                      >
+                        {expanded ? "Show fewer" : `+${group.length - DUP_COLLAPSE_AT} more`}
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -612,19 +917,30 @@ export default function QualityPage() {
                     // "Best" is meaningless with nothing scored: the old code
                     // silently kept whichever member came first and called it
                     // best. Say so instead of pretending.
-                    disabled={!anyScored}
+                    disabled={!anyScored || resolveBusy}
                     title={anyScored ? undefined : "No image in this group has an aesthetic score — run scoring first, or use Keep first."}
-                    onClick={() => resolve("best", rankForKeepBest(group))}
+                    onClick={() => resolveGroup(meta, "best")}
                   >Keep best</button>
                   {/* group[0] is the image the scan kept — see get_duplicates.
                       Confirms on a same-source group just as *Keep best* does:
                       it deletes the same N−1 frames on one click, and the hazard
                       belongs to the group, not to the ranking. */}
-                  <button className="btn sm" onClick={() => resolve("first", group)}>Keep first</button>
+                  <button className="btn sm" disabled={resolveBusy} onClick={() => resolveGroup(meta, "first")}>Keep first</button>
                 </div>
               </div>
               );
             })}
+
+            {filteredGroups.length > visibleGroups && (
+              <button
+                className="btn sm"
+                style={{ alignSelf: "center" }}
+                onClick={() => setVisibleGroups((n) => n + DUP_PAGE_SIZE)}
+              >
+                Show {Math.min(DUP_PAGE_SIZE, filteredGroups.length - visibleGroups)} more
+                {" "}({filteredGroups.length - visibleGroups} remaining)
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -632,11 +948,20 @@ export default function QualityPage() {
       {pendingResolve && (
         <ConfirmDialog
           {...resolveConfirmCopy(pendingResolve)}
-          confirmLabel="Delete frames"
+          confirmLabel={
+            pendingResolve.kind === "group"
+              ? "Delete frames"
+              : `Delete ${plannedDeletions(pendingResolve.plans)} images`
+          }
           danger
           onCancel={() => setPendingResolve(null)}
           onConfirm={() => {
-            resolveMutation.mutate({ keep: pendingResolve.keep, del: pendingResolve.del });
+            // One dialog serves both paths, so the run's owner rides on the
+            // pending resolution rather than on which button opened it.
+            resolveMutation.mutate({
+              plans: pendingResolve.plans,
+              bulk: pendingResolve.kind === "bulk",
+            });
             setPendingResolve(null);
           }}
         />

@@ -307,6 +307,15 @@ def test_every_score_qualifier_names_a_real_score_column():
     # A qualifier that *is* a score would be enrolled twice and, worse, seeded
     # with a float by the behavioural helpers below.
     assert SCORE_QUALIFIERS.isdisjoint(SCORE_COLUMNS)
+    # …and the filter above passes *vacuously* on an empty set, which is exactly
+    # what an `info=` dropped in passing (adding `index=True`, say) produces:
+    # `CARRIED_COLUMNS` collapses back to `SCORE_COLUMNS` and
+    # `test_every_rebuild_path_carries_every_score` stops guarding the marker,
+    # with the whole suite still green. So the known members are named.
+    assert "aesthetic_model" in SCORE_QUALIFIERS, (
+        "aesthetic_model lost its info={'qualifies': ...} on backend/models/image.py, "
+        "which silently un-enrols it from test_every_rebuild_path_carries_every_score"
+    )
 
 
 def test_not_mirrored_has_no_stale_entries():

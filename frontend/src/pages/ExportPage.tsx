@@ -931,7 +931,17 @@ export default function ExportPage() {
                         <>
                           {" "}The minimum-score filter applies one threshold to all of them, so it is
                           over- or under-including depending on which model scored each image
-                          {Object.keys(preview.aesthetic_models_will_export).length > 1
+                          {/* `> 0`, not `> 1`: the extreme instance of one
+                              threshold cutting two scales unequally is a
+                              threshold that eliminates one model's images
+                              *entirely*, which leaves exactly one surviving key
+                              — the case where "900 by LAION still export" is the
+                              most actionable number the box can carry, since it
+                              is also saying the other model lost all of them.
+                              The outer box is already gated on the whole-scope
+                              dict having more than one key, so this only renders
+                              inside an already-mixed dataset. */}
+                          {Object.keys(preview.aesthetic_models_will_export).length > 0
                             ? ` (${Object.entries(preview.aesthetic_models_will_export)
                                 .map(([m, n]) => `${n.toLocaleString()} by ${aestheticModelLabel(m)}`)
                                 .join(", ")} still export)`

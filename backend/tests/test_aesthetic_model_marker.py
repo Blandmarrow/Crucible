@@ -53,16 +53,32 @@ def _no_real_scorers(monkeypatch):
     fails the import outright on CI, in both cases far from the test that
     queued it.
 
-    Nothing here asserts on a score. What is under test is the *request*
-    contract (which marker reaches `BackgroundJob.config`, which rows the
-    selection query picks) and the read surfaces, all of which are decided
-    before any model loads.
+    Most of what is under test is the *request* contract (which marker reaches
+    `BackgroundJob.config`, which rows the selection query picks) and the read
+    surfaces, all of which are decided before any model loads. The one thing
+    that is not is the **dispatch**: which of the two loaders actually ran, and
+    which handle shape reached the shared loop. So the stubs keep a call log and
+    the fixture returns it — an autouse fixture can still be requested by name,
+    so only the test that cares takes the parameter. Entries are name-tagged
+    tuples, the `test_booru_http.py::_fakes` idiom:
+
+        ("load", "laion" | "v2_5", entry)   — which loader ran, and what it gave back
+        ("batch", model, handle)            — what `score_images_batch` received
+
+    The two loaders return **distinct** `_Entry` instances so the handle at the
+    batch call identifies its origin, which is what pins the two shapes at
+    `quality.py:203`/`:208` (`handle = entry` for V2.5, `handle = entry.model`
+    for LAION). Swapping those crashes every real V2.5 run on the first image,
+    and V2.5 inference is manual-verify-only, so nothing else would catch it.
     """
     from backend.ml.model_manager import model_manager
+
+    calls: list[tuple] = []
 
     aesthetic_mod = types.ModuleType("backend.ml.aesthetic_scorer")
 
     async def score_images_batch(paths, model_handle, job_id=None, model="laion"):
+        calls.append(("batch", model, model_handle))
         return [7.0] * len(paths)
 
     async def score_images_watermark(paths, model_handle, job_id=None, watermark_threshold=0.5):
@@ -77,14 +93,21 @@ def _no_real_scorers(monkeypatch):
     monkeypatch.setitem(sys.modules, "backend.ml.aesthetic_scorer", aesthetic_mod)
 
     class _Entry:
-        model = object()
-        processor = object()
+        def __init__(self):
+            self.model = object()
+            self.processor = object()
 
-    async def _load(*a, **kw):
-        return _Entry()
+    laion_entry, v2_5_entry = _Entry(), _Entry()
 
-    monkeypatch.setattr(model_manager, "load_aesthetic", _load)
-    monkeypatch.setattr(model_manager, "load_aesthetic_v2_5", _load)
+    def _loader(tag, entry):
+        async def _load(*a, **kw):
+            calls.append(("load", tag, entry))
+            return entry
+        return _load
+
+    monkeypatch.setattr(model_manager, "load_aesthetic", _loader("laion", laion_entry))
+    monkeypatch.setattr(model_manager, "load_aesthetic_v2_5", _loader("v2_5", v2_5_entry))
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +200,54 @@ def test_the_default_is_laion_and_says_so_in_the_label(tmp_path):
             job = next(j for j in jobs if j["id"] == r.json()["job_id"])
             assert job["config"]["aesthetic_model"] == "laion"
             assert "V2.5" not in job["label"]
+
+    run(scenario())
+
+
+def test_the_marker_decides_which_model_actually_runs(tmp_path, _no_real_scorers):
+    """The one test that observes the *dispatch* rather than the request.
+
+    Everything else here derives from `body.aesthetic_model`, so a wrong literal
+    at the branch in `_run` — `"v25"` for `"v2_5"`, say — would load LAION,
+    score with LAION and stamp `aesthetic_model = "v2_5"` beside it, with the
+    whole module green. That is a LAION distribution handed to `rankForKeepBest`,
+    which *deletes* images.
+
+    The handle assertions are the second half: the two loaders return different
+    entry shapes on purpose, and swapping them is a crash on the first image of
+    every real V2.5 run that no torch-free test could otherwise see.
+    """
+    calls = _no_real_scorers
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await upload_image(env, ds["id"], "a.png", png_bytes())
+
+            async def score(**extra) -> tuple[tuple, tuple]:
+                calls.clear()
+                r = await env.client.post(f"{API}/quality/score", json={
+                    "dataset_id": ds["id"], "run_aesthetic": True,
+                    "run_technical": False, **extra,
+                })
+                assert r.status_code == 200, r.text
+                await wait_for_job(env, r.json()["job_id"], timeout=60)
+                loads = [c for c in calls if c[0] == "load"]
+                batches = [c for c in calls if c[0] == "batch"]
+                assert len(loads) == 1, f"expected exactly one loader call, got {loads}"
+                assert len(batches) == 1, f"expected exactly one batch call, got {batches}"
+                return loads[0], batches[0]
+
+            load, batch = await score(aesthetic_model="v2_5")
+            assert load[1] == "v2_5", "V2.5 was requested and LAION was loaded"
+            assert batch[1] == "v2_5", "the loop was told the other model"
+            assert batch[2] is load[2], "V2.5 takes the plain entry (.model + .processor)"
+
+            for request in ({}, {"aesthetic_model": "laion"}):
+                load, batch = await score(**request)
+                assert load[1] == "laion", f"{request or 'the default'} loaded V2.5"
+                assert batch[1] == "laion"
+                assert batch[2] is load[2].model, "LAION takes the three-tenant dict"
 
     run(scenario())
 

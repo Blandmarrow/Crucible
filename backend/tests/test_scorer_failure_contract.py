@@ -25,18 +25,30 @@ from backend.tests.conftest import needs_torch, run
 
 @needs_torch
 def test_an_aesthetic_failure_records_no_score(monkeypatch):
+    """The paths do not exist and neither handle is real, so *both* scorers would
+    die here on their own — which would make this vacuous. Hence the shape it
+    shares with its V2.5 sibling below: the failing scorer counts its calls, the
+    other one is stubbed to **succeed**, and a dispatch that went the wrong way
+    returns `[5.0, 5.0]` instead of passing by accident.
+    """
     import backend.ml.aesthetic_scorer as aes
+    import backend.ml.aesthetic_v2_5_scorer as v25
+
+    calls = []
 
     def boom(*a, **k):
+        calls.append(1)
         raise RuntimeError("CLIP exploded")
 
     monkeypatch.setattr(aes, "score_image_sync", boom)
+    monkeypatch.setattr(v25, "score_image_v2_5_sync", lambda *a, **k: 5.0)
 
     async def scenario():
         return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], {})
 
     scores = run(scenario())
     assert scores == [None, None], "0.0 is outside the column's 1-10 range"
+    assert len(calls) == 2, "the default did not reach the LAION scorer at all"
 
 
 @needs_torch
@@ -49,20 +61,30 @@ def test_a_v2_5_failure_records_no_score_either(monkeypatch):
     SSE cadence and the `cancel_requested` check to drift, and this repo has
     already had to fix each of those once. Patched on the V2.5 module because the
     branch imports it at call time.
+
+    Stubbing LAION to *succeed* is what makes this pin the shared loop rather
+    than merely observe two dead paths: delete the `model == "v2_5"` branch and
+    the scores come back `[5.0, 5.0]`; rename `score_image_v2_5_sync` and the
+    call count is 0.
     """
     import backend.ml.aesthetic_scorer as aes
     import backend.ml.aesthetic_v2_5_scorer as v25
 
+    calls = []
+
     def boom(*a, **k):
+        calls.append(1)
         raise RuntimeError("SigLIP exploded")
 
     monkeypatch.setattr(v25, "score_image_v2_5_sync", boom)
+    monkeypatch.setattr(aes, "score_image_sync", lambda *a, **k: 5.0)
 
     async def scenario():
         return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], None, model="v2_5")
 
     scores = run(scenario())
     assert scores == [None, None], "0.0 is outside the column's 1-10 range"
+    assert len(calls) == 2, "the V2.5 branch was not the one that ran"
 
 
 @needs_torch

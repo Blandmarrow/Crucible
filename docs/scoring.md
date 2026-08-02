@@ -18,9 +18,12 @@ Tick the scorers you want and start the run — they execute together in one bac
 | **DINOv2 per-layer embeds** — stores all 12 transformer layer CLS tokens; enables per-layer style similarity (only offered when DINOv2 embeddings is ticked) | GPU · 1.2 GB |
 | **NSFW detection · Marqo** — ViT classifier, sets the `is_nsfw` flag | GPU · 1.0 GB |
 
-These costs are not additive. Aesthetic, Watermark and Style embeddings are three uses of
-a single CLIP ViT-L/14 load, so ticking all three costs that 2.1 GB once, not three times
-over. DINOv2 and NSFW are separate models, so those do add to the total.
+The CLIP-based costs are not additive. Watermark, Style embeddings and the *LAION* aesthetic
+model are three uses of a single CLIP ViT-L/14 load, so ticking all three costs that 2.1 GB
+once, not three times over. Picking **Aesthetic Predictor V2.5** instead takes the aesthetic
+score off that shared backbone and onto its own SigLIP one, so it adds roughly 2 GB on top
+whenever Watermark or Style embeddings is also ticked. DINOv2 and NSFW are separate models,
+so those do add to the total.
 
 A **subfolder** dropdown in the page header (shown only when subfolders exist) scopes the run, so you can score one subset at a time without touching the rest of the dataset. An optional **job label** field names the run in the queue and in [Logs](workspace.md#logs).
 

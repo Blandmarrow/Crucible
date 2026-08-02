@@ -198,11 +198,33 @@ async def extract_clip_embeddings_batch(
 
 async def score_images_batch(
     image_paths: list[str],
-    model_entry_dict: dict,
+    model_handle,
     job_id: str | None = None,
+    model: str = "laion",
 ) -> list[float | None]:
+    """Score a batch with either aesthetic producer.
+
+    One loop for both, chosen above it rather than duplicated: the SSE cadence,
+    the `cancel_requested` check and the None-on-failure contract have each had
+    to be fixed once already, and a second copy would be a second place to fix
+    them. `model` is the marker that will be stored on every row this batch
+    scores, so the value written and the code path run are one decision.
+
+    `model_handle` is per-model, because the two loaders return different entry
+    shapes on purpose: for "laion" it is `aesthetic`'s three-tenant
+    `{"clip", "mlp", "preprocess"}` dict, for "v2_5" the plain `ModelEntry`
+    itself (`.model` + `.processor`). The default keeps every existing caller
+    unchanged.
+    """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
+
+    if model == "v2_5":
+        # Imported inside the branch so a LAION run never imports the package.
+        from backend.ml.aesthetic_v2_5_scorer import score_image_v2_5_sync
+        score_one = score_image_v2_5_sync
+    else:
+        score_one = score_image_sync
 
     loop = asyncio.get_event_loop()
     scores: list[float | None] = []
@@ -212,7 +234,7 @@ async def score_images_batch(
         if job_id and job_queue.cancel_requested(job_id):
             break
         try:
-            score = await loop.run_in_executor(None, score_image_sync, path, model_entry_dict)
+            score = await loop.run_in_executor(None, score_one, path, model_handle)
         except Exception:
             # NULL, not 0.0 — the technical scorer's failure contract
             # (docs/dev/scoring.md § The failure contract). `aesthetic_score` is

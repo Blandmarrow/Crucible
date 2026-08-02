@@ -2,6 +2,7 @@ import asyncio
 import base64
 import functools
 import logging
+from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -88,6 +89,19 @@ class ScoreRequest(BaseModel):
     subfolder: str | None = None
     image_ids: list[str] | None = None
     run_aesthetic: bool = True
+    # Which producer writes `Image.aesthetic_score` (and the marker stored beside
+    # it). A `Literal` rather than a plain `str`: an unknown value must be a 422,
+    # never an unknown marker in the DB. The default keeps every existing client
+    # byte-identical, and `body.model_dump()` carries it onto
+    # `BackgroundJob.config` for free — job history is where a user later asks
+    # which model made these numbers.
+    aesthetic_model: Literal["laion", "v2_5"] = "laion"
+    # Re-score only rows already scored by a *different* model. A scoping flag
+    # rather than an id round-trip, so the selection stays atomic with the run
+    # and composes with `subfolder` like every other scope. Deliberately excludes
+    # never-scored rows: plain *Run scoring* already covers those, and two
+    # buttons with two literal meanings beat one with a mode.
+    only_mismatched: bool = False
     run_technical: bool = True
     run_watermark: bool = False
     run_embeddings: bool = False
@@ -118,15 +132,26 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         query = query.where(Image.id.in_(body.image_ids))
     elif body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
+    if body.only_mismatched:
+        # `score non-NULL <=> marker non-NULL` (migration a5e1b7c3d9f0), so the
+        # score test alone is what excludes never-scored rows — the marker test
+        # then leaves exactly the rows another model measured.
+        query = query.where(
+            Image.aesthetic_score.isnot(None),
+            Image.aesthetic_model.isnot(body.aesthetic_model),
+        )
     result = await db.execute(query)
     images = result.scalars().all()
 
     if not images:
         return {"job_id": None, "message": "No images found"}
 
+    aesthetic_check = (
+        "aesthetic (V2.5)" if body.aesthetic_model == "v2_5" else "aesthetic"
+    )
     checks = [c for c, flag in [
         ("technical", body.run_technical),
-        ("aesthetic", body.run_aesthetic),
+        (aesthetic_check, body.run_aesthetic),
         ("watermark", body.run_watermark),
         ("embeddings", body.run_embeddings),
         ("DINOv2", body.run_dino),
@@ -164,9 +189,26 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         loop = asyncio.get_running_loop()
 
         aesthetic_scores = []
+        # Captured inside the branch, next to the loader call, so the marker
+        # written to the DB and the model actually run are provably the same
+        # decision rather than two reads of `body` that could drift.
+        aesthetic_marker: str | None = None
         if body.run_aesthetic:
-            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
-            aesthetic_scores = await score_images_batch(paths, entry.model, job_id=job_id)
+            aesthetic_marker = body.aesthetic_model
+            if aesthetic_marker == "v2_5":
+                entry = await model_manager.load_aesthetic_v2_5(
+                    job_id=job_id, loop=loop, dataset_id=body.dataset_id
+                )
+                # The plain entry shape carries the processor alongside the model.
+                handle = entry
+            else:
+                entry = await model_manager.load_aesthetic(
+                    job_id=job_id, loop=loop, dataset_id=body.dataset_id
+                )
+                handle = entry.model  # the three-tenant {"clip","mlp","preprocess"} dict
+            aesthetic_scores = await score_images_batch(
+                paths, handle, job_id=job_id, model=aesthetic_marker
+            )
 
         technical_results = []
         if body.run_technical:
@@ -220,6 +262,20 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                 refreshed: set[str] = set()
                 if i < len(aesthetic_scores):
                     img.aesthetic_score = aesthetic_scores[i]
+                    # Never written without a score, never survives one. A marker
+                    # beside a NULL score claims a model looked and produced
+                    # nothing; a stale marker on an overwritten NULL puts a
+                    # phantom row in the per-model breakdown. Both break the
+                    # migration's invariant (score non-NULL <=> marker non-NULL).
+                    #
+                    # `aesthetic_model` is deliberately NOT added to `refreshed`:
+                    # that set feeds the `scores_stale` clear predicate against
+                    # `_JOB_SCORE_COLUMNS`, which is `*_score`-suffix-derived and
+                    # correctly excludes the marker. Adding it is inert today and
+                    # a live bug the day anyone re-derives that universe.
+                    img.aesthetic_model = (
+                        aesthetic_marker if aesthetic_scores[i] is not None else None
+                    )
                     refreshed.add("aesthetic_score")
                 if i < len(technical_results):
                     t = technical_results[i]
@@ -335,6 +391,46 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(images)}
+
+
+@router.get("/aesthetic-coverage/{dataset_id}")
+async def aesthetic_coverage(
+    dataset_id: str,
+    subfolder: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """How many images are scored, by which model, within the Score page's scope.
+
+    A dedicated endpoint rather than a field on `get_dataset_stats`: this needs
+    the page's own subfolder scope and a refetch every time a scoring job
+    finishes, and the Score page otherwise makes three light queries — pulling
+    the whole stats aggregation onto it for a count would be the expensive way
+    round. The Stats page gets the same breakdown from its existing query
+    instead, as flat `aesthetic_{marker}` keys.
+
+    `by_model` sums to `scored`, which is the invariant migration a5e1b7c3d9f0's
+    backfill buys: every non-NULL score carries a non-NULL marker, so there is no
+    "scored but unknown" bucket to account for.
+    """
+    scope = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        scope.append(Image.subfolder == normalize_subfolder(subfolder))
+
+    total, scored = (await db.execute(
+        select(func.count(Image.id), func.count(Image.aesthetic_score)).where(*scope)
+    )).one()
+
+    rows = (await db.execute(
+        select(Image.aesthetic_model, func.count(Image.id))
+        .where(*scope, Image.aesthetic_model.isnot(None))
+        .group_by(Image.aesthetic_model)
+    )).all()
+
+    return {
+        "scored": scored,
+        "unscored": total - scored,
+        "by_model": {marker: count for marker, count in rows},
+    }
 
 
 @router.post("/embed-references")
@@ -676,6 +772,12 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
             "id": img.id,
             "filename": img.filename,
             "aesthetic_score": img.aesthetic_score,
+            # Which model produced that score. One line covering both flagged
+            # members and the prepended root — the root path has regressed
+            # separately before (see the docstring above), and a group whose root
+            # carried no marker would look uniform to the mixed-model guard that
+            # keeps *Keep best* from ranking two incomparable scales.
+            "aesthetic_model": img.aesthetic_model,
             "updated_at": img.updated_at,
             "created_at": img.created_at,
             "kept": kept,

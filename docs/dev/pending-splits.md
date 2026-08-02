@@ -148,6 +148,58 @@ staleness sweep while still recording the seam.
   CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
   in the job half.
 
+## docs/dev/ml-models.md
+
+- **Moves:** § Upscaling (~700 words) and § LUT Color Grading (~430), i.e. everything below
+  § ML model management
+- **New file:** docs/dev/image-processing-models.md
+- **Why here:** the file is a model *registry and loader* doc with two image-*processing*
+  subsystems appended. § ML model management is about `model_manager.py` — the registry,
+  eviction, VRAM accounting, per-loader quirks, the EXIF-open invariant, the device
+  abstraction — and it is what a reader arrives for when adding or debugging a loader.
+  Upscaling (spandrel) and LUT grading are pipelines that happen to load a model: their
+  governing invariant is `image_service._open_safe`, not `open_rgb`, and their surfaces are
+  `routers/upscaling.py` and `routers/lut.py`. A reader working on eviction never needs
+  either. The seam leaves ~2,600 and ~1,150 out of 3,749 — the staying half is still over
+  the ~2,100 target, and the natural second seam is § ML model management's own tail: the
+  per-loader compatibility notes (Florence-2 PromptGen patches, JoyCaption inference
+  details, `_TAG_STYLES`) are *quirks of individual models*, while the registry table, the
+  VRAM budget and the device abstraction are the *mechanism*.
+- **Watch for:** this file is the single most-cited dev doc — CLAUDE.md § Key invariants
+  points at it for both the EXIF-open and close-PIL-images rules, and
+  `docs/dev/scoring.md`, `docs/dev/detection-inference.md`, `docs/dev/captioning.md`,
+  `docs/dev/tag-consolidation.md` and `docs/dev/environment-setup.md` all reference it. Nearly
+  all of those want the *management* half, so they stay pointed at `ml-models.md` — check
+  each rather than repointing by reflex. The upscaling prose is cited from
+  `docs/dev/bulk-image-jobs.md` (crop-upscale) and `docs/dev/image-files.md`; those are the
+  two that move. Grep `ml-models.md` across `docs/` before and after. The user-facing side of
+  the moving half lives in `docs/editing.md`, not in per-feature pages, so the
+  mirror-the-user-doc naming convention gives no name for free — image-processing-models.md
+  is a proposal, not a constraint.
+
+## docs/scoring.md
+
+- **Moves:** § Duplicate resolution and its two subsections, § Clearing many groups at once
+  and § Duplicates that came from the same video (~700 words together)
+- **New file:** docs/duplicates.md
+- **Why here:** the page documents two different user tasks that merely share a screen.
+  *Measuring images* is the scoring run, the model picker, what each scorer produces, style
+  similarity, quality flags and stale scores — read before you press the button. *Resolving
+  duplicates* is what you do to the panel that appears afterwards: it deletes files, it has
+  its own bulk bar, its own confirm dialogs and its own same-source hazard, and a reader
+  arrives at it from the gallery's duplicate badge rather than from the scoring flow. The
+  seam leaves ~1,990 and ~700. The staying half is over the ~1,500 target, so if it needs a
+  second seam, § Style similarity (~570 words with its mode table) is the candidate — it is
+  a separate CPU-only workflow with its own collapsible section and its own concepts.
+- **Watch for:** the moved sections are referenced by `docs/gallery.md` and `docs/video.md`
+  (the same-source frames hazard), and the dev-side mirror is split across
+  `docs/dev/image-similarity.md` (pHash grouping, the duplicates panel) and
+  `docs/dev/scoring.md` — so the new user doc mirrors `image-similarity.md`, not
+  `scoring.md`, and the naming convention gives no name for free. A new user doc needs its
+  own README Docs-table row and a `docs/features.md` index row. The mixed-aesthetic-model
+  refusal lands in the moved half but is explained in § Choosing the aesthetic model, which
+  stays — that becomes a cross-file `§` pointer the checker cannot verify.
+
 ## docs/video.md
 
 - **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and

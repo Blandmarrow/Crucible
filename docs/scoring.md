@@ -10,7 +10,7 @@ Tick the scorers you want and start the run — they execute together in one bac
 
 | Scorer | Cost |
 |---|---|
-| **Aesthetic score · LAION** — CLIP-based aesthetic predictor (1–10), trained on human ratings | GPU · 2.1 GB |
+| **Aesthetic score** — a learned aesthetic predictor (1–10), trained on human ratings; pick which model runs it, see below | GPU · 2.0–2.1 GB |
 | **Technical · OpenCV** — blur, noise, near-uniform, color richness, saturation, brightness, duplicates | CPU only |
 | **Watermark detection** — CLIP zero-shot classification for text overlays and logos | GPU · 2.1 GB |
 | **Style embeddings · CLIP** — required for the style-similarity workflow below | GPU · 2.1 GB |
@@ -31,7 +31,7 @@ Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers wr
 | Scorer | Metrics |
 |---|---|
 | **Technical** | Blur (Laplacian variance), noise (smooth-region std dev), uniformity (grayscale std dev), color, saturation, brightness (mean grayscale, 0–1) — then duplicate grouping across the dataset |
-| **Aesthetic** | Aesthetic score 1–10 (LAION improved aesthetic predictor, CLIP ViT-L/14) |
+| **Aesthetic** | Aesthetic score 1–10, plus a record of which model produced it |
 | **Watermark** | Watermark score 0–1 (CLIP zero-shot), flag `has_watermark` |
 | **Style embeddings** | 768-dim CLIP ViT-L/14 embedding per image |
 | **DINOv2** | 768-dim final-layer embedding + all 12 transformer-layer CLS tokens for per-layer style analysis |
@@ -64,6 +64,25 @@ similarity compares them against each other.
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
 compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it.
+
+## Choosing the aesthetic model
+
+Ticking **Aesthetic score** reveals a model picker below the scorer grid, with two options:
+
+| Model | What it is |
+|---|---|
+| **LAION (CLIP ViT-L/14)** | The original predictor: LAION's `sac+logos+ava1` head over CLIP. Shares its 2.1 GB backbone with Watermark detection and Style embeddings, so ticking those alongside costs nothing extra |
+| **Aesthetic Predictor V2.5 (SigLIP)** | A newer predictor over a SigLIP-so400m backbone (2.0 GB, loaded separately). Rates photographic and illustrated images more evenly than LAION |
+
+The choice is per run and is remembered across datasets and restarts — the next run uses whatever you picked last, and **Reset to defaults** in the panel header puts it back to LAION.
+
+**The two scales are not comparable.** Both produce a number from 1 to 10 and that is all they share: a 6.2 from one says nothing about a 6.2 from the other. Crucible therefore records which model scored each image, and a line under the picker reports the split for the current scope — *"Aesthetic coverage: 1,970 scored — 1,204 by LAION (CLIP ViT-L/14), 766 by Aesthetic Predictor V2.5 (SigLIP)"*. Beside it, when some images were scored by a different model than the one selected, a **Re-score N with …** button brings just those onto the current model. It deliberately leaves never-scored images alone; *Run scoring* is the button for those.
+
+Nothing forces you to re-score, but a mixed dataset weakens anything that reads the number as a single ranking:
+
+- **Duplicate resolution** refuses. A group holding two models' scores has its *Keep best* disabled, naming both models, because ranking across the two scales and then deleting the losers destroys images on a comparison that means nothing. Bulk *Keep best* skips those groups and says how many it skipped; *Keep first* reads no score and is unaffected.
+- **Export** warns. The [Export](export.md) preview reports the split, and — if you are filtering on a minimum aesthetic score — that one threshold is being applied to both scales at once.
+- **Statistics** shows the split under the Aesthetic tile in Score coverage, and the aesthetic histogram there mixes both scales into one distribution.
 
 ## Style similarity
 
@@ -124,7 +143,7 @@ The warning matters most at export, where **Exclude flagged** decides what to sh
 
 After a scoring run that includes duplicate detection, the Score images page groups detected duplicates into thumbnail grids, oldest first, with a green outline and a **kept** label on the one the scan chose to keep. The group header names the distance threshold actually in force, from Settings → Thresholds. Each group offers:
 
-- **Keep best** — retains the image with the highest aesthetic score and deletes the rest. Images with no aesthetic score rank **last**, never first: unscored means unknown, not bad. If no image in the group has been scored at all, the button is disabled and says so — use *Keep first* instead
+- **Keep best** — retains the image with the highest aesthetic score and deletes the rest. Images with no aesthetic score rank **last**, never first: unscored means unknown, not bad. If no image in the group has been scored at all, the button is disabled and says so — use *Keep first* instead. It is disabled for the same reason when a group's scores come from **two different aesthetic models**: the thumbnails then carry a small model label under each score, and re-scoring the group with one model re-enables it
 - **Keep first** — retains the image marked *kept*, which is always first in the group, and deletes the rest
 
 Both buttons ask for confirmation on a group whose frames all came from one video — see below.
@@ -135,12 +154,12 @@ Long groups show their first ten images with a **+N more** button to reveal the 
 
 A scoring run over a big dataset can produce a hundred or more groups, so the top of the panel carries the same two actions over every group at once:
 
-- **Keep best in N groups** — applies *Keep best* to each. Groups where nothing has an aesthetic score are **skipped**, not resolved by some other rule; the button says how many it is skipping, and disables itself if that is all of them
+- **Keep best in N groups** — applies *Keep best* to each. Groups where nothing has an aesthetic score are **skipped**, not resolved by some other rule, and so are groups mixing two aesthetic models; the button says how many it is skipping and why, and disables itself only if that is all of them
 - **Keep first in N groups** — applies *Keep first* to each
 
 Next to them are three filters — **All**, **From one video**, and **Mixed or no video** — so you can clear the safe groups en masse and hand-check the risky ones. They appear only when at least one group is entirely frames from a single video. **The filter decides what the bulk buttons cover**: the count in each button is the number of groups matching the active filter, including the ones further down the list than you have scrolled, not the ones currently on screen.
 
-Bulk actions always ask for confirmation. The dialog states how many images will be deleted across how many groups, which one it keeps in each, how many of those groups are entirely frames from one video, and how many were skipped for having no score. A run over many groups reports progress in the button, and if it fails partway it tells you how many groups it got through — the ones already resolved stay resolved.
+Bulk actions always ask for confirmation. The dialog states how many images will be deleted across how many groups, which one it keeps in each, how many of those groups are entirely frames from one video, and how many were skipped — for having no score, or for mixing two aesthetic models. A run over many groups reports progress in the button, and if it fails partway it tells you how many groups it got through — the ones already resolved stay resolved.
 
 ### Duplicates that came from the same video
 

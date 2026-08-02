@@ -41,6 +41,26 @@ class Image(Base):
     # Quality scores
     nsfw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which model produced `aesthetic_score`: "laion" (CLIP ViT-L/14 + LAION's
+    # sac+logos+ava1 MLP) or "v2_5" (SigLIP-so400m + Aesthetic Predictor V2.5).
+    # The two produce non-comparable distributions, and two consumers act
+    # destructively on the score — `aesthetic_min` omits images at export and
+    # `rankForKeepBest` *deletes* them — so the marker is a safety device, not
+    # bookkeeping.
+    #
+    # NULL is load-bearing: the invariant is `aesthetic_score IS NOT NULL` ⟺
+    # `aesthetic_model IS NOT NULL`, established by migration a5e1b7c3d9f0's
+    # backfill and maintained by the single write site in `routers/quality.py`.
+    # Hence no `default=""` (an empty string recreates exactly the ambiguity the
+    # backfill removed), and no Enum or CHECK — a future learned head writes
+    # `head:{uuid}` here.
+    #
+    # `info["qualifies"]` enrols it in the rebuild-path guards of
+    # `backend/tests/test_video_lineage_mirrors.py`, which are otherwise derived
+    # by the `*_score` suffix and so cannot see a column named like this one.
+    aesthetic_model: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, info={"qualifies": "aesthetic_score"}
+    )
     blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     uniformity_score: Mapped[float | None] = mapped_column(Float, nullable=True)

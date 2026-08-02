@@ -40,6 +40,32 @@ def test_an_aesthetic_failure_records_no_score(monkeypatch):
 
 
 @needs_torch
+def test_a_v2_5_failure_records_no_score_either(monkeypatch):
+    """The contract belongs to the *loop*, not to the model — which is the whole
+    reason `score_images_batch` takes a `model` parameter instead of V2.5 getting
+    a loop of its own.
+
+    A second copy would be a second place for the None-on-failure contract, the
+    SSE cadence and the `cancel_requested` check to drift, and this repo has
+    already had to fix each of those once. Patched on the V2.5 module because the
+    branch imports it at call time.
+    """
+    import backend.ml.aesthetic_scorer as aes
+    import backend.ml.aesthetic_v2_5_scorer as v25
+
+    def boom(*a, **k):
+        raise RuntimeError("SigLIP exploded")
+
+    monkeypatch.setattr(v25, "score_image_v2_5_sync", boom)
+
+    async def scenario():
+        return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], None, model="v2_5")
+
+    scores = run(scenario())
+    assert scores == [None, None], "0.0 is outside the column's 1-10 range"
+
+
+@needs_torch
 def test_a_watermark_failure_records_no_score_and_no_flag(monkeypatch):
     import backend.ml.aesthetic_scorer as aes
 

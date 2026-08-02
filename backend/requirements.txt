@@ -46,6 +46,11 @@ spandrel_extra_arches>=0.1
 transformers>=4.36
 sentence-transformers>=3.0
 open_clip_torch>=2.20
+# Aesthetic Predictor V2.5 (SigLIP), the second producer of Image.aesthetic_score.
+# The package *is* the reference implementation, so taking it beats transcribing
+# it — a hand-rolled copy would have to track the checkpoint. AGPL-3.0, matching
+# Crucible's. Deliberately not in requirements-ci.txt, which stays torch-free.
+aesthetic-predictor-v2-5>=2024.12.18.1
 accelerate>=0.27
 safetensors>=0.7
 timm>=1.0.27

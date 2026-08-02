@@ -960,7 +960,8 @@ async def preview_export(
 
     query = select(
         Image.id, Image.filename, Image.caption_text,
-        Image.aesthetic_score, Image.quality_flags, Image.style_similarity_score,
+        Image.aesthetic_score, Image.aesthetic_model, Image.quality_flags,
+        Image.style_similarity_score,
         Image.scores_stale,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
     ).where(Image.dataset_id == dataset_id)
@@ -1008,6 +1009,8 @@ async def preview_export(
     freetext_will_export = 0
     stale_scores = 0
     stale_scores_will_export = 0
+    aesthetic_models: dict[str, int] = {}
+    aesthetic_models_will_export: dict[str, int] = {}
     without_detections = 0
     sample_files: list[dict] = []
 
@@ -1022,6 +1025,8 @@ async def preview_export(
         # deliberately not returned — Stats owns that view, via its Licenses panel.
         if r.scores_stale:
             stale_scores += 1
+        if r.aesthetic_model:
+            aesthetic_models[r.aesthetic_model] = aesthetic_models.get(r.aesthetic_model, 0) + 1
 
         lic = resolve_provenance(r, ds_defaults)["license"]
         if not lic:
@@ -1054,6 +1059,10 @@ async def preview_export(
             will_export += 1
             if r.scores_stale:
                 stale_scores_will_export += 1
+            if r.aesthetic_model:
+                aesthetic_models_will_export[r.aesthetic_model] = (
+                    aesthetic_models_will_export.get(r.aesthetic_model, 0) + 1
+                )
             if not lic:
                 unlicensed_will_export += 1
             elif lic.lower().startswith(OTHER_PREFIX):
@@ -1098,6 +1107,15 @@ async def preview_export(
         # silently dropping keepers and shipping rejects.
         "stale_scores_count": stale_scores,
         "stale_scores_will_export": stale_scores_will_export,
+        # Which models produced the aesthetic scores in scope, as {marker: count}
+        # — the same whole-scope / will-export pair as the two advisories above.
+        # Dicts rather than a "mixed" boolean because the useful sentence is
+        # "1,204 by LAION, 766 by V2.5": the skew is what tells a user whether an
+        # `aesthetic_min` threshold is over- or under-including, since the two
+        # scales are not comparable. Advisory only — nothing here changes
+        # `will_export` or contributes an exclusion row.
+        "aesthetic_models": aesthetic_models,
+        "aesthetic_models_will_export": aesthetic_models_will_export,
         "sample_files": sample_files,
     }
     if export_masks:

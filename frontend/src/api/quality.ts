@@ -4,6 +4,11 @@ export interface DuplicateImage {
   id: string;
   filename: string;
   aesthetic_score: number | null;
+  /** Which model produced `aesthetic_score`: "laion" | "v2_5" (or a future
+   *  `head:{uuid}`). Non-null exactly when the score is. Two markers inside one
+   *  group mean two non-comparable scales, and *Keep best* — which deletes —
+   *  must refuse rather than rank across them. */
+  aesthetic_model: string | null;
   updated_at: string;
   created_at: string;
   /** True for the one image in the group the scan kept — the group's first
@@ -31,6 +36,12 @@ export const qualityApi = {
     subfolder?: string;
     image_ids?: string[];
     run_aesthetic: boolean;
+    /** Which model writes `aesthetic_score`. Omitted = "laion", matching the
+     *  server default; an unknown value is a 422. */
+    aesthetic_model?: "laion" | "v2_5";
+    /** Re-score only rows a *different* model already scored. Never-scored rows
+     *  are excluded — plain scoring covers those. */
+    only_mismatched?: boolean;
     run_technical: boolean;
     run_watermark?: boolean;
     run_embeddings?: boolean;
@@ -39,7 +50,22 @@ export const qualityApi = {
     run_nsfw?: boolean;
     label?: string;
   }) =>
-    client.post<{ job_id: string; total: number }>("/quality/score", params).then((r) => r.data),
+    // `job_id` is null with a `message` when the scope matched no images — the
+    // ordinary answer for a re-score offer whose mismatch count raced to zero,
+    // not an error.
+    client
+      .post<{ job_id: string | null; total?: number; message?: string }>("/quality/score", params)
+      .then((r) => r.data),
+
+  /** Per-model aesthetic coverage within one subfolder scope. `by_model` sums to
+   *  `scored`: every stored score carries a marker. */
+  aestheticCoverage: (dataset_id: string, subfolder?: string) =>
+    client
+      .get<{ scored: number; unscored: number; by_model: Record<string, number> }>(
+        `/quality/aesthetic-coverage/${dataset_id}`,
+        { params: subfolder ? { subfolder } : undefined },
+      )
+      .then((r) => r.data),
 
   /** Groups are led by the image the scan kept (`kept: true`); the rest are the
    *  removable copies, in `created_at` order. See `get_duplicates`. */

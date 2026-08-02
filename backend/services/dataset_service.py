@@ -1419,6 +1419,19 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "technical": cov_row.technical,
         "watermark": cov_row.watermark,
     }
+    # Per-producer aesthetic coverage, under a **reserved `aesthetic_*` prefix**.
+    # Flat keys in the same `dict[str, int]` rather than a nested field: no schema
+    # change, and the CSV export of this dict picks them up for free. The set is
+    # open-ended by design (a future learned head writes `head:{uuid}`), which is
+    # why the frontend renders it as a breakdown line rather than adding fixed
+    # entries to its `coverageDefs` list. These sum to `score_cov["aesthetic"]`:
+    # every non-NULL score carries a non-NULL marker (migration a5e1b7c3d9f0).
+    for marker, count in (await db.execute(
+        select(Image.aesthetic_model, func.count(Image.id))
+        .where(*_base_where, Image.aesthetic_model.isnot(None))
+        .group_by(Image.aesthetic_model)
+    )).all():
+        score_cov[f"aesthetic_{marker}"] = count
 
     # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
     def _flag_sum(json_key: str):
@@ -1646,7 +1659,8 @@ async def duplicate_dataset(
             Image.original_filename, Image.subfolder, Image.is_auto_named,
             Image.width, Image.height, Image.file_size_bytes, Image.format,
             Image.phash, Image.caption_text, Image.caption_style, Image.captioned_by, Image.captioned_at,
-            Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.blur_score,
+            Image.quality_flags, Image.nsfw_score, Image.aesthetic_score, Image.aesthetic_model,
+            Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.luminance_score, Image.style_similarity_score,
             Image.scores_stale, Image.dino_layer_scores,
@@ -1811,6 +1825,7 @@ async def duplicate_dataset(
                     quality_flags=row.quality_flags,
                     nsfw_score=row.nsfw_score,
                     aesthetic_score=row.aesthetic_score,
+                    aesthetic_model=row.aesthetic_model,
                     blur_score=row.blur_score,
                     noise_score=row.noise_score,
                     uniformity_score=row.uniformity_score,
@@ -1917,6 +1932,7 @@ async def duplicate_dataset(
                     format=state.format,
                     nsfw_score=state.nsfw_score,
                     aesthetic_score=state.aesthetic_score,
+                    aesthetic_model=state.aesthetic_model,
                     blur_score=state.blur_score,
                     noise_score=state.noise_score,
                     uniformity_score=state.uniformity_score,

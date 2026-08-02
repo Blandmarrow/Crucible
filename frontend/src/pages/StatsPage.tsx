@@ -11,6 +11,7 @@ import { detectionApi, type DetectionStats } from "../api/detection";
 import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { OTHER_LICENSES_KEY, licenseInfo } from "../constants/licenses";
+import { aestheticModelLabel } from "../constants/aestheticModels";
 import LicenseBadge from "../components/common/LicenseBadge";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
@@ -1314,12 +1315,20 @@ export default function StatsPage() {
   const openFlag = (flag: string, label: string) =>
     setPanelFilter({ title: label, params: { quality_flag: flag } });
 
+  // Fixed at four. `score_coverage` also carries per-producer keys under the
+  // reserved `aesthetic_*` prefix, and that set is **open** — a future learned
+  // head writes one key per head — so they are rendered as a breakdown line
+  // under the Aesthetic tile rather than as tiles of their own, which would
+  // break this four-column grid the moment a third producer appeared.
   const coverageDefs = [
     { key: "aesthetic",  label: "Aesthetic"  },
     { key: "technical",  label: "Technical"  },
     { key: "watermark",  label: "Watermark"  },
     { key: "embeddings", label: "Embeddings" },
   ];
+  const aestheticByModel = Object.entries(stats?.score_coverage ?? {})
+    .filter(([k]) => k.startsWith("aesthetic_"))
+    .map(([k, n]) => [k.slice("aesthetic_".length), n] as const);
 
   return (
     <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
@@ -1542,6 +1551,19 @@ export default function StatsPage() {
                       {n.toLocaleString()} <span style={{ color: "var(--fg-dim)" }}>/ {stats.image_count.toLocaleString()}</span>
                     </div>
                     <div style={{ fontSize: 10.5, color: "var(--fg-mute)", marginTop: 2 }}>{pct}% scored</div>
+                    {/* Only when more than one model produced these scores: with
+                        one producer the line restates the figure above it. Two
+                        means two non-comparable scales in one column, which the
+                        aesthetic histogram and every `aesthetic_min` filter read
+                        as though they were one. */}
+                    {key === "aesthetic" && aestheticByModel.length > 1 && (
+                      <div style={{ fontSize: 10.5, color: "var(--warn)", marginTop: 4 }}>
+                        {aestheticByModel
+                          .map(([marker, count]) => `${count.toLocaleString()} ${aestheticModelLabel(marker)}`)
+                          .join(" · ")}
+                        {" — scales are not comparable"}
+                      </div>
+                    )}
                   </div>
                 );
               })}

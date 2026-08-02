@@ -37,25 +37,25 @@ of work as §N, and those numbers never move; the build order is this table alon
 | Order | Stage | Depends on | Notes |
 |---|---|---|---|
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
-| 2 | **Aesthetic model picker** (§2) | — | Marker layer + V2.5. Independent of §1. |
+| ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/scoring.md`; this section is deleted per this file's own lifecycle rule. |
 | 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
 | 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
 
 **§6 led on a code reason, not just its size**, and that reason is now settled: it removed
-the last reader of `settings.hf_token` inside `backend/ml/model_manager.py`. §2 adds new
-model-loading code to that same module, and it now inherits a module with **no** HF-token
-plumbing at all — `_load_paligemma2_sync` passes no `token=` and, like the other eight
-loaders, relies on the ambient `HF_TOKEN` that `services/secrets_service.py::sync_env`
-maintains. A new loader in §2 should do the same and read nothing from the singleton.
+the last reader of `settings.hf_token` inside `backend/ml/model_manager.py`. §2 added new
+model-loading code to that same module, and it inherited a module with **no** HF-token
+plumbing at all — `_load_paligemma2_sync` passes no `token=` and, like the other loaders,
+relies on the ambient `HF_TOKEN` that `services/secrets_service.py::sync_env` maintains.
+`_load_aesthetic_v2_5_sync` did the same, and any further loader should.
 (One assumption in the original §6 was wrong and is worth not repeating: the `settings`
 singleton is **not** frozen — it is a plain mutable pydantic instance. Nothing may assign to
 it, but that is a chosen invariant, not something the type enforces.)
 
 **§1 no longer leads, but its own argument is unchanged**: it is a hard prerequisite for §3
 *and* stands alone, so if it turns out nobody rates anything, that is discovered for the
-price of a column rather than after building a trainer. Nothing in §2 touches the rating
-column, so moving it third costs it nothing.
+price of a column rather than after building a trainer. Nothing in §2 touched the rating
+column, so moving it third cost it nothing.
 
 ## Decisions overturned on 2026-08-02
 
@@ -69,10 +69,14 @@ Recorded so they are not reintroduced by someone reading an older draft:
 - **The "never a filter" rule is gone**, because sharing the column makes it unenforceable:
   `aesthetic_min` and `rankForKeepBest` read `aesthetic_score` and therefore consume the
   head's output whether or not anyone wires them. The protection moves from the column to
-  the consumer — see § The marker is a safety device.
+  the consumer — §2 shipped exactly that for its own two producers, so §3 inherits the
+  guards rather than inventing them. See `docs/dev/scoring.md` § The marker is a safety
+  device, and write `head:{uuid}` into the same `Image.aesthetic_model` column.
 - **Pairwise labeling is cut.** Tier sort only; see § Why tier sort.
-- **Scope is global-with-override**, not per-dataset. This was decided about §3's *head*;
-  §2's model selection was never covered by it — see § Still open.
+- **Scope is global-with-override**, not per-dataset. This was decided about §3's *head*
+  alone. §2's model selection was never covered by it and was settled the other way — a
+  per-run choice with a sticky default, no scope concept at all, and that is what shipped.
+  See `docs/dev/scoring.md` § The aesthetic model picker.
 - **Labeling is not the expensive part any more.** The previous estimate ("an 800-pair
   labeling UI, likely more work than everything else combined") assumed pairwise. Tier sort
   over a rating column that already exists is a fraction of it.
@@ -89,9 +93,35 @@ Cheap to get wrong twice, so recorded explicitly.
   zero-shot watermark scoring and `clip_embedding` extraction
   (`backend/routers/quality.py`). No aesthetic swap removes CLIP — which is why LAION is
   free to keep in the picker.
-- The weights cache file is already named `aesthetic_predictor_v2_5.pth`
-  (`backend/ml/model_manager.py`) while holding LAION v2 weights — the same filename the
-  real V2.5 uses. Rename before adding V2.5 or the two collide.
+- The weights cache file used to be named `aesthetic_predictor_v2_5.pth`
+  (`backend/ml/model_manager.py`) while holding LAION weights. **Closed by §2**, which
+  renamed it to `laion_aesthetic_sac_logos_ava1_l14.pth` in its own first commit. The
+  rename was free because nothing but `load_aesthetic` read that path — no DB reference, no
+  migration, and `download_weights` re-fetches from the HF cache whenever the file is
+  absent. (The orphaned ~5 MB file is deliberately left on disk: there is no rename
+  primitive there, only a path constant, and an unlink would put a fallible unowned
+  filesystem mutation inside a loader running in an executor thread.) The collision it
+  guarded against turned out to be **latent rather than live**: the real V2.5 head does use
+  that exact filename, but the `aesthetic-predictor-v2-5` package fetches it through
+  `torch.hub.load_state_dict_from_url`, so it lands in the torch hub cache and never in
+  `models_cache_dir`. See `docs/dev/ml-models.md`.
+- **`QualityPage` already persists a global, cross-dataset "workflow" blob**
+  (`QUALITY_WORKFLOW_KEY`, whose own comment says "global, shared across all datasets"),
+  holding `embeddingType` and `dinoLayer` — mutually exclusive *model* choices made per run
+  and remembered as a default. This is the precedent §2's picker followed — `aestheticModel`
+  joined that blob.
+- `SCORING_OPTIONS` in `QualityPage.tsx` is a flat list of seven checkboxes with a per-row
+  `vram` constant. The aesthetic row's label was the literal `"Aesthetic score · LAION"`;
+  §2 dropped the model name from it and put the choice in a sub-row below the grid — **not**
+  a control inside the row, which is a click-to-toggle `<label>` in a tight two-column flex
+  grid. Grouping or categorising the scorer list is a real question but was not §2's; three
+  producers do not need a category tree. Revisit at the fourth.
+- `score_coverage` is `dict[str, int]` (`backend/schemas/dataset.py`), so per-model keys
+  need no schema change and reach the StatsPage CSV export generically — but the coverage
+  *panel* iterates a fixed `coverageDefs` list, which a new key must be added to.
+- `rankForKeepBest` is already null-safe: scored images rank descending, unscored ones hold
+  their incoming order behind all of them, and the caller disables the button outright when
+  nothing in the group is scored. Mixed *markers*, not nulls, are the new failure.
 - Aesthetic Predictor V2.5 is SigLIP-so400m-patch14-384 plus an MLP head, AGPL-3.0, pip
   package `aesthetic-predictor-v2-5`, last released 2024-12-18.
 - Crucible is AGPL-3.0 (`LICENSE`, full FSF text), so V2.5 is licence-compatible.
@@ -186,42 +216,6 @@ and the export is 89% short of what was meant. This is precisely the failure the
 own population against the unrated count *before* it runs ("214 match · 1,715 unrated and
 therefore excluded"), not that the filter is withheld.
 
-## 2. The aesthetic model picker — second
-
-Read `docs/dev/scoring.md` and `docs/dev/ml-models.md`.
-
-**Decided**: a marker column (`aesthetic_model`) recording which model produced each stored
-`aesthetic_score`. NULL means the legacy LAION scorer. The picker lives on the Score images
-page and offers LAION, Aesthetic Predictor V2.5, and (after §3) the user's head.
-
-**Decided**: do **not** force a global re-score. Extend the existing `score_coverage`
-pattern to report coverage *per model*, and offer to re-score rows whose marker differs from
-the current selection. Mixed scales become visible and fixable rather than silent.
-
-**Decided — a quality run with "Aesthetic" checked runs the dataset's selected model.**
-Otherwise the picker is decorative and a routine re-score silently reverts head scores to
-LAION. A row lacking the embedding the selected model needs is **reported unscored**, never
-guessed — the failure contract in `docs/dev/scoring.md` already says NULL rather than a
-fabricated number.
-
-**Decided — V2.5 stays in.** It is the only item here with a real VRAM cost, and it earns it
-as a stronger baseline than LAION to measure the head against. Costs that are not optional:
-SigLIP so400m is ~400M params **on top of** the existing CLIP, so grow `_evict_lru(3500)`,
-the `vram_mb=3500` floor, and the registry row (`"LAION Aesthetic Predictor"`) in
-`backend/ml/model_manager.py`. Its score distribution is not comparable to LAION's.
-
-### The marker is a safety device, not bookkeeping
-
-Sharing `aesthetic_score` means the head reaches two **destructive** consumers for free, on
-datasets where half the rows may still carry a LAION number on a different scale:
-
-- `aesthetic_min` in `backend/services/export_service.py` — omits images, invisibly.
-- `rankForKeepBest` in duplicate resolution — **deletes** images, which is sharper.
-
-Since no carve-out is available, every consumer that discards or deletes must read the
-marker and refuse or warn on a mixed set. The StatsPage histogram and gallery sort are the
-benign consumers and need only to render the marker.
-
 ## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
@@ -232,7 +226,8 @@ embeddings). Read `docs/dev/image-similarity.md`, `docs/dev/scores-stale.md` and
 
 A new **top-level** routed page, "Aesthetic Rating", beside Datasets and File Browser — not
 a per-dataset one, because a head trained from labels pooled across datasets cannot live
-under a single dataset. The per-dataset half is the picker from §2, a panel on the existing
+under a single dataset. The per-dataset half is the picker §2 shipped (see
+`docs/dev/scoring.md` § The aesthetic model picker), a panel on the existing
 Score images page. One new routed page, not two; note the *seventh* site in
 `docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
 
@@ -359,15 +354,10 @@ DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spe
 
 ## Still open
 
-The first blocks §2 and so is now the nearest open question; the rest are carried forward
-from the 2026-08-02 session and none of them blocks §2 or §1.
+**Nothing here blocks §1.** What used to lead this list — where the aesthetic model
+selection lives — was settled as a per-run choice with a sticky default and shipped with
+§2; it is now documented behaviour in `docs/dev/scoring.md`, not a question.
 
-- **Where the aesthetic model selection lives.** §2 says a quality run with "Aesthetic"
-  checked runs *the dataset's* selected model, while § Decisions overturned settles scope as
-  global-with-override. That decision was taken about §3's head, so §2 needs its own answer —
-  and it is what the marker migration and the per-model `score_coverage` shape hang off.
-  Default to matching §3 (a global selection with an optional per-dataset override) so the
-  two stages share one scope concept rather than teaching the user two.
 - How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
   per-user or per-install? Larger is more stable and costs re-rating it every session.
 - Restoring an old snapshot reinstates ratings as of that snapshot, overwriting any given
@@ -377,7 +367,6 @@ from the 2026-08-02 session and none of them blocks §2 or §1.
 
 ## Traps worth restating
 
-- A stem-keyed weights cache file named for a model it does not contain (§2).
 - Two embedding spaces sharing a byte-identical blob size (§5).
 - A masked secret echoed back as its own new value (§6, shipped) — closed structurally
   rather than by convention: the read shape nests (`{masked, source}`) while the write shape

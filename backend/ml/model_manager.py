@@ -381,7 +381,9 @@ class ModelManager:
         # LAION's sac+logos+ava1-l14-linearMSE MLP head. The filename used to read
         # "aesthetic_predictor_v2_5.pth", which names a different model entirely —
         # Aesthetic Predictor V2.5 is a SigLIP-based predictor, and its own head
-        # checkpoint really is called that.
+        # checkpoint really is called that. The two never collided in practice:
+        # `_load_aesthetic_v2_5_sync` gets its head via torch.hub, so it lands in
+        # the torch hub cache and never in `models_cache_dir`.
         weights_path = settings.models_cache_dir / "laion_aesthetic_sac_logos_ava1_l14.pth"
 
         if job_id and loop:
@@ -433,6 +435,96 @@ class ModelManager:
         vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
         vram_used = max(3500, (vram_after - vram_before) // (1024 * 1024))
         return ModelEntry({"clip": clip_model, "mlp": mlp, "preprocess": preprocess}, None, vram_mb=vram_used)
+
+    async def load_aesthetic_v2_5(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        """Aesthetic Predictor V2.5 — the *second* aesthetic producer, and a
+        separate registry entry rather than a replacement for `aesthetic`.
+
+        `aesthetic`'s `ModelEntry.model` is a three-tenant dict whose `clip` and
+        `preprocess` also serve zero-shot watermark scoring, CLIP-embedding
+        extraction and the `embed-references` upload endpoint. Swapping the
+        backbone under it would silently break three features that have nothing
+        to do with aesthetics. Both backbones may therefore be resident during a
+        single run (~2000 + ~3500 MB), which no realistic setup evicts over.
+        """
+        model_id = "aesthetic_v2_5"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            entry = await _loop.run_in_executor(
+                None, self._load_aesthetic_v2_5_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
+    def _load_aesthetic_v2_5_sync(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        from aesthetic_predictor_v2_5 import convert_v2_5_from_siglip
+
+        model_name = "google/siglip-so400m-patch14-384"
+        logger.info("Loading Aesthetic Predictor V2.5 (%s)...", model_name)
+
+        if job_id and loop:
+            from backend.ml.download_progress import emit_sync, is_hf_cached
+            # Two downloads land on first run, and they do not share a cache: the
+            # SigLIP backbone comes from the hub (~1.6 GB), while the predictor
+            # head is fetched by the package itself through
+            # `torch.hub.load_state_dict_from_url` and lands in the *torch hub*
+            # cache. Neither is a file under `models_cache_dir` to stat, and the
+            # backbone is the one worth warning about, so it stands proxy.
+            cached = is_hf_cached(model_name, "config.json")
+            emit_sync(
+                job_id, loop,
+                "Loading Aesthetic Predictor V2.5 into VRAM..." if cached
+                else "Downloading Aesthetic Predictor V2.5 (first run)...",
+                -1.0, dataset_id,
+            )
+
+        # ~428M params in SigLIP-so400m's vision tower. Measured on the dev box;
+        # the floor is the figure `_evict_lru` reserves before the load, not a
+        # cap on what the entry reports afterwards.
+        self._evict_lru(2000)
+
+        vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        model = None
+        try:
+            # No `trust_remote_code=True` despite the package README: SigLIP has
+            # been natively supported by `transformers` for many releases, so it
+            # buys nothing here and is an arbitrary-code switch on a hub repo.
+            # No `token=` either — `secrets_service.sync_env` puts HF_TOKEN in the
+            # ambient environment, which every loader in this file relies on.
+            model, processor = convert_v2_5_from_siglip(low_cpu_mem_usage=True)
+            model = model.to(_device.get_device()).eval()
+        except Exception:
+            if model is not None:
+                try:
+                    model.cpu()
+                except Exception:
+                    pass
+            del model
+            _device.empty_cache()
+            raise
+
+        vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
+        vram_used = max(2000, (vram_after - vram_before) // (1024 * 1024))
+        # The **plain** entry shape, not `aesthetic`'s dict: `_evict_lru` and
+        # `unload` call `entry.model.cpu()`, which on a dict-shaped entry raises
+        # into a bare `except` and leaks the weights. Nothing else here needs the
+        # backbone, so there is no reason to repeat that.
+        return ModelEntry(model, processor, vram_mb=vram_used)
 
     async def load_dino(
         self,
@@ -700,6 +792,7 @@ class ModelManager:
             {"id": "joycaption_alpha", "name": "JoyCaption Alpha Two", "vram_mb": 17000},
             {"id": "joycaption_beta", "name": "JoyCaption Beta One", "vram_mb": 17000},
             {"id": "aesthetic", "name": "LAION Aesthetic Predictor", "vram_mb": 3500},
+            {"id": "aesthetic_v2_5", "name": "Aesthetic Predictor V2.5 (SigLIP)", "vram_mb": 2000},
             {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
             {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000},
             {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800},

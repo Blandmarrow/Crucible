@@ -43,7 +43,7 @@ A re-path of the enclosing subfolder (rename or re-nest) does not touch `sort_or
 A single `DndContext` in `GalleryPage` wraps **both** the subfolder sidebar and the image grid (the `flex` row containing them), so cards can be dragged from one into the other. `handleDragEnd` branches on the drop target's id before the reorder logic.
 
 - **Droppable ids** are namespaced `subfolder:{path}` (`subfolder:` alone = root) via `subfolderDropId` / `isSubfolderDropId` / `subfolderFromDropId` in `frontend/src/constants/galleryOptions.ts`, plus the non-namespaced `SIDEBAR_DROP_ID` sentinel. Image ids are UUIDs so the prefix cannot collide. The helpers live in the constants module rather than beside the component because `react-refresh/only-export-components` rejects a component file that also exports plain functions.
-- **`DropZone`** (`components/gallery/DropZone.tsx`) is a render-prop wrapper around `useDroppable` taking a raw `id`. It exists for two reasons: `useDroppable` only registers when it runs *inside* the `DndContext`, which `GalleryPage` renders in its own JSX (so a hook at the top of `GalleryPage` would silently never register), and the rows are built inside `renderSubfolderNode`'s closure where a hook can't go at all. It yields `{ setNodeRef, isOver }`; `isOver` layers `inset 0 0 0 1px var(--accent)` over the row's existing active background.
+- **`DropZone`** (`components/gallery/DropZone.tsx`) is a render-prop wrapper around `useDroppable` taking a raw `id`. It exists for two reasons: `useDroppable` only registers when it runs *inside* the `DndContext`, which `GalleryPage` renders in its own JSX (so a hook at the top of `GalleryPage` would silently never register), and the rows are built inside `renderSubfolderNode`'s closure where a hook can't go at all. It yields `{ setNodeRef, isOver }`; `isOver` fills the row with `var(--accent-glow)` and layers `inset 0 0 0 2px var(--accent)` over it. **A drop target must not share a colour with the selected row.** Both used to paint the same neutral `var(--surface-3)`, leaving a 1px ring as the only thing distinguishing "this is where the images land" from "this is the folder you are filtering by" — on a row the drag preview was sitting on top of. See § Reading the drop target.
 - **Cards are draggable in every sort mode.** `SortableImageCard` takes a `sortable?: boolean` prop (default `true`) passed to `useSortable`'s `disabled` as `{ draggable: false, droppable: !sortable }`. Outside custom order the card is still draggable but is not a drop target, so `over.id` can only ever be a subfolder id. **`useSortable` outside a `SortableContext` is safe** — the sortable context has a default value and `useSortable` reads it with a plain `useContext`; with `activeIndex`/`overIndex` at `-1` the sort transform stays `null` and it degrades to a plain draggable. `SortableContext` itself is still gated on `isCustomOrder`.
 - **Collision detection** is a composed function that resolves in four steps: (0) a **folder** drag short-circuits everything — see § Dragging a subfolder onto another; (1) a subfolder row under the pointer always wins; (2) otherwise, if the pointer is inside the **sidebar sentinel** (below), return `[]`; (3) otherwise use the `pointerWithin` hits, falling back to `closestCenter` **with folder rows and the sentinel filtered out** so gutter drops between cards still reorder. Plain `closestCenter` is wrong here — a 180 px row's center can beat a card's when dragging near the grid's left edge.
 - **The sidebar container is a sentinel droppable** (`SIDEBAR_DROP_ID`) — never a move target, only a way to answer "is the pointer in the sidebar?". Step (2) returning `[]` makes `over` `null`, so `handleDragEnd`'s existing `!over` guard no-ops. Without it, a drop on sidebar chrome — the "All" row, the header, the create form, the padding below the last row — reaches the `closestCenter` fallback, which scores against `collisionRect` (the **dragged card's** rect, not the pointer) and therefore returns a grid card; in custom-order mode that silently reordered the image and persisted it via `PATCH /images/batch/reorder`. Two constraints on the filter in step (3): the sentinel must be excluded too, or a gutter drop could resolve to the 180 px sidebar rect instead of a card; and the sentinel comparison must come **before** `!isSubfolderDropId(...)`, because that is an `id is string` predicate whose negation narrows `c.id` to `number` and stops the comparison compiling. Note `SIDEBAR_DROP_ID` (`"subfolder-sidebar"`) is deliberately outside the `"subfolder:"` namespace — one character apart, so do not widen the prefix.
@@ -55,6 +55,36 @@ A single `DndContext` in `GalleryPage` wraps **both** the subfolder sidebar and 
 - **`VideoStrip` is mounted outside this `DndContext`** (and outside the grid's scroll container) on purpose: inside it, the strip's cards would join the collision detection above and the subfolder droppables, and inside the container they would sit under the drag-to-upload handler. See `docs/dev/video-ui.md`.
 
 **Known gaps** (deliberate, not bugs): the sidebar does not auto-scroll during a drag — dnd-kit only auto-scrolls the *dragged* element's ancestors — so a target below the fold must be scrolled to first, and that applies to a dragged **folder** as much as to a dragged card. Collapsed parent rows are themselves valid drop targets; there is no spring-loaded expand-on-hover, though a folder drop re-points `expandedPaths` and adds the destination's ancestors, so a folder dropped into a collapsed parent is at least revealed where it landed. In custom-order mode, only the sidebar is sentinel-guarded: a drop anywhere else `pointerWithin` finds nothing — the toolbar, the filter bar, the pagination row, past the window edge — still reaches the `closestCenter` fallback and reorders to the nearest card. That predates the drag-to-subfolder work; guarding it would mean a second sentinel around the grid column.
+
+### Reading the drop target
+
+**The drag preview covers the row it is about to drop into.** `DragOverlay` sizes itself to
+the dragged node, so an image card is card-sized while the sidebar is 180 px wide — the
+preview lands squarely on top of the target row and whatever highlight it is wearing. The
+row styling above is therefore only half a fix; it is invisible under the card. Three
+things together make the target readable, and none of them is redundant:
+
+- **The preview fades to `opacity: 0.25` while over a folder row** (0.92 otherwise), so the
+  row's accent fill and ring show through it. The fade is on an inner wrapper around
+  `ImageCard`, *not* the outer positioned div, so the badges below stay at full strength.
+- **A chip pinned to the centre of the preview names the target** — folder glyph plus the
+  path, or `(root)` for the empty-string row. It is the unambiguous half: a fill and a ring
+  say *a* row is targeted, the chip says *which*, and it is legible wherever the pointer is
+  because it travels with the preview.
+- **The "N images" badge stays outside the faded wrapper**, since the count is the other
+  thing worth reading at the moment of dropping.
+
+`dropTargetPath` holds it: `null` for "not over a folder row", `""` for the `(root)` row,
+which is a real target — so the state is three-valued and `if (dropTargetPath)` is a bug
+that silently drops the root case. It is set from `onDragOver`'s `e.over`, which
+**collision detection has already narrowed** (step 0 above rejects a self-or-descendant
+folder drop), so the chip reads dnd-kit's decision rather than re-deriving it and the two
+can never disagree. `handleDragStart`, `handleDragEnd` and `handleDragCancel` all clear it;
+a missed clear leaves a chip stuck on the next drag's preview. Only the image branch of the
+overlay consumes it — a folder drag's preview is a small pill that does not cover the row.
+
+Verified by screenshot rather than by spec, for the reason § Dragging a subfolder onto
+another gives: there is still no drag e2e idiom in the suite.
 
 ### Dragging a subfolder onto another
 

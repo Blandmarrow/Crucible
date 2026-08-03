@@ -45,11 +45,15 @@ A folder import copies every file into the dataset, so it checks first that the 
 
 ## Organising into subfolders
 
-**Drag an image card onto a subfolder row** in the left sidebar to move it there — this works in any sort mode. Drop onto **(root)** to move an image back out of its subfolder; that row is always available, even when it's empty. The row highlights as you drag over it, and missing it — dropping on **All** or on empty sidebar space — does nothing.
+**Drag an image card onto a subfolder row** in the left sidebar to move it there — this works in any sort mode. Drop onto **(root)** to move an image back out of its subfolder; that row is always available, even when it's empty. Missing the rows — dropping on **All** or on empty sidebar space — does nothing.
+
+As you drag over a row it fills with green and the picture you're dragging fades, so you can see the row underneath it; a green tag on the card names the folder you're about to drop into. If you're dragging a selection, the number of images comes along with it.
 
 If the card you drag is part of the current selection, the **whole selection moves**; dragging an unselected card moves just that one and leaves your selection intact. Dropping images onto the subfolder they're already in makes no changes — you'll just get an "Already in …" notice.
 
 Whether moved files are also renamed to match the target subfolder follows the same **auto-rename** preference as the selection toolbar's "Move to subfolder" action. The toolbar route remains available for moving to a subfolder that doesn't exist yet.
+
+**The sidebar remembers which folders you left open.** Click the arrow at the left of a row to expand or collapse it; the tree comes back the way you left it when you return from an image, switch pages, or reopen Crucible entirely — per dataset, so a deep working folder stays put. **Reset filters** clears your filters and selected folder but leaves the tree open where it was. And whenever a folder becomes the selected one — you clicked it, you came back to it, or you followed a link to it from a video's extraction history — it opens to show the folders inside it, along with every branch above it, so you can see both where you are and what is filed under it. Collapsing the folder you are in still sticks; it only opens when you pick it.
 
 ### Renaming and re-nesting a subfolder
 

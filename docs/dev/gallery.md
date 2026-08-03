@@ -48,6 +48,8 @@ The `(root)` row renders **whenever the sidebar does**, even at count 0: `rootEn
 - **Upload subfolder**: a `<select>` next to the Upload button lets users target a specific subfolder for drag-drop or file-picker uploads. Defaults to the active subfolder; can be overridden independently.
 - **Drop target**: every subfolder row — and the `(root)` row — is a dnd-kit droppable, so image cards can be dragged from the grid onto a row to move them into that subfolder, and a named row is also *draggable* so the tree can be re-nested by dragging one folder onto another. See `docs/dev/gallery-dnd.md` § Drag images onto subfolders and § Dragging a subfolder onto another. The "All" row is deliberately **not** a droppable (it has no target path); the sidebar *container* is a sentinel droppable so that missing a row lands on a no-op instead of a reorder.
 - **Rename / Move**: see § Renaming and moving a subfolder below. Both are reached from the row's right-click menu; neither has a hover button.
+- **Expand / collapse**: nested rows are drawn only when their parent's path is in `expandedPaths`, a `Set<string>` toggled by the row's leading glyph button (which doubles as the indent spacer, and carries the `Expand {path}`/`Collapse {path}` label that is the only accessible name it has). The set is **persisted** — as a `string[]` in `gallery-state-${datasetId}`, restored behind an `Array.isArray` guard — because `GalleryPage` unmounts on every trip to the image detail view, so an in-memory-only set meant the tree came back fully collapsed around a still-selected deep folder. It is deliberately *not* cleared by **Reset filters**, which removes that same blob: the open branches are the tree's shape, not a filter.
+- **Selecting a folder opens it, and opens everything above it.** An effect on `activeSubfolder` adds every ancestor prefix (`ancestorPaths`, the module-level helper shared with the re-path bookkeeping below) *and the path itself*. The two halves answer different complaints: the ancestors make the row **reachable**, covering the three places a selection arrives from without knowing the tree's shape — the restored blob, the `?subfolder=` deep link applied during render, and `createSubfolderMutation`'s `setActiveSubfolder(data.path)`, which is why that mutation no longer expands anything by hand — while the path itself makes picking a folder **show what is filed under it**, the way every other tree behaves. Being keyed on `activeSubfolder` is what lets a user still collapse the folder they are standing in: the effect fires on the change of selection, not for as long as it is selected. It returns the previous set unchanged when everything is already open, so it cannot re-trigger itself, and a childless path in the set is inert — both the toggle and the render bail on `hasChildren`.
 - **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, delete, and re-path.
 - **CSS**: `.subfolder-row .subfolder-delete-btn`, `.subfolder-row .subfolder-move-btn`, and `.subfolder-row .subfolder-copy-btn` are `opacity: 0`; hover on the row reveals them. Defined in `frontend/src/index.css`. Move and copy buttons share base layout via `.subfolder-action-btn`; each has its own hover color (accent for move, info for copy). Delete uses inline styles (pre-existing pattern).
 
@@ -152,14 +154,15 @@ same one `deleteSubfolderMutation` uses):
 - **`expandedPaths` must be re-pointed**, and this is the one that gets missed: it is a
   `Set<string>` keyed by path, so a re-path orphans every key and silently collapses the
   branch the user was working in. It is rebuilt through the same map *and* gains the
-  destination's ancestors, which is what makes a folder dropped into a collapsed parent
-  visible where it landed.
+  destination's ancestors (via `ancestorPaths`), which is what makes a folder dropped into
+  a collapsed parent visible where it landed. The `activeSubfolder` effect does not cover
+  this: a re-path can move a folder the user is not standing in.
 - **`uploadSubfolder`** — the `activeSubfolder` effect covers the common case, but the user
   can override the upload target independently, so it is re-pointed too or the `<select>`
   renders blank.
 - **`createChildOf`** is cleared if it pointed into the subtree.
-- Persistence needs nothing: `activeSubfolder` feeds the debounced persist effect and
-  `liveStateRef`, so `gallery-state-${datasetId}` follows.
+- Persistence needs nothing: `activeSubfolder` and `expandedPaths` both feed the debounced
+  persist effect and `liveStateRef`, so `gallery-state-${datasetId}` follows.
 - The toast is driven off `kind`, not re-derived: *Renamed to "{to}"* vs
   *Moved "{label}" into "{parent || "(root)"}"*.
 

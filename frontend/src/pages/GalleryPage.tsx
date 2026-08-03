@@ -7,7 +7,7 @@ import { apiErrorDetail } from "../utils/apiError";
 import { createPortal } from "react-dom";
 import {
   DndContext, DragOverlay, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors,
-  type DragEndEvent, type DragStartEvent, type CollisionDetection,
+  type DragEndEvent, type DragStartEvent, type DragOverEvent, type CollisionDetection,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { imagesApi, type ImageFilterParams, type UploadResult } from "../api/images";
@@ -94,6 +94,13 @@ function buildSubfolderTree(items: SubfolderInfo[]): SubfolderNode[] {
   return roots;
 }
 
+/** Every proper ancestor of a subfolder path: "a/b/c" → ["a", "a/b"]. The set of
+ *  `expandedPaths` keys that have to be open for that path's row to be visible. */
+function ancestorPaths(path: string): string[] {
+  const parts = path.split("/");
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
 function scoreChipLabel(f: ScoreFilter): string {
   const short = SCORE_FIELDS.find(s => s.value === f.field)?.short ?? f.field;
   if (f.min && f.max) return `${short}: ${f.min}–${f.max}`;
@@ -105,7 +112,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -230,7 +237,13 @@ export default function GalleryPage() {
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingMoveSubfolder, setPendingMoveSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingCopySubfolder, setPendingCopySubfolder] = useState<SubfolderInfo | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // Persisted as a string[] in the gallery-state blob (Sets are not JSON), because
+  // GalleryPage unmounts on every trip to the image detail view — without this the tree
+  // came back fully collapsed around a still-selected deep folder. Array-guarded: the
+  // blob can have been written by a build that did not carry this field.
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(Array.isArray(saved?.expandedPaths) ? saved.expandedPaths : [])
+  );
   const [createChildOf, setCreateChildOf] = useState<string | null>(null);
   const [newChildName, setNewChildName] = useState("");
   // Right-click menu on a named subfolder row. Rendered with the other overlays, not
@@ -243,8 +256,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -252,6 +265,8 @@ export default function GalleryPage() {
   const lastRangeEndId = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  // `null` = not over a folder row; `""` = the (root) row, which is a real target.
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
 
   // closestCenter alone is wrong once the 180px sidebar rows are droppables (a card
   // dragged near the grid's left edge can be "closest" to a row), but pointerWithin
@@ -320,6 +335,28 @@ export default function GalleryPage() {
     return () => clearTimeout(t);
   }, [detectionLabelInput, detectionLabel]);
 
+  // Selecting a folder opens it, and opens everything above it. The ancestors are what
+  // make the row *reachable* — `activeSubfolder` arrives from three places that know
+  // nothing about the tree's shape (the restored blob, the deep link applied during
+  // render, and a sidebar click), and the first two can name a folder nested inside closed
+  // branches, selecting a row nobody can see. The path itself is what makes picking a
+  // folder show what is filed under it, the way every other tree behaves.
+  //
+  // Keyed on `activeSubfolder`, so it fires on the *change* and not afterwards: collapsing
+  // the folder you are standing in stays collapsed. Returning `prev` unchanged when
+  // everything is already open is what stops this re-running itself. A childless path is
+  // harmless in the set — both the toggle and the render bail on `hasChildren`.
+  useEffect(() => {
+    if (!activeSubfolder) return;
+    const needed = [...ancestorPaths(activeSubfolder), activeSubfolder];
+    setExpandedPaths(prev => {
+      if (needed.every(p => prev.has(p))) return prev;
+      const next = new Set(prev);
+      for (const p of needed) next.add(p);
+      return next;
+    });
+  }, [activeSubfolder]);
+
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
   // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
   // at flush time; the window is the same shared constant either way.
@@ -329,11 +366,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -341,11 +378,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -718,8 +755,7 @@ export default function GalleryPage() {
       setExpandedPaths(prev => {
         const next = new Set<string>();
         for (const p of prev) next.add(inSubtree(p) ? rewrite(p) : p);
-        const parts = to.split("/");
-        for (let i = 1; i < parts.length; i++) next.add(parts.slice(0, i).join("/"));
+        for (const p of ancestorPaths(to)) next.add(p);
         return next;
       });
       // The activeSubfolder effect covers the common case, but the user can override
@@ -811,12 +847,26 @@ export default function GalleryPage() {
     }
   }, [sortIdx, datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDragStart = useCallback((e: DragStartEvent) => setActiveDragId(String(e.active.id)), []);
-  const handleDragCancel = useCallback(() => setActiveDragId(null), []);
+  const handleDragStart = useCallback((e: DragStartEvent) => {
+    setActiveDragId(String(e.active.id));
+    setDropTargetPath(null);
+  }, []);
+  const handleDragCancel = useCallback(() => {
+    setActiveDragId(null);
+    setDropTargetPath(null);
+  }, []);
+  // Which folder row the pointer is currently over, for the overlay's drop-target chip.
+  // `over` is already narrowed by `collisionDetection`, so this reads the decision rather
+  // than re-deriving it — a row that lights up and a chip that names it can never disagree.
+  const handleDragOver = useCallback((e: DragOverEvent) => {
+    const id = e.over?.id;
+    setDropTargetPath(id !== undefined && isSubfolderDropId(id) ? subfolderFromDropId(id) : null);
+  }, []);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragId(null);
+    setDropTargetPath(null);
     if (!over || !datasetId) return;
 
     // A dragged *folder* — must come before the branch below, which assumes active.id
@@ -900,15 +950,8 @@ export default function GalleryPage() {
       setNewSubfolderName("");
       setCreateChildOf(null);
       setNewChildName("");
-      // Auto-expand all ancestor paths so the new subfolder is visible
-      const parts = data.path.split("/");
-      if (parts.length > 1) {
-        setExpandedPaths(prev => {
-          const next = new Set(prev);
-          for (let i = 1; i < parts.length; i++) next.add(parts.slice(0, i).join("/"));
-          return next;
-        });
-      }
+      // Selecting it is also what reveals it: the activeSubfolder effect opens every
+      // ancestor, so a child created inside a collapsed parent is visible where it landed.
       setActiveSubfolder(data.path);
       toast.success(`Created subfolder "${data.path}"`);
     },
@@ -1033,6 +1076,9 @@ export default function GalleryPage() {
     setLicenseFilter("");
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
+    // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
+    // removes, but it is the tree's shape, not a filter — collapsing everything is not
+    // what "reset filters" promises. The next persist writes the live set back.
     dropScrollRestore();
     // Immediate, unlike the deep-link paths: this is a direct gesture and wants
     // feedback now, not once the new page renders.
@@ -1146,13 +1192,20 @@ export default function GalleryPage() {
           style={{
             display: "flex", alignItems: "center",
             borderRadius: "var(--r)",
-            background: isOver || isActive ? "var(--surface-3)" : "transparent",
-            boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
+            // A drop target must not look like the selected row: both used to be the
+            // same neutral `--surface-3`, so the only cue that this row was the target
+            // was a 1px ring, on a row the drag preview was covering.
+            background: isOver ? "var(--accent-glow)" : isActive ? "var(--surface-3)" : "transparent",
+            boxShadow: isOver ? "inset 0 0 0 2px var(--accent)" : "none",
             opacity: isDragging ? 0.4 : 1,
           }}
         >
-          {/* expand/collapse toggle (doubles as indent) */}
+          {/* expand/collapse toggle (doubles as indent). Its glyph is the whole of its
+              content, so without a label it is a nameless button to a screen reader —
+              and to a test looking for a stable handle on it. */}
           <button
+            aria-label={hasChildren ? `${isExpanded ? "Collapse" : "Expand"} ${node.path}` : undefined}
+            aria-expanded={hasChildren ? isExpanded : undefined}
             onClick={(e) => {
               e.stopPropagation();
               if (!hasChildren) return;
@@ -1713,6 +1766,7 @@ export default function GalleryPage() {
         sensors={sensors}
         collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
@@ -1796,8 +1850,8 @@ export default function GalleryPage() {
                 style={{
                   display: "flex", alignItems: "center",
                   borderRadius: "var(--r)",
-                  background: isOver || isRootActive ? "var(--surface-3)" : "transparent",
-                  boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
+                  background: isOver ? "var(--accent-glow)" : isRootActive ? "var(--surface-3)" : "transparent",
+                  boxShadow: isOver ? "inset 0 0 0 2px var(--accent)" : "none",
                 }}
               >
                 <button
@@ -1967,11 +2021,21 @@ export default function GalleryPage() {
       {createPortal(
         <DragOverlay dropAnimation={null} zIndex={60}>
           {activeDragImage && (
-            <div style={{
-              position: "relative", pointerEvents: "none", opacity: 0.92,
-              boxShadow: "0 12px 32px -8px rgba(0,0,0,.6)", borderRadius: "var(--r-lg)",
-            }}>
-              <ImageCard image={activeDragImage} />
+            <div style={{ position: "relative", pointerEvents: "none" }}>
+              {/* The card is card-sized and the sidebar is 180px wide, so over a folder
+                  row the preview sits squarely on top of the row it is about to drop
+                  into — the highlight underneath was unreadable, which is the whole
+                  complaint. Fade the picture out of the way and let the row show
+                  through; the chip below then says where it lands. */}
+              <div style={{
+                opacity: dropTargetPath !== null ? 0.25 : 0.92,
+                transition: "opacity .12s",
+                boxShadow: "0 12px 32px -8px rgba(0,0,0,.6)", borderRadius: "var(--r-lg)",
+              }}>
+                <ImageCard image={activeDragImage} />
+              </div>
+              {/* Outside the faded wrapper: the count is the other thing you need to read
+                  at the moment of dropping. */}
               {activeDragCount > 1 && (
                 <span style={{
                   position: "absolute", top: -8, right: -8, zIndex: 2,
@@ -1980,6 +2044,22 @@ export default function GalleryPage() {
                   fontSize: 11, fontWeight: 600, fontFamily: '"Geist Mono", monospace',
                 }}>
                   {activeDragCount} images
+                </span>
+              )}
+              {dropTargetPath !== null && (
+                <span style={{
+                  position: "absolute", left: "50%", top: "50%", zIndex: 2,
+                  transform: "translate(-50%, -50%)", maxWidth: "94%",
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 11px", borderRadius: 999,
+                  background: "var(--accent)", color: "#03130d",
+                  fontSize: 12, fontWeight: 600,
+                  boxShadow: "0 6px 18px -6px rgba(0,0,0,.7)",
+                }}>
+                  <FolderInput size={12} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {dropTargetPath === "" ? "(root)" : dropTargetPath}
+                  </span>
                 </span>
               )}
             </div>

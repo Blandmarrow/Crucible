@@ -101,6 +101,21 @@ function ancestorPaths(path: string): string[] {
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
 }
 
+/** Is `path` `root` itself or filed anywhere beneath it? The subtree predicate every
+ *  path-keyed piece of sidebar state is re-pointed or pruned by. `isInSubtree("", root)`
+ *  is false for any named `root`, so the dataset root is never caught by one. */
+function isInSubtree(path: string, root: string): boolean {
+  return path === root || path.startsWith(root + "/");
+}
+
+/** Returns the *same* set when nothing matched, so it never forces a render — or a
+ *  needless write to `gallery-state-${datasetId}`. */
+function withoutSubtree(set: Set<string>, root: string): Set<string> {
+  const kept = [...set].filter(p => !isInSubtree(p, root));
+  if (kept.length === set.size) return set;
+  return new Set(kept);
+}
+
 function scoreChipLabel(f: ScoreFilter): string {
   const short = SCORE_FIELDS.find(s => s.value === f.field)?.short ?? f.field;
   if (f.min && f.max) return `${short}: ${f.min}–${f.max}`;
@@ -767,7 +782,7 @@ export default function GalleryPage() {
     onSuccess: (data, vars) => {
       const from = data.previous_path;
       const to = data.path;
-      const inSubtree = (p: string) => p === from || p.startsWith(from + "/");
+      const inSubtree = (p: string) => isInSubtree(p, from);
       const rewrite = (p: string) => to + p.slice(from.length);
 
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
@@ -993,10 +1008,20 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       setPendingDeleteSubfolder(null);
-      if (activeSubfolder === path || activeSubfolder?.startsWith(path + "/")) {
+      // The same re-pointing repathSubfolderMutation does, except the folder is gone, so
+      // every path-keyed piece of state under it is cleared rather than rewritten.
+      // `delete_subfolder` removes `path` *and* `path/%` plus every declared entry below,
+      // so the whole subtree goes. Pruning expandedPaths matters now that the set is
+      // persisted: dead keys would be stored forever, and a folder later re-created at the
+      // same path would come back pre-expanded.
+      if (activeSubfolder !== undefined && isInSubtree(activeSubfolder, path)) {
         setActiveSubfolder(undefined);
         resetPage();
       }
+      setExpandedPaths(prev => withoutSubtree(prev, path));
+      // `isInSubtree("", path)` is false, so the root upload target is never disturbed.
+      setUploadSubfolder(prev => (isInSubtree(prev, path) ? "" : prev));
+      setCreateChildOf(prev => (prev !== null && isInSubtree(prev, path) ? null : prev));
       toast.success(`Deleted subfolder "${path}"`);
     },
     onError: () => toast.error("Failed to delete subfolder"),
@@ -1010,6 +1035,7 @@ export default function GalleryPage() {
         params.subfolder,
       ),
     onSuccess: (data) => {
+      const moved = pendingMoveSubfolder?.path;
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
@@ -1017,7 +1043,12 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
-      if (activeSubfolder === pendingMoveSubfolder?.path || activeSubfolder?.startsWith(pendingMoveSubfolder!.path + "/")) { setActiveSubfolder(undefined); resetPage(); }
+      // Deliberately prunes nothing from expandedPaths, unlike the delete above: the
+      // backend matches `Image.subfolder == source_subfolder` exactly, one level, and
+      // never touches declared_subfolders — move `alpha` and everything under
+      // `alpha/inner` stays exactly where it was. Snapping the branch shut here would
+      // close a folder that is still full, and persist that as the user's choice.
+      if (moved !== undefined && activeSubfolder !== undefined && isInSubtree(activeSubfolder, moved)) { setActiveSubfolder(undefined); resetPage(); }
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
       setPendingMoveSubfolder(null);
     },

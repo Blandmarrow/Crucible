@@ -56,6 +56,13 @@ export const SORT_OPTIONS = [
   // that did not come from a video sort last (nulls-last, applied server-side).
   { label: "Video timeline",     sort: "source_timestamp_ms",    order: "asc"  },
   { label: "Shot order",         sort: "source_shot_index",      order: "asc"  },
+  // The keep/cut rating. Higher is better, so "Rating ↓" is best-first and reads
+  // the same way as "Aesthetic ↓" two entries up. Both directions, because
+  // "show me what I marked Cut" is a real review pass; unrated images sort last
+  // either way (nulls-last, applied server-side) — "not judged" is no answer,
+  // not a tier below Cut.
+  { label: "Rating ↓",            sort: "aesthetic_rating",       order: "desc" },
+  { label: "Rating ↑",            sort: "aesthetic_rating",       order: "asc"  },
 ] as const;
 
 /** Sentinel value for the gallery's "missing license only" filter option. */

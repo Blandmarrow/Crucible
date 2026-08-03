@@ -33,6 +33,13 @@ interface ExportFilters {
   label_match?: "any" | "all";
   /** true = only images carrying no label at all. */
   label_missing?: boolean;
+  /** Keep only images rated at or above this tier (1–4). Shaped like
+   *  `aesthetic_min`: an **unrated** image has no value to compare and is
+   *  dropped, which is what `unrated_will_export` exists to warn about. */
+  rating_min?: number | null;
+  /** Drop images rated at any of these tiers (1–4). Shaped like `exclude_flags`;
+   *  an unrated image is never named, so this never drops the untriaged. */
+  exclude_ratings?: number[] | null;
   label?: string;
 }
 
@@ -57,6 +64,8 @@ export interface ExportPreviewFilters {
   label_filter?: string[] | null;
   label_match?: "any" | "all";
   label_missing?: boolean;
+  rating_min?: number | null;
+  exclude_ratings?: number[] | null;
 }
 
 export interface ExportPreview {
@@ -68,6 +77,8 @@ export interface ExportPreview {
   excluded_flagged: number;
   excluded_style_sim: number;
   excluded_license: number;
+  /** Dropped by `rating_min` or `exclude_ratings`. */
+  excluded_by_rating: number;
   unlicensed_count: number;
   /** How many of those actually ship under the *current* filters — every filter,
    *  not just the license ones. The client cannot derive this. */
@@ -91,6 +102,14 @@ export interface ExportPreview {
   /** The same breakdown restricted to what actually ships under the current
    *  filters. */
   aesthetic_models_will_export: Record<string, number>;
+  /** Images nobody has rated, over the whole dataset scope — the population a
+   *  rating filter is chosen against. With `rating_min` on, every one of them is
+   *  excluded, so this is the number that turns "214 will export" into a
+   *  sentence a user can act on. */
+  unrated_count: number;
+  /** How many of those survive the current filters and actually ship — zero
+   *  whenever `rating_min` is on, which is exactly the point. */
+  unrated_will_export: number;
   sample_files: { image: string; caption_preview: string }[];
   images_without_detections?: number;
 }
@@ -150,6 +169,8 @@ export const exportApi = {
           ...(filters?.label_filter?.length && { label_filter: JSON.stringify(filters.label_filter) }),
           ...(filters?.label_match === "all" && { label_match: "all" }),
           ...(filters?.label_missing && { label_missing: true }),
+          ...(filters?.rating_min != null && { rating_min: filters.rating_min }),
+          ...(filters?.exclude_ratings?.length && { exclude_ratings: JSON.stringify(filters.exclude_ratings) }),
         },
       })
       .then((r) => r.data),

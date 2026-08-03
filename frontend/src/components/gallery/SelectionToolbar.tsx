@@ -28,6 +28,8 @@ import SetProvenanceModal from "./SetProvenanceModal";
 import { invalidateLabelScope, invalidateProvenanceScope } from "../../constants/queryKeys";
 import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import { useLabels } from "../../hooks/useLabels";
+import SetRatingModal from "./SetRatingModal";
+import { ratingLabel } from "../../constants/rating";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { SubfolderInfo } from "../../types";
@@ -95,6 +97,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showMoveDataset, setShowMoveDataset] = useState(false);
   const [showProvenance, setShowProvenance] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
+  const [showRating, setShowRating] = useState(false);
   const [showCopyDataset, setShowCopyDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
@@ -362,6 +365,26 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onError: (err) => toast.error(apiErrorDetail(err, "Setting source/license failed")),
   });
 
+  const ratingMutation = useMutation({
+    mutationFn: (rating: number | null) => imagesApi.bulkRating(datasetId, { imageIds: ids, rating }),
+    onSuccess: (data, rating) => {
+      // The whole dataset-content scope, never an inline key list: a rating
+      // moves the gallery cards, the Stats distribution *and* the Export
+      // preview's counts, and an open pane showing any of them would otherwise
+      // sit on numbers that no longer hold (constants/queryKeys.ts).
+      invalidateDatasetContentScope(qc, datasetId);
+      qc.invalidateQueries({ queryKey: ["export-preview"] });
+      setShowRating(false);
+      clear();
+      toast.success(
+        rating === null
+          ? `Cleared the rating on ${data.updated} image${data.updated !== 1 ? "s" : ""}`
+          : `Rated ${data.updated} image${data.updated !== 1 ? "s" : ""} ${ratingLabel(rating)}`
+      );
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Setting the rating failed")),
+  });
+
   const labelsMutation = useMutation({
     mutationFn: (edit: { add: string[]; remove: string[] }) =>
       labelsApi.assign({ image_ids: ids, add: edit.add, remove: edit.remove }),
@@ -535,7 +558,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   // this list was written for; `showProvenance`, `showMoveDataset` and
   // `showCopyDataset` were already missing for the same reason — the list is
   // hand-maintained, so a new modal state belongs here in the same edit.
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showInpaint || showReextract || showThumbnails || showMoveSubfolder || showMoveDataset || showCopyDataset || showProvenance || showLabels || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showInpaint || showReextract || showThumbnails || showMoveSubfolder || showMoveDataset || showCopyDataset || showProvenance || showLabels || showRating || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -644,6 +667,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           title="Add or remove labels across the selection"
         >
           <Tags size={14} /> Labels
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowRating(true)}
+          title="Set the keep/cut rating (or press 1–4 in the gallery)"
+          data-testid="toolbar-set-rating"
+        >
+          <Star size={14} /> Rate
         </button>
         <button
           className="btn-ghost btn-sm flex items-center gap-1.5"
@@ -1383,6 +1414,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           onClose={() => setShowProvenance(false)}
           sourceInfo={datasetBreakdown}
           customLicenses={customLicenses}
+        />
+      )}
+
+      {/* Set rating modal */}
+      {showRating && (
+        <SetRatingModal
+          count={count}
+          isPending={ratingMutation.isPending}
+          onConfirm={(rating) => ratingMutation.mutate(rating)}
+          onClose={() => setShowRating(false)}
+          sourceInfo={datasetBreakdown}
         />
       )}
 

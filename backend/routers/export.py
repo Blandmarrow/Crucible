@@ -67,6 +67,11 @@ class KohyaExportRequest(BaseModel):
     label_filter: list[str] | None = None
     label_match: Literal["any", "all"] = "any"
     label_missing: bool | None = None
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -108,6 +113,11 @@ class AIToolkitExportRequest(BaseModel):
     label_filter: list[str] | None = None
     label_match: Literal["any", "all"] = "any"
     label_missing: bool | None = None
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -147,6 +157,11 @@ class PlainExportRequest(BaseModel):
     label_filter: list[str] | None = None
     label_match: Literal["any", "all"] = "any"
     label_missing: bool | None = None
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -192,6 +207,35 @@ def _parse_subfolders_param(value: str) -> list[str] | None:
     if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
         raise HTTPException(status_code=400, detail="subfolders must be a JSON array of strings")
     return parsed
+
+
+def _parse_ratings(values: list[int] | None) -> list[int] | None:
+    """Validate an `exclude_ratings` body list: tiers 1–4, nothing else.
+
+    `0` is the *filter's* unrated sentinel on `GET /images/` and is not a tier —
+    "drop the unrated" is what `rating_min` already says — so it is a 400 here
+    rather than a clause that silently means something different from the gallery.
+    Same request-path-only rule as `_parse_flags`.
+    """
+    if not values:
+        return None
+    invalid = [v for v in values if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 4]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"exclude_ratings must be tiers 1-4: {invalid}")
+    return sorted(set(values))
+
+
+def _parse_ratings_json(s: str) -> list[int] | None:
+    """The preview's query-param form of `_parse_ratings` — a JSON array."""
+    if not s:
+        return None
+    try:
+        parsed = json.loads(s)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="exclude_ratings must be a JSON array of integers 1-4")
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="exclude_ratings must be a JSON array of integers 1-4")
+    return _parse_ratings(parsed)
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -242,6 +286,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
     # a filter shape the gallery 400s must not be smuggled in here and fail an
     # already-enqueued job instead.
     label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -286,6 +331,8 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -311,6 +358,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
     # a filter shape the gallery 400s must not be smuggled in here and fail an
     # already-enqueued job instead.
     label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -354,6 +402,8 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -379,6 +429,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
     # a filter shape the gallery 400s must not be smuggled in here and fail an
     # already-enqueued job instead.
     label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -420,6 +471,8 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -452,6 +505,8 @@ async def preview(
     label_filter: str = Query(default="", description="JSON array of label ids; empty = no filter"),
     label_match: Literal["any", "all"] = Query(default="any"),
     label_missing: bool | None = Query(default=None),
+    rating_min: int | None = Query(default=None, ge=1, le=4),
+    exclude_ratings: str = Query(default="", description="JSON array of rating tiers 1-4 to drop"),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = _parse_subfolders_param(subfolders)
@@ -478,4 +533,6 @@ async def preview(
         ),
         label_match=label_match,
         label_missing=label_missing,
+        rating_min=rating_min,
+        exclude_ratings=_parse_ratings_json(exclude_ratings),
     )

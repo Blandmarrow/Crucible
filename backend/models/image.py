@@ -128,6 +128,36 @@ class Image(Base):
     # enrol a boolean in the float-seeding guards.
     scores_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # The human keep/cut decision: 4 = Keep, 3 = Probably, 2 = Probably not,
+    # 1 = Cut, NULL = not yet rated. Higher is better, matching every other
+    # numeric column here (and every photo tool's star rating), so "Rating ↓" in
+    # `SORT_OPTIONS` reads best-first alongside "Aesthetic ↓".
+    #
+    # Authored data, not a measurement: nothing computes it and nothing
+    # recomputes it, so it travels on every cross-dataset copy and move, is
+    # mirrored and diffed for versioning, and is deliberately NOT inherited by a
+    # derivative (crop, upscale, LUT, crop-to-detection) — a new picture has not
+    # been judged.
+    #
+    # Deliberately NOT named `*_score`, and carrying no
+    # `info={"qualifies": ...}`. `score_columns()` in `backend/utils.py` is
+    # suffix-derived and pinned to exactly ten names by
+    # `test_scores_stale.py::test_the_score_universe_is_the_ten_suffixed_columns`,
+    # and `qualifies` means "this column says how to read a score" — a rating
+    # qualifies nothing. `info={"carried": True}` is the honest enrolment into
+    # the rebuild-path guards of `backend/tests/test_video_lineage_mirrors.py`.
+    aesthetic_rating: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, info={"carried": True}
+    )
+    # The `scores_stale` twin for the rating: the pixels were rewritten in place
+    # after a human judged them. A separate bit rather than a reuse, because the
+    # **clear predicates diverge** — a quality run clears `scores_stale`, while
+    # only a human re-rating clears this one. `utils.record_in_place` stays the
+    # single writer of both.
+    rating_stale: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0", info={"carried": True}
+    )
+
     # Manual sort order (NULL = no custom order set; NULLS LAST when sorting)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
@@ -151,6 +181,7 @@ class Image(Base):
         Index("ix_images_dataset_aesthetic", "dataset_id", "aesthetic_score"),
         Index("ix_images_dataset_blur", "dataset_id", "blur_score"),
         Index("ix_images_dataset_similarity", "dataset_id", "style_similarity_score"),
+        Index("ix_images_dataset_rating", "dataset_id", "aesthetic_rating"),
         Index("ix_images_dataset_subfolder", "dataset_id", "subfolder"),
         Index("ix_images_dataset_sort_order", "dataset_id", "sort_order"),
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),

@@ -105,6 +105,14 @@ class VersionImageState(Base):
     # them trustworthy. Mutable state, so it is diffed as well as mirrored.
     scores_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
+    # The human keep/cut decision and its own staleness bit — mirrored for the
+    # same reason as everything else here: a restore writes back exactly what
+    # this row holds, so an unmirrored column is silently blanked. Authored
+    # *mutable* data, so both are diffed as well as mirrored. (No `info=` — only
+    # the `Image` side is read by the rebuild-path guards.)
+    aesthetic_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

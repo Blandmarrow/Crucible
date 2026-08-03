@@ -727,6 +727,8 @@ async def create_snapshot(
             luminance_score=img.luminance_score,
             style_similarity_score=img.style_similarity_score,
             scores_stale=img.scores_stale,
+            aesthetic_rating=img.aesthetic_rating,
+            rating_stale=img.rating_stale,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
             source_name=img.source_name,
@@ -832,6 +834,12 @@ _DIFF_COLS = (
     # snapshots flips this and nothing else, and that is exactly a difference
     # worth showing.
     VersionImageState.scores_stale,
+    # Authored *mutable* data — a human re-rates between two snapshots, and that
+    # is precisely a difference worth showing. The immutable carve-out below is
+    # for lineage alone, and `rating_stale` follows its rating for the same
+    # reason `scores_stale` follows its scores.
+    VersionImageState.aesthetic_rating,
+    VersionImageState.rating_stale,
     VersionImageState.dino_layer_scores,
     VersionImageState.generation_metadata,
     VersionImageState.source_name,
@@ -876,6 +884,7 @@ _DIFF_COMPARE_FIELDS = (
     "nsfw_score", "aesthetic_score", "aesthetic_model", "blur_score", "noise_score", "uniformity_score",
     "watermark_score", "color_score", "saturation_score", "luminance_score",
     "style_similarity_score", "scores_stale",
+    "aesthetic_rating", "rating_stale",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
     "source_meta", "sort_order", "label_ids", "detections",
@@ -1472,6 +1481,8 @@ async def restore_snapshot(
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.scores_stale = state.scores_stale
+        img.aesthetic_rating = state.aesthetic_rating
+        img.rating_stale = state.rating_stale
         img.sort_order = state.sort_order
         img.source_video_id = (
             state.source_video_id if state.source_video_id in live_video_ids else None

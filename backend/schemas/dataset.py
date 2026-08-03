@@ -157,6 +157,12 @@ class DatasetStats(BaseModel):
     caption_length_distribution: dict[str, int] = {}
     caption_token_distribution: dict[str, int] = {}
     style_similarity_distribution: dict[str, int] = {}
+    # Keep/cut rating → count, best-first with "Unrated" last and always present.
+    # Deliberately its own field rather than four more entries in `score_coverage`:
+    # a rating is not a measurement, and `StatsPage`'s coverage grid is a fixed
+    # four-column layout. The unrated total is a bucket here, which is where it
+    # belongs — it is a share of the same population, not a coverage figure.
+    rating_distribution: dict[str, int] = {}
     quality_flag_counts: dict[str, int] = {}
     score_coverage: dict[str, int] = {}
     # Effective license (image value coalesced over the dataset default) → count.

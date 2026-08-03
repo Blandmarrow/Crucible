@@ -2,11 +2,13 @@ import { create } from "zustand";
 import {
   GALLERY_CHECKBOX_SIZE_KEY,
   GALLERY_LICENSE_BADGE_KEY,
+  GALLERY_RATING_BADGE_KEY,
   GALLERY_STYLE_METER_KEY,
   LABEL_HOTKEYS_KEY,
   clampGalleryCheckboxSize,
   getGalleryCheckboxSize,
   getGalleryLicenseBadge,
+  getGalleryRatingBadge,
   getGalleryStyleMeter,
   getLabelHotkeysEnabled,
 } from "../constants/storage";
@@ -40,6 +42,11 @@ interface UiPrefsStore {
    *  view — the same reason the three preferences above live here. */
   labelHotkeysEnabled: boolean;
   setLabelHotkeysEnabled: (on: boolean) => void;
+  /** Whether gallery cards show the keep/cut rating badge. On by default.
+   *  Unlike the style meter there is no request to gate — the rating ships in
+   *  the list payload regardless — so this is a render toggle only. */
+  galleryRatingBadge: boolean;
+  setGalleryRatingBadge: (on: boolean) => void;
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -63,5 +70,10 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
   setLabelHotkeysEnabled: (on) => {
     localStorage.setItem(LABEL_HOTKEYS_KEY, String(on));
     set({ labelHotkeysEnabled: on });
+  },
+  galleryRatingBadge: getGalleryRatingBadge(),
+  setGalleryRatingBadge: (on) => {
+    localStorage.setItem(GALLERY_RATING_BADGE_KEY, String(on));
+    set({ galleryRatingBadge: on });
   },
 }));

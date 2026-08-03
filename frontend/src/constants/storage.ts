@@ -27,6 +27,7 @@ export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "i
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
 export const LABEL_HOTKEYS_KEY           = "label-hotkeys-enabled";   // "true" | "false" (ON by default — read with !== "false")
+export const GALLERY_RATING_BADGE_KEY    = "gallery-rating-badge";    // "true" | "false" (ON by default — read with !== "false")
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -115,4 +116,14 @@ export function getGalleryStyleMeter(): boolean {
 
 export function getLabelHotkeysEnabled(): boolean {
   return localStorage.getItem(LABEL_HOTKEYS_KEY) !== "false";
+}
+
+/** Whether gallery cards show the keep/cut rating badge. **On** by default,
+ *  hence `!== "false"` — same read as the style meter above.
+ *
+ *  It costs nothing on a dataset nobody has rated: an unrated card renders no
+ *  badge, and the value ships in the list payload either way, so there is no
+ *  request to gate. */
+export function getGalleryRatingBadge(): boolean {
+  return localStorage.getItem(GALLERY_RATING_BADGE_KEY) !== "false";
 }

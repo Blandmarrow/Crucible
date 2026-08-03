@@ -45,6 +45,9 @@ import LabelPicker from "../components/common/LabelPicker";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
+import { RATING_FILTER_ENTRIES, RATING_UNRATED, encodeRatingFilter, ratingLabel } from "../constants/rating";
+import { usePaneContext } from "../contexts/PaneContext";
+import { usePaneStore } from "../store/paneStore";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -159,7 +162,7 @@ function loadSavedState(datasetId: string) {
     // every guard in `sanitizeScoreFilters` read as dead code. The two flat strings
     // follow the `labelFilter` precedent — declared concrete, `typeof`-guarded at the
     // read site.
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; ratingFilter?: number[]; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -295,6 +298,24 @@ export default function GalleryPage() {
   const [detectionLabelInput, setDetectionLabelInput] = useState(restoredDetectionLabel);
   const [detectionLabel, setDetectionLabel] = useState(restoredDetectionLabel);
   const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>(() => sanitizeScoreFilters(saved?.scoreFilters));
+  // Keep/cut rating tiers, where `0` means unrated. A *set*, not a single value:
+  // the whole point of the chip row is "Keep or Probably or still unrated", and
+  // the one `rating_filter` param expresses that OR (the license pair cannot).
+  // Sanitised on restore the way `licenseFilter` is — this comes back from
+  // localStorage, and an out-of-domain entry would be a 400 from the listing
+  // endpoint rather than a filter that quietly matches nothing.
+  const [ratingFilter, setRatingFilter] = useState<number[]>(() => {
+    const restored = saved?.ratingFilter;
+    if (!Array.isArray(restored)) return [];
+    return restored.filter((v) => Number.isInteger(v) && v >= 0 && v <= 4);
+  });
+  const toggleRatingTier = (value: number) => {
+    setPage(1);
+    dropScrollRestore();
+    setRatingFilter((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value].sort((a, b) => a - b)
+    );
+  };
   const [showAddScore, setShowAddScore] = useState(false);
   const [draftField, setDraftField] = useState(SCORE_FIELDS[0].value);
   const [draftMin, setDraftMin] = useState("");
@@ -376,8 +397,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -524,11 +545,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -536,11 +557,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -712,11 +733,12 @@ export default function GalleryPage() {
     label_missing: labelMissing ? true : undefined,
     label_filter: labelFilter.length ? JSON.stringify(labelFilter) : undefined,
     label_match: labelFilter.length > 1 ? labelMatch : undefined,
-  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]);
+    rating_filter: encodeRatingFilter(ratingFilter),
+  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, frameVideoId]);
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, frameVideoId],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, ratingFilter, frameVideoId]
   );
 
   const { data: images = [], isLoading, isPlaceholderData, refetch } = useQuery({
@@ -743,6 +765,23 @@ export default function GalleryPage() {
     queryFn: () => imagesApi.count(filterParams).then((r) => r.count),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
+  });
+
+  // How many of this dataset's images carry no rating at all — the population a
+  // rating filter is chosen *against*. Without it "214 match" reads as the whole
+  // story, when the real story is usually "…out of 1,715 nobody has looked at".
+  // Deliberately the whole dataset rather than the current filters: it is the
+  // denominator for the triage work still outstanding, and it must not move as
+  // the chips are clicked. Nests under `["images", datasetId]` so every gallery
+  // mutation already invalidates it.
+  const unratedFilter = useMemo(
+    () => ({ dataset_id: datasetId!, rating_filter: encodeRatingFilter([RATING_UNRATED]) }),
+    [datasetId],
+  );
+  const { data: unratedCount } = useQuery({
+    queryKey: imagesCountKey(datasetId, unratedFilter),
+    queryFn: () => imagesApi.count(unratedFilter).then((r) => r.count),
+    enabled: !!datasetId,
   });
 
   imagesRef.current = images;
@@ -773,6 +812,64 @@ export default function GalleryPage() {
   // instead of claiming, which is the honest branch of the two.
   const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere === totalCount;
   const [selectingAll, setSelectingAll] = useState(false);
+
+  // ── Rate the selection with 1–4 (0 clears) ────────────────────────────────
+  // The rating is written from the keyboard because that is the only way a
+  // triage pass is fast enough to be worth doing: select, glance, press.
+  //
+  // The guard shape is `ImageDetailPage`'s keydown, verbatim — pane, modal,
+  // text field — because a window listener in a split-pane app is otherwise a
+  // trap. Without the pane check both panes rate on one keypress; without the
+  // text-field check typing "4" into the search box rates the selection.
+  const paneCtx = usePaneContext();
+  const activePaneId = usePaneStore((s) => s.activePaneId);
+  const selectedIdsHere = useMemo(
+    () => [...selectedIds].filter((id) => datasetByImageId.get(id) === datasetId),
+    [selectedIds, datasetByImageId, datasetId]
+  );
+  const rateSelection = useCallback((rating: number | null) => {
+    const ids = selectedIdsHere;
+    if (!datasetId) return;
+    if (ids.length === 0) {
+      // A toast rather than nothing: the keys are invisible, so a silent no-op
+      // reads as "the shortcut is broken" rather than "select something first".
+      toast("Select images first, then press 1–4 to rate them (0 clears)");
+      return;
+    }
+    imagesApi
+      .bulkRating(datasetId, { imageIds: ids, rating })
+      .then((r) => {
+        toast.success(
+          rating === null
+            ? `Cleared the rating on ${r.updated.toLocaleString()} image${r.updated !== 1 ? "s" : ""}`
+            : `Rated ${r.updated.toLocaleString()} image${r.updated !== 1 ? "s" : ""} ${ratingLabel(rating)}`
+        );
+        invalidateDatasetContentScope(qc, datasetId);
+      })
+      .catch((err) => toast.error(apiErrorDetail(err, "Could not set the rating")));
+  }, [datasetId, qc, selectedIdsHere]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" || target.isContentEditable
+      ) return;
+      // Any open dialog, asked of the DOM rather than of a list of state flags:
+      // this page opens a dozen modals and `SelectionToolbar` opens more that
+      // the page never learns about, so an enumerated guard would be wrong the
+      // first time one is added. `useModalBehavior` puts `role="dialog"` on
+      // every panel in the app, which makes this the one honest question.
+      if (document.querySelector('[role="dialog"]')) return;
+      if (e.key === "0") { e.preventDefault(); rateSelection(null); return; }
+      if (e.key >= "1" && e.key <= "4") { e.preventDefault(); rateSelection(Number(e.key)); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [rateSelection, paneCtx, activePaneId]);
 
   const selectAllMatching = useCallback(() => {
     setSelectingAll(true);
@@ -1288,6 +1385,7 @@ export default function GalleryPage() {
     setLabelFilter([]);
     setLabelMatch("any");
     setLabelMissing(false);
+    setRatingFilter([]);
     // Both halves of each debounced pair, together. Clearing only the committed value
     // leaves the input non-empty, so 350 ms later the debounce re-commits the old query
     // and fires `setPage(1)` — Reset undoing itself, in PM-012's silhouette. And these
@@ -1819,6 +1917,60 @@ export default function GalleryPage() {
             />
           )}
 
+          {/* Keep/cut rating chips. Multi-select, and "Unrated" is one of them —
+              which is the whole reason this is a single `rating_filter` param
+              rather than the license filter's value+missing pair: "Keep or still
+              unrated" is a real review pass and an AND of two params cannot say it.
+
+              The unrated total rides alongside, because a rating filter without it
+              is a number with no denominator: "214 match" is a different fact when
+              1,715 images have never been looked at. It counts the whole dataset,
+              not the current filters, so clicking chips does not move it. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} data-testid="rating-chips">
+            <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>Rating</span>
+            {RATING_FILTER_ENTRIES.map((entry) => {
+              const on = ratingFilter.includes(entry.value);
+              return (
+                <button
+                  key={entry.value}
+                  data-testid={`rating-chip-${entry.value}`}
+                  data-active={on ? "true" : "false"}
+                  onClick={() => toggleRatingTier(entry.value)}
+                  title={
+                    entry.value === RATING_UNRATED
+                      ? "Images nobody has rated yet"
+                      : `Press ${entry.value} on a selection to rate it ${entry.label}`
+                  }
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "2px 8px", borderRadius: "var(--r)", cursor: "pointer",
+                    background: on ? "var(--surface-3)" : "transparent",
+                    border: `1px solid ${on ? entry.color : "var(--line)"}`,
+                    color: on ? entry.color : "var(--fg-dim)",
+                    fontSize: 12, whiteSpace: "nowrap",
+                  }}
+                >
+                  {entry.value !== RATING_UNRATED && (
+                    <span style={{ font: '600 11px "Geist Mono", monospace' }}>{entry.value}</span>
+                  )}
+                  {entry.label}
+                </button>
+              );
+            })}
+            {ratingFilter.length > 0 && (
+              <button
+                onClick={() => { setRatingFilter([]); setPage(1); dropScrollRestore(); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 12, padding: "0 2px" }}
+                title="Clear the rating filter"
+              >Clear</button>
+            )}
+            {unratedCount !== undefined && unratedCount > 0 && (
+              <span data-testid="unrated-count" style={{ fontSize: 11.5, color: "var(--fg-mute)" }}>
+                {unratedCount.toLocaleString()} unrated in this dataset
+              </span>
+            )}
+          </div>
+
           {/* Multi-score filters */}
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             {scoreFilters.map((f, i) => (
@@ -2265,7 +2417,12 @@ export default function GalleryPage() {
         )}
         <div
           ref={scrollRef}
-          style={{ height: "100%", overflowY: "auto", padding: "18px 28px" }}
+          // The bottom pad clears `SelectionToolbar`, which floats at
+          // `bottom-6` fixed to the *viewport* and so sits on top of whatever
+          // the scroll area ends with — the pagination row, every time the
+          // content is short enough to reach the bottom of the screen. Without
+          // it, "Next →" is unclickable for as long as anything is selected.
+          style={{ height: "100%", overflowY: "auto", padding: "18px 28px 96px" }}
           onDragEnter={handleDragEnter}
           onDragOver={(e) => e.preventDefault()}
           onDragLeave={handleDragLeave}

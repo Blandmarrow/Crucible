@@ -487,6 +487,69 @@ def test_restore_puts_back_every_score(tmp_path):
     run(scenario())
 
 
+def test_restore_puts_back_the_rating(tmp_path):
+    """A restore reverts a rating — the same round trip as the scores above, and
+    the same silent failure without the mirror.
+
+    A rating is authored data that nothing recomputes, so the snapshot is the
+    only record of an old one. `rating_stale` travels with it for the same reason
+    `scores_stale` travels with the scores: a restore that put back a rating and
+    dropped the bit would present a judgement made about deleted pixels as
+    current.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        async with Session() as db:
+            img = await _get_by_filename(db, ds_id, "1.png")
+            img.aesthetic_rating = 4
+            img.rating_stale = True
+            await db.commit()
+
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+
+            img.aesthetic_rating = None
+            img.rating_stale = False
+            await db.commit()
+
+            await version_service.restore_snapshot(
+                db, ds_id, snap.id, pre_restore_snapshot=False)
+
+            await db.refresh(img)
+            assert img.aesthetic_rating == 4
+            assert img.rating_stale is True
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_diff_reports_a_changed_rating(tmp_path):
+    """A rating is *mutable* authored data — a human re-rates between two
+    snapshots, and that is exactly the kind of difference the diff exists to
+    show. `_DIFF_COLS`' carve-out is for immutable lineage only.
+    """
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        async with Session() as db:
+            img = await _get_by_filename(db, ds_id, "1.png")
+            img.aesthetic_rating = 1
+            await db.commit()
+            a = await version_service.create_snapshot(db, ds_id, "a", "")
+
+            img.aesthetic_rating = 4
+            await db.commit()
+            b = await version_service.create_snapshot(db, ds_id, "b", "")
+
+            diff = await version_service.diff_versions(db, ds_id, a.id, b.id)
+            modified = {m["filename"]: m for m in diff["modified"]}
+            assert "1.png" in modified, diff
+            assert modified["1.png"]["changes"]["aesthetic_rating"] == {
+                "from": 1, "to": 4
+            }
+        await engine.dispose()
+
+    run(scenario())
+
+
 def test_diff_reports_a_changed_technical_score(tmp_path):
     """A score is mutable — every quality re-run can change one — so it belongs
     in the diff as well as the mirror. `_DIFF_COLS`' carve-out is for *immutable*

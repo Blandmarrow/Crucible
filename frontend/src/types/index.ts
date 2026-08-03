@@ -97,6 +97,10 @@ export interface DatasetStats {
   caption_length_distribution: Record<string, number>;
   caption_token_distribution: Record<string, number>;
   style_similarity_distribution: Record<string, number>;
+  /** Keep/cut rating → count, best-first with "Unrated" last and always present
+   *  (a zero bucket still renders, because it is the denominator for the rest).
+   *  Optional so a client can outlive a backend that predates the column. */
+  rating_distribution?: Record<string, number>;
   quality_flag_counts: Record<string, number>;
   score_coverage: Record<string, number>;
   /** Effective license id -> count; "" = no license recorded at either level. */
@@ -145,6 +149,15 @@ export interface ImageListItem {
    *  longer exists. Cleared by a quality run that refreshes every score the
    *  image carries. `ImageDetail` inherits this. */
   scores_stale: boolean;
+  /** The human keep/cut decision: 4 = Keep, 3 = Probably, 2 = Probably not,
+   *  1 = Cut, null = not yet rated. Higher is better — see
+   *  `constants/rating.ts`, which owns the labels and colours. */
+  aesthetic_rating: number | null;
+  /** The pixels were rewritten in place after the rating above was given, so the
+   *  judgement was made about an image that no longer exists. Its own bit rather
+   *  than `scores_stale`, because only a human re-rating clears it — a quality
+   *  re-run says nothing about a decision. */
+  rating_stale: boolean;
   dino_layer_scores: Record<string, number> | null;
   quality_flags: Record<string, unknown>;
   generation_metadata?: GenerationMetadata | null;

@@ -25,6 +25,17 @@ export interface RestoreRequest {
   pre_restore_snapshot: boolean;
 }
 
+export interface RatingImpact {
+  /** Live images whose rating the restore would change, in either direction. */
+  will_change: number;
+  /** The subset it would *clear* — rated after the snapshot was taken. */
+  will_clear: number;
+  /** Rated images the version does not contain. Under `handle_extra_images:
+   *  "remove"` these are **deleted**, not reverted, so the modal reports them
+   *  separately: which number applies depends on the mode selected. */
+  extras_rated: number;
+}
+
 export interface RestoreSummary {
   files_restored: number;
   files_unavailable: number;
@@ -85,6 +96,15 @@ export const versioningApi = {
   updateVersion: (datasetId: string, versionId: string, body: VersionUpdateRequest) =>
     client
       .patch<Version>(`/datasets/${datasetId}/versions/${versionId}`, body)
+      .then((r) => r.data),
+
+  /** What restoring this version would do to the keep/cut ratings on disk now.
+   *  A version-vs-*current* comparison, which `diffVersions` is not — that reads
+   *  two snapshots. A rating is hand-made work nothing recomputes, so the
+   *  restore confirm states the number first. */
+  ratingImpact: (datasetId: string, versionId: string) =>
+    client
+      .get<RatingImpact>(`/datasets/${datasetId}/versions/${versionId}/rating-impact`)
       .then((r) => r.data),
 
   restoreVersion: (datasetId: string, versionId: string, body: RestoreRequest) =>

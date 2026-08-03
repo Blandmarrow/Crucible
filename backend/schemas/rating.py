@@ -74,7 +74,14 @@ class BoundaryAgreementOut(BaseModel):
 
 
 class ScorerModelAgreementOut(BaseModel):
-    model: str
+    # Nullable because nothing *enforces* `aesthetic_score IS NOT NULL ⟺
+    # aesthetic_model IS NOT NULL` — the migration's backfill established it, and
+    # any writer that sets a score without the marker breaks it again. A `None`
+    # here means "scored by a writer that skipped the marker", **not** a model
+    # named "unknown": the bucket is real and its `n` is counted, so
+    # `sum(m.n) == scored_and_rated` holds. Skipping the row instead would break
+    # that identity silently.
+    model: str | None
     n: int
     spearman: float | None
     # The largest ρ *any* scorer could reach against this tier distribution. With
@@ -84,6 +91,11 @@ class ScorerModelAgreementOut(BaseModel):
     # The most legible thing on the page: four flat tier means mean the scorer
     # knows nothing about your taste, and anyone can read four numbers.
     mean_by_rating: dict[str, float | None]
+    # The count behind each of those means, on the wire for the same reason
+    # `n_lo`/`n_hi` are: a mean over one image is indistinguishable from a mean
+    # over two hundred, and it is not derivable from `boundaries` except by an
+    # index trick that breaks the moment a boundary changes.
+    n_by_rating: dict[str, int]
     boundaries: list[BoundaryAgreementOut]
 
 

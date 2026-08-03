@@ -141,9 +141,11 @@ async def scorer_agreement(db: AsyncSession = Depends(get_db)):
 
     **Grouped by `aesthetic_model`**, because LAION's sac+logos+ava1 scores and
     V2.5's SigLIP scores are not comparable — pooling them would measure the mix.
-    Migration `a5e1b7c3d9f0`'s backfill establishes `aesthetic_score IS NOT NULL
-    ⟺ aesthetic_model IS NOT NULL`, so `sum(m.n) == scored_and_rated` with no
-    "scored but unknown" bucket to account for; a test asserts it.
+    Migration `a5e1b7c3d9f0`'s backfill established `aesthetic_score IS NOT NULL
+    ⟺ aesthetic_model IS NOT NULL`, but **nothing enforces it**, so a `None`
+    marker gets its **own bucket** rather than being skipped: bucketing keeps
+    `sum(m.n) == scored_and_rated` true, and a test asserts both. (Precedent:
+    `dataset_service.py`'s and `export_service.py`'s unknown-marker buckets.)
 
     Selects **columns, not entities** (`quality.py`'s rule at its paginated
     scorer): four scalars per row, and an ORM entity here would drag every
@@ -160,7 +162,9 @@ async def scorer_agreement(db: AsyncSession = Depends(get_db)):
         .where(Image.aesthetic_rating.isnot(None), Image.aesthetic_score.isnot(None))
     )).all()
 
-    by_model: dict[str, list[tuple[float, int]]] = {}
+    # `None` is a valid dict key: a scored row whose marker was never written
+    # groups together rather than crashing the response model.
+    by_model: dict[str | None, list[tuple[float, int]]] = {}
     for marker, score, tier in rows:
         by_model.setdefault(marker, []).append((float(score), int(tier)))
 
@@ -191,6 +195,7 @@ async def scorer_agreement(db: AsyncSession = Depends(get_db)):
             mean_by_rating={
                 str(t): (sum(v) / len(v) if v else None) for t, v in sorted(by_tier.items())
             },
+            n_by_rating={str(t): len(v) for t, v in sorted(by_tier.items())},
             boundaries=boundaries,
         ))
 

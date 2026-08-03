@@ -143,6 +143,9 @@ async def seed(
                 "created_at": base_time + timedelta(seconds=i),
                 "updated_at": base_time,
                 "aesthetic_score": round(rng.random() * 10, 4),
+                # Written alongside the score, never omitted:
+                # `GET /rating/scorer-agreement` groups by this marker.
+                "aesthetic_model": "laion",
                 "blur_score": round(rng.random() * 300, 4),
                 "noise_score": round(rng.random() * 30, 4),
                 "uniformity_score": round(rng.random() * 30, 4),

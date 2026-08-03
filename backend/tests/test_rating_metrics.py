@@ -166,6 +166,13 @@ def test_self_agreement_counts_consecutive_pairs_not_first_and_last():
     assert out["rate"] == pytest.approx(0.0)
     assert out["first_last_pairs"] == 1
     assert out["first_last_agreements"] == 1
+    # The same history read in rating order rather than write order — what a
+    # router sorting by `rating` would hand in. Every witness moves the other
+    # way, which is what makes three events the minimum length that can tell
+    # them apart. Pinned over HTTP too, where the ordering actually lives:
+    # `test_a_three_event_history_is_read_in_write_order_not_sorted_by_rating`.
+    sorted_out = self_agreement([_ev("a", 1), _ev("a", 1), _ev("a", 4)])
+    assert sorted_out["agreements"] == 1 and sorted_out["first_last_agreements"] == 0
 
 
 def test_self_agreement_ignores_images_with_one_event():

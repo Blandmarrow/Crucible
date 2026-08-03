@@ -28,6 +28,13 @@ class ImageRatingEvent(Base):
     can disagree with the last event for that image, so nothing may derive the
     *current* rating from this log.
 
+    **A restore can also destroy events, unrecoverably.** `image_id` cascades, and
+    `restore_snapshot(handle_extra_images="remove")` deletes `Image` rows — so an
+    image the restore drops loses its history, and undoing the restore brings the
+    image and its snapshotted rating back but not its events. That is the second
+    divergence direction: a rated image with *zero* events, so nothing may assume
+    `rated ⇒ has ≥1 event` either.
+
     **The `VersionImageState` mirroring rule does not reach this.** That rule is
     about columns on `Image`, and the structural guard in
     `backend/tests/test_video_lineage_mirrors.py` derives its universe from

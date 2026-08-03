@@ -22,7 +22,11 @@ export interface SelfAgreement {
   singleton_pairs: number;
   singleton_agreements: number;
   singleton_rate: number | null;
-  /** `pairs − singleton_pairs`, stated rather than left to be inferred. */
+  /** `pairs − singleton_pairs`, stated rather than left to be inferred. It
+   *  absorbs **unknown** as well as bulk: `singleton_*` requires `batch_size == 1`
+   *  on both sides, and the migration backfilled every pre-existing rating with a
+   *  NULL batch size — so on an existing install the first re-rate of a backfilled
+   *  image counts here. "Not a confirmed one-image write", not "a bulk write". */
   bulk_pairs: number;
   /** Pairs where either side cleared the rating. **Excluded** from `pairs`:
    *  withdrawing a judgement is not a second opinion. */
@@ -62,8 +66,10 @@ export interface BoundaryAgreement {
 }
 
 export interface ScorerModelAgreement {
-  /** The `aesthetic_model` marker: "laion" | "v2_5" | a future `head:{uuid}`. */
-  model: string;
+  /** The `aesthetic_model` marker: "laion" | "v2_5" | a future `head:{uuid}`.
+   *  **Null** for rows scored by a writer that skipped the marker — a real
+   *  bucket counted in `n`, not a model named "unknown". */
+  model: string | null;
   n: number;
   spearman: number | null;
   /** The largest ρ **any** scorer could reach against this tier distribution —
@@ -75,6 +81,9 @@ export interface ScorerModelAgreement {
    *  as "the scorer rates them at zero"). Four flat means is the most legible
    *  possible statement that a scorer knows nothing about your taste. */
   mean_by_rating: Record<string, number | null>;
+  /** Images behind each mean above. On the wire for the same reason `n_lo`/`n_hi`
+   *  are: a mean over one image looks exactly like a mean over two hundred. */
+  n_by_rating: Record<string, number>;
   boundaries: BoundaryAgreement[];
 }
 

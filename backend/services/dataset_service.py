@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
-from sqlalchemy import case, func, select, update as sa_update
+from sqlalchemy import String, case, func, literal, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -531,6 +531,68 @@ async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> Non
     if changed:
         ds.declared_subfolders = current
         await db.commit()
+
+
+async def repath_subfolder(
+    db: AsyncSession, dataset_id: str, path: str, new_path: str
+) -> int:
+    """Re-path a subfolder and its whole subtree: `path` -> `new_path`.
+
+    Serves both rename (`a/b` -> `a/c`) and move (`a` -> `b/a`) — they are the same
+    prefix rewrite, because gallery subfolders are virtual. This is a **label** change
+    only: every image stays exactly where it is on disk and keeps its filename, so an
+    image auto-named after the old folder keeps that stem. Renumbering is the remedy
+    (see the gallery's Renumber Files button).
+
+    Both paths arrive already normalized and validated by the router. Returns the
+    number of image rows updated.
+    """
+    # Both escapes matter: `_` is a LIKE wildcard *and* an ordinary character, so
+    # without it re-pathing `a_b` would rewrite every image in `axb` too.
+    escaped = path.replace("%", r"\%").replace("_", r"\_")
+
+    exact = await db.execute(
+        sa_update(Image)
+        .where(Image.dataset_id == dataset_id, Image.subfolder == path)
+        .values(subfolder=new_path)
+    )
+    # substr() is 1-based, so starting at len(path)+1 keeps the leading "/" and
+    # splices the remainder onto the new prefix. literal(...) forces SQLite's `||`
+    # concatenation rather than a numeric `+`.
+    descendants = await db.execute(
+        sa_update(Image)
+        .where(Image.dataset_id == dataset_id)
+        .where(Image.subfolder.like(escaped + "/%", escape="\\"))
+        .values(
+            subfolder=literal(new_path, type_=String)
+            + func.substr(Image.subfolder, len(path) + 1)
+        )
+    )
+    updated = (exact.rowcount or 0) + (descendants.rowcount or 0)
+
+    ds = await db.get(Dataset, dataset_id)
+    if ds:
+        rebuilt: list[str] = []
+        for p in (ds.declared_subfolders or []):
+            if p == path:
+                rebuilt.append(new_path)
+            elif p.startswith(path + "/"):
+                rebuilt.append(new_path + p[len(path):])
+            else:
+                rebuilt.append(p)
+        # Mirror declare_subfolder: the destination's ancestors have to exist, or an
+        # empty folder moved under a merely-declared parent vanishes from the sidebar.
+        parts = new_path.split("/")
+        for i in range(1, len(parts)):
+            rebuilt.append("/".join(parts[:i]))
+        seen: set[str] = set()
+        deduped = [p for p in rebuilt if not (p in seen or seen.add(p))]
+        # Reassign, never mutate in place: SQLAlchemy compares JSON columns by
+        # equality, so an in-place edit is a silently skipped UPDATE.
+        ds.declared_subfolders = deduped
+
+    await db.commit()
+    return updated
 
 
 async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:

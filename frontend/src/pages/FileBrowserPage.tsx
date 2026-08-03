@@ -11,6 +11,7 @@ import { parentOf, breadcrumbsFromPath } from "../utils/pathUtils";
 import { apiErrorDetail } from "../utils/apiError";
 import { playbackErrorMessage } from "../utils/videoPlayback";
 import { datasetsApi } from "../api/datasets";
+import ContextMenu, { type ContextMenuAction } from "../components/common/ContextMenu";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { Dataset, GenerationMetadata as GenMeta } from "../types";
 
@@ -23,64 +24,6 @@ function formatSize(bytes: number | null) {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
-// ── Context Menu ──────────────────────────────────────────────────────────────
-
-interface ContextMenuAction {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}
-
-interface ContextMenuProps {
-  x: number;
-  y: number;
-  actions: ContextMenuAction[];
-  onClose: () => void;
-}
-
-function ContextMenu({ x, y, actions, onClose }: ContextMenuProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose]);
-
-  return (
-    <div
-      ref={ref}
-      style={{
-        position: "fixed", left: x, top: y, zIndex: 1000,
-        background: "var(--surface-2)", border: "1px solid var(--line-2)",
-        borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
-        minWidth: 180, padding: "4px 0",
-      }}
-    >
-      {actions.map((a) => (
-        <button
-          key={a.label}
-          onClick={() => { a.onClick(); onClose(); }}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            width: "100%", padding: "7px 14px",
-            fontSize: 13, background: "none", border: "none",
-            color: a.danger ? "var(--bad)" : "var(--fg)",
-            cursor: "pointer", textAlign: "left",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-        >
-          <span style={{ opacity: 0.7 }}>{a.icon}</span>
-          {a.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 // ── Inline rename input ───────────────────────────────────────────────────────

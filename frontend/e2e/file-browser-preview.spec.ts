@@ -35,7 +35,8 @@ test('opening the inline rename releases the video preview', async ({ page, requ
   await expect(page.getByText('Preview paused')).toHaveCount(0)
 
   await row.click({ button: 'right' })
-  await page.getByRole('button', { name: 'Rename' }).click()
+  // `menuitem`, not `button`: the shared ContextMenu gives its entries that role.
+  await page.getByRole('menuitem', { name: 'Rename' }).click()
 
   // The element is gone, not merely `src`-cleared: clearing `src` leaves it
   // attached, still holding the connection, and fires a spurious `error` event

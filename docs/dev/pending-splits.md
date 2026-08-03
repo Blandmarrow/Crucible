@@ -75,25 +75,30 @@ staleness sweep while still recording the seam.
 
 ## docs/dev/gallery.md
 
-- **Moves:** § Drag images onto subfolders (1,253 words — more than a third of the file)
-  and § Manual image ordering (199)
-- **New file:** docs/dev/gallery-dnd.md
-- **Why here:** both sections are one subsystem — dnd-kit. Droppables, collision detection,
-  the drag overlay, what a drop mutates, and the manual `sort_order` reorder that is the
-  same gesture with a different target. Everything left is *reading* a gallery: filters,
-  sorting, selection, the subfolder sidebar. Splitting there leaves ~2,540 and ~1,450, and
-  the moved half is the one a reader almost never needs while working on filters or sort.
-  The staying half has since grown past the ~2,100 target: § Gallery image selection took
-  on select-all-matching-filters and the pagination row (901 words now, from ~400). If it
-  needs a second seam, that is where — the affordance, the count query key and the
-  pagination arithmetic are one feature, and the shift-click range model above them is a
-  different one.
-- **Watch for:** § Manual image ordering is cited from `docs/dev/bulk-ops.md` (Renumber's
-  two-phase rename) and from § Sorting in this same file, which becomes a cross-file `§`
-  pointer. `docs/dev/image-filters.md` points at § Gallery filters and
-  `docs/dev/datasets-page.md` at the subfolder sidebar — both stay behind, so check you
-  have not repointed them by reflex. The drag sections also reference
-  `docs/dev/frontend-core.md` § SelectionToolbar in both directions.
+- **Moves:** § Gallery subfolder sidebar (544 words), § The subfolder row context menu (190)
+  and § Renaming and moving a subfolder (1,168)
+- **New file:** docs/dev/gallery-subfolders.md (mirrors docs/gallery.md § Organising into
+  subfolders)
+- **Why here:** the file tripped its budget again the same day `gallery-dnd.md` was split
+  out of it, because subfolder *management* arrived — rename, re-nest, the row context
+  menu, the re-path endpoint and its five pieces of path-keyed bookkeeping. Those three
+  sections are one subsystem and a reader arrives for exactly it: the sidebar is the UI,
+  the menu is how the two new operations are reached, and the re-path section is the
+  endpoint plus the client state it invalidates. What stays is *reading* a gallery —
+  selection and the shift-click range model, the filter bar, sorting. The seam leaves
+  ~1,900 and ~2,430 out of 4,335; the staying half is over the ~2,100 target because
+  § Gallery image selection is 1,263 words on its own, and its recorded second seam (the
+  select-all affordance + count key + pagination arithmetic, versus the shift-click range
+  model) is the one to take if it needs a third file.
+- **Watch for:** § Renaming and moving a subfolder is cited from `docs/dev/gallery-dnd.md`
+  § Dragging a subfolder onto another and § Manual image ordering (both in the file that
+  just split off, so they become cross-file pointers a second time), and § The subfolder
+  row context menu from `docs/dev/styling.md` § Context menu and `docs/dev/file-browser.md`.
+  `docs/dev/datasets-page.md` points at the subfolder sidebar — that moves now, so this is
+  the one inbound reference that has to change direction rather than stay put. § Gallery
+  filters and § Gallery image selection are cited from `docs/dev/image-filters.md` and
+  stay behind. The sidebar section's own bullets cross-reference `docs/dev/gallery-dnd.md`
+  in both directions.
 
 ## docs/dev/file-browser.md
 
@@ -208,6 +213,27 @@ staleness sweep while still recording the seam.
   a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
   first and produces a docs/style-similarity.md, the names line up for free.
 
+## docs/gallery.md
+
+- **Moves:** § Datasets (436 words) and § Getting images in (696)
+- **New file:** docs/datasets.md (mirrors docs/dev/datasets-page.md)
+- **Why here:** the page is two user tasks under one title, and its own name says so —
+  "Datasets **&** Gallery". One is *acquiring*: making a dataset, categories, duplicating,
+  uploading, importing a folder, rescan, caption import, versioning-mode. The other is
+  *curating* what is already in one: browsing and filtering the grid, subfolders and now
+  renaming/re-nesting them, manual ordering, sorting. A reader arrives for exactly one,
+  and the seam leaves ~1,130 and ~1,400 out of 2,580 — both under the ~1,500 target, which
+  is rare enough to take. It tripped the budget when § Organising into subfolders gained
+  rename, move and the no-filename-renames note.
+- **Watch for:** this is a user doc, so the inbound links are markdown links — README has
+  five (three of them pointing at the *acquiring* half: Organize, Import, Sync) plus its
+  Docs-table row, and a new file needs its own row there and in `docs/features.md`, which
+  is an index and takes a row rather than prose. `docs/captioning.md`, `docs/video.md`,
+  `docs/workspace.md` (a `gallery.md#getting-images-in` **anchor**, which moves) and
+  `docs/duplicates.md` all link here too — check each for whether it wants the half that
+  moves. README's `gallery.md#manual-image-ordering` and
+  `gallery.md#renaming-and-re-nesting-a-subfolder` anchors both stay behind.
+
 ## docs/video.md
 
 - **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and
@@ -234,6 +260,13 @@ session that appended the style-similarity percentile material to § Style simil
 seam held as recorded, and the staying half landed at ~2,100 words. That half is still over
 the 2,500 user budget's 60% target, so its recorded second seam stands: § Style similarity
 is now the largest section and is a separate CPU-only workflow with its own concepts.
+
+`docs/dev/gallery.md` → `docs/dev/gallery-dnd.md` was executed on 2026-08-03, at the start of
+the session that added subfolder rename and re-nesting — the seam held as recorded, and
+both § Manual image ordering and § Drag images onto subfolders moved together. The staying
+half landed at ~2,900 words before that session's own additions, above the ~2,100 target
+rather than the ~2,540 the entry predicted, because § Gallery image selection kept growing;
+its recorded second seam therefore still stands.
 
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
 `bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →

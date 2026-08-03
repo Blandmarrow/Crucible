@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { ArrowRightFromLine, Copy } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
+import { ArrowRightFromLine, Copy, Edit2, Folder, FolderInput, Plus, Trash2 } from "lucide-react";
 import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -7,7 +7,7 @@ import { apiErrorDetail } from "../utils/apiError";
 import { createPortal } from "react-dom";
 import {
   DndContext, DragOverlay, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors,
-  type DragEndEvent, type DragStartEvent, type CollisionDetection,
+  type DragEndEvent, type DragStartEvent, type DragOverEvent, type CollisionDetection,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { imagesApi, type ImageFilterParams, type UploadResult } from "../api/images";
@@ -22,6 +22,9 @@ import { showImportSummaryToast } from "../utils/importToast";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
+import SubfolderRowDnd from "../components/gallery/SubfolderRowDnd";
+import MoveSubfolderModal from "../components/gallery/MoveSubfolderModal";
+import ContextMenu, { type ContextMenuAction } from "../components/common/ContextMenu";
 import SelectionToolbar from "../components/gallery/SelectionToolbar";
 import VideoStrip from "../components/gallery/VideoStrip";
 import { videosApi } from "../api/videos";
@@ -32,7 +35,7 @@ import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY, PERSIST_DEBOUNCE_MS } from "../constants/storage";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
-import { MISSING_LICENSE, SORT_OPTIONS, isSubfolderDropId, subfolderDropId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
+import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 
@@ -91,6 +94,43 @@ function buildSubfolderTree(items: SubfolderInfo[]): SubfolderNode[] {
   return roots;
 }
 
+/** Every proper ancestor of a subfolder path: "a/b/c" → ["a", "a/b"]. The set of
+ *  `expandedPaths` keys that have to be open for that path's row to be visible. */
+function ancestorPaths(path: string): string[] {
+  const parts = path.split("/");
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
+/** Is `path` `root` itself or filed anywhere beneath it? The subtree predicate every
+ *  path-keyed piece of sidebar state is re-pointed or pruned by. `isInSubtree("", root)`
+ *  is false for any named `root`, so the dataset root is never caught by one. */
+function isInSubtree(path: string, root: string): boolean {
+  return path === root || path.startsWith(root + "/");
+}
+
+/** Returns the *same* set when nothing matched, so it never forces a render — or a
+ *  needless write to `gallery-state-${datasetId}`. */
+function withoutSubtree(set: Set<string>, root: string): Set<string> {
+  const kept = [...set].filter(p => !isInSubtree(p, root));
+  if (kept.length === set.size) return set;
+  return new Set(kept);
+}
+
+/** The expand/collapse cell's box, which doubles as the row's indent. Shared by the
+ *  branch row's <button> and the leaf row's inert spacer so the two cannot drift out of
+ *  alignment — `box-sizing: border-box` is global, so they measure identically. */
+function toggleCellStyle(depth: number): CSSProperties {
+  return {
+    flexShrink: 0,
+    width: 8 + depth * 12 + 12,
+    minHeight: 28, border: "none",
+    background: "transparent",
+    color: "var(--fg-mute)", fontSize: 7,
+    paddingLeft: 8 + depth * 12,
+    display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 2,
+  };
+}
+
 function scoreChipLabel(f: ScoreFilter): string {
   const short = SCORE_FIELDS.find(s => s.value === f.field)?.short ?? f.field;
   if (f.min && f.max) return `${short}: ${f.min}–${f.max}`;
@@ -102,7 +142,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -227,14 +267,27 @@ export default function GalleryPage() {
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingMoveSubfolder, setPendingMoveSubfolder] = useState<SubfolderInfo | null>(null);
   const [pendingCopySubfolder, setPendingCopySubfolder] = useState<SubfolderInfo | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // Persisted as a string[] in the gallery-state blob (Sets are not JSON), because
+  // GalleryPage unmounts on every trip to the image detail view — without this the tree
+  // came back fully collapsed around a still-selected deep folder. Array-guarded: the
+  // blob can have been written by a build that did not carry this field.
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(Array.isArray(saved?.expandedPaths) ? saved.expandedPaths : [])
+  );
   const [createChildOf, setCreateChildOf] = useState<string | null>(null);
   const [newChildName, setNewChildName] = useState("");
+  // Right-click menu on a named subfolder row. Rendered with the other overlays, not
+  // inside renderSubfolderNode — the node it describes may collapse out from under it.
+  const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; node: SubfolderNode } | null>(null);
+  const [pendingRepathSubfolder, setPendingRepathSubfolder] = useState<SubfolderNode | null>(null);
+  // Inline rename. Single-segment by construction (see the input's onChange).
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -242,12 +295,27 @@ export default function GalleryPage() {
   const lastRangeEndId = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  // `null` = not over a folder row; `""` = the (root) row, which is a real target.
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
 
   // closestCenter alone is wrong once the 180px sidebar rows are droppables (a card
   // dragged near the grid's left edge can be "closest" to a row), but pointerWithin
   // alone makes reordering feel dead in the gutters between cards. Compose the two.
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     const pointer = pointerWithin(args);
+    // A folder drag short-circuits everything below. Filtering *here* rather than only
+    // guarding at drag end is what keeps `isOver` honest — otherwise a self-or-descendant
+    // row lights up with the accent ring and then refuses the drop. It also stops a folder
+    // drag ever resolving to a grid card (pointerWithin over the grid hands back a card,
+    // which survives today only because findIndex returns -1) and bypasses the sidebar
+    // sentinel, which exists to guard a reorder a folder drag can never do.
+    if (isSubfolderDragId(args.active.id)) {
+      const src = subfolderFromDragId(args.active.id);
+      const hit = pointer.find(
+        c => isSubfolderDropId(c.id) && canDropFolderOn(src, subfolderFromDropId(c.id))
+      );
+      return hit ? [hit] : [];
+    }
     // A sidebar row under the pointer always wins — rows never overlap cards.
     const folderHit = pointer.find(c => isSubfolderDropId(c.id));
     if (folderHit) return [folderHit];
@@ -297,6 +365,57 @@ export default function GalleryPage() {
     return () => clearTimeout(t);
   }, [detectionLabelInput, detectionLabel]);
 
+  // Selecting a folder opens it, and opens everything above it: the path itself is what makes
+  // picking a folder show what is filed under it, the way every other tree behaves, and the
+  // ancestors are what make the row visible at all.
+  //
+  // The path *itself* goes in only when the selection actually changed since the last run,
+  // which a dep array alone does not give you: an effect fires on **mount** whether or not
+  // its dep moved, and GalleryPage unmounts on every trip to the image detail view. Without
+  // `seenSubfolder` the return trip re-added `activeSubfolder`, re-opening a folder the user
+  // deliberately collapsed while standing in it — the persisted blob had it right and this
+  // effect overrode it. Four traps, each load-bearing:
+  //
+  //  - It remembers the *value*, not a `useRef(true)` first-run flag. StrictMode
+  //    double-invokes mount effects in dev, so a flag flipped by run #1 makes run #2 look
+  //    like a real change and the bug comes back — only under `npm run dev`, since the e2e
+  //    suite serves the production bundle where StrictMode is inert. A value makes both runs
+  //    decide the same thing.
+  //  - The seed is `undefined` when a link named a subfolder, so the effect sees a change and
+  //    opens it: a deep link is an arrival, not a restore. `usePaneGallerySubfolder` returns
+  //    `undefined` for "no link asked for anything" and `""` for a real link to the dataset
+  //    root, so the test is `!== undefined` and never truthiness.
+  //  - Ordering holds: the render-phase apply block above runs before the commit, so on a
+  //    deep-linked mount the effect already sees the linked value.
+  //  - The ref is written *before* the `!activeSubfolder` bail. Arriving with
+  //    `?source_video_id=` clears the selection; a stale value left behind would make the
+  //    user's next click on that same folder look like a no-op and not open it.
+  //
+  // Ancestors go in on every run, by design: they are what make the row *reachable*, and
+  // `activeSubfolder` arrives from three places that know nothing about the tree's shape (the
+  // restored blob, the deep link applied during render, and a sidebar click), the first two of
+  // which can name a folder nested inside closed branches. So collapsing `alpha` while standing
+  // in `alpha/inner` does re-open `alpha` on the way back — otherwise the active row is off
+  // screen — while `alpha/inner` itself stays shut. Returning `prev` unchanged when everything
+  // is already open is what stops this re-running itself. A childless path is harmless in the
+  // set — both the toggle and the render bail on `hasChildren`.
+  const seenSubfolder = useRef<string | undefined>(
+    linkedSubfolder !== undefined ? undefined : (saved?.activeSubfolder ?? undefined)
+  );
+  useEffect(() => {
+    const previous = seenSubfolder.current;
+    seenSubfolder.current = activeSubfolder;
+    if (!activeSubfolder) return;
+    const needed = ancestorPaths(activeSubfolder);
+    if (activeSubfolder !== previous) needed.push(activeSubfolder);
+    setExpandedPaths(prev => {
+      if (needed.every(p => prev.has(p))) return prev;
+      const next = new Set(prev);
+      for (const p of needed) next.add(p);
+      return next;
+    });
+  }, [activeSubfolder]);
+
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
   // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
   // at flush time; the window is the same shared constant either way.
@@ -306,11 +425,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -318,11 +437,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "" })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -667,6 +786,54 @@ export default function GalleryPage() {
     },
   });
 
+  // One mutation for rename, the Move-to… picker and the drag — all three are the same
+  // subtree prefix rewrite server-side, and all three need the same client-side
+  // re-pointing afterwards. Deliberately *not* folded into moveToSubfolderMutation:
+  // that one's clear() touches the module-global selection store, which must never
+  // fire for a folder operation. See docs/dev/gallery.md § Renaming and moving a subfolder.
+  const repathSubfolderMutation = useMutation({
+    mutationFn: (p: { path: string; newPath: string; kind: "rename" | "move" }) =>
+      datasetsApi.repathSubfolder(datasetId!, p.path, p.newPath),
+    onSuccess: (data, vars) => {
+      const from = data.previous_path;
+      const to = data.path;
+      const inSubtree = (p: string) => isInSubtree(p, from);
+      const rewrite = (p: string) => to + p.slice(from.length);
+
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      // The count key nests under this prefix, so pagination refreshes for free.
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+
+      // Re-point, never clear: unlike a delete, the folder still exists. And no
+      // resetPage() — the image set is identical, only its label changed.
+      if (activeSubfolder !== undefined && inSubtree(activeSubfolder)) setActiveSubfolder(rewrite(activeSubfolder));
+      // expandedPaths is a Set keyed by path, so a re-path orphans every key and
+      // silently collapses the branch the user was working in. Rebuild it through the
+      // same map, and add the destination's ancestors so a folder dropped into a
+      // collapsed parent is revealed where it landed.
+      setExpandedPaths(prev => {
+        const next = new Set<string>();
+        for (const p of prev) next.add(inSubtree(p) ? rewrite(p) : p);
+        for (const p of ancestorPaths(to)) next.add(p);
+        return next;
+      });
+      // The activeSubfolder effect covers the common case, but the user can override
+      // the upload target independently — re-point it or the <select> renders blank.
+      setUploadSubfolder(prev => (inSubtree(prev) ? rewrite(prev) : prev));
+      setCreateChildOf(prev => (prev !== null && inSubtree(prev) ? null : prev));
+
+      setRenamingPath(null);
+      setPendingRepathSubfolder(null);
+      const parent = to.includes("/") ? to.slice(0, to.lastIndexOf("/")) : "";
+      toast.success(
+        vars.kind === "rename"
+          ? `Renamed to "${to}"`
+          : `Moved "${to.split("/").pop()}" into "${parent || "(root)"}"`
+      );
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Could not move the subfolder")),
+  });
+
   // Images to move for a drag starting on `draggedId`: the whole selection if the
   // dragged card is part of it, otherwise just that card.
   const dragIdsFor = useCallback((draggedId: string) => {
@@ -682,7 +849,10 @@ export default function GalleryPage() {
     () => (activeDragId ? images.find(i => i.id === activeDragId) ?? null : null),
     [images, activeDragId]
   );
-  const activeDragCount = activeDragId ? dragIdsFor(activeDragId).length : 0;
+  // A folder drag has no image behind it, so the overlay needs its own branch or it
+  // renders nothing — and the "N images" badge must not appear for one either.
+  const activeDragFolder = isSubfolderDragId(activeDragId) ? subfolderFromDragId(activeDragId) : null;
+  const activeDragCount = activeDragId && !activeDragFolder ? dragIdsFor(activeDragId).length : 0;
 
   const moveImagesTo = useCallback((draggedId: string, target: string) => {
     if (!datasetId) return;
@@ -736,13 +906,46 @@ export default function GalleryPage() {
     }
   }, [sortIdx, datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleDragStart = useCallback((e: DragStartEvent) => setActiveDragId(String(e.active.id)), []);
-  const handleDragCancel = useCallback(() => setActiveDragId(null), []);
+  const handleDragStart = useCallback((e: DragStartEvent) => {
+    setActiveDragId(String(e.active.id));
+    setDropTargetPath(null);
+  }, []);
+  const handleDragCancel = useCallback(() => {
+    setActiveDragId(null);
+    setDropTargetPath(null);
+  }, []);
+  // Which folder row the pointer is currently over, for the overlay's drop-target chip.
+  // `over` is already narrowed by `collisionDetection`, so this reads the decision rather
+  // than re-deriving it — a row that lights up and a chip that names it can never disagree.
+  const handleDragOver = useCallback((e: DragOverEvent) => {
+    const id = e.over?.id;
+    setDropTargetPath(id !== undefined && isSubfolderDropId(id) ? subfolderFromDropId(id) : null);
+  }, []);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveDragId(null);
+    setDropTargetPath(null);
     if (!over || !datasetId) return;
+
+    // A dragged *folder* — must come before the branch below, which assumes active.id
+    // is an image id. Dropping on the `(root)` row means "move to top level"; it is the
+    // only un-nest gesture drag offers, since the sidebar background is the sentinel.
+    if (isSubfolderDragId(active.id)) {
+      if (!isSubfolderDropId(over.id)) return;
+      const src = subfolderFromDragId(active.id);
+      const destParent = subfolderFromDropId(over.id);
+      if (!canDropFolderOn(src, destParent)) return;  // defence in depth
+      const label = src.split("/").pop()!;
+      const currentParent = src.includes("/") ? src.slice(0, src.lastIndexOf("/")) : "";
+      if (destParent === currentParent) return;
+      repathSubfolderMutation.mutate({
+        path: src,
+        newPath: destParent ? `${destParent}/${label}` : label,
+        kind: "move",
+      });
+      return;
+    }
 
     // Dropped on a sidebar subfolder row → move rather than reorder.
     if (isSubfolderDropId(over.id)) {
@@ -760,7 +963,7 @@ export default function GalleryPage() {
     qc.setQueryData(imagesQueryKey, newOrder);
     const pageOffset = (page - 1) * pageSize;
     reorderMutation.mutate(newOrder.map((img, idx) => ({ id: img.id, sort_order: pageOffset + idx })));
-  }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation, isCustomOrder, moveImagesTo]);
+  }, [qc, imagesQueryKey, datasetId, page, pageSize, reorderMutation, isCustomOrder, moveImagesTo, repathSubfolderMutation]);
 
   const handleUpload = useCallback(async (files: FileList | File[], sf?: string) => {
     if (!datasetId) return;
@@ -806,15 +1009,8 @@ export default function GalleryPage() {
       setNewSubfolderName("");
       setCreateChildOf(null);
       setNewChildName("");
-      // Auto-expand all ancestor paths so the new subfolder is visible
-      const parts = data.path.split("/");
-      if (parts.length > 1) {
-        setExpandedPaths(prev => {
-          const next = new Set(prev);
-          for (let i = 1; i < parts.length; i++) next.add(parts.slice(0, i).join("/"));
-          return next;
-        });
-      }
+      // Selecting it is also what reveals it: the activeSubfolder effect opens every
+      // ancestor, so a child created inside a collapsed parent is visible where it landed.
       setActiveSubfolder(data.path);
       toast.success(`Created subfolder "${data.path}"`);
     },
@@ -827,10 +1023,20 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       setPendingDeleteSubfolder(null);
-      if (activeSubfolder === path || activeSubfolder?.startsWith(path + "/")) {
+      // The same re-pointing repathSubfolderMutation does, except the folder is gone, so
+      // every path-keyed piece of state under it is cleared rather than rewritten.
+      // `delete_subfolder` removes `path` *and* `path/%` plus every declared entry below,
+      // so the whole subtree goes. Pruning expandedPaths matters now that the set is
+      // persisted: dead keys would be stored forever, and a folder later re-created at the
+      // same path would come back pre-expanded.
+      if (activeSubfolder !== undefined && isInSubtree(activeSubfolder, path)) {
         setActiveSubfolder(undefined);
         resetPage();
       }
+      setExpandedPaths(prev => withoutSubtree(prev, path));
+      // `isInSubtree("", path)` is false, so the root upload target is never disturbed.
+      setUploadSubfolder(prev => (isInSubtree(prev, path) ? "" : prev));
+      setCreateChildOf(prev => (prev !== null && isInSubtree(prev, path) ? null : prev));
       toast.success(`Deleted subfolder "${path}"`);
     },
     onError: () => toast.error("Failed to delete subfolder"),
@@ -844,6 +1050,7 @@ export default function GalleryPage() {
         params.subfolder,
       ),
     onSuccess: (data) => {
+      const moved = pendingMoveSubfolder?.path;
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
@@ -851,7 +1058,12 @@ export default function GalleryPage() {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
-      if (activeSubfolder === pendingMoveSubfolder?.path || activeSubfolder?.startsWith(pendingMoveSubfolder!.path + "/")) { setActiveSubfolder(undefined); resetPage(); }
+      // Deliberately prunes nothing from expandedPaths, unlike the delete above: the
+      // backend matches `Image.subfolder == source_subfolder` exactly, one level, and
+      // never touches declared_subfolders — move `alpha` and everything under
+      // `alpha/inner` stays exactly where it was. Snapping the branch shut here would
+      // close a folder that is still full, and persist that as the user's choice.
+      if (moved !== undefined && activeSubfolder !== undefined && isInSubtree(activeSubfolder, moved)) { setActiveSubfolder(undefined); resetPage(); }
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
       setPendingMoveSubfolder(null);
     },
@@ -939,6 +1151,9 @@ export default function GalleryPage() {
     setLicenseFilter("");
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
+    // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
+    // removes, but it is the tree's shape, not a filter — collapsing everything is not
+    // what "reset filters" promises. The next persist writes the live set back.
     dropScrollRestore();
     // Immediate, unlike the deep-link paths: this is a direct gesture and wants
     // feedback now, not once the new page renders.
@@ -977,51 +1192,158 @@ export default function GalleryPage() {
       })()
     : "";
 
+  // Enter commits a rename. `name` is already separator-free (stripped on input) and
+  // trimmed; the no-op cases are dropped here rather than sent, which is what makes the
+  // endpoint's empty/same-path/'..' 400 branches unreachable from the UI.
+  const commitRename = (node: SubfolderNode) => {
+    const name = renameDraft.trim();
+    if (!name || name === node.label || name === "." || name === "..") { setRenamingPath(null); return; }
+    const parent = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
+    repathSubfolderMutation.mutate({
+      path: node.path,
+      newPath: parent ? `${parent}/${name}` : name,
+      kind: "rename",
+    });
+  };
+
+  // Most-used first, destructive last. Four of the six call the *same* setters the hover
+  // buttons already call — the menu is additive, nothing was relocated into it. Rename
+  // and Move have no button counterpart because a 180 px row already holds four; that is
+  // deliberate, not an unfinished set.
+  const folderMenuActions = (node: SubfolderNode): ContextMenuAction[] => [
+    {
+      label: "New subfolder inside…",
+      icon: <Plus size={13} />,
+      onClick: () => { setCreateChildOf(node.path); setNewChildName(""); },
+    },
+    {
+      label: "Rename…",
+      icon: <Edit2 size={13} />,
+      onClick: () => { setRenamingPath(node.path); setRenameDraft(node.label); },
+    },
+    {
+      label: "Move to…",
+      icon: <FolderInput size={13} />,
+      onClick: () => setPendingRepathSubfolder(node),
+    },
+    {
+      label: "Move to another dataset…",
+      icon: <ArrowRightFromLine size={13} />,
+      onClick: () => setPendingMoveSubfolder(node),
+    },
+    {
+      label: "Copy to another dataset…",
+      icon: <Copy size={13} />,
+      onClick: () => setPendingCopySubfolder(node),
+    },
+    {
+      label: "Delete",
+      icon: <Trash2 size={13} />,
+      onClick: () => setPendingDeleteSubfolder(node),
+      danger: true,
+    },
+  ];
+
   const renderSubfolderNode = (node: SubfolderNode) => {
     const isExpanded = expandedPaths.has(node.path);
     const isActive = activeSubfolder === node.path;
     const hasChildren = node.children.length > 0;
+    const isRenaming = renamingPath === node.path;
 
     return (
       <div key={node.path}>
-        <DropZone id={subfolderDropId(node.path)}>
-        {({ setNodeRef, isOver }) => (
+        <SubfolderRowDnd dropId={subfolderDropId(node.path)} dragId={subfolderDragId(node.path)}>
+        {({ setNodeRef, setActivatorNodeRef, listeners, attributes, isOver, isDragging }) => (
         <div
           ref={setNodeRef}
           className="subfolder-row"
+          // A right-press never starts a drag: PointerSensor.activators bails on
+          // event.button !== 0, so the menu and the draggable coexist untouched.
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setFolderMenu({ x: e.clientX, y: e.clientY, node });
+          }}
           style={{
             display: "flex", alignItems: "center",
             borderRadius: "var(--r)",
-            background: isOver || isActive ? "var(--surface-3)" : "transparent",
-            boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
+            // A drop target must not look like the selected row: both used to be the
+            // same neutral `--surface-3`, so the only cue that this row was the target
+            // was a 1px ring, on a row the drag preview was covering.
+            background: isOver ? "var(--accent-glow)" : isActive ? "var(--surface-3)" : "transparent",
+            boxShadow: isOver ? "inset 0 0 0 2px var(--accent)" : "none",
+            opacity: isDragging ? 0.4 : 1,
           }}
         >
-          {/* expand/collapse toggle (doubles as indent) */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!hasChildren) return;
-              setExpandedPaths(prev => {
-                const next = new Set(prev);
-                if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
-                return next;
-              });
-            }}
-            style={{
-              flexShrink: 0,
-              width: 8 + node.depth * 12 + 12,
-              minHeight: 28, border: "none",
-              background: "transparent",
-              cursor: hasChildren ? "pointer" : "default",
-              color: "var(--fg-mute)", fontSize: 7,
-              paddingLeft: 8 + node.depth * 12,
-              display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 2,
-            }}
-          >{hasChildren ? (isExpanded ? "▼" : "▶") : ""}</button>
+          {/* expand/collapse toggle (doubles as the row's indent). Its glyph is the whole of
+              its content, so without a label it is a nameless button to a screen reader — and
+              to a test looking for a stable handle on it. A leaf has nothing to expand, so it
+              renders the same box as an inert spacer rather than an empty, focusable, no-op
+              button; the box is shared through toggleCellStyle so the two cannot drift. */}
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.path}`}
+              aria-expanded={isExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedPaths(prev => {
+                  const next = new Set(prev);
+                  if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
+                  return next;
+                });
+              }}
+              style={{ ...toggleCellStyle(node.depth), cursor: "pointer" }}
+            >{isExpanded ? "▼" : "▶"}</button>
+          ) : (
+            <span aria-hidden="true" style={toggleCellStyle(node.depth)} />
+          )}
 
-          {/* label + count */}
+          {isRenaming ? (
+            /* Inline, not a modal: the in-row input keeps the tree indentation visible,
+               so it is obvious which folder is being renamed. Single-segment by
+               construction — separators are stripped on input rather than rejected on
+               submit, so typing "a/b" yields "ab" and this control can never *move* a
+               folder by accident. The four hover buttons are hidden while it is open
+               (× sits one pixel from Enter). */
+            <input
+              className="input"
+              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "3px 6px", marginRight: 4 }}
+              value={renameDraft}
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setRenameDraft(e.target.value.replace(/[\\/]/g, ""))}
+              onBlur={() => setRenamingPath(null)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename(node);
+                if (e.key === "Escape") {
+                  // GalleryPage has a document-level Escape handler of its own.
+                  e.stopPropagation();
+                  setRenamingPath(null);
+                }
+              }}
+            />
+          ) : (
+          <>
+          {/* label + count — also the drag activator. Listeners go *here*, not on the
+              row: the hover buttons below are siblings of the activator, so a pointerdown
+              on × never reaches them, and PointerSensor.activators has no
+              interactive-element filter. onClick still fires thanks to the 8 px
+              activationConstraint, the same contract the image cards rely on. */}
           <button
-            onClick={() => { setActiveSubfolder(node.path); resetPage(); }}
+            ref={setActivatorNodeRef}
+            {...listeners}
+            {...attributes}
+            // Opening the folder is done here as well as in the activeSubfolder effect:
+            // re-clicking the row you are already standing in sets the same value, which
+            // React bails out of, so the effect never fires and a collapsed active folder
+            // would stay shut with no way to open it but the ▶ toggle.
+            onClick={() => {
+              setActiveSubfolder(node.path);
+              setExpandedPaths(prev => (prev.has(node.path) ? prev : new Set(prev).add(node.path)));
+              resetPage();
+            }}
             title={node.path}
             style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1068,9 +1390,11 @@ export default function GalleryPage() {
               marginRight: 4,
             }}
           >×</button>
+          </>
+          )}
         </div>
         )}
-        </DropZone>
+        </SubfolderRowDnd>
 
         {/* inline child-create form */}
         {createChildOf === node.path && (
@@ -1522,6 +1846,7 @@ export default function GalleryPage() {
         sensors={sensors}
         collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
@@ -1605,8 +1930,8 @@ export default function GalleryPage() {
                 style={{
                   display: "flex", alignItems: "center",
                   borderRadius: "var(--r)",
-                  background: isOver || isRootActive ? "var(--surface-3)" : "transparent",
-                  boxShadow: isOver ? "inset 0 0 0 1px var(--accent)" : "none",
+                  background: isOver ? "var(--accent-glow)" : isRootActive ? "var(--surface-3)" : "transparent",
+                  boxShadow: isOver ? "inset 0 0 0 2px var(--accent)" : "none",
                 }}
               >
                 <button
@@ -1776,11 +2101,21 @@ export default function GalleryPage() {
       {createPortal(
         <DragOverlay dropAnimation={null} zIndex={60}>
           {activeDragImage && (
-            <div style={{
-              position: "relative", pointerEvents: "none", opacity: 0.92,
-              boxShadow: "0 12px 32px -8px rgba(0,0,0,.6)", borderRadius: "var(--r-lg)",
-            }}>
-              <ImageCard image={activeDragImage} />
+            <div style={{ position: "relative", pointerEvents: "none" }}>
+              {/* The card is card-sized and the sidebar is 180px wide, so over a folder
+                  row the preview sits squarely on top of the row it is about to drop
+                  into — the highlight underneath was unreadable, which is the whole
+                  complaint. Fade the picture out of the way and let the row show
+                  through; the chip below then says where it lands. */}
+              <div style={{
+                opacity: dropTargetPath !== null ? 0.25 : 0.92,
+                transition: "opacity .12s",
+                boxShadow: "0 12px 32px -8px rgba(0,0,0,.6)", borderRadius: "var(--r-lg)",
+              }}>
+                <ImageCard image={activeDragImage} />
+              </div>
+              {/* Outside the faded wrapper: the count is the other thing you need to read
+                  at the moment of dropping. */}
               {activeDragCount > 1 && (
                 <span style={{
                   position: "absolute", top: -8, right: -8, zIndex: 2,
@@ -1791,6 +2126,37 @@ export default function GalleryPage() {
                   {activeDragCount} images
                 </span>
               )}
+              {dropTargetPath !== null && (
+                <span style={{
+                  position: "absolute", left: "50%", top: "50%", zIndex: 2,
+                  transform: "translate(-50%, -50%)", maxWidth: "94%",
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 11px", borderRadius: 999,
+                  background: "var(--accent)", color: "#03130d",
+                  fontSize: 12, fontWeight: 600,
+                  boxShadow: "0 6px 18px -6px rgba(0,0,0,.7)",
+                }}>
+                  <FolderInput size={12} style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {dropTargetPath === "" ? "(root)" : dropTargetPath}
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+          {activeDragFolder && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "5px 10px", borderRadius: "var(--r)",
+              background: "var(--surface-3)", border: "1px solid var(--accent)",
+              boxShadow: "0 8px 24px -8px rgba(0,0,0,.6)",
+              color: "var(--fg)", fontSize: 12.5, fontWeight: 600,
+              pointerEvents: "none", opacity: 0.95, maxWidth: 220,
+            }}>
+              <Folder size={13} style={{ flexShrink: 0, opacity: 0.8 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {activeDragFolder.split("/").pop()}
+              </span>
             </div>
           )}
         </DragOverlay>,
@@ -1861,6 +2227,28 @@ export default function GalleryPage() {
           isPending={moveSubfolderToDatasetMutation.isPending}
           onConfirm={(targetId, subfolder) => moveSubfolderToDatasetMutation.mutate({ targetId, subfolder })}
           onClose={() => setPendingMoveSubfolder(null)}
+        />
+      )}
+
+      {/* Subfolder row context menu. "All" is the no-filter state rather than a folder,
+          and `(root)` has no path to rename and its actions are a pixel away already —
+          so neither row gets one. */}
+      {folderMenu && (
+        <ContextMenu
+          x={folderMenu.x}
+          y={folderMenu.y}
+          actions={folderMenuActions(folderMenu.node)}
+          onClose={() => setFolderMenu(null)}
+        />
+      )}
+
+      {pendingRepathSubfolder && (
+        <MoveSubfolderModal
+          node={pendingRepathSubfolder}
+          subfolders={subfolders}
+          isPending={repathSubfolderMutation.isPending}
+          onConfirm={(newPath) => repathSubfolderMutation.mutate({ path: pendingRepathSubfolder.path, newPath, kind: "move" })}
+          onClose={() => setPendingRepathSubfolder(null)}
         />
       )}
 

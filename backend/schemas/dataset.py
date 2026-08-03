@@ -70,6 +70,24 @@ class SubfolderCreate(BaseModel):
     path: str
 
 
+class SubfolderRepath(BaseModel):
+    """Rename or re-nest a gallery subfolder — the same subtree prefix rewrite either way.
+
+    Gallery subfolders are virtual (`Image.subfolder` + `Dataset.declared_subfolders`),
+    so `new_path` is a whole path, not a name: `a/b` -> `a/c` renames, `a` -> `b/a`
+    re-nests. Moving to the top level is `new_path = "<basename>"`, never `""` —
+    `""` is the root pseudo-folder and cannot hold a rename.
+    """
+    path: str
+    new_path: str
+
+
+class SubfolderRepathResult(BaseModel):
+    path: str
+    previous_path: str
+    images_updated: int
+
+
 class LicenseUsage(BaseModel):
     """One distinct effective license in a dataset. `""` = no license recorded."""
     license: str

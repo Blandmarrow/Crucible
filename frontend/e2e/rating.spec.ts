@@ -85,15 +85,80 @@ test('0 clears the rating on the selection', async ({ page, request }) => {
 // silently mark everything selected as Keep.
 test('typing a digit in the search box does not rate the selection', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `rating-guard-${Date.now()}`)
-  await uploadViaApi(request, ds.id, 'a.png')
+  // The filename carries the digit being typed, so the tile survives its own
+  // search: a name that filtered itself off screen would empty the grid, and
+  // every on-screen assertion below would then hold for the innocent reason.
+  await uploadViaApi(request, ds.id, 'a4.png')
 
   await page.goto(`/datasets/${ds.id}/gallery`)
   await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
-  await page.getByTestId('select-a.png').click()
+  await page.getByTestId('select-a4.png').click()
   await expect(page.getByText('1 selected')).toBeVisible()
 
-  await page.getByPlaceholder(/search/i).first().fill('4')
-  // Give the rating request a chance to have happened, then assert it did not.
-  await expect(page.getByTestId('unrated-count')).toContainText('1 unrated')
+  // The load-bearing assertion. A rating write is a request, and watching for it
+  // is the only check that cannot be satisfied by the UI simply not having caught
+  // up yet — `unrated-count` still reads its pre-write value for as long as the
+  // write is in flight, so it passes on timing alone.
+  const writes: string[] = []
+  page.on('request', (r) => { if (r.url().includes('bulk-rating')) writes.push(r.url()) })
+
+  // The debounced search that the typing itself triggers. It cannot come back
+  // before the keydown that would have fired the write, which is what makes an
+  // empty `writes` afterwards mean something.
+  const searched = page.waitForResponse((r) => r.url().includes('/api/v1/images/') && r.url().includes('search=4'))
+  // `pressSequentially`, never `fill` — `fill` sets the value directly and dispatches no
+  // `keydown` at all, so the window listener never runs and the test passes identically
+  // with the guard deleted.
+  const box = page.getByPlaceholder(/search/i).first()
+  await box.pressSequentially('4')
+  // The digit reached the input rather than being swallowed: the rating handler
+  // calls `preventDefault()`, so a guard that let it through eats the character
+  // and the search box stays empty.
+  await expect(box).toHaveValue('4')
+  await searched
+
+  expect(writes).toEqual([])
   await expect(page.getByTestId('rating-badge')).toHaveCount(0)
+  await expect(page.getByTestId('unrated-count')).toContainText('1 unrated')
+})
+
+// The other half of that guard, on the page whose modal set is hand-written. The
+// gallery asks the DOM for `[role="dialog"]`; `ImageDetailPage` cannot, because its
+// detect overlay is a bare `fixed inset-0` div with no dialog role — so it reads a
+// single `anyModalOpen`, and this test is what keeps that set from drifting again.
+// Clicking the modal's own heading is the point: a field would be caught by the
+// text-field guard instead, and prove nothing about the modal one.
+test('keys do not rate or navigate behind the detect modal', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `rating-modal-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+  await uploadViaApi(request, ds.id, 'b.png')
+  const images = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+
+  await page.goto(`/datasets/${ds.id}/image/${images[0].id}`)
+  const url = page.url()
+
+  const writes: string[] = []
+  page.on('request', (r) => { if (r.url().includes('bulk-rating')) writes.push(r.url()) })
+
+  await page.getByRole('button', { name: /Run Detection/ }).first().click()
+  const modal = page.locator('div.fixed.inset-0 >> .card')
+  await expect(modal).toBeVisible()
+  await modal.getByRole('heading', { name: 'Run Detection' }).click()
+
+  await page.keyboard.press('3')
+  await page.keyboard.press('ArrowRight')
+  await expect(modal).toBeVisible()
+  // A negative about a request needs a moment to be worth asserting: there is no
+  // event to wait for when the correct behaviour is that nothing is sent.
+  await page.waitForTimeout(500)
+  expect(writes).toEqual([])
+  // The arrow keys are scoped to the same guard, and a second image exists for
+  // them to have moved to — so an unchanged URL is a real assertion.
+  expect(page.url()).toBe(url)
+
+  // Closing it hands the keys back, which is what makes the assertions above a
+  // statement about the modal rather than about the keys never working here.
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.keyboard.press('3')
+  await expect.poll(() => writes.length).toBe(1)
 })

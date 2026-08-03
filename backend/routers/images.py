@@ -883,7 +883,10 @@ async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db
         # 10,000 default is sized for one bind per id against SQLite's 32,766
         # ceiling (its own docstring says so); a multi-VALUES insert of five
         # columns would be 50,000 binds and blow it. `from_select` binds the id
-        # list plus four literals — 10,004 — so the existing chunk size stays
+        # list plus **three** literals — 10,003 worst case, not 10,004:
+        # `Image.id` and `Image.dataset_id` are selected columns and bind
+        # nothing, so compiling it gives `['id_1', 'param_1', 'param_2',
+        # 'param_3']` — so the existing chunk size stays
         # correct and no second one has to be invented and kept in step. It also
         # cannot drift from the UPDATE above: both use the same `in_(batch_ids)`.
         #

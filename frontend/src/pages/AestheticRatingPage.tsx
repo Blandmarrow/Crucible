@@ -18,10 +18,32 @@ import { RATING_OPTIONS, ratingColor, ratingLabel } from "../constants/rating";
  * home and needs no re-homing later.
  */
 
+/* Every figure on this page divides by a different denominator, so each carries
+   its own floor rather than one shared number — and all three live here rather
+   than in `backend/ml/rating_metrics.py`, whose `None` means the statistic is
+   *undefined* (an empty side, zero variance, fewer than three points).
+   "Defined but too thin to print" is a different claim, and collapsing the two
+   into one token would also throw away the counts the page renders in place of
+   the figure. `pairs`, `n`, `n_lo` and `n_hi` are on the wire for this. */
+
 /** Below this many comparable pairs the page shows counts and no percentage.
  *  A ceiling from three pairs is noise wearing a number, and not shipping those
  *  is the entire point of measuring first. */
 const MIN_CEILING_PAIRS = 10;
+
+/** Images **per side** of a boundary, not the product. One image against twenty
+ *  is twenty non-independent comparisons that a single score decides — the
+ *  1-vs-1 bug in disguise, which a product floor of 20 waves straight through.
+ *  Five a side gives the AUC a granularity of 0.04 against the 0.01 its two
+ *  decimals advertise, and a null SE of ≈0.19 — the same order of noise
+ *  `MIN_CEILING_PAIRS` already accepts from ten Bernoulli trials (0.16). A
+ *  separate product floor would be dead code: 5×5 = 25. */
+const MIN_BOUNDARY_PER_SIDE = 5;
+
+/** Rated-and-scored images before ρ is printed: four tiers at the same
+ *  five-a-side floor. ρ's SE ≈ 1/√(n−1) is 0.23 there, against **0.71** at the
+ *  three points `spearman` merely calls defined. */
+const MIN_RHO_IMAGES = 20;
 
 const pct = (v: number | null | undefined) =>
   v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
@@ -223,11 +245,23 @@ function SelfAgreementPanel({ sa, haveCeiling }: { sa: SelfAgreement; haveCeilin
               value={sa.singleton_pairs >= MIN_CEILING_PAIRS ? pct(sa.singleton_rate) : "—"}
               detail={`${sa.singleton_pairs.toLocaleString()} of ${sa.pairs.toLocaleString()} pairs, both one-image writes`}
             />
+            {/* Not "a multi-image write": `singleton_*` requires `batch_size == 1`
+                on **both** sides, and the migration backfilled every pre-existing
+                rating with a NULL batch size — so this bucket absorbs *unknown*
+                too, and on any existing install the first re-rate of a backfilled
+                image lands here. The arithmetic is right; only the old wording
+                overclaimed. A third `unknown_pairs` field would be a schema change
+                to fix a caption, for a count already derivable. */}
             <Figure
               term="From bulk sweeps"
               value={sa.bulk_pairs.toLocaleString()}
-              detail="pairs where at least one side was a multi-image write"
+              detail="pairs where at least one side was not a confirmed one-image write"
             />
+            {/* No floor here, and none wanted: this whole `<dl>` sits inside the
+                `haveCeiling` branch and `rate_within_1` divides by that same
+                `pairs`, so it is already floored. "Deliberate re-rates" carries a
+                second check only because `singleton_pairs` is a strictly smaller
+                denominator. Floor the denominator, not the figure. */}
             <Figure
               term="Within one tier"
               value={pct(sa.rate_within_1)}
@@ -299,7 +333,7 @@ function ScorerAgreementPanel({ data }: { data: ScorerAgreement | undefined }) {
       ) : (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {data.models.map((m) => <ModelCard key={m.model} m={m} />)}
+            {data.models.map((m) => <ModelCard key={m.model ?? "unmarked"} m={m} />)}
           </div>
           {data.rated_unscored > 0 && (
             <p style={{ color: "var(--fg-dim)", fontSize: 11.5, marginTop: 10 }}>
@@ -315,25 +349,61 @@ function ScorerAgreementPanel({ data }: { data: ScorerAgreement | undefined }) {
 }
 
 function ModelCard({ m }: { m: ScorerModelAgreement }) {
+  // Coalesced here rather than inside `aestheticModelLabel`, whose signature
+  // stays `string`: it deliberately renders an unknown marker verbatim, because
+  // the marker set is open (`head:{uuid}`). A missing marker is a different
+  // thing from an unrecognised one.
+  const label = m.model === null ? "Scorer not recorded" : aestheticModelLabel(m.model);
+  const haveRho = m.n >= MIN_RHO_IMAGES;
+  // Above the floor and still undefined, for the state the floor makes
+  // reachable: `rating_metrics`' own "forty images all rated Cut". A tier with
+  // nobody in it has a null mean, so counting the non-null means counts tiers.
+  const oneTier =
+    haveRho && RATING_OPTIONS.filter((o) => m.mean_by_rating[String(o.value)] != null).length <= 1;
+
   return (
     <div className="card" style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{aestheticModelLabel(m.model)}</span>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
         <span style={{ color: "var(--fg-dim)", fontSize: 11.5 }}>
           {m.n.toLocaleString()} rated and scored
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 14 }}>
+      <div
+        style={{
+          display: "flex", alignItems: "baseline", gap: 8,
+          marginBottom: oneTier ? 4 : 14,
+        }}
+      >
+        {/* The slot is rendered at its full size either way, so crossing the
+            floor does not reflow the card. */}
         <span style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-.02em" }}>
-          ρ {num(m.spearman)}
+          ρ {haveRho ? num(m.spearman) : "—"}
         </span>
-        {/* Never the bare ρ: with four rating tiers the tie structure caps it
-            below 1.0, so 0.31 alone reads as failure forever. */}
-        <span style={{ color: "var(--fg-dim)", fontSize: 12.5 }}>
-          of a possible {num(m.spearman_ceiling)}
-        </span>
+        {haveRho ? (
+          /* Never the bare ρ: with four rating tiers the tie structure caps it
+             below 1.0, so 0.31 alone reads as failure forever. Withheld below
+             the floor along with the ρ — from three images in three tiers the
+             ceiling computes to exactly 1.00, and "of a possible 1.00" then
+             reads as headroom when it only means nothing tied. */
+          <span style={{ color: "var(--fg-dim)", fontSize: 12.5 }}>
+            of a possible {num(m.spearman_ceiling)}
+          </span>
+        ) : (
+          <span style={{ color: "var(--fg-dim)", fontSize: 12.5 }}>
+            too few to correlate — {MIN_RHO_IMAGES} rated and scored images are needed
+          </span>
+        )}
       </div>
+      {/* The tier means and the boundary rows stay rendered below the floor:
+          they are raw observables, and blanking the card would hide the very
+          thing that fills it. */}
+      {oneTier && (
+        <div style={{ color: "var(--fg-dim)", fontSize: 11.5, marginBottom: 14 }}>
+          Every rated image here is in one tier — nothing to correlate.
+        </div>
+      )}
 
       <div style={{ marginBottom: 14 }}>
         <div style={{ color: "var(--fg-mute)", fontSize: 11.5, marginBottom: 6 }}>
@@ -342,6 +412,7 @@ function ModelCard({ m }: { m: ScorerModelAgreement }) {
         <div style={{ display: "flex", gap: 8 }}>
           {RATING_OPTIONS.map((o) => {
             const v = m.mean_by_rating[String(o.value)];
+            const n = m.n_by_rating[String(o.value)] ?? 0;
             return (
               <div
                 key={o.value}
@@ -358,6 +429,18 @@ function ModelCard({ m }: { m: ScorerModelAgreement }) {
                 >
                   {num(v)}
                 </div>
+                {/* The count under the mean, for the reason the boundary rows
+                    carry theirs: a mean over one image reads exactly like a mean
+                    over two hundred, in the figure the page calls its most
+                    legible. */}
+                <div
+                  style={{
+                    fontSize: 10.5, color: "var(--fg-dim)",
+                    fontFeatureSettings: '"tnum"',
+                  }}
+                >
+                  {n.toLocaleString()} {n === 1 ? "image" : "images"}
+                </div>
               </div>
             );
           })}
@@ -366,7 +449,8 @@ function ModelCard({ m }: { m: ScorerModelAgreement }) {
 
       <div style={{ color: "var(--fg-mute)", fontSize: 11.5, marginBottom: 6 }}>
         Per-boundary accuracy — how often it puts the better image above the worse
-        one. 0.5 is a coin flip.
+        one. 0.5 is a coin flip. A boundary with fewer than {MIN_BOUNDARY_PER_SIDE}{" "}
+        images on a side shows its counts and no figure.
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {m.boundaries.map((b) => <BoundaryRow key={b.boundary} b={b} />)}
@@ -377,7 +461,11 @@ function ModelCard({ m }: { m: ScorerModelAgreement }) {
 
 function BoundaryRow({ b }: { b: ScorerModelAgreement["boundaries"][number] }) {
   const [lo, hi] = b.boundary.split("v").map(Number);
-  const auc = b.auc;
+  // The floor nulls the AUC rather than adding a state: the em dash and the
+  // zero-width bar the undefined case already draws mean exactly "we are not
+  // claiming this". Per side, because one image against twenty is twenty
+  // comparisons a single score decides.
+  const auc = Math.min(b.n_lo, b.n_hi) >= MIN_BOUNDARY_PER_SIDE ? b.auc : null;
   // Centred on 0.5, never drawn from zero: a bar from 0 makes a coin flip look
   // like half a success rather than the no-information point it is.
   const magnitude = auc === null ? 0 : Math.abs(auc - 0.5) * 100;
@@ -388,12 +476,24 @@ function BoundaryRow({ b }: { b: ScorerModelAgreement["boundaries"][number] }) {
       <span style={{ width: 140, flexShrink: 0, color: "var(--fg-dim)" }}>
         {ratingLabel(lo)} vs {ratingLabel(hi)}
       </span>
+      {/* Before the bar, not in a `title=`: a tooltip is unreachable by keyboard,
+          unannounced by a screen reader and absent from every screenshot. Here
+          `12 vs 3` reads straight against `Probably not vs Probably` with no
+          legend, and the announced order becomes label, counts, figure. */}
+      <span
+        style={{
+          width: 84, flexShrink: 0, textAlign: "right",
+          fontFeatureSettings: '"tnum"', color: "var(--fg-dim)",
+        }}
+      >
+        {b.n_lo.toLocaleString()} vs {b.n_hi.toLocaleString()}
+      </span>
       <div
+        aria-hidden
         style={{
           flex: 1, height: 10, background: "var(--surface-2)", borderRadius: 3,
           position: "relative", overflow: "hidden",
         }}
-        title={`${b.n_lo} vs ${b.n_hi} images`}
       >
         <div
           style={{

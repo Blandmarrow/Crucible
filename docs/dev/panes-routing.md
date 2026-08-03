@@ -2,7 +2,7 @@
 
 This file covers the shell every page renders inside: the Sidebar's active-dataset rule, the
 split-view pane manager (`paneStore`, `PaneContext`, the `pane/` components and their `App.tsx`
-integration), and route-level code splitting including the six-site checklist a new routed page
+integration), and route-level code splitting including the eight-site checklist a new routed page
 must satisfy. The state and constants a page itself uses are in `docs/dev/frontend-core.md`,
 job progress and cache invalidation in `docs/dev/frontend-jobs.md`, and the CSS tokens and
 modal conventions in `docs/dev/styling.md`.
@@ -84,5 +84,13 @@ The count read "six" for a long time, omitting sites 7 and 8 on the grounds that
 from a dropdown or a nav item with no id to hand. That is true of exactly those two pages.
 `booru`, `file-browser` and `rating` all have sidebar entries and all appear in
 `PAGE_OPTIONS`, so for a normal page eight is the number.
+
+There is a ninth site, and it is deliberately **not** on the list:
+`TopBar.tsx`'s `Breadcrumbs` special-cases `useMatch("/booru")`, and every
+top-level page without such a case — `/settings`, `/logs`, `/file-browser`,
+`/rating` — falls through to a bare `Crucible` crumb. That is the norm rather
+than an omission, so adding it as item 9 would imply every new page owes a
+breadcrumb case, which is neither what the code does nor what those four pages
+want. Add the case only when a page's crumb is worth more than `Crucible`.
 
 Each consumer owns its own `<Suspense>`: `App.tsx` wraps the whole `<Routes>` tree, while `PageRenderer` wraps per pane — a per-pane boundary is deliberate, so a pane still fetching its chunk shows its own fallback instead of blanking a sibling pane that is already rendered.

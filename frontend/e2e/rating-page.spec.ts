@@ -90,7 +90,12 @@ test('the rating page reports its corpus and withholds an unearned ceiling', asy
 
   // ── Distribution ──
   const dist = page.locator('section').filter({ hasText: 'Rating distribution' })
-  await expect(dist).toContainText(`${after.rated} rated, ${after.unrated} unrated`)
+  // `toLocaleString`, like the page: the corpus here is the whole shared e2e
+  // database, so a raw number starts failing the moment it passes 999 and reads
+  // as a page bug rather than a spec one.
+  await expect(dist).toContainText(
+    `${after.rated.toLocaleString('en-US')} rated, ${after.unrated.toLocaleString('en-US')} unrated`,
+  )
   // Every tier renders even at zero, so the four bars need no defaulting.
   for (const label of ['Keep', 'Probably', 'Probably not', 'Cut']) {
     await expect(dist.getByText(label, { exact: true })).toBeVisible()
@@ -100,7 +105,7 @@ test('the rating page reports its corpus and withholds an unearned ceiling', asy
   const ceiling = page.locator('section').filter({ hasText: 'Your own ceiling' })
   await expect(ceiling).toContainText('Not enough re-ratings yet')
   await expect(ceiling).toContainText(
-    `${after.self_agreement.pairs} comparable pair`,
+    `${after.self_agreement.pairs.toLocaleString('en-US')} comparable pair`,
   )
   await expect(ceiling).toContainText('not a blind re-show')
   // A ceiling from one pair is noise wearing a number; no percentage is offered.
@@ -110,6 +115,11 @@ test('the rating page reports its corpus and withholds an unearned ceiling', asy
   const scorerRes = await request.get('/api/v1/rating/scorer-agreement')
   expect(scorerRes.status(), await scorerRes.text()).toBe(200)
   const scorerBody = await scorerRes.json()
+  // Absolute counts, not deltas — the one place this spec can use them. They hold
+  // only because no spec can run a scorer (torch is absent in CI) and no endpoint
+  // writes `aesthetic_score`, so the scored population of the shared corpus is
+  // permanently empty. Same footing as the `toBeLessThan(10)` tripwire above: if
+  // that ever changes, these fail loudly rather than drifting.
   expect(scorerBody.scored_and_rated).toBe(0)
   expect(scorerBody.models).toEqual([])
 

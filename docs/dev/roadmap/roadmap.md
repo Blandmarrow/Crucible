@@ -41,7 +41,7 @@ of work as §N, and those numbers never move; the build order is this table alon
 | ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/scoring.md`; this section is deleted per this file's own lifecycle rule. |
 | ✓ | **Rating column** (§1) | — | **Shipped 2026-08-03.** `Image.aesthetic_rating` + `rating_stale`, the gallery/export/stats/restore surfaces. Now documented in `docs/dev/rating.md`; this section is deleted per this file's own lifecycle rule. |
 | ✓ | **Head phase 0 — the measurement gate** (§3) | §1, §2 | **Shipped 2026-08-03.** `image_rating_events`, `backend/ml/rating_metrics.py`, `GET /rating/summary` + `/rating/scorer-agreement`, and the Aesthetic Rating page. Documented in `docs/dev/rating.md` § The event log and § Phase 0 metrics. It builds none of §3 — it measures whether §3 is worth building. |
-| 3 | **The learned head** (§3, phases 1+) | Phase 0's numbers | The expensive one, and now **conditional**: if ρ for LAION or V2.5 already sits near the self-agreement ceiling, §3 is answered and the remaining phases do not get built. |
+| 3 | **The learned head** (§3, phases 1+) | Phase 0's numbers | The expensive one, and now **conditional**: if ρ for LAION or V2.5 already sits near its own `spearman_ceiling`, §3 is answered and the remaining phases do not get built. The self-agreement rate is a separate caveat on that reading, not a term in it — see § The gate. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
 
 **§6 led on a code reason, not just its size**, and that reason is now settled: it removed
@@ -173,16 +173,18 @@ embeddings). Read `docs/dev/image-similarity.md`, `docs/dev/scores-stale.md` and
 
 ### Where it lives
 
-A new **top-level** routed page, "Aesthetic Rating", beside Datasets and File Browser — not
-a per-dataset one, because a head trained from labels pooled across datasets cannot live
-under a single dataset. The per-dataset half is the picker §2 shipped (see
-`docs/dev/scoring.md` § The aesthetic model picker), a panel on the existing
-Score images page. One new routed page, not two; note the *seventh* site in
-`docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
+**Shipped 2026-08-03 with Phase 0.** The page is a **top-level** route, "Aesthetic Rating",
+beside Datasets and File Browser — not a per-dataset one, because a head trained from labels
+pooled across datasets cannot live under a single dataset. The per-dataset half is the
+picker §2 shipped (see `docs/dev/scoring.md` § The aesthetic model picker), a panel on the
+existing Score images page. One new routed page, not two; it satisfies all **eight** sites in
+`docs/dev/panes-routing.md`'s checklist, `PaneHeader`'s `PAGE_OPTIONS` among them — that
+list read "six" until this page was built, and the two it omitted are exactly the two a
+pickable, sidebar-reachable page needs.
 
 **§1 shipped without it.** Scope was confirmed as existing surfaces only — the gallery's
-keys and chips, the selection toolbar, `ImageDetailPage` — so this page arrives with §3, and
-arrives already carrying a rated corpus rather than an empty queue.
+keys and chips, the selection toolbar, `ImageDetailPage` — so the page arrived with Phase 0
+rather than with §1, already carrying a rated corpus rather than an empty queue.
 
 ### Why tier sort
 
@@ -282,7 +284,11 @@ Four tiles, three of which are nearly free:
   ceiling; the page says so unconditionally. The system-selected, previous-answer-hidden
   re-show is Phase 2, and it is what turns the number real.
 - **LAION on the same images** — the only honest answer to *is this better than what I had*.
-  If the head fails to beat it meaningfully, stop.
+  If the head fails to beat it meaningfully, stop. **Phase 0 shipped this whole tile**:
+  `GET /rating/scorer-agreement` already reports ρ, its ceiling, the four tier means and the
+  three per-boundary AUCs for every `aesthetic_model` marker in the corpus, so the
+  comparison exists before the head does — which is what makes it a gate rather than a
+  post-hoc defence.
 - **Luminance correlation** — `luminance_score` already exists, so this is a two-column SQL
   query with no decoding. A head that has quietly learned "brighter is better" shows up here
   and nowhere else.
@@ -329,13 +335,29 @@ recorded rather than deleted because each was decided against its stated alterna
   does not block anything.
 - **Uncertainty sampling stays uniform in v1**, with per-boundary accuracy reported instead
   (`ordering_auc`, one figure per adjacent tier pair). The parenthetical here named
-  Probably-not/Cut as "the boundary the user acts on", but the export filters that shipped
-  with §1 act on Probably/Keep (`rating_min` ≥ 3 or 4) — so 1-vs-2 is the one boundary where
-  being wrong is free, and weighting it would have been weighting the cheapest mistake.
+  Probably-not/Cut as "the boundary the user acts on" — but the export filters that shipped
+  with §1 act on **both** ends: `rating_min` ≥ 3 or 4 at the top, and `exclude_ratings`
+  naming Cut at the bottom, which is precisely the 1-vs-2 boundary. So no boundary is free,
+  and uniform sampling stands on different ground than the earlier note claimed: with three
+  boundaries and no evidence yet about which one a given install's decisions concentrate on,
+  weighting any of them is a guess. `ordering_auc` reports all three so the evidence can
+  arrive before the weighting does.
+
+### The gate
 
 What remains open is a single **gate**, and it is the point of Phase 0: if ρ for LAION or
-V2.5 already sits near the self-agreement ceiling, §3 is answered and phases 1+ do not get
-built. Nothing further is decidable until the corpus has re-ratings in it.
+V2.5 already sits near its own **`spearman_ceiling`**, §3 is answered and phases 1+ do not
+get built. The ceiling is the right comparator because it is the only quantity on ρ's scale
+— a bound the four-tier tie structure imposes on *any* scorer, so "0.31 of a possible 0.97"
+is a fraction of the achievable and 0.31 alone is not.
+
+The **self-agreement rate is not a term in that comparison** and never was: it is a
+proportion of agreeing re-rating pairs, and nothing maps a proportion of pairs onto a rank
+correlation's scale. It qualifies the gate from the side — a scorer measured against labels
+the user reproduces 60% of the time is measured against noise, so a low ρ says as much about
+the corpus as about the scorer. Read the two apart, as
+`docs/dev/rating.md` § Phase 0 metrics already presents them. Nothing further is decidable
+until the corpus has re-ratings in it.
 
 ## Traps worth restating
 

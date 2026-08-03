@@ -188,24 +188,75 @@ def test_a_busy_dataset_writes_neither_rating_nor_event(tmp_path):
 
 def test_events_chunk_with_the_id_list(tmp_path, monkeypatch):
     """The INSERT … SELECT rides the same `chunked()` loop as the UPDATE and uses
-    the same `in_(batch)` predicate, so the two cannot cover different sets."""
+    the same `in_(batch)` predicate, so the two cannot cover different sets.
+
+    The patch **counts**, and `seen` is asserted, because 7 events is exactly
+    what an *unchunked* pass produces too: if `bulk_rating` ever stopped
+    resolving `chunked` as a module global, the monkeypatch would silently no-op
+    and this test would stay green testing nothing. `[2, 2, 2, 1]` is the one
+    observation a single unchunked pass cannot make.
+    """
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
+            # Seeded before the patch is installed, so nothing but the rating
+            # write is measured.
             ids = await _seed(env, ds["id"], n=7)
 
             real_chunked = images_router.chunked
-            monkeypatch.setattr(
-                images_router, "chunked", lambda seq, size=2: real_chunked(seq, 2)
-            )
+            seen: list[int] = []
+
+            def counting_chunked(seq, size=2):
+                for batch in real_chunked(seq, 2):
+                    seen.append(len(batch))
+                    yield batch
+
+            monkeypatch.setattr(images_router, "chunked", counting_chunked)
             r = await _rate(env, ds["id"], ids, 2)
             assert r.json() == {"updated": 7}
+            # One loop drives both statements, so seven ids at size 2 is four
+            # passes and not eight.
+            assert seen == [2, 2, 2, 1]
 
             events = await _events(env)
             assert len(events) == 7
             assert {e.image_id for e in events} == set(ids)
             # batch_size is the whole write, not the chunk it happened to land in.
             assert {e.batch_size for e in events} == {7}
+
+    run(scenario())
+
+
+def test_a_cross_dataset_selection_stamps_each_event_with_its_own_image_dataset(tmp_path):
+    """`dataset_id` comes from `Image.dataset_id`, per row — not from the body.
+
+    An explicit `image_ids` selection can span datasets, which is the whole
+    reason `bulk_rating` guards *every* dataset it touches rather than
+    `body.dataset_id` alone. Every other test in this file rates within one
+    dataset, where a `literal(body.dataset_id)` would be indistinguishable.
+
+    No `foreign_keys=True`: the column carries no FK by design, so the pragma
+    would prove nothing here.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            a = await env.create_dataset("a")
+            b = await env.create_dataset("b")
+            ids_a = await _seed(env, a["id"], n=2)
+            ids_b = await _seed(env, b["id"], n=2)
+
+            # One write, addressed with `a` as the body's dataset, spanning both.
+            r = await _rate(env, a["id"], ids_a + ids_b, 3)
+            assert r.json() == {"updated": 4}
+
+            events = await _events(env)
+            assert {e.image_id: e.dataset_id for e in events} == {
+                **{i: a["id"] for i in ids_a},
+                **{i: b["id"] for i in ids_b},
+            }
+            # Stated separately so the failure names itself: stamping the body's
+            # dataset onto every row collapses this to `{a}`.
+            assert {e.dataset_id for e in events} == {a["id"], b["id"]}
 
     run(scenario())
 

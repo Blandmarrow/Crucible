@@ -6,10 +6,12 @@ Both routes back a page that must render against an empty corpus, a corpus with
 no re-ratings, and a corpus where everything is rated the same — so each returns
 200 with zeros and nulls rather than a 404 or a NaN that fails serialisation.
 
-The one invariant test worth its weight is `sum(m.n) == scored_and_rated`, which
-holds only because migration `a5e1b7c3d9f0` backfilled `aesthetic_model` for every
-scored row. Break that and the per-model breakdown silently stops accounting for
-part of the corpus.
+The one invariant test worth its weight is `sum(m.n) == scored_and_rated`. It
+holds by construction rather than by luck: a scored row whose `aesthetic_model`
+was never written gets its **own bucket** keyed `None`, because skipping it would
+make the per-model breakdown silently stop accounting for part of the corpus.
+Migration `a5e1b7c3d9f0` backfilled the marker for every row that existed then;
+nothing enforces it for rows written since.
 """
 from backend.models import Image
 from backend.tests.conftest import API, api_env, run
@@ -169,6 +171,50 @@ def test_summary_separates_bulk_pairs_from_singleton_pairs(tmp_path):
     run(scenario())
 
 
+def test_a_three_event_history_is_read_in_write_order_not_sorted_by_rating(tmp_path):
+    """The `ORDER BY … ImageRatingEvent.id` in `rating_summary`, pinned.
+
+    Ordering by `rating` instead turns `1 → 4 → 1` into `1 → 1 → 4`. **Two
+    events cannot catch it** — every figure `self_agreement` reports is symmetric
+    in a single pair — so three is the minimum, and the witnesses move in
+    opposite directions:
+
+    | history as read     | pairs | agreements | distant | first_last_agreements |
+    |---------------------|-------|------------|---------|-----------------------|
+    | 1 → 4 → 1 (by id)   | 2     | 0          | 2       | 1                     |
+    | 1 → 1 → 4 (by rating)| 2    | 1          | 1       | 0                     |
+
+    All three are asserted together: any one alone could be matched by accident.
+    Every write is a one-image list, so `batch_size` is constant and cannot
+    introduce a nondeterministic tie-break.
+
+    HTTP level, because the ordering being pinned is the router's — a unit test
+    of `self_agreement` supplies the order itself and so cannot see it. The
+    `id`-rather-than-`created_at` half of the rule is **not testable at any
+    layer**: one write produces at most one event per image, so within an image's
+    history timestamps never tie, and the ties the rule guards against are
+    cross-image ones that grouping removes before ordering matters.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            rows = [_mk(ds["id"], 0)]
+            await _add(env, rows)
+            one = [rows[0].id]
+
+            await _rate(env, ds["id"], one, 1)
+            await _rate(env, ds["id"], one, 4)
+            await _rate(env, ds["id"], one, 1)
+
+            sa = (await env.client.get(f"{API}/rating/summary")).json()["self_agreement"]
+            assert sa["pairs"] == 2
+            assert sa["agreements"] == 0            # 1 → 1 → 4 would report 1
+            assert sa["distant"] == 2               # ...and 1
+            assert sa["first_last_agreements"] == 1  # ...and 0
+
+    run(scenario())
+
+
 # --- scorer-agreement ------------------------------------------------------
 
 
@@ -185,8 +231,8 @@ def test_scorer_agreement_on_an_empty_corpus_is_200_with_no_models(tmp_path):
 
 
 def test_scorer_agreement_groups_by_model_and_accounts_for_every_scored_row(tmp_path):
-    """`sum(m.n) == scored_and_rated` — the invariant migration `a5e1b7c3d9f0`'s
-    backfill buys. There is no scored-but-unmarked bucket to leak into."""
+    """`sum(m.n) == scored_and_rated` — the invariant bucketing (rather than
+    skipping) an unknown marker preserves; the unmarked case has its own test."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
@@ -209,7 +255,77 @@ def test_scorer_agreement_groups_by_model_and_accounts_for_every_scored_row(tmp_
 
             laion = body["models"][0]
             assert set(laion["mean_by_rating"]) == {"1", "2", "3", "4"}
+            # Every mean arrives with the count behind it, and they account for
+            # the model's whole population.
+            assert sum(laion["n_by_rating"].values()) == laion["n"]
             assert [b["boundary"] for b in laion["boundaries"]] == ["1v2", "2v3", "3v4"]
+
+    run(scenario())
+
+
+def test_a_scored_row_with_no_model_marker_gets_its_own_bucket_not_a_500(tmp_path):
+    """Nothing *enforces* `aesthetic_score IS NOT NULL ⟺ aesthetic_model IS NOT
+    NULL` — the migration established it; a writer that skips the marker breaks
+    it again, and `bench_scaling.py` did exactly that. A `None` marker fed into a
+    `model: str` field raised a `ValidationError` **inside the handler**, so the
+    page whose stated job is rendering whatever day one looks like answered 500.
+
+    Bucketed rather than skipped, because skipping would silently break
+    `sum(m.n) == scored_and_rated` — asserted here as well as above.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await _add(env, [
+                _mk(ds["id"], 0, aesthetic_rating=4, aesthetic_score=0.9,
+                    aesthetic_model="laion"),
+                _mk(ds["id"], 1, aesthetic_rating=2, aesthetic_score=0.2,
+                    aesthetic_model="laion"),
+                # Scored, rated, unmarked.
+                _mk(ds["id"], 2, aesthetic_rating=1, aesthetic_score=0.4),
+            ])
+
+            r = await env.client.get(f"{API}/rating/scorer-agreement")
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["scored_and_rated"] == 3
+            assert sum(m["n"] for m in body["models"]) == body["scored_and_rated"]
+            unmarked = [m for m in body["models"] if m["model"] is None]
+            assert len(unmarked) == 1 and unmarked[0]["n"] == 1
+
+    run(scenario())
+
+
+def test_a_boundary_with_one_image_a_side_still_reports_its_auc_and_its_counts(tmp_path):
+    """The division of labour between the module and the page, pinned.
+
+    `ordering_auc`'s `None` means *undefined* — a side with nobody in it. "One a
+    side" is defined and reported, counts and all; it is the **page** that
+    refuses to print a figure below its own `MIN_BOUNDARY_PER_SIDE`, because
+    folding the two into one token would throw the counts away with it. This is
+    what stops a later sweep moving the floor down here.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await _add(env, [
+                # 1v2 has one image a side; 3 and 4 stay empty.
+                _mk(ds["id"], 0, aesthetic_rating=1, aesthetic_score=0.1,
+                    aesthetic_model="laion"),
+                _mk(ds["id"], 1, aesthetic_rating=2, aesthetic_score=0.9,
+                    aesthetic_model="laion"),
+            ])
+
+            model = (await env.client.get(
+                f"{API}/rating/scorer-agreement"
+            )).json()["models"][0]
+            by_boundary = {b["boundary"]: b for b in model["boundaries"]}
+
+            assert by_boundary["1v2"]["auc"] == 1.0
+            assert by_boundary["1v2"]["n_lo"] == 1 and by_boundary["1v2"]["n_hi"] == 1
+            # An empty side is the undefined case, and *that* is the module's None.
+            assert by_boundary["3v4"]["auc"] is None
+            assert by_boundary["3v4"]["n_lo"] == 0 and by_boundary["3v4"]["n_hi"] == 0
 
     run(scenario())
 

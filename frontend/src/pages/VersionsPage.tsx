@@ -9,6 +9,7 @@ import { versioningApi } from "../api/versioning";
 import { datasetsApi } from "../api/datasets";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { VERSIONS_BRANCH_KEY } from "../constants/storage";
+import { invalidateRatingMetrics } from "../constants/queryKeys";
 import type { Version } from "../types";
 import CreateSnapshotModal from "../components/versioning/CreateSnapshotModal";
 import DiffModal from "../components/versioning/DiffModal";
@@ -383,6 +384,13 @@ export default function VersionsPage() {
             qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
             qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
             qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+            // A restore rewrites `aesthetic_rating` from the snapshot — the
+            // fourth rating mutator, after the three `bulk-rating` writers. Its
+            // keys carry no dataset, so the hand-rolled list above cannot reach
+            // them; without this, a restore that clears forty ratings in one pane
+            // leaves the Aesthetic Rating page in another holding the old counts
+            // for the full 30 s `staleTime`.
+            invalidateRatingMetrics(qc);
           }}
         />
       )}

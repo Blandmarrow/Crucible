@@ -170,7 +170,7 @@ carries (HEVC, ProRes, MPEG-4 part 2, Motion JPEG, Windows Media, Theora); AV1 i
 deliberately absent, since current browsers decode it in `.mp4`/`.webm` and an `.mkv`
 carrying it is already caught by the container rule.
 
-Route registration follows the six-site pattern in `docs/dev/panes-routing.md`
+Route registration follows the eight-site pattern in `docs/dev/panes-routing.md`
 (§ Route-level code splitting). The `/datasets/:id/video/:vid` regex in `routeToView` sits
 **above** the generic `dsPageMatch`, same hazard as the image regex: the generic pattern
 also matches and would yield an invalid `page: "video"`. `video-detail` is deliberately

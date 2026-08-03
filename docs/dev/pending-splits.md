@@ -44,6 +44,28 @@ ground while sitting *below* that 60% floor — so it would read as already-spli
 `## docs/dev/example.md (structural)` heading, whose trailing marker exempts it from the
 staleness sweep while still recording the seam.
 
+## docs/dev/pending-splits.md
+
+- **Moves:** § How entries work and the three-band lifetime rule that follows it (405 words
+  with the intro), plus the executed-seam history at the foot of the file
+- **New file:** docs/dev/pending-splits-format.md (structural, no user doc to mirror)
+- **Why here:** this file has two audiences that never overlap. The *queue* is read by
+  whoever is about to append to an over-budget file — they want one entry and nothing
+  else. The *format and lifetime rules* are read once, by whoever is recording a seam for
+  the first time, and never again; the executed-seam history is read by nobody routinely
+  and exists to stop a seam being re-proposed. Moving both leaves the queue as a flat list
+  of entries and drops the file to ~2,950. That is still over the ~2,100 target, and the
+  honest reason is that the file grows one entry per over-budget doc rather than by
+  section — so the *second* cut is by area (user docs versus `docs/dev/`) if it is ever
+  wanted. It crossed the budget on 2026-08-03 when `docs/dev/rating.md`'s entry landed.
+- **Watch for:** the `doc-maintenance` skill cites this file by name and quotes its entry
+  template, and `scripts/check_docs.py` hardcodes the path in two checks (the
+  over-budget-with-no-seam WARN and the stale-entry sweep) and matches entries on their
+  `## <repo-relative path>` headings — so the *queue* half must keep that filename and
+  that heading shape, and only the format prose may move. Check the skill's § Splitting an
+  oversized doc and § When a file trips the budget for text that would then point at the
+  wrong file.
+
 ## Queue
 
 ## CLAUDE.md
@@ -239,6 +261,32 @@ staleness sweep while still recording the seam.
   a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
   first and produces a docs/style-similarity.md, the names line up for free.
 
+## docs/dev/rating.md
+
+- **Moves:** § Phase 0 metrics in full, including § Testing the page (1,058 words), and
+  § The event log (822)
+- **New file:** docs/dev/rating-metrics.md (no user doc to mirror — `docs/rating.md`
+  covers the page, and the measurement is a maintainer's subject)
+- **Why here:** the file is the *rating column* — its scale, staleness bit, travel rules,
+  filter, writer, export and versioning behaviour. The two sections above are the
+  *measurement built on top of it*: an append-only log nothing else reads, two pure-numpy
+  statistics, two aggregate endpoints and a page that renders them. A reader arrives for
+  one or the other, never both, and everything one needs from the other is already a
+  one-line fact (the log is written by `bulk_rating`; the metrics read the log). The seam
+  leaves ~1,785 and ~1,880 — both comfortably under the ~2,100 target, which is why this
+  is the cut rather than any of the column's own short sections.
+- **Watch for:** § The event log is cited from § Versioning *within* this file (the
+  restore/event-loss sentence added on 2026-08-03 points at it by `§` name) and from
+  `backend/models/rating_event.py`'s docstring; § Phase 0 metrics from
+  `backend/ml/rating_metrics.py`, `backend/routers/rating.py` and
+  `frontend/e2e/rating-page.spec.ts`. CLAUDE.md's Documentation Map row names both
+  subjects in one trigger sentence and has to become two rows. Grep for the
+  `docs/dev/rating.md` path itself
+  across `docs/`, `CLAUDE.md`, `backend/` and `frontend/` before and after — several
+  citations sit in code comments the checker never reads. The two halves also have
+  different *lifetimes*: Phase 1 (a learned head) appends only to the metrics half, which
+  is the reason to split before it lands rather than after.
+
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)
@@ -301,8 +349,9 @@ staleness sweep while still recording the seam.
   the repo, `manage.ps1`/`manage.sh` and `docs/dev/environment-setup.md` describe the same
   setup flow the moving half documents — check both for text that now points at the wrong
   file. A new file needs a README Docs-table row, and `docs/features.md` takes a row rather
-  than prose. It tripped the budget on 2026-08-03, when the Aesthetic Rating page added one
-  Features bullet.
+  than prose. It first crossed the budget at `0e7265a` (the aesthetic model picker,
+  2494 → 2519); the Aesthetic Rating page then took it 2591 → 2651 on 2026-08-03, which is
+  the commit the entry was written under — so the entry is overdue rather than fresh.
 
 `docs/scoring.md` → `docs/duplicates.md` was executed on 2026-08-02, at the start of the
 session that appended the style-similarity percentile material to § Style similarity — the

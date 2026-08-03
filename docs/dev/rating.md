@@ -146,8 +146,9 @@ contract is "the dataset as it was". Exempting one authored column makes that co
 per-column. The carve-out is also not free — a rating that survived while the file rolled
 back would describe pixels that no longer exist, and clearing it would make restore a second
 writer of `rating_stale`. There is no "preserve my ratings" checkbox either; that is the
-carve-out wearing a control, and it can produce a dataset state that never existed. The loss
-is recoverable through the pre-restore auto-snapshot, which is checked by default.
+carve-out wearing a control, and it can produce a dataset state that never existed. The
+*rating* is recoverable through the pre-restore auto-snapshot, which is checked by default;
+the rating **events** of an image the restore deletes are not (§ The event log).
 
 `GET /datasets/{id}/versions/{version_id}/rating-impact` states the blast radius first. It
 is genuinely new: `diff_versions` reads `VersionImageState` on both sides, and there is no
@@ -193,7 +194,8 @@ instead of needing two passes.
 **`bulk_rating` is the sole writer**, in the same transaction as the rating itself. The
 insert is an `INSERT … SELECT` sharing the `chunked()` loop and the identical
 `Image.id.in_(batch)` predicate as the `UPDATE`, so the two cannot cover different sets — and
-because `from_select` binds the id list plus four literals rather than five binds per row,
+because `from_select` binds the id list plus **three** literals (`Image.id` and
+`Image.dataset_id` are selected columns and bind nothing) rather than five binds per row,
 `chunked`'s 10,000 default stays correct against SQLite's 32,766 ceiling and no second chunk
 size has to be invented and kept in step.
 
@@ -210,8 +212,27 @@ last event for that image** — so nothing may derive the *current* rating from 
 `backend/tests/test_rating_events.py` pins it so a future "make the log authoritative"
 change has to argue.
 
+**Undoing a restore does not bring events back.** `image_id` is `ON DELETE CASCADE` and
+`restore_snapshot(handle_extra_images="remove")` *deletes* `Image` rows, so an image the
+restore drops loses its whole history; restoring the pre-restore snapshot re-creates it with
+its original id and its snapshotted rating, and the events stay gone. Verified under
+`PRAGMA foreign_keys=ON` (production's setting): 2 events → 0 → rating 4 back, events 0.
+That is the log's **second** divergence direction — a rated image with *zero* events — so
+nothing may assume `rated ⇒ has ≥1 event` any more than it may read the current rating out
+of the log.
+
 Copy and derivative paths mint new `Image.id`s, so events do not travel while the rating
 does; carrying them would count one human decision twice.
+
+Two writer properties the tests pin because nothing else can. `dataset_id` is read from
+`Image.dataset_id` **per row**, never from the request body — an explicit id list can span
+datasets, which is why the endpoint guards every dataset it touches. And the ordering takes
+**three** events to observe at all: every figure over a single pair is symmetric, so a
+router sorting by `rating` turns `1 → 4 → 1` into `1 → 1 → 4` and only the third event tells
+them apart. The `id`-rather-than-`created_at` half of that rule is not testable at any
+layer — one write makes at most one event per image, so within an image's history timestamps
+never tie, and the cross-image ties it guards against are removed by grouping before
+ordering matters.
 
 ## Phase 0 metrics
 
@@ -234,24 +255,29 @@ rather than being the thing that fails a run.
 
 **Your own ceiling** — `self_agreement`. Universe: images with ≥2 events. The headline counts
 **consecutive** pairs, not first-versus-last, which hides oscillation (1 → 4 → 1 scores as
-perfect agreement); first-versus-last is reported alongside as a labelled secondary figure.
+perfect agreement); first-versus-last is returned by the API and rendered nowhere.
 Clears are excluded rather than counted as disagreements, because a withdrawal is not a
 second opinion. It returns **raw counts, never a bare rate**, because the figure is a
 diagnostic and three biases pull it in known directions: *selection* (you re-rate what you
 disagree with) pushes it **down**; *anchoring* (the second look sees your old answer) pushes
 it **up**; *bulk sweep* (select-all then press 1 writes events for images nobody looked at)
 pushes it **up** hardest, and `singleton_*` — pairs where **both** sides had `batch_size == 1`
-— is what isolates it. The page shows counts and no percentage below `MIN_CEILING_PAIRS`
-(10), and renders the "not a blind re-show" caveat unconditionally. A system-selected,
+— is what isolates it. Its complement `bulk_pairs` is therefore *not a confirmed one-image
+write*, not *bulk*: the backfill wrote NULL batch sizes, so on any existing install the
+first re-rate of a backfilled image lands there too, and the page's label says so. The page
+shows counts and no percentage below `MIN_CEILING_PAIRS` (10), and renders the "not a blind
+re-show" caveat unconditionally. A system-selected,
 previous-answer-hidden re-show is what would turn this into a real ceiling, and that is not
 built.
 
 **Does an existing scorer already track your taste** — Spearman ρ of `aesthetic_score`
 against `aesthetic_rating`, **grouped by `aesthetic_model`** because LAION and V2.5 scores
-are not comparable. Migration `a5e1b7c3d9f0`'s backfill gives `aesthetic_score IS NOT NULL ⟺
-aesthetic_model IS NOT NULL`, so `sum(m.n) == scored_and_rated` with no unaccounted bucket.
-`models` is a **list ordered by `n` desc**, not a dict, so a future `head:{uuid}` producer
-lands in it without a schema change.
+are not comparable. Migration `a5e1b7c3d9f0`'s backfill *established* `aesthetic_score IS
+NOT NULL ⟺ aesthetic_model IS NOT NULL` but nothing enforces it, so a scored row with no
+marker gets its **own bucket** keyed `None` rather than being skipped — that is what keeps
+`sum(m.n) == scored_and_rated` true, and both the schema field and the page's label are
+nullable for it. `models` is a **list ordered by `n` desc**, not a dict, so a future
+`head:{uuid}` producer lands in it without a schema change.
 
 Three details are not refinements:
 
@@ -270,6 +296,22 @@ Three details are not refinements:
 same `average_ranks` helper in O(n log n) — it never materialises the |lo|×|hi| pair matrix
 — with ties earning 0.5. The page draws its bar **centred on 0.5**, since 0.5 is a coin flip
 and a bar from zero would make no information look like half a success.
+
+**The floors live in the page, not the module.** `rating_metrics`' `None` means the
+statistic is *undefined* (an empty side, zero variance, fewer than three points); "defined
+but too thin to print" is a different claim, and collapsing the two would throw away the
+counts the page renders in its place. So `AestheticRatingPage` carries three constants:
+`MIN_CEILING_PAIRS` (10 pairs), `MIN_BOUNDARY_PER_SIDE` (5 images **per side**, never the
+product — one image against twenty is twenty non-independent comparisons a single score
+decides) and `MIN_RHO_IMAGES` (20 rated-and-scored, where ρ's SE ≈ 0.23 against **0.71** at
+the three points `spearman` merely calls defined). Below its floor each renders an em dash
+plus the counts that would fill it; `pairs`, `n`, `n_lo`, `n_hi` and `n_by_rating` are on
+the wire for exactly that — the last so a tier mean over one image cannot read like a mean
+over two hundred, which it is not derivable from `boundaries` to prevent except by an index
+trick that breaks the moment a boundary changes. Below `MIN_RHO_IMAGES` the *ceiling* is withheld with the ρ — from three
+images in three tiers it computes to 1.00 and reads as headroom when it only means nothing
+tied. `n_lo`/`n_hi` are rendered **beside the bar**, not in a `title=` tooltip no screen
+reader announces, and the bar is `aria-hidden`: the number next to it is the datum.
 
 ### Testing the page: no dataset scope means no absolute counts
 

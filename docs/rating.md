@@ -99,7 +99,9 @@ shows it. These are re-ratings *you chose to make*, with your previous answer vi
 screen — so it is pushed down by your tendency to revisit images you disagree with, and
 pushed up both by seeing your old answer first and by bulk sweeps that rate images nobody
 looked at individually. The page splits the deliberate one-at-a-time re-rates out from the
-sweeps for that reason. Treat it as a rough floor.
+rest for that reason — and the rest is labelled "not a confirmed one-image write" rather
+than "bulk", because ratings you gave before this page existed were recorded without a
+write size and count there too. Treat the whole figure as a rough floor.
 
 Below ten comparable re-ratings the page shows the counts and refuses to show a percentage
 at all. A figure from three re-rates is noise wearing a number. To feed it, simply rate an
@@ -121,6 +123,13 @@ coin flip — the no-information point, not half a success.
 If the four tier averages are flat, that scorer knows nothing about your taste. If they climb
 cleanly, it does. That is four numbers anyone can read, and it is the fastest answer on the
 page.
+
+**Every figure here waits until it has enough behind it**, in the same way the ceiling waits
+for ten re-ratings. The correlation needs twenty images that are both rated and scored, and
+each boundary bar needs five images on *each* of its two sides — one image against twenty is
+one opinion, not twenty comparisons. Below that you get a dash and the counts that would
+fill it, so you can see how close it is rather than reading a confident 1.00 off two images.
+The tier averages and the counts are always shown: they are what you actually measured.
 
 The page needs no scoring run to be useful: with nothing scored it still shows your rating
 distribution and your ceiling, and the scorer panel simply says what is missing.

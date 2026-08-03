@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
 import { ArrowRightFromLine, Copy, Edit2, Folder, FolderInput, Plus, Trash2 } from "lucide-react";
 import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
@@ -114,6 +114,21 @@ function withoutSubtree(set: Set<string>, root: string): Set<string> {
   const kept = [...set].filter(p => !isInSubtree(p, root));
   if (kept.length === set.size) return set;
   return new Set(kept);
+}
+
+/** The expand/collapse cell's box, which doubles as the row's indent. Shared by the
+ *  branch row's <button> and the leaf row's inert spacer so the two cannot drift out of
+ *  alignment — `box-sizing: border-box` is global, so they measure identically. */
+function toggleCellStyle(depth: number): CSSProperties {
+  return {
+    flexShrink: 0,
+    width: 8 + depth * 12 + 12,
+    minHeight: 28, border: "none",
+    background: "transparent",
+    color: "var(--fg-mute)", fontSize: 7,
+    paddingLeft: 8 + depth * 12,
+    display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 2,
+  };
 }
 
 function scoreChipLabel(f: ScoreFilter): string {
@@ -1260,32 +1275,29 @@ export default function GalleryPage() {
             opacity: isDragging ? 0.4 : 1,
           }}
         >
-          {/* expand/collapse toggle (doubles as indent). Its glyph is the whole of its
-              content, so without a label it is a nameless button to a screen reader —
-              and to a test looking for a stable handle on it. */}
-          <button
-            aria-label={hasChildren ? `${isExpanded ? "Collapse" : "Expand"} ${node.path}` : undefined}
-            aria-expanded={hasChildren ? isExpanded : undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!hasChildren) return;
-              setExpandedPaths(prev => {
-                const next = new Set(prev);
-                if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
-                return next;
-              });
-            }}
-            style={{
-              flexShrink: 0,
-              width: 8 + node.depth * 12 + 12,
-              minHeight: 28, border: "none",
-              background: "transparent",
-              cursor: hasChildren ? "pointer" : "default",
-              color: "var(--fg-mute)", fontSize: 7,
-              paddingLeft: 8 + node.depth * 12,
-              display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 2,
-            }}
-          >{hasChildren ? (isExpanded ? "▼" : "▶") : ""}</button>
+          {/* expand/collapse toggle (doubles as the row's indent). Its glyph is the whole of
+              its content, so without a label it is a nameless button to a screen reader — and
+              to a test looking for a stable handle on it. A leaf has nothing to expand, so it
+              renders the same box as an inert spacer rather than an empty, focusable, no-op
+              button; the box is shared through toggleCellStyle so the two cannot drift. */}
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.path}`}
+              aria-expanded={isExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedPaths(prev => {
+                  const next = new Set(prev);
+                  if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
+                  return next;
+                });
+              }}
+              style={{ ...toggleCellStyle(node.depth), cursor: "pointer" }}
+            >{isExpanded ? "▼" : "▶"}</button>
+          ) : (
+            <span aria-hidden="true" style={toggleCellStyle(node.depth)} />
+          )}
 
           {isRenaming ? (
             /* Inline, not a modal: the in-row input keeps the tree indentation visible,

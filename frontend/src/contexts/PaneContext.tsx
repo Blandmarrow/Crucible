@@ -14,7 +14,10 @@ export type PageType =
   | "bulk-edit"
   | "consolidate"
   | "versions"
-  | "comfy";
+  | "comfy"
+  // Dataset-free, like "booru" and "file-browser": it pools ratings across every
+  // dataset, so `PaneView` needs no new id field for it.
+  | "rating";
 
 export interface PaneView {
   page: PageType;

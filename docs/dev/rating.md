@@ -167,11 +167,137 @@ recovered by exactly that checkbox. It does not render at zero (a warning that i
 present is furniture), and the styling escalates when the count is non-zero and the user has
 unchecked the safety snapshot.
 
+## The event log
+
+`aesthetic_rating` is overwritten in place and `updated_at` is a generic `onupdate` that any
+edit bumps, so nothing knew *when* a rating was given or that one had ever been revised.
+`image_rating_events` (`backend/models/rating_event.py`, migration `d4a2c9e6b8f3`) is that
+history: one append-only row per rating write.
+
+| Column | Why it is what it is |
+|---|---|
+| `id` — integer autoincrement | A bulk write stamps one `datetime.utcnow()` across its whole batch, so `created_at` ties are the norm. The monotonic id is the only deterministic ordering key for "consecutive events", and the ceiling below is defined over consecutive pairs. Precedent for the integer form: `VersionImageState`, `Detection`. |
+| `image_id` — FK, `ON DELETE CASCADE` | With the image gone there are no pixels the judgement was about. |
+| `dataset_id` — **no FK** | Mirrors `VersionImageState.image_id`. It records the dataset the rating was *given in*, which is the frame a rating is calibrated against (§ The scale). A `datasets.id` FK with CASCADE would destroy the history of an image since moved out of a deleted dataset. |
+| `rating` — nullable | A clear is an event: "I withdraw the judgement" is something a human did. |
+| `batch_size` | `len(ids)` of the write. It separates "I looked at this image and pressed 4" from "I swept 1,970 images to Cut", and it is the only fact here that exists solely at write time and cannot be reconstructed later — which is why it went in immediately. NULL means unknown (the backfill). |
+| no `updated_at` | Append-only; an `onupdate` advertises a mutation path that must not exist. |
+
+The migration backfills one event per already-rated image, stamped with `updated_at` — the
+tightest available upper bound on when the rating was given. `created_at` is the image's
+ingest time, always earlier, and would fabricate a false ordering against the real events
+that follow. The backfill does not create a ceiling (one event per image means no comparable
+pairs); what it buys is that the *first* deliberate re-rate produces a countable pair
+instead of needing two passes.
+
+**`bulk_rating` is the sole writer**, in the same transaction as the rating itself. The
+insert is an `INSERT … SELECT` sharing the `chunked()` loop and the identical
+`Image.id.in_(batch)` predicate as the `UPDATE`, so the two cannot cover different sets — and
+because `from_select` binds the id list plus four literals rather than five binds per row,
+`chunked`'s 10,000 default stays correct against SQLite's 32,766 ceiling and no second chunk
+size has to be invented and kept in step.
+
+**An unchanged re-rating still writes an event.** This is the load-bearing rule. `bulk_rating`
+already argues it for `rating_stale` — looking again is the whole event the bit is about —
+and here suppressing the no-ops would leave the log holding *only* disagreements, so
+self-agreement would compute to 0% forever.
+
+**A restore writes no events**, and that creates a deliberate non-invariant. An event means
+"a human looked at these pixels and said this"; a rollback is not that, and replaying one
+would synthesise a disagreement the user never made in the exact statistic the log exists to
+produce. The cost is that after a restore `images.aesthetic_rating` **can disagree with the
+last event for that image** — so nothing may derive the *current* rating from the log, and
+`backend/tests/test_rating_events.py` pins it so a future "make the log authoritative"
+change has to argue.
+
+Copy and derivative paths mint new `Image.id`s, so events do not travel while the rating
+does; carrying them would count one human decision twice.
+
+## Phase 0 metrics
+
+Two questions decide whether a learned aesthetic head is worth building, and neither needs a
+head, a trainer or a labeling queue. `backend/ml/rating_metrics.py` answers both in pure
+numpy — no DB, no torch, no images — which is what makes them CI-testable.
+`GET /rating/summary` and `GET /rating/scorer-agreement` (`backend/routers/rating.py`) serve
+them; both pool across every dataset, because a head trained from pooled labels cannot live
+under one. `routers/rating.py` owns aggregate *reads* over the corpus; `images.py` keeps the
+writes.
+
+**scipy is undeclared, not absent.** `backend/requirements-ci.txt` declares `numpy>=1.26`
+and no scipy — but `imagehash>=4.3` is declared, and imagehash *requires* scipy, so it is
+installed on the runner regardless. That is a fact about a pHash library's dependency list,
+not a guarantee: imagehash dropping scipy or moving it to an extra would break rank
+correlation with no visible connection between the two. So Spearman is hand-rolled in numpy,
+and `test_rating_metrics.py` cross-checks it against `scipy.stats.spearmanr` behind a
+`pytest.importorskip` — it runs where scipy is present and skips cleanly where it is not,
+rather than being the thing that fails a run.
+
+**Your own ceiling** — `self_agreement`. Universe: images with ≥2 events. The headline counts
+**consecutive** pairs, not first-versus-last, which hides oscillation (1 → 4 → 1 scores as
+perfect agreement); first-versus-last is reported alongside as a labelled secondary figure.
+Clears are excluded rather than counted as disagreements, because a withdrawal is not a
+second opinion. It returns **raw counts, never a bare rate**, because the figure is a
+diagnostic and three biases pull it in known directions: *selection* (you re-rate what you
+disagree with) pushes it **down**; *anchoring* (the second look sees your old answer) pushes
+it **up**; *bulk sweep* (select-all then press 1 writes events for images nobody looked at)
+pushes it **up** hardest, and `singleton_*` — pairs where **both** sides had `batch_size == 1`
+— is what isolates it. The page shows counts and no percentage below `MIN_CEILING_PAIRS`
+(10), and renders the "not a blind re-show" caveat unconditionally. A system-selected,
+previous-answer-hidden re-show is what would turn this into a real ceiling, and that is not
+built.
+
+**Does an existing scorer already track your taste** — Spearman ρ of `aesthetic_score`
+against `aesthetic_rating`, **grouped by `aesthetic_model`** because LAION and V2.5 scores
+are not comparable. Migration `a5e1b7c3d9f0`'s backfill gives `aesthetic_score IS NOT NULL ⟺
+aesthetic_model IS NOT NULL`, so `sum(m.n) == scored_and_rated` with no unaccounted bucket.
+`models` is a **list ordered by `n` desc**, not a dict, so a future `head:{uuid}` producer
+lands in it without a schema change.
+
+Three details are not refinements:
+
+- **Average ranks are mandatory.** The rating vector has four distinct values over hundreds
+  of rows, so every rank is the mean of hundreds of positions. Ordinal ranking would impose
+  an arbitrary within-tier order fixed by row order, and the "correlation" would partly be
+  measuring `images.id` ordering — silently.
+- **`spearman_ceiling`.** With a four-level target the tie structure caps ρ below 1.0 no
+  matter how good the scorer is. "0.31 of a possible 0.97" is the honest form; a bare 0.31
+  reads as failure forever.
+- **Every guard returns `None`, never NaN.** These are serialised to JSON, which cannot carry
+  NaN, so a missing zero-variance guard is a serialisation error rather than a wrong number
+  — and zero variance is a real early state (forty images all rated Cut).
+
+`ordering_auc` is the Mann-Whitney statistic per adjacent-tier boundary, computed from the
+same `average_ranks` helper in O(n log n) — it never materialises the |lo|×|hi| pair matrix
+— with ties earning 0.5. The page draws its bar **centred on 0.5**, since 0.5 is a coin flip
+and a bar from zero would make no information look like half a success.
+
+### Testing the page: no dataset scope means no absolute counts
+
+Every other e2e spec scopes to a dataset it just created, so it owns its numbers. This page
+has no dataset scope by design, which makes the whole shared e2e database its corpus —
+`frontend/e2e/rating-page.spec.ts` therefore takes a baseline from `GET /rating/summary`
+first, asserts **deltas** across its writes, then asserts the rendered tiles against the
+API's own post-write values. An absolute count passes when the spec runs alone and fails the
+moment a sibling spec uploads anything, which is how this one was written the first time.
+
+The part that fails *silently* is the branch. The spec exists to prove the page refuses a
+percentage below `MIN_CEILING_PAIRS`, and that branch is chosen from a corpus the spec does
+not control — so as the suite grows past ten comparable pairs it would quietly start
+exercising the other branch and stop testing the refusal, still green. The guard is an
+explicit `expect(pairs).toBeLessThan(10)`, which turns that into a failure that names itself.
+Any later spec asserting a threshold branch on this page needs the same guard; Phase 2's
+labeling queue lands on this page and will.
+
 ## Where things live
 
 | Concern | Code |
 |---|---|
 | Columns, index, mirror | `backend/models/image.py`, `backend/models/versioning.py`, migration `c3b8e1d7a52f` |
+| Event log | `backend/models/rating_event.py`, migration `d4a2c9e6b8f3` |
+| Metrics (pure numpy) | `backend/ml/rating_metrics.py` |
+| Metric endpoints | `backend/routers/rating.py`, `backend/schemas/rating.py` |
+| The Aesthetic Rating page | `frontend/src/pages/AestheticRatingPage.tsx`, `frontend/src/api/rating.ts` |
+| Metric invalidation | `frontend/src/constants/queryKeys.ts::invalidateRatingMetrics` |
 | The stale bit's only writer | `backend/utils.py::record_in_place` |
 | Filter parse | `backend/utils.py::parse_rating_filter_param` |
 | Write endpoint, filter clause, sort | `backend/routers/images.py` |
@@ -181,4 +307,4 @@ unchecked the safety snapshot.
 | Vocabulary | `frontend/src/constants/rating.ts` |
 | Badge, chips, keys | `ImageCard.tsx`, `GalleryPage.tsx` |
 | Bulk and single controls | `SetRatingModal.tsx`, `ImageDetailPage.tsx` |
-| Tests | `backend/tests/test_rating_http.py`, `test_scores_stale.py`, `test_video_lineage_mirrors.py`, `test_versioning_restore.py`, `frontend/e2e/rating.spec.ts` |
+| Tests | `backend/tests/test_rating_http.py`, `test_rating_events.py`, `test_rating_metrics.py`, `test_rating_metrics_http.py`, `test_scores_stale.py`, `test_video_lineage_mirrors.py`, `test_versioning_restore.py`, `frontend/e2e/rating.spec.ts`, `frontend/e2e/rating-page.spec.ts` |

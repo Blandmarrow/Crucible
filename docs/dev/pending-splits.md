@@ -281,6 +281,29 @@ staleness sweep while still recording the seam.
   docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
 
+## README.md
+
+- **Moves:** § Installation (782 words), § Prerequisites (123) and § Tech Stack (41)
+- **New file:** docs/installation.md
+- **Why here:** the README serves two readers who never overlap. One is *evaluating* —
+  what is this, what does it do, where are the docs — and reads the intro, Features,
+  Workflow, Usage and the Docs table. The other is *installing*, and reads a long,
+  platform-branched procedure (Windows/Linux/macOS scripts, the GPU PyTorch auto-detect,
+  the optional SAM2/SAM3 step, troubleshooting) they will never open again. That procedure
+  is already the second-largest section and grows with every optional package. The seam
+  leaves ~1,700 and ~950; the staying half is over the ~1,500 target, so if a second cut is
+  wanted, § Features is the one — it is an index of pointers into `docs/`, and
+  `docs/features.md` already exists to be exactly that.
+- **Watch for:** the README is the repo's front page, so its inbound links come from
+  *outside* the checker's reach — GitHub's rendered landing page, and anything that
+  deep-links a `#installation` or `#prerequisites` anchor. Both anchors move, and neither
+  a broken external bookmark nor a stale badge shows up in `scripts/check_docs.py`. Inside
+  the repo, `manage.ps1`/`manage.sh` and `docs/dev/environment-setup.md` describe the same
+  setup flow the moving half documents — check both for text that now points at the wrong
+  file. A new file needs a README Docs-table row, and `docs/features.md` takes a row rather
+  than prose. It tripped the budget on 2026-08-03, when the Aesthetic Rating page added one
+  Features bullet.
+
 `docs/scoring.md` → `docs/duplicates.md` was executed on 2026-08-02, at the start of the
 session that appended the style-similarity percentile material to § Style similarity — the
 seam held as recorded, and the staying half landed at ~2,100 words. That half is still over

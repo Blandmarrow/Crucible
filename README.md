@@ -53,6 +53,7 @@ Every step from raw images to a training-ready export, in order:
 ### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/gallery.md)
+- **Rate** images Keep/Cut from the keyboard, then filter, sort and export by your own verdict. An **Aesthetic Rating** page pools those ratings across every dataset and reports two things no score can tell you on its own: how often you give the same image the same answer twice, and whether either aesthetic scorer already tracks your taste → [details](docs/rating.md)
 
 ### Object detection
 - **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM 2.1 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/detection.md)

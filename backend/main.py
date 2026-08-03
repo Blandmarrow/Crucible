@@ -54,7 +54,7 @@ from backend.utils import FileInUseError
 from backend.services.secrets_service import sync_env
 
 sync_env(None)
-from backend.routers import booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
+from backend.routers import booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, jobs, lut, models, providers, quality, rating, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
@@ -194,6 +194,7 @@ app.include_router(videos.router, prefix=PREFIX)
 app.include_router(captions.router, prefix=PREFIX)
 app.include_router(captioning.router, prefix=PREFIX)
 app.include_router(quality.router, prefix=PREFIX)
+app.include_router(rating.router, prefix=PREFIX)
 app.include_router(models.router, prefix=PREFIX)
 app.include_router(booru.router, prefix=PREFIX)
 app.include_router(export.router, prefix=PREFIX)

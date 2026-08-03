@@ -36,7 +36,7 @@ import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
-import { invalidateDatasetContentScope } from "../../constants/queryKeys";
+import { invalidateDatasetContentScope, invalidateRatingMetrics } from "../../constants/queryKeys";
 
 interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
@@ -288,6 +288,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       // sit on numbers that no longer hold (constants/queryKeys.ts).
       invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["export-preview"] });
+      invalidateRatingMetrics(qc);
       setShowRating(false);
       clear();
       toast.success(

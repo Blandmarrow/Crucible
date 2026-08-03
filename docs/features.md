@@ -26,6 +26,7 @@ The order images travel through the app:
 | Sidebar item | Documented in |
 |---|---|
 | Datasets, Gallery, image detail | [gallery.md](gallery.md) · [rating.md](rating.md) |
+| Aesthetic Rating | [rating.md](rating.md#the-aesthetic-rating-page) |
 | Videos strip, video detail | [video.md](video.md) |
 | Captioning | [captioning.md](captioning.md) |
 | Score images | [scoring.md](scoring.md) · [duplicates.md](duplicates.md) |

@@ -15,6 +15,7 @@ import {
   BooruPage,
   VersionsPage,
   ComfyPage,
+  AestheticRatingPage,
 } from "../../pages/lazyPages";
 
 function renderPage(view: PaneView) {
@@ -33,6 +34,7 @@ function renderPage(view: PaneView) {
     case "comfy":        return <ComfyPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
+    case "rating":       return <AestheticRatingPage />;
     default:             return <DatasetsPage />;
   }
 }

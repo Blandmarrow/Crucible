@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case, delete, func, or_, select, update as sa_update
+from sqlalchemy import DateTime, Integer, and_, case, delete, func, insert as sa_insert, literal, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
@@ -23,7 +23,7 @@ from backend.licenses import (
     merge_provenance,
     resolve_provenance,
 )
-from backend.models import BackgroundJob, Dataset, Image, Video
+from backend.models import BackgroundJob, Dataset, Image, ImageRatingEvent, Video
 from backend.models.detection import Detection
 from backend.schemas.detection import DetectionOut
 from backend.schemas.image import (
@@ -840,6 +840,15 @@ async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db
     clear predicate — a quality run that re-measured — is exactly why the two are
     separate columns.
 
+    **The sole writer of `ImageRatingEvent`**, in the same transaction as the
+    rating (see the two comments in the loop). `version_service`'s restore
+    write-back is the only other place `aesthetic_rating` is assigned outside a
+    field-by-field rebuild, and it deliberately writes no event: a rollback is not
+    a human looking at pixels, and replaying one would synthesise a disagreement
+    nobody made. The cost is a deliberate non-invariant — after a restore this
+    column can disagree with the last event — so nothing may read the *current*
+    rating out of the log.
+
     No single-image PATCH twin: none exists for any other field except
     provenance, and the keyboard paths post a one-element id list.
     """
@@ -856,14 +865,50 @@ async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db
         ensure_not_busy(ds_id)
 
     ids = [r.id for r in rows]
+    # One timestamp for the whole write, so a batch is identifiable as one act.
+    # Ties across a batch are therefore the norm, which is why the event table
+    # orders by its autoincrement id and not by this.
+    now = datetime.utcnow()
+    batch_size = len(ids)
     updated = 0
     for batch in chunked(ids):
+        batch_ids = list(batch)
         result = await db.execute(
             sa_update(Image)
-            .where(Image.id.in_(list(batch)))
+            .where(Image.id.in_(batch_ids))
             .values(aesthetic_rating=body.rating, rating_stale=False)
         )
         updated += result.rowcount or 0
+        # INSERT … SELECT, not an executemany — load-bearing. `utils.chunked`'s
+        # 10,000 default is sized for one bind per id against SQLite's 32,766
+        # ceiling (its own docstring says so); a multi-VALUES insert of five
+        # columns would be 50,000 binds and blow it. `from_select` binds the id
+        # list plus four literals — 10,004 — so the existing chunk size stays
+        # correct and no second one has to be invented and kept in step. It also
+        # cannot drift from the UPDATE above: both use the same `in_(batch_ids)`.
+        #
+        # An unchanged re-rating still writes an event. `rating_stale`'s clear
+        # above already argues it — "looking again is the whole event the bit is
+        # about" — and here it is what makes the self-agreement ceiling possible
+        # at all: suppress the no-ops and the log holds only disagreements, so the
+        # ceiling computes to 0% agreement forever.
+        #
+        # One transaction, one commit(). No filesystem mutation, so PM-013 does
+        # not literally apply, but the sibling reasoning does: a rating written
+        # without its event is a permanent, silent hole in the history the ceiling
+        # is computed from, and unlike a bad pixel it cannot be recomputed.
+        await db.execute(
+            sa_insert(ImageRatingEvent).from_select(
+                ["image_id", "dataset_id", "rating", "batch_size", "created_at"],
+                select(
+                    Image.id,
+                    Image.dataset_id,
+                    literal(body.rating, Integer),
+                    literal(batch_size, Integer),
+                    literal(now, DateTime),
+                ).where(Image.id.in_(batch_ids)),
+            )
+        )
     await db.commit()
     # No refresh_stats, as in bulk_provenance: it recomputes counts and sizes,
     # neither of which a rating touches. The rating distribution is computed live

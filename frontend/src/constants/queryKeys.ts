@@ -77,3 +77,29 @@ export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string
     qc.invalidateQueries({ queryKey: [k, datasetId] });
   }
 }
+
+/**
+ * The Aesthetic Rating page's two queries, which every rating write moves.
+ *
+ * **Deliberately not part of `DATASET_CONTENT_SCOPE`**: these keys carry no
+ * dataset, because both endpoints pool ratings across the whole library. A
+ * dataset-keyed invalidation would never match them.
+ *
+ * A helper rather than three inline lists for the reason this file exists at
+ * all — the three rating writers (`GalleryPage`'s number keys,
+ * `SelectionToolbar`'s modal, `ImageDetailPage`'s control) already have to
+ * remember `export-preview`, and a fourth key repeated three times is a fourth
+ * chance to drift. It matters concretely in split view: the page can be mounted
+ * in one pane while rating happens in another, and the global `staleTime` is
+ * 30 s, so without this the tiles sit on stale counts while the user watches.
+ */
+const RATING_METRICS_SCOPE = [
+  ["rating-summary"],
+  ["rating-scorer-agreement"],
+] as const;
+
+export function invalidateRatingMetrics(qc: QueryClient) {
+  for (const key of RATING_METRICS_SCOPE) {
+    qc.invalidateQueries({ queryKey: key });
+  }
+}

@@ -59,12 +59,30 @@ Two rules, neither of which any tool enforces:
 - **Add a page by adding a line to `lazyPages.ts`** — never by importing the page directly in a consumer. A direct `import GalleryPage from "./pages/GalleryPage"` compiles, lints and tests clean while silently folding that page back into the index chunk. The only symptom is a fatter `index` bundle in `npm run build` output.
 - **Both consumers import from that module**, never from a second copy. `App.tsx` (single-view `<Routes>`) and `components/pane/PageRenderer.tsx` (split view) must resolve a given page to the *same* lazy component identity, or toggling a pane between single- and split-view remounts the page from a second chunk and loses its state.
 
-**A *routed* page touches six sites**, not just `lazyPages.ts` — the checklist, as `video-detail` exercised it: `pages/lazyPages.ts`; `App.tsx`'s lazy import and its `<Route>`; `PageRenderer`'s switch; `contexts/PaneContext.tsx` (the `PageType` union, plus any id the page needs — `videoId`); `routeToView` in `App.tsx`, where a `/datasets/:id/…` sub-route regex must sit **above** the generic dataset-page match, which would otherwise also match; and the id accessor, `usePaneVideoId` in `hooks/usePaneDatasetId.ts`. Miss one and the page works in single view but not in a pane, or the reverse.
+**A *routed* page touches eight sites**, not just `lazyPages.ts`:
 
-A page that must also be **pickable** from a pane's page selector touches a seventh:
-`PaneHeader`'s `PAGE_OPTIONS` (and `NEEDS_DATASET`, if it takes one) — which is why
-`docs/dev/workspace.md` names `PaneHeader` as a site for `BooruPage`. The checklist gets away
-with six because `video-detail` and `image-detail` are deliberately absent from both: you
-reach them by clicking a card, never by choosing them from a dropdown with no id to hand.
+1. `pages/lazyPages.ts` — the `lazy()` line.
+2. `App.tsx` — the import from `./pages/lazyPages`.
+3. `App.tsx` — the `<Route>`.
+4. `App.tsx`'s `routeToView` — where a `/datasets/:id/…` sub-route regex must sit **above**
+   the generic dataset-page match, which would otherwise also match. A top-level path
+   (`/rating`, `/booru`) has no such hazard: `dsPageMatch` only matches `/datasets/…`.
+5. `contexts/PaneContext.tsx` — the `PageType` union, plus any id field the page needs
+   (`videoId`). A dataset-free page adds no field.
+6. `components/pane/PageRenderer.tsx` — the import and the `switch` case.
+7. `components/pane/PaneHeader.tsx` — `PAGE_OPTIONS`, and `NEEDS_DATASET` **only** if the
+   page takes a dataset.
+8. `components/layout/Sidebar.tsx` — an inline `Ico*` SVG and a `<NavItem>`. Library-wide
+   entries go above the `{datasetId && (…)}` block; dataset-scoped ones inside it.
+
+Plus the id accessor (`usePaneVideoId` in `hooks/usePaneDatasetId.ts`) for a page carrying
+an id. Miss one and the page works in single view but not in a pane, or the reverse — or,
+for the last two, it is unreachable from the UI while every route works.
+
+The count read "six" for a long time, omitting sites 7 and 8 on the grounds that
+`video-detail` and `image-detail` need neither: you reach those by clicking a card, never
+from a dropdown or a nav item with no id to hand. That is true of exactly those two pages.
+`booru`, `file-browser` and `rating` all have sidebar entries and all appear in
+`PAGE_OPTIONS`, so for a normal page eight is the number.
 
 Each consumer owns its own `<Suspense>`: `App.tsx` wraps the whole `<Routes>` tree, while `PageRenderer` wraps per pane — a per-pane boundary is deliberate, so a pane still fetching its chunk shows its own fallback instead of blanking a sibling pane that is already rendered.

@@ -40,7 +40,8 @@ of work as §N, and those numbers never move; the build order is this table alon
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
 | ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/scoring.md`; this section is deleted per this file's own lifecycle rule. |
 | ✓ | **Rating column** (§1) | — | **Shipped 2026-08-03.** `Image.aesthetic_rating` + `rating_stale`, the gallery/export/stats/restore surfaces. Now documented in `docs/dev/rating.md`; this section is deleted per this file's own lifecycle rule. |
-| 3 | **The learned head** (§3) | §1, §2 | The expensive one. |
+| ✓ | **Head phase 0 — the measurement gate** (§3) | §1, §2 | **Shipped 2026-08-03.** `image_rating_events`, `backend/ml/rating_metrics.py`, `GET /rating/summary` + `/rating/scorer-agreement`, and the Aesthetic Rating page. Documented in `docs/dev/rating.md` § The event log and § Phase 0 metrics. It builds none of §3 — it measures whether §3 is worth building. |
+| 3 | **The learned head** (§3, phases 1+) | Phase 0's numbers | The expensive one, and now **conditional**: if ρ for LAION or V2.5 already sits near the self-agreement ceiling, §3 is answered and the remaining phases do not get built. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
 
 **§6 led on a code reason, not just its size**, and that reason is now settled: it removed
@@ -249,9 +250,14 @@ meaning.
 - **LAION's opinion is hidden while judging and revealed after committing**, so it cannot
   anchor the rating. The running disagreement figure is the first honest signal about
   whether a personal head is worth training at all.
-- **Do not add scikit-learn.** Implement PCA + Bradley-Terry in numpy/scipy (both already
-  declared). This also puts the head in the same CI-testable, torch-free class as
-  `similarity_scorer.py`.
+- **Do not add scikit-learn.** Implement PCA + Bradley-Terry in **numpy only**. An earlier
+  version of this line said "numpy/scipy (both already declared)", and scipy is *not*
+  declared: `backend/requirements-ci.txt` carries `numpy>=1.26` and no scipy. Scipy is
+  nonetheless installed on the runner, because `imagehash>=4.3` requires it — which is a
+  fact about a pHash library's dependency list rather than a commitment, and not something
+  a fitted head should rest on. Phase 0's `rating_metrics.py` hand-rolls Spearman for
+  exactly that reason and cross-checks against scipy behind an `importorskip`. Numpy-only
+  also puts the head in the same CI-testable, torch-free class as `similarity_scorer.py`.
 - **The DINOv2 here is `dinov2-base` (768-dim)**, not `dinov2-large` (1024). The spec's
   dimension arithmetic and its overfitting argument should be restated against 768.
 - **Preference data keys on `Image.id`** with `ON DELETE CASCADE`. Keying on `phash` would
@@ -269,6 +275,12 @@ Four tiles, three of which are nearly free:
 - **Your own ceiling** — re-show ~40 already-rated images and count how often the same
   answer comes back. Contradict yourself 12.5% of the time and a head at 84% is *at
   ceiling*; more rating buys nothing. Without this tile, 84% reads as "needs work" forever.
+  **Phase 0 shipped the counting half** — `image_rating_events` plus `self_agreement`'s
+  consecutive-pair statistic, its singleton/bulk split and its three named biases — and
+  deliberately **not** the re-show. What exists today is computed over re-ratings the user
+  *chose* to make with the previous answer visible, which is a rough floor rather than a
+  ceiling; the page says so unconditionally. The system-selected, previous-answer-hidden
+  re-show is Phase 2, and it is what turns the number real.
 - **LAION on the same images** — the only honest answer to *is this better than what I had*.
   If the head fails to beat it meaningfully, stop.
 - **Luminance correlation** — `luminance_score` already exists, so this is a two-column SQL
@@ -308,10 +320,22 @@ Everything remaining is a §3 question. What used to lead this list — where th
 model selection lives — was settled as a per-run choice with a sticky default and shipped
 with §2; it is now documented behaviour in `docs/dev/scoring.md`, not a question.
 
-- How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
-  per-user or per-install? Larger is more stable and costs re-rating it every session.
-- Whether the head's uncertainty sampling should weight the boundary the user acts on
-  (Probably-not / Cut) above the others.
+Both of the questions that stood here were answered on 2026-08-03 alongside Phase 0, and are
+recorded rather than deleted because each was decided against its stated alternative:
+
+- **The anchor set is per-install**, and the schema commits to nothing else. There is no user
+  concept anywhere in it — no `User` model, no `user_id`, no auth — so "per-user" was never a
+  real option to weigh. Its size beyond the ten-per-bucket floor is a Phase 1 question and
+  does not block anything.
+- **Uncertainty sampling stays uniform in v1**, with per-boundary accuracy reported instead
+  (`ordering_auc`, one figure per adjacent tier pair). The parenthetical here named
+  Probably-not/Cut as "the boundary the user acts on", but the export filters that shipped
+  with §1 act on Probably/Keep (`rating_min` ≥ 3 or 4) — so 1-vs-2 is the one boundary where
+  being wrong is free, and weighting it would have been weighting the cheapest mistake.
+
+What remains open is a single **gate**, and it is the point of Phase 0: if ρ for LAION or
+V2.5 already sits near the self-agreement ceiling, §3 is answered and phases 1+ do not get
+built. Nothing further is decidable until the corpus has re-ratings in it.
 
 ## Traps worth restating
 
@@ -330,6 +354,14 @@ with §2; it is now documented behaviour in `docs/dev/scoring.md`, not a questio
   scores only up to an additive constant per connected component. Rate dataset A on Monday
   and B on Tuesday with no shared images and their two means compare nothing at all. The
   interleaved anchors are what make a cross-dataset number exist.
+- **A threshold branch tested against a corpus the test does not own** (§3 Phase 0, shipped)
+  — the Aesthetic Rating page has no dataset scope, so the whole shared e2e database is its
+  corpus. A spec asserting the below-floor branch ("not enough re-ratings yet") keeps passing
+  as the suite grows, right up until the corpus crosses the floor, at which point it quietly
+  begins exercising the *other* branch and stops testing the refusal it was written for.
+  Closed with an explicit `expect(pairs).toBeLessThan(10)`; see `docs/dev/rating.md`
+  § Testing the page: no dataset scope means no absolute counts. Phase 2's labeling queue
+  lands on this same page and inherits the hazard.
 - **A predicted rating mistaken for an authored one** (§1, §3) — the visual distinction is
   the only thing separating the training set from the model's own output. Any surface that
   loses it (a bulk operation, an export manifest, a stats query counting both) closes a

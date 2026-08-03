@@ -17,6 +17,7 @@ const PAGE_OPTIONS: { value: PageType; label: string }[] = [
   { value: "comfy",        label: "ComfyUI" },
   { value: "file-browser", label: "File Browser" },
   { value: "booru",        label: "Booru Browser" },
+  { value: "rating",       label: "Aesthetic Rating" },
 ];
 
 const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export", "bulk-edit", "consolidate", "versions", "comfy"]);

@@ -41,7 +41,7 @@ import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { useTokenCount } from "../utils/tokenCount";
-import { invalidateDatasetContentScope } from "../constants/queryKeys";
+import { invalidateDatasetContentScope, invalidateRatingMetrics } from "../constants/queryKeys";
 import { RATING_OPTIONS, ratingLabel } from "../constants/rating";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
@@ -407,6 +407,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       if (datasetId) invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["export-preview"] });
+      invalidateRatingMetrics(qc);
       toast.success(rating === null ? "Rating cleared" : `Rated ${ratingLabel(rating)}`);
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Could not set the rating")),

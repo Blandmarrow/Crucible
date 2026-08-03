@@ -1189,26 +1189,34 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       {/* Move to subfolder modal */}
       {showMoveSubfolder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-3">
+          <div className="card p-5 w-full max-w-sm space-y-3" style={{ maxHeight: "85vh", overflowY: "auto" }}>
             <h4 className="font-medium flex items-center gap-2">
               <FolderInput size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Subfolder
             </h4>
             {datasetBreakdown}
             {subfolders.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
+              /* A chip is a `.btn` — inline-flex + white-space: nowrap, and as a flex item it
+                 inherits min-width: auto — so a long path can neither wrap nor shrink and runs
+                 past the card. maxWidth/minWidth on the chip plus the ellipsis span inside are
+                 all three load-bearing; see MoveToDatasetModal, which uses the same pattern. */
+              <div className="flex flex-wrap gap-1.5" style={{ maxHeight: 180, overflowY: "auto" }}>
                 <button
                   className={`btn btn-sm ${moveSubfolderTarget === "" ? "btn-primary" : "btn-secondary"}`}
+                  style={{ maxWidth: "100%", minWidth: 0 }}
+                  title="(root)"
                   onClick={() => setMoveSubfolderTarget("")}
                 >
-                  (root)
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>(root)</span>
                 </button>
                 {subfolders.filter(sf => sf.path !== "").map(sf => (
                   <button
                     key={sf.path}
                     className={`btn btn-sm ${moveSubfolderTarget === sf.path ? "btn-primary" : "btn-secondary"}`}
+                    style={{ maxWidth: "100%", minWidth: 0 }}
+                    title={sf.path}
                     onClick={() => setMoveSubfolderTarget(sf.path)}
                   >
-                    {sf.path}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sf.path}</span>
                   </button>
                 ))}
               </div>

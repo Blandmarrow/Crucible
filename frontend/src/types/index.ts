@@ -113,6 +113,15 @@ export interface SubfolderInfo {
   image_count: number;
 }
 
+/** Result of `PATCH /datasets/{id}/subfolders` — a rename or a re-nest, both being
+ *  a subtree prefix rewrite. `previous_path` is what the caller re-points its
+ *  path-keyed state (active subfolder, expanded set) from. */
+export interface SubfolderRepathResult {
+  path: string;
+  previous_path: string;
+  images_updated: number;
+}
+
 export interface ImageListItem {
   id: string;
   dataset_id: string;

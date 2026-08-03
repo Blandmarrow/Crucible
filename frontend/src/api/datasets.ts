@@ -1,5 +1,5 @@
 import client from "./client";
-import type { Dataset, DatasetStats, SubfolderInfo, TagCooccurrence } from "../types";
+import type { Dataset, DatasetStats, SubfolderInfo, SubfolderRepathResult, TagCooccurrence } from "../types";
 
 export interface ScoreValues {
   aesthetic_score: number[];
@@ -71,6 +71,10 @@ export const datasetsApi = {
     client.get<SubfolderInfo[]>(`/datasets/${id}/subfolders`).then((r) => r.data),
   createSubfolder: (id: string, path: string) =>
     client.post<SubfolderInfo>(`/datasets/${id}/subfolders`, { path }).then((r) => r.data),
+  /** Rename (`a/b` -> `a/c`) or re-nest (`a` -> `b/a`) a subfolder with its subtree.
+   *  `newPath` is a whole path; the top level is `"<basename>"`, never `""`. */
+  repathSubfolder: (id: string, path: string, newPath: string) =>
+    client.patch<SubfolderRepathResult>(`/datasets/${id}/subfolders`, { path, new_path: newPath }).then((r) => r.data),
   deleteSubfolder: (id: string, path: string) =>
     client.delete(`/datasets/${id}/subfolders`, { params: { path } }).then((r) => r.data),
   refreshStats: (id: string) => client.post(`/datasets/${id}/refresh-stats`),

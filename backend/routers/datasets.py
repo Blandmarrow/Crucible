@@ -10,7 +10,8 @@ from backend.config import settings
 from backend.database import get_db
 from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
-from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, LicenseUsage, SubfolderCreate, SubfolderInfo, TagCooccurrence
+from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, LicenseUsage, SubfolderCreate, SubfolderInfo, SubfolderRepath, SubfolderRepathResult, TagCooccurrence
+from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import (
     create_dataset,
     declare_subfolder,
@@ -26,6 +27,7 @@ from backend.services.dataset_service import (
     refresh_stats,
     remove_dataset_dir,
     rename_dataset,
+    repath_subfolder,
     rescan_dataset,
 )
 from backend.workers.job_queue import job_queue
@@ -391,6 +393,50 @@ async def create_subfolder(dataset_id: str, body: SubfolderCreate, db: AsyncSess
         raise HTTPException(400, "Subfolder path must not be empty")
     await declare_subfolder(db, dataset_id, path)
     return {"path": path, "image_count": 0}
+
+
+@router.patch("/{dataset_id}/subfolders", response_model=SubfolderRepathResult)
+async def repath_subfolder_endpoint(
+    dataset_id: str, body: SubfolderRepath, db: AsyncSession = Depends(get_db)
+):
+    """Rename or re-nest a subfolder, carrying its whole subtree with it.
+
+    One endpoint for both: gallery subfolders are virtual, so `a/b` -> `a/c` (rename)
+    and `a` -> `b/a` (move) are the same prefix rewrite over `Image.subfolder` and
+    `Dataset.declared_subfolders`. Nothing on disk moves and no file is renamed.
+
+    `new_path` is a **whole path**. Moving a folder to the top level is
+    `new_path = "<basename>"`, *not* `""` — `""` is the root pseudo-folder, which
+    holds images but cannot itself be renamed or re-nested.
+    """
+    ds = await db.get(Dataset, dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+    # VersionImageState.subfolder means a snapshot restore rewrites this exact column.
+    ensure_not_busy(dataset_id)
+
+    # Normalize before any semantic check, so a '..' segment never reaches a comparison.
+    src = normalize_subfolder(body.path)
+    dst = normalize_subfolder(body.new_path)
+    if not src:
+        raise HTTPException(400, "Subfolder path must not be empty")
+    if not dst:
+        raise HTTPException(400, "New subfolder path must not be empty")
+    if dst == src:
+        raise HTTPException(400, "New path is the same as the current path")
+    if dst.startswith(src + "/"):
+        raise HTTPException(400, "Cannot move a subfolder into itself")
+
+    # Existence and collision share one query — and it is the merged
+    # image-derived + declared set, so a declared-but-empty folder counts.
+    existing = {s["path"] for s in await list_subfolders(db, dataset_id)}
+    if src not in existing:
+        raise HTTPException(404, f"Subfolder not found: {src}")
+    if dst in existing:
+        raise HTTPException(409, f'A subfolder named "{dst}" already exists')
+
+    updated = await repath_subfolder(db, dataset_id, src, dst)
+    return {"path": dst, "previous_path": src, "images_updated": updated}
 
 
 @router.delete("/{dataset_id}/subfolders")

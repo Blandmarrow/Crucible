@@ -1,6 +1,6 @@
-# Gallery: selection, subfolders, filters & drag ordering
+# Gallery: selection, subfolders, filters & sorting
 
-This file covers `GalleryPage`: image selection and the shift-click range model, the subfolder sidebar, the filter controls, manual drag ordering, and dragging image cards onto subfolder rows. The detail view and its navigation context are in `docs/dev/image-detail.md`; file naming, imports and rescan in `docs/dev/image-files.md`.
+This file covers reading and curating a gallery in `GalleryPage`: image selection and the shift-click range model, the subfolder sidebar and its rename/move operations, the filter controls, and sorting. Everything dnd-kit — manual drag ordering, dragging image cards onto subfolder rows, and dragging a subfolder onto another — is in `docs/dev/gallery-dnd.md`. The detail view and its navigation context are in `docs/dev/image-detail.md`; file naming, imports and rescan in `docs/dev/image-files.md`.
 
 ### Gallery image selection
 
@@ -46,9 +46,152 @@ The `(root)` row renders **whenever the sidebar does**, even at count 0: `rootEn
 - **Move to dataset**: hover-revealed arrow icon button on each row opens `MoveToDatasetModal` (shared with `SelectionToolbar`). On confirm, calls `POST /images/batch/move-dataset` with `source_dataset_id + source_subfolder`. If the moved subfolder was active, resets to "All". Invalidates `["images"]` and `["subfolders"]` for both source and target datasets.
 - **Copy to dataset**: hover-revealed copy icon button on each row opens `MoveToDatasetModal` with `mode="copy"`. On confirm, calls `POST /images/batch/copy-dataset`. Source subfolder stays intact. Invalidates `["images"]` and `["subfolders"]` for target dataset only.
 - **Upload subfolder**: a `<select>` next to the Upload button lets users target a specific subfolder for drag-drop or file-picker uploads. Defaults to the active subfolder; can be overridden independently.
-- **Drop target**: every subfolder row — and the `(root)` row — is a dnd-kit droppable, so image cards can be dragged from the grid onto a row to move them into that subfolder. See § Drag images onto subfolders below. The "All" row is deliberately **not** a droppable (it has no target path); the sidebar *container* is a sentinel droppable so that missing a row lands on a no-op instead of a reorder.
-- **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, and delete.
+- **Drop target**: every subfolder row — and the `(root)` row — is a dnd-kit droppable, so image cards can be dragged from the grid onto a row to move them into that subfolder, and a named row is also *draggable* so the tree can be re-nested by dragging one folder onto another. See `docs/dev/gallery-dnd.md` § Drag images onto subfolders and § Dragging a subfolder onto another. The "All" row is deliberately **not** a droppable (it has no target path); the sidebar *container* is a sentinel droppable so that missing a row lands on a no-op instead of a reorder.
+- **Rename / Move**: see § Renaming and moving a subfolder below. Both are reached from the row's right-click menu; neither has a hover button.
+- **Query key**: `["subfolders", datasetId]` — invalidated after upload, batch delete, batch move, create, delete, and re-path.
 - **CSS**: `.subfolder-row .subfolder-delete-btn`, `.subfolder-row .subfolder-move-btn`, and `.subfolder-row .subfolder-copy-btn` are `opacity: 0`; hover on the row reveals them. Defined in `frontend/src/index.css`. Move and copy buttons share base layout via `.subfolder-action-btn`; each has its own hover color (accent for move, info for copy). Delete uses inline styles (pre-existing pattern).
+
+### The subfolder row context menu
+
+Right-clicking a **named** subfolder row opens the shared `ContextMenu`
+(`components/common/ContextMenu.tsx` — see `docs/dev/styling.md` § Context menu). State
+is `folderMenu: {x, y, node}`, and the menu renders with the other overlays after
+`</DndContext>` rather than inside `renderSubfolderNode`, whose node can collapse out
+from under it.
+
+Six entries, most-used first and destructive last: *New subfolder inside…*, **Rename…**,
+**Move to…**, *Move to another dataset…*, *Copy to another dataset…*, *Delete*. Four of
+them call the **same setters the hover buttons already call** — the menu is additive and
+nothing was relocated into it. Rename and Move are the two with no button counterpart,
+because a 180 px row already carries four; that is a deliberate stopping point, not an
+unfinished set.
+
+**Neither the `(root)` row nor "All" gets a menu.** Root has no path to rename, its entry
+is synthetic when empty, and its two actions are already one pixel away as buttons; "All"
+is the no-filter state rather than a folder, which is the same reason it is deliberately
+not a droppable.
+
+Right-press and drag coexist without special handling: `@dnd-kit/core`'s
+`PointerSensor.activators` bails on `event.button !== 0`, so a right-press never starts a
+drag.
+
+### Renaming and moving a subfolder
+
+Gallery subfolders are **virtual** — `Image.subfolder` is a `String(512)` column, every
+image lives flat in `{dataset}/images/`, and empty folders are remembered in
+`Dataset.declared_subfolders`. Nothing exists on disk. So renaming `a/b` → `a/c` and
+re-nesting `a` under `b` (→ `b/a`) are the same subtree prefix rewrite, and one endpoint
+serves both. This is unrelated to `routers/filesystem.py`, which manipulates real
+directories.
+
+**`PATCH /datasets/{id}/subfolders`** takes `{path, new_path}` and returns
+`{path, previous_path, images_updated}`. `previous_path` exists for the frontend's
+re-pointing bookkeeping below. Guards, in this order — normalization first so a `..`
+never reaches a comparison, existence and collision last because they cost a query:
+
+| Condition | Code | Message |
+|---|---|---|
+| dataset missing | 404 | `Dataset not found` |
+| `ensure_not_busy(dataset_id)` | 409 | from the guard |
+| `..` in either field | 400 | from `normalize_subfolder` |
+| `src == ""` | 400 | `Subfolder path must not be empty` |
+| `dst == ""` | 400 | `New subfolder path must not be empty` |
+| `dst == src` | 400 | `New path is the same as the current path` |
+| `dst.startswith(src + "/")` | 400 | `Cannot move a subfolder into itself` |
+| `src not in existing` | 404 | `Subfolder not found: {src}` |
+| `dst in existing` | 409 | `A subfolder named "{dst}" already exists` |
+
+`new_path` is a **whole path**, so moving to the top level is `new_path = "<basename>"`,
+never `""` — `""` is the root pseudo-folder, which holds images but cannot itself be
+renamed. That is the obvious wrong reading, hence the docstring. The last two guards
+share one `list_subfolders` call, which is already the merged image-derived + declared
+set, and both stay in the **router** rather than the service (no HTTP in services).
+`ensure_not_busy` is justified concretely: `VersionImageState.subfolder` means a snapshot
+restore rewrites this exact column. `create_subfolder` and `remove_subfolder` still do
+not guard — left alone rather than drive-by edited.
+
+`dataset_service.repath_subfolder` does two UPDATEs — an exact match and a
+`LIKE prefix + "/%"` for the descendants, splicing the tail on with
+`literal(new_path) + func.substr(Image.subfolder, len(path) + 1)` (`substr` is 1-based, so
+`len(path)+1` keeps the leading `/`). The LIKE escaping is copied verbatim from
+`delete_subfolder` and **both halves matter**: `_` is a LIKE wildcard *and* an ordinary
+character, so unescaped, re-pathing `a_b` would rewrite every image in `axb`. It then
+rebuilds `declared_subfolders` — re-pathing every entry in the subtree, appending the
+destination's ancestors (mirroring `declare_subfolder`, or an empty folder moved under a
+merely-declared folder vanishes from the sidebar), dedupe preserving order — and
+**reassigns the list**, because SQLAlchemy compares JSON columns by equality and an
+in-place edit is a silently skipped UPDATE whose failure is narrow: images re-path
+correctly and only empty declared folders are lost.
+
+**A re-path is a label change and renames no files.** An image auto-named from the old
+folder (`characters_001.png`) keeps that stem after `characters` → `people`; the remedies
+are the existing **Renumber Files** button and move-to-subfolder-with-rename. Contrast
+`POST /images/batch/move-subfolder`'s `rename_on_move`. Renaming files here would turn one
+atomic transaction into a fallible filesystem batch, pulling in PM-013, PM-021 (`images.py`
+is wholly unconverted) and the stem-keyed thumbnail collision rule. There is no
+`record_in_place`, no thumbnail work and no filesystem mutation at all.
+
+`backend/tests/test_subfolder_repath_http.py` is the request-level coverage: the subtree
+rename with an explicit *filenames are unchanged* assertion, both move directions, the
+`declared_subfolders` rewrite read back through the session (the branch nothing else
+covers), the LIKE escaping, every guard row, and the busy 409.
+
+**One frontend mutation serves all three gestures** — `repathSubfolderMutation`, taking
+`{path, newPath, kind: "rename" | "move"}` and used by the inline rename, the picker modal
+and the drag. It is kept **separate** from `moveToSubfolderMutation`, whose `clear()`
+touches the module-global selection store and must never fire for a folder operation. Its
+`onSuccess` runs the path-keyed bookkeeping, with `from = data.previous_path`,
+`to = data.path` and the subtree predicate `p === from || p.startsWith(from + "/")` (the
+same one `deleteSubfolderMutation` uses):
+
+- Invalidates `["subfolders", datasetId]` and `["images", datasetId]` — the count key nests
+  under that prefix, so pagination refreshes for free.
+- **`activeSubfolder` is re-pointed, not cleared.** Delete clears because the folder is
+  gone; here it still exists. And there is **no `resetPage()`** — the image set is
+  identical, only its label changed.
+- **`expandedPaths` must be re-pointed**, and this is the one that gets missed: it is a
+  `Set<string>` keyed by path, so a re-path orphans every key and silently collapses the
+  branch the user was working in. It is rebuilt through the same map *and* gains the
+  destination's ancestors, which is what makes a folder dropped into a collapsed parent
+  visible where it landed.
+- **`uploadSubfolder`** — the `activeSubfolder` effect covers the common case, but the user
+  can override the upload target independently, so it is re-pointed too or the `<select>`
+  renders blank.
+- **`createChildOf`** is cleared if it pointed into the subtree.
+- Persistence needs nothing: `activeSubfolder` feeds the debounced persist effect and
+  `liveStateRef`, so `gallery-state-${datasetId}` follows.
+- The toast is driven off `kind`, not re-derived: *Renamed to "{to}"* vs
+  *Moved "{label}" into "{parent || "(root)"}"*.
+
+**Rename is an inline input, not a modal** — two precedents (the inline child-create form
+in this same sidebar, `FileBrowserPage`'s `RenameInput`), and an in-row input keeps the
+tree indentation visible so it is obvious which folder is being renamed. When
+`renamingPath === node.path` the row renders the indent button, then the input at
+`flex: 1`, and **hides the four hover buttons** (`×` sits one pixel from Enter). It is
+**single-segment by construction**: the draft seeds from `node.label` and separators are
+stripped on input (`.replace(/[\\/]/g, "")`) rather than rejected on submit, so typing
+`a/b` yields `ab` and the control structurally cannot *move* a folder. Enter composes
+`parent ? parent + "/" + name : name`; empty, unchanged, `.` and `..` are ignored, which
+makes the endpoint's 400 branches unreachable from the UI. Escape cancels and
+`stopPropagation()`s (GalleryPage has a document-level Escape handler); blur cancels rather
+than commits; there are no Cancel/Confirm buttons. `FileBrowserPage`'s `RenameInput` is
+**not** reused — the two contracts genuinely diverge on separator stripping, Escape
+propagation and blur-cancel.
+
+**Move to… is `components/gallery/MoveSubfolderModal.tsx`**, props
+`{node, subfolders, isPending, onConfirm(newPath), onClose}`. It adopts `useModalBehavior`
+(no backdrop close) — it is a newly extracted component, so `docs/dev/styling.md`'s
+long-lived-parent blocker does not apply. It renders a **vertical list, not chips**, so it
+is immune by construction to the overflow the toolbar's chip row had: `(root) — top level`
+first, then every folder passing `canDropFolderOn`, indented by `depth * 10` px, each row
+ellipsised. The folder's current parent renders **disabled** with `(current location)`
+rather than hidden. A footer preview line (`Result: characters/poses/hero`) is the point of
+the modal — this re-paths a whole subtree — and **Move** is disabled when nothing is
+selected, while pending, or when the composed path already exists (a client-side echo of
+the 409). `MoveToDatasetModal` is not reused: it is about *datasets*, carries copy-mode and
+cross-dataset provenance, and has four call sites.
+
+The drag half is in `docs/dev/gallery-dnd.md` § Dragging a subfolder onto another.
 
 ### Gallery filters
 
@@ -81,50 +224,3 @@ Both lineage columns are in `_NULLS_LAST_SORT_FIELDS`, which gives them `.nulls_
 `sort_order` is **not** in that frozenset, despite wanting the same treatment: its own `if sort == "sort_order"` branch matches first and applies nulls-last plus the tiebreak itself, so an entry there could never be reached. That branch also ignores `order` on purpose — "custom order, descending" is not something the drag-and-drop grid can mean.
 
 `backend/tests/test_image_sort_fields.py` holds the allowlist, the coercion, the 500 regression, both orderings, the nulls-last-in-both-directions rule, the tiebreak's stability, and a structural check that every `sort` value the UI offers is on the allowlist — a name the dropdown offers that the backend coerces away is a menu entry that does nothing.
-
-### Manual image ordering
-
-`Image.sort_order: int | None` (nullable, default `NULL`) — stores the custom display position of an image within its `(dataset_id, subfolder)` scope. `NULL` means no custom order has been assigned; such images sort last (`NULLS LAST`) with `created_at ASC` as a tiebreak.
-
-**Activation**: the gallery sort dropdown includes a **"Custom order"** option (`sort=sort_order`). When it is selected for the first time and no image in the current page has `sort_order` set, the frontend silently initialises order from the current page's arrangement by calling `PATCH /images/batch/reorder` with `pageOffset + index` values so that page 2+ images receive sort_orders starting at `(page-1)*pageSize` rather than 0.
-
-**Drag-and-drop**: every card is a `SortableImageCard` in **every** sort mode — the entire card surface is the drag handle (listeners spread on the outer wrapper). The `DndContext` is likewise unconditional and spans the sidebar as well as the grid (see § Drag images onto subfolders); only `SortableContext` — and therefore reordering — is gated on "Custom order". `PointerSensor` with `activationConstraint: { distance: 8 }` lets short clicks still navigate to the detail page. In custom order, `handleDragEnd` falls through its subfolder branch and calls `arrayMove` for an immediate optimistic `qc.setQueryData`, then fires `reorderMutation` (`PATCH /images/batch/reorder`) to persist.
-
-### Drag images onto subfolders
-
-A single `DndContext` in `GalleryPage` wraps **both** the subfolder sidebar and the image grid (the `flex` row containing them), so cards can be dragged from one into the other. `handleDragEnd` branches on the drop target's id before the reorder logic.
-
-- **Droppable ids** are namespaced `subfolder:{path}` (`subfolder:` alone = root) via `subfolderDropId` / `isSubfolderDropId` / `subfolderFromDropId` in `frontend/src/constants/galleryOptions.ts`, plus the non-namespaced `SIDEBAR_DROP_ID` sentinel. Image ids are UUIDs so the prefix cannot collide. The helpers live in the constants module rather than beside the component because `react-refresh/only-export-components` rejects a component file that also exports plain functions.
-- **`DropZone`** (`components/gallery/DropZone.tsx`) is a render-prop wrapper around `useDroppable` taking a raw `id`. It exists for two reasons: `useDroppable` only registers when it runs *inside* the `DndContext`, which `GalleryPage` renders in its own JSX (so a hook at the top of `GalleryPage` would silently never register), and the rows are built inside `renderSubfolderNode`'s closure where a hook can't go at all. It yields `{ setNodeRef, isOver }`; `isOver` layers `inset 0 0 0 1px var(--accent)` over the row's existing active background.
-- **Cards are draggable in every sort mode.** `SortableImageCard` takes a `sortable?: boolean` prop (default `true`) passed to `useSortable`'s `disabled` as `{ draggable: false, droppable: !sortable }`. Outside custom order the card is still draggable but is not a drop target, so `over.id` can only ever be a subfolder id. **`useSortable` outside a `SortableContext` is safe** — the sortable context has a default value and `useSortable` reads it with a plain `useContext`; with `activeIndex`/`overIndex` at `-1` the sort transform stays `null` and it degrades to a plain draggable. `SortableContext` itself is still gated on `isCustomOrder`.
-- **Collision detection** is a composed function that resolves in three steps: (1) a subfolder row under the pointer always wins; (2) otherwise, if the pointer is inside the **sidebar sentinel** (below), return `[]`; (3) otherwise use the `pointerWithin` hits, falling back to `closestCenter` **with folder rows and the sentinel filtered out** so gutter drops between cards still reorder. Plain `closestCenter` is wrong here — a 180 px row's center can beat a card's when dragging near the grid's left edge.
-- **The sidebar container is a sentinel droppable** (`SIDEBAR_DROP_ID`) — never a move target, only a way to answer "is the pointer in the sidebar?". Step (2) returning `[]` makes `over` `null`, so `handleDragEnd`'s existing `!over` guard no-ops. Without it, a drop on sidebar chrome — the "All" row, the header, the create form, the padding below the last row — reaches the `closestCenter` fallback, which scores against `collisionRect` (the **dragged card's** rect, not the pointer) and therefore returns a grid card; in custom-order mode that silently reordered the image and persisted it via `PATCH /images/batch/reorder`. Two constraints on the filter in step (3): the sentinel must be excluded too, or a gutter drop could resolve to the 180 px sidebar rect instead of a card; and the sentinel comparison must come **before** `!isSubfolderDropId(...)`, because that is an `id is string` predicate whose negation narrows `c.id` to `number` and stops the comparison compiling. Note `SIDEBAR_DROP_ID` (`"subfolder-sidebar"`) is deliberately outside the `"subfolder:"` namespace — one character apart, so do not widen the prefix.
-- **`DragOverlay`** is portaled to `document.body`. This is required, not cosmetic: the grid's scroll container is `overflow-y: auto`, so without it the dragged card is clipped the moment it crosses into the sidebar. A consequence is that reorder drags now dim the source card in place rather than moving it. A multi-image drag shows an "N images" badge.
-- **Selection semantics**: dragging a card that is in the current selection moves the whole selection; dragging an unselected card moves only it. `clear()` is gated on `vars.ids.length > 1` so a single-card drag can't wipe an unrelated selection — note that counts images *actually moved* (post no-op filter), not images dragged, so dragging a 5-image selection of which 4 are already in the target moves one and leaves the selection standing. The selection store is module-global, so ids are filtered by `datasetByImageId.get(id) === datasetId` before sending — the backend derives `dataset_id` from the first row and would otherwise move another pane's images into this dataset.
-- **No-op guard**: the backend does *not* filter out images already in the target, and with `rename_on_move` they would be pointlessly renamed to a fresh unique stem. `moveImagesTo` drops those ids client-side against the current page cache (`ImageListItem.subfolder`) and toasts "Already in …" when nothing remains. Ids absent from the cache are sent through — their subfolder is unknown.
-- The mutation mirrors `SelectionToolbar`'s `moveSubfolderMutation` on the parts that must not diverge: same `SUBFOLDER_RENAME_KEY` read, same two invalidations, same success toast. It deliberately differs in two places — `clear()` is conditional (above) where the toolbar's is unconditional, and `onError` surfaces the server's `detail` where the toolbar shows a flat "Move failed". No optimistic update: `rename_on_move` changes `filename`/`file_path`/`thumbnail_path` server-side.
-
-- **`VideoStrip` is mounted outside this `DndContext`** (and outside the grid's scroll container) on purpose: inside it, the strip's cards would join the collision detection above and the subfolder droppables, and inside the container they would sit under the drag-to-upload handler. See `docs/dev/video-ui.md`.
-
-**Known gaps** (deliberate, not bugs): the sidebar does not auto-scroll during a drag — dnd-kit only auto-scrolls the *dragged* element's ancestors — so a target below the fold must be scrolled to first. Collapsed parent rows are themselves valid drop targets; there is no spring-loaded expand-on-hover. In custom-order mode, only the sidebar is sentinel-guarded: a drop anywhere else `pointerWithin` finds nothing — the toolbar, the filter bar, the pagination row, past the window edge — still reaches the `closestCenter` fallback and reorders to the nearest card. That predates the drag-to-subfolder work; guarding it would mean a second sentinel around the grid column.
-
-**Renumber Files button**: visible in the gallery toolbar only when "Custom order" is active. Opens a `ConfirmDialog`, then calls `POST /images/bulk-rename` with `sort_by_sort_order: true` — renames every image in the current subfolder to `{subfolder_slug}_001.ext`, `_002`, … in drag order. Useful before export to make filenames reflect training sequence.
-
-**`PATCH /images/batch/reorder`** (`backend/routers/images.py`): accepts `{ dataset_id, updates: [{id, sort_order}] }`. Validates all IDs belong to `dataset_id`, then bulk-updates `sort_order` via `sa_update`. Returns `{ updated: int }`.
-
-**Upload append**: new uploads are appended to the end of the custom order only when *every* existing image in that `(dataset_id, subfolder)` already has `sort_order` set (checked via `COUNT(id) == COUNT(sort_order)` + `MAX(sort_order)`). If any image lacks a `sort_order`, the subfolder is treated as unordered and new uploads receive `NULL`.
-
-**Cross-operation behaviour**:
-| Operation | `sort_order` effect |
-|---|---|
-| Upload to ordered subfolder | Appended at `MAX + 1` |
-| Upload to unordered subfolder | `NULL` |
-| Batch move subfolder (same dataset) | Preserved |
-| Batch move dataset | Preserved in relative sequence, appended after target's max `sort_order`. If target is empty: starts from 0. If target has mixed ordering (some null): cleared to `NULL`. |
-| Batch copy dataset | Preserved in relative sequence, appended after target's max `sort_order`. Same logic as move: empty target starts from 0, fully ordered target appends at max+1, mixed ordering clears to `NULL`. |
-| Dataset duplicate | Copied from source (both live-copy and snapshot-copy paths) |
-| Crop / upscale / LUT new-file | `NULL` (sorts last) |
-| Export | Always ordered `sort_order ASC NULLS LAST, created_at ASC` |
-| Snapshot create | Captured in `VersionImageState.sort_order` |
-| Snapshot restore / branch checkout | Restored to `Image.sort_order` |
-| Version diff | Compared; appears as a `sort_order` change entry when ordering changed between versions |

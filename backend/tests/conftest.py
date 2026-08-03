@@ -431,11 +431,13 @@ async def upload_video(env, dataset_id: str, name: str = "a.mp4", data: bytes | 
     return next(v for v in listing if v["filename"] == filename)
 
 
-async def upload_image(env, dataset_id: str, name: str = "a.png", data: bytes | None = None) -> dict:
+async def upload_image(
+    env, dataset_id: str, name: str = "a.png", data: bytes | None = None, subfolder: str = ""
+) -> dict:
     """Upload one image and return its row. The endpoint returns filenames only."""
     r = await env.client.post(
         f"{API}/images/upload",
-        params={"dataset_id": dataset_id},
+        params={"dataset_id": dataset_id, "subfolder": subfolder},
         files=[("files", (name, data or png_bytes(), "image/png"))],
     )
     assert r.status_code == 201, r.text

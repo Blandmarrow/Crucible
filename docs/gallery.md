@@ -51,6 +51,18 @@ If the card you drag is part of the current selection, the **whole selection mov
 
 Whether moved files are also renamed to match the target subfolder follows the same **auto-rename** preference as the selection toolbar's "Move to subfolder" action. The toolbar route remains available for moving to a subfolder that doesn't exist yet.
 
+### Renaming and re-nesting a subfolder
+
+**Right-click a subfolder row** for its full menu: create a subfolder inside it, **Rename…**, **Move to…**, move or copy it to another dataset, or delete it. The hover buttons on the row still do the same things they always did — the menu adds to them rather than replacing them.
+
+- **Rename** turns the row into a text box. Type the new name and press Enter; Escape or clicking away cancels. It's a *name*, not a path — slashes are ignored as you type, so renaming can never accidentally move the folder somewhere else.
+- **Move to…** opens a list of every folder it can go under, plus **(root) — top level**, and shows you the resulting path before you commit. A folder cannot be moved into itself or into one of its own subfolders, so those rows aren't offered.
+- **Drag a subfolder row onto another** to re-nest it — the same gesture as dragging images, and dropping on **(root)** moves it back out to the top level. Everything inside it, subfolders included, comes along.
+
+**Renaming a folder does not rename the files inside it.** A folder is a label, so images keep the filenames they already had — including images auto-named after the old folder (`characters_001.png` stays `characters_001.png` after `characters` becomes `people`). If you want the names to match, use **Renumber Files** (in Custom order) or move the images with the auto-rename preference on.
+
+The **All** and **(root)** rows have no menu: *All* isn't a folder, it's the no-filter view, and *(root)* has no name to change — its move and copy buttons are already on the row.
+
 ## Sorting
 
 The gallery sort dropdown covers newest/oldest, name, aesthetic score, style similarity, colourfulness, brightness, and **Custom order** (below). Your choice is remembered per dataset, and **Settings → Gallery** sets the default for datasets you have not sorted yet.

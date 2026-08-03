@@ -16,6 +16,26 @@ export const subfolderFromDropId = (id: string) => id.slice(SUBFOLDER_DROP_PREFI
  *  card fallback, which scores by the dragged card's rect and would silently reorder. */
 export const SIDEBAR_DROP_ID = "subfolder-sidebar";
 
+/** Draggable ids for the subfolder rows themselves (drag a folder onto another to
+ *  re-nest it). A row carries two ids at once — `subfolder:{path}` as a droppable and
+ *  `folder-drag:{path}` as a draggable — so this prefix has to clear **both**
+ *  `SUBFOLDER_DROP_PREFIX` and `SIDEBAR_DROP_ID`, which are already only one character
+ *  apart. Hence a different word rather than a longer `subfolder…` prefix. */
+export const SUBFOLDER_DRAG_PREFIX = "folder-drag:";
+
+export const subfolderDragId = (path: string) => SUBFOLDER_DRAG_PREFIX + path;
+
+export const isSubfolderDragId = (id: unknown): id is string =>
+  typeof id === "string" && id.startsWith(SUBFOLDER_DRAG_PREFIX);
+
+export const subfolderFromDragId = (id: string) => id.slice(SUBFOLDER_DRAG_PREFIX.length);
+
+/** May `src` be dropped on `dest`? False for itself and for any of its own
+ *  descendants — re-pathing `a` to `a/b/a` would orphan the whole subtree. Shared by
+ *  collision detection, the drag-end re-check and `MoveSubfolderModal`'s list. */
+export const canDropFolderOn = (src: string, dest: string) =>
+  dest !== src && !dest.startsWith(src + "/");
+
 export const SORT_OPTIONS = [
   { label: "Newest first",       sort: "created_at",             order: "desc" },
   { label: "Oldest first",       sort: "created_at",             order: "asc"  },

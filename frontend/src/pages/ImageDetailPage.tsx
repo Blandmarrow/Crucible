@@ -47,7 +47,7 @@ import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, 
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useAssignImageLabels, useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
-import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope, invalidateRatingMetrics } from "../constants/queryKeys";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import type { ImageFilterParams } from "../api/images";
 import { RATING_OPTIONS, ratingLabel } from "../constants/rating";
@@ -710,6 +710,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       if (datasetId) invalidateDatasetContentScope(qc, datasetId);
       qc.invalidateQueries({ queryKey: ["export-preview"] });
+      invalidateRatingMetrics(qc);
       toast.success(rating === null ? "Rating cleared" : `Rated ${ratingLabel(rating)}`);
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Could not set the rating")),

@@ -15,6 +15,7 @@ import {
   BooruPage,
   VersionsPage,
   ComfyPage,
+  AestheticRatingPage,
 } from "../../pages/lazyPages";
 
 // A pane's dataset is part of a page's *identity* for the three pages below: each
@@ -54,6 +55,7 @@ function renderPage(view: PaneView) {
     case "comfy":        return <ComfyPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
+    case "rating":       return <AestheticRatingPage />;
     default:             return <DatasetsPage />;
   }
 }

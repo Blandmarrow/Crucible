@@ -10,5 +10,6 @@ from backend.models.openai_provider import OpenAIProvider
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.models.style_run import StyleSimilarityRun
 from backend.models.app_data import CaptionPromptPreset, DeclaredCategory
+from backend.models.rating_event import ImageRatingEvent
 
-__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory"]
+__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "ImageRatingEvent"]

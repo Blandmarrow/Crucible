@@ -44,7 +44,7 @@ import { usePopover } from "../hooks/usePopover";
 import LabelPicker from "../components/common/LabelPicker";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
-import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope, invalidateRatingMetrics } from "../constants/queryKeys";
 import { RATING_FILTER_ENTRIES, RATING_UNRATED, encodeRatingFilter, ratingLabel } from "../constants/rating";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
@@ -849,6 +849,7 @@ export default function GalleryPage() {
         // deliberately outside DATASET_CONTENT_SCOPE, and a rating filter in a
         // split-pane Export preview otherwise shows counts from before this write.
         qc.invalidateQueries({ queryKey: ["export-preview"] });
+        invalidateRatingMetrics(qc);
       })
       .catch((err) => toast.error(apiErrorDetail(err, "Could not set the rating")));
   }, [datasetId, qc, selectedIdsHere]);

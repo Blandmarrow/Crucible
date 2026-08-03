@@ -22,6 +22,7 @@ import {
   VersionsPage,
   ComfyPage,
   LogsPage,
+  AestheticRatingPage,
 } from "./pages/lazyPages";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
@@ -53,6 +54,9 @@ function routeToView(pathname: string): PaneView {
   }
   if (pathname.startsWith("/booru")) return { page: "booru" };
   if (pathname.startsWith("/file-browser")) return { page: "file-browser" };
+  // Safe below dsPageMatch: that only matches `/datasets/…`, and the rating page
+  // is dataset-free by design — it pools every dataset's ratings.
+  if (pathname.startsWith("/rating")) return { page: "rating" };
   return { page: "datasets" };
 }
 
@@ -94,6 +98,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/comfy" element={<ErrorBoundary><ComfyPage /></ErrorBoundary>} />
+        <Route path="/rating" element={<ErrorBoundary><AestheticRatingPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />

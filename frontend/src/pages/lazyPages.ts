@@ -26,3 +26,4 @@ export const SettingsPage = lazy(() => import("./SettingsPage"));
 export const VersionsPage = lazy(() => import("./VersionsPage"));
 export const ComfyPage = lazy(() => import("./ComfyPage"));
 export const LogsPage = lazy(() => import("./LogsPage"));
+export const AestheticRatingPage = lazy(() => import("./AestheticRatingPage"));

@@ -23,6 +23,17 @@ const IcoBooru = () => (
     <path d="M8 6.5v7"/>
   </svg>
 );
+// A half-filled star: the same 5-point outline as IcoQuality, with the left half
+// solid. The two pages sit one keystroke apart in meaning — Score Images is what
+// a model measured, Aesthetic Rating is what the human decided — so the icon
+// deliberately echoes the star rather than inventing an unrelated glyph, and the
+// fill is what tells them apart at 16px.
+const IcoRating = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+    <path d="M8 1.5l1.9 4 4.1.6-3 2.9.7 4.1L8 11.2l-3.7 1.9.7-4.1-3-2.9 4.1-.6L8 1.5z"/>
+    <path d="M8 1.5L6.1 5.5 2 6.1l3 2.9-.7 4.1L8 11.2V1.5z" fill="currentColor"/>
+  </svg>
+);
 const IcoGallery = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <rect x="2" y="2.5" width="5.5" height="5.5" rx="1"/>
@@ -263,6 +274,10 @@ export default function Sidebar() {
       {/* Nav */}
       <nav style={{ padding: "10px 8px 10px 10px", display: "flex", flexDirection: "column", gap: 1, flex: 1, overflowY: "auto" }}>
         <NavItem to="/datasets" icon={<IcoDatasets />} label="Datasets" />
+        {/* Above the active-dataset block, with the other library-wide entries:
+            it pools ratings across every dataset, so it is not about the one
+            currently open. */}
+        <NavItem to="/rating" icon={<IcoRating />} label="Aesthetic Rating" />
         <NavItem to="/booru" icon={<IcoBooru />} label="Booru Browser" />
         <NavItem to="/file-browser" icon={<IcoFileBrowser />} label="File Browser" />
         <NavItem to="/settings" icon={<IcoSettings />} label="Settings" />

@@ -1393,6 +1393,13 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
     tc_dist: dict[str, int] = {}
 
     ssim_dist: dict[str, int] = {}
+    # Named buckets, like `score_buckets` above, with an explicit "Unrated" entry
+    # rather than an absent key: "nobody has looked at 1,715 of these" is the
+    # single most useful number on this panel, and a bucket that only appears
+    # when non-zero cannot be read as a denominator.
+    rating_labels = ["Keep", "Probably", "Probably not", "Cut", "Unrated"]
+    rating_dist: dict[str, int] = {lbl: 0 for lbl in rating_labels}
+    _rating_names = {4: "Keep", 3: "Probably", 2: "Probably not", 1: "Cut"}
 
     captioned = 0
 
@@ -1464,6 +1471,9 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
             b = _watermark_bucket(r.watermark_score)
             wm_dist[b] = wm_dist.get(b, 0) + 1
 
+        # Keep/cut rating
+        rating_dist[_rating_names.get(r.aesthetic_rating, "Unrated")] += 1
+
         # Style similarity
         if r.style_similarity_score is not None:
             b = _watermark_bucket(r.style_similarity_score)
@@ -1528,6 +1538,10 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         "caption_length_distribution": _ordered(wc_dist, wc_labels),
         "caption_token_distribution": _ordered(tc_dist, tc_labels),
         "style_similarity_distribution": dict(sorted(ssim_dist.items())),
+        # Best-first, with "Unrated" last — it is *no answer*, not a tier below
+        # Cut, which is the same reasoning that puts NULL last in both directions
+        # of the gallery's rating sort.
+        "rating_distribution": _ordered(rating_dist, rating_labels),
         "quality_flag_counts": flag_counts,
         "score_coverage": score_cov,
     }
@@ -1552,6 +1566,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         Image.luminance_score,
         Image.file_size_bytes,
         Image.style_similarity_score,
+        Image.aesthetic_rating,
     ).where(Image.dataset_id == dataset_id)
     if subfolder is not None:
         q = q.where(Image.subfolder == subfolder)
@@ -1818,7 +1833,8 @@ async def duplicate_dataset(
             Image.blur_score,
             Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
             Image.saturation_score, Image.luminance_score, Image.style_similarity_score,
-            Image.scores_stale, Image.dino_layer_scores,
+            Image.scores_stale, Image.aesthetic_rating, Image.rating_stale,
+            Image.dino_layer_scores,
             Image.generation_metadata, Image.processing_history, Image.sort_order,
             Image.source_name, Image.source_url, Image.license, Image.attribution,
             Image.source_meta,
@@ -1990,6 +2006,8 @@ async def duplicate_dataset(
                     luminance_score=row.luminance_score,
                     style_similarity_score=row.style_similarity_score,
                     scores_stale=row.scores_stale,
+                    aesthetic_rating=row.aesthetic_rating,
+                    rating_stale=row.rating_stale,
                     dino_layer_scores=row.dino_layer_scores,
                     generation_metadata=row.generation_metadata,
                     processing_history=row.processing_history,
@@ -2097,6 +2115,8 @@ async def duplicate_dataset(
                     luminance_score=state.luminance_score,
                     style_similarity_score=state.style_similarity_score,
                     scores_stale=state.scores_stale,
+                    aesthetic_rating=state.aesthetic_rating,
+                    rating_stale=state.rating_stale,
                     dino_layer_scores=state.dino_layer_scores,
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,

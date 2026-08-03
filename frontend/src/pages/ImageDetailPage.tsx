@@ -42,6 +42,7 @@ import type { Detection } from "../types";
 import { getGalleryPageSize } from "../constants/storage";
 import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
+import { RATING_OPTIONS, ratingLabel } from "../constants/rating";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
 interface Wd14ModelInfo { id: string; name: string; }
@@ -392,6 +393,26 @@ export default function ImageDetailPage() {
   // *different* image while the dialog still names the old one.
   const formModalOpen = showCropDetect || showReextract;
 
+  // The keep/cut rating. A one-element id list rather than a single-image PATCH:
+  // no such endpoint exists for any field but provenance, and the bulk one
+  // already carries the clear predicate for `rating_stale`.
+  const ratingMutation = useMutation({
+    mutationFn: (rating: number | null) =>
+      imagesApi.bulkRating(datasetId!, { imageIds: [imageId!], rating }),
+    onSuccess: (_data, rating) => {
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+      if (datasetId) invalidateDatasetContentScope(qc, datasetId);
+      qc.invalidateQueries({ queryKey: ["export-preview"] });
+      toast.success(rating === null ? "Rating cleared" : `Rated ${ratingLabel(rating)}`);
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Could not set the rating")),
+  });
+
+  const rateImage = useCallback(
+    (rating: number | null) => ratingMutation.mutate(rating),
+    [ratingMutation]
+  );
+
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
   // or this pane is not the active pane in split-pane mode.
   useEffect(() => {
@@ -418,10 +439,18 @@ export default function ImageDetailPage() {
       }
       if (e.key === "ArrowLeft" && prevId) goTo(prevId);
       if (e.key === "ArrowRight" && nextId) goTo(nextId);
+      // Rating, folded into this effect rather than given a third window
+      // listener: it wants the identical pane/modal/text-field guard, and a
+      // separate listener is how two of them drift apart. Modifier chords are
+      // left to the browser — Ctrl+1 switches panes in some setups.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && imageId && datasetId) {
+        if (e.key === "0") { e.preventDefault(); rateImage(null); }
+        else if (e.key >= "1" && e.key <= "4") { e.preventDefault(); rateImage(Number(e.key)); }
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
+  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, datasetId, rateImage, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   // Delete opens the confirm. Guarded on the active pane like the arrow keys
   // above: `splitPane` clones the current view, so without it one keypress opens
@@ -1709,6 +1738,58 @@ export default function ImageDetailPage() {
               Per-layer embeddings stored — run style similarity with "All layers" to score them.
             </p>
           ) : null}
+
+          {/* Keep/cut rating. Visible buttons as well as the 1–4 keys, because a
+              keyboard-only control is undiscoverable and this is the one field
+              on the page a human is expected to write on every image. The
+              numeral on each button *is* the key that sets it. */}
+          <div className="mt-3" data-testid="rating-control">
+            <div className="flex items-center justify-between mb-1">
+              <div className="label !mb-0">Rating</div>
+              {image.aesthetic_rating != null && (
+                <button
+                  className="btn-ghost btn-sm"
+                  style={{ padding: "0 4px", fontSize: 11 }}
+                  disabled={ratingMutation.isPending}
+                  onClick={() => rateImage(null)}
+                  title="Clear the rating (or press 0)"
+                >
+                  clear
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5">
+              {RATING_OPTIONS.map((opt) => {
+                const on = image.aesthetic_rating === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    data-testid={`rate-${opt.value}`}
+                    data-active={on ? "true" : "false"}
+                    disabled={ratingMutation.isPending}
+                    onClick={() => rateImage(opt.value)}
+                    title={`${opt.label} — or press ${opt.value}`}
+                    style={{
+                      flex: 1, padding: "3px 4px", borderRadius: "var(--r)", cursor: "pointer",
+                      background: on ? "var(--surface-3)" : "transparent",
+                      border: `1px solid ${on ? opt.color : "var(--line)"}`,
+                      color: on ? opt.color : "var(--fg-dim)",
+                      fontSize: 11, whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ font: '600 11px "Geist Mono", monospace', marginRight: 4 }}>{opt.value}</span>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            {image.rating_stale && (
+              <p className="text-[10px] text-amber-400 mt-1">
+                Edited in place since you rated it — the decision was made about pixels that no longer
+                exist. Rating it again (even the same way) confirms it.
+              </p>
+            )}
+          </div>
 
           {/* Quality flags. `scores_stale` is not one of them — it qualifies all
               of them, so it renders here and must be in the row's condition too,

@@ -32,6 +32,9 @@ _EXPORT_COLS = (
     Image.aesthetic_score,
     Image.quality_flags,
     Image.style_similarity_score,
+    # The keep/cut rating — both an include threshold (`rating_min`) and an
+    # exclude list (`exclude_ratings`), and the preview's unrated advisory.
+    Image.aesthetic_rating,
     # Provenance: resolved against the parent Dataset (fetched once, by the
     # dataset_id the loop is called with) for the manifests and license filters.
     Image.source_name,
@@ -58,6 +61,8 @@ def _is_excluded(
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
     effective_license: str = "",
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
 ) -> bool:
     if aesthetic_min is not None and (img.aesthetic_score is None or img.aesthetic_score < aesthetic_min):
         return True
@@ -68,6 +73,18 @@ def _is_excluded(
         if any(flags.get(f) for f in exclude_flags):
             return True
     if style_sim_min is not None and (img.style_similarity_score is None or img.style_similarity_score < style_sim_min):
+        return True
+    # Rating include, shaped exactly like `aesthetic_min`: an unrated image has no
+    # value to compare, so it fails the threshold and is dropped. That is the
+    # surprising half, which is why the preview reports the unrated population
+    # separately — "214 match" means something different when 1,715 images have
+    # never been looked at.
+    if rating_min is not None and (img.aesthetic_rating is None or img.aesthetic_rating < rating_min):
+        return True
+    # Rating exclude, shaped exactly like `exclude_flags`: naming a tier drops it,
+    # and an unrated image is never named (its rating is NULL, not a tier), so
+    # "exclude Cut" never silently drops the untriaged majority.
+    if exclude_ratings and img.aesthetic_rating in exclude_ratings:
         return True
     # License filters run on the *effective* license (image over dataset default).
     # commercial_only is conservative: unknown rights are treated as "no".
@@ -565,6 +582,8 @@ async def _run_export_loop(
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
     manifest_dir: Path | None = None,
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
 ) -> dict:
     """
     Shared export loop. Always returns 'exported', 'jsonl_entries',
@@ -639,6 +658,8 @@ async def _run_export_loop(
                 exclude_unlicensed=exclude_unlicensed,
                 exclude_no_derivatives=exclude_no_derivatives,
                 effective_license=prov["license"],
+                rating_min=rating_min,
+                exclude_ratings=exclude_ratings,
             ):
                 continue
             if export_masks and mask_missing == "skip" and not detections_by_image.get(img.id):
@@ -774,6 +795,8 @@ async def export_kohya(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -794,6 +817,7 @@ async def export_kohya(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        rating_min=rating_min, exclude_ratings=exclude_ratings,
         manifest_dir=Path(output_dir),
     )
 
@@ -838,6 +862,8 @@ async def export_aitoolkit(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -858,6 +884,7 @@ async def export_aitoolkit(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        rating_min=rating_min, exclude_ratings=exclude_ratings,
         manifest_dir=Path(output_dir),
     )
 
@@ -900,6 +927,8 @@ async def export_plain(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -922,6 +951,7 @@ async def export_plain(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        rating_min=rating_min, exclude_ratings=exclude_ratings,
         manifest_dir=Path(output_dir),
     )
 
@@ -955,6 +985,8 @@ async def preview_export(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    rating_min: int | None = None,
+    exclude_ratings: list[int] | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
 
@@ -963,6 +995,7 @@ async def preview_export(
         Image.aesthetic_score, Image.aesthetic_model, Image.quality_flags,
         Image.style_similarity_score,
         Image.scores_stale,
+        Image.aesthetic_rating,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
@@ -1009,6 +1042,9 @@ async def preview_export(
     freetext_will_export = 0
     stale_scores = 0
     stale_scores_will_export = 0
+    excl_rating = 0
+    unrated = 0
+    unrated_will_export = 0
     aesthetic_models: dict[str, int] = {}
     aesthetic_models_will_export: dict[str, int] = {}
     without_detections = 0
@@ -1019,6 +1055,16 @@ async def preview_export(
         no_cap = captioned_only and not r.caption_text
         flagged = bool(exclude_flags) and any((r.quality_flags or {}).get(f) for f in exclude_flags)
         low_sim = style_sim_min is not None and (r.style_similarity_score is None or r.style_similarity_score < style_sim_min)
+        # The exclusion evaluation here is a *duplicate* of `_is_excluded`, not a
+        # call to it (the preview reads a different column list and needs a
+        # per-reason tally), so both rating clauses have to land twice. They must
+        # stay in step: an unrated image fails `rating_min` because it has no
+        # value to compare, and is never named by `exclude_ratings`.
+        bad_rating = (
+            rating_min is not None and (r.aesthetic_rating is None or r.aesthetic_rating < rating_min)
+        ) or bool(exclude_ratings and r.aesthetic_rating in (exclude_ratings or []))
+        if r.aesthetic_rating is None:
+            unrated += 1
 
         # The license filters operate on the *effective* value, so inheritance is
         # resolved here rather than reading `r.license`. A per-license breakdown is
@@ -1048,8 +1094,10 @@ async def preview_export(
             excl_flagged += 1
         if low_sim:
             excl_style_sim += 1
+        if bad_rating:
+            excl_rating += 1
 
-        if not (low_aes or no_cap or flagged or low_sim or bad_license):
+        if not (low_aes or no_cap or flagged or low_sim or bad_license or bad_rating):
             no_det = export_masks and r.id not in ids_with_detections
             if no_det:
                 without_detections += 1
@@ -1059,6 +1107,8 @@ async def preview_export(
             will_export += 1
             if r.scores_stale:
                 stale_scores_will_export += 1
+            if r.aesthetic_rating is None:
+                unrated_will_export += 1
             if r.aesthetic_model:
                 aesthetic_models_will_export[r.aesthetic_model] = (
                     aesthetic_models_will_export.get(r.aesthetic_model, 0) + 1
@@ -1080,6 +1130,7 @@ async def preview_export(
         "excluded_flagged": excl_flagged,
         "excluded_style_sim": excl_style_sim,
         "excluded_license": excl_license,
+        "excluded_by_rating": excl_rating,
         # Counted over the whole dataset scope, not just what will export — the
         # point of the warning is "you have unlicensed images", which stays true
         # whether or not the current filters happen to drop them.
@@ -1107,6 +1158,16 @@ async def preview_export(
         # silently dropping keepers and shipping rejects.
         "stale_scores_count": stale_scores,
         "stale_scores_will_export": stale_scores_will_export,
+        # Images nobody has rated, on the same whole-scope / survives-every-filter
+        # split as the two advisories above — and for a sharper reason. A rating
+        # *include* filter drops every unrated image, because an unrated image has
+        # no value to compare against the threshold. This pair is what lets the UI
+        # say "214 will export · 1,715 unrated and therefore excluded" **before**
+        # the export runs, rather than leaving a user to discover that the filter
+        # they read as "the good ones" meant "the ones I have already judged".
+        # Advisory only: `excluded_by_rating` above is the exclusion row.
+        "unrated_count": unrated,
+        "unrated_will_export": unrated_will_export,
         # Which models produced the aesthetic scores in scope, as {marker: count}
         # — the same whole-scope / will-export pair as the two advisories above.
         # Dicts rather than a "mixed" boolean because the useful sentence is

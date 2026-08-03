@@ -12,6 +12,7 @@ import type { ScoreValues } from "../api/datasets";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { OTHER_LICENSES_KEY, licenseInfo } from "../constants/licenses";
 import { aestheticModelLabel } from "../constants/aestheticModels";
+import { RATING_OPTIONS, RATING_UNRATED, encodeRatingFilter } from "../constants/rating";
 import LicenseBadge from "../components/common/LicenseBadge";
 import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
@@ -103,7 +104,7 @@ type PanelFilter = { title: string; params: FilterParams } | null;
 type CategoryId = "summary" | "aesthetic" | "technical" | "properties" | "captions" | "detections";
 type ItemId =
   | "score_guide" | "quality_flags" | "score_coverage" | "licenses"
-  | "aesthetic_score" | "style_sim" | "color_richness" | "saturation"
+  | "aesthetic_score" | "style_sim" | "color_richness" | "saturation" | "rating"
   | "blur" | "noise" | "uniformity" | "watermark" | "luminance"
   | "aspect_ratio" | "megapixels" | "file_size" | "file_formats"
   | "caption_wc" | "caption_tc" | "top_tags" | "cooccurrence"
@@ -329,6 +330,7 @@ const STATS_CONFIG: StatsCategoryDef[] = [
     { id: "licenses",       label: "Licenses"        },
   ]},
   { id: "aesthetic",  label: "Aesthetic & Style",  items: [
+    { id: "rating",          label: "Keep/cut rating"  },
     { id: "aesthetic_score", label: "Aesthetic score"  },
     { id: "style_sim",       label: "Style similarity" },
     { id: "color_richness",  label: "Color richness"   },
@@ -942,6 +944,7 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStat
 
     ...section("AESTHETIC SCORE DISTRIBUTION"),
     ...dist("aesthetic", stats.score_distribution),
+    ...dist("rating", stats.rating_distribution ?? {}),
 
     ...section("BLUR DISTRIBUTION"),
     ...dist("blur", stats.blur_distribution),
@@ -1273,6 +1276,21 @@ export default function StatsPage() {
   const formatData: ChartEntry[] = Object.entries(stats.format_distribution).map(([name, count]) => ({
     name, count, filter: { format_filter: name },
   }));
+  // Click-through carries a `rating_filter`, the same way `scoreEntries` carries
+  // a score range: the bar is only worth drawing if it takes you to the images.
+  // "Unrated" maps to the `0` sentinel, which is exactly what it is for.
+  const ratingData: ChartEntry[] = Object.entries(stats.rating_distribution ?? {}).map(([name, count]) => {
+    const tier = RATING_OPTIONS.find((o) => o.label === name)?.value ?? RATING_UNRATED;
+    return {
+      name,
+      count,
+      filter: {
+        rating_filter: encodeRatingFilter([tier]),
+        sort: "aesthetic_rating",
+        order: "desc",
+      },
+    };
+  });
   const capLenData   = capLenEntries(stats.caption_length_distribution);
   const capTokenData = capTokenEntries(stats.caption_token_distribution);
   const topTags = tagStats.slice(0, 20);
@@ -1579,6 +1597,16 @@ export default function StatsPage() {
         isCollapsed={vis.collapsed.aesthetic}
         onToggleCollapsed={() => toggleCollapsed("aesthetic")}
       >
+        {show("aesthetic", "rating") && (
+          <div style={{ marginBottom: 14 }}>
+            <HistPanel
+              title="Keep/cut rating"
+              subtitle="Your decisions, best first · click a bar to browse that tier"
+              entries={ratingData}
+              onBarClick={open("Rating")}
+            />
+          </div>
+        )}
         {(show("aesthetic", "aesthetic_score") || (show("aesthetic", "style_sim") && hasStyleSimData)) && (
           <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "aesthetic_score") && show("aesthetic", "style_sim") && hasStyleSimData ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("aesthetic", "aesthetic_score") && (

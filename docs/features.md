@@ -14,6 +14,7 @@ The order images travel through the app:
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
 | 3 | Score for aesthetics, technical quality, watermarks, NSFW, and style | [Quality Scoring](scoring.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
+| 3 | Rate images Keep/Cut from the keyboard, then filter, sort and export by it | [Keep/Cut Rating](rating.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
 | 5 | Batch-edit captions, crops, resizes; upscale and LUT color grade | [Batch Editing & Image Processing](editing.md) |
 | 5 | Merge synonymous and redundant tags across a dataset | [Tag Consolidation](tag-consolidation.md) |
@@ -24,7 +25,7 @@ The order images travel through the app:
 
 | Sidebar item | Documented in |
 |---|---|
-| Datasets, Gallery, image detail | [gallery.md](gallery.md) |
+| Datasets, Gallery, image detail | [gallery.md](gallery.md) · [rating.md](rating.md) |
 | Videos strip, video detail | [video.md](video.md) |
 | Captioning | [captioning.md](captioning.md) |
 | Score images | [scoring.md](scoring.md) · [duplicates.md](duplicates.md) |

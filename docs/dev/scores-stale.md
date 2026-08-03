@@ -1,6 +1,6 @@
 # `scores_stale` — the bit that qualifies the ten `*_score` columns
 
-This file covers `Image.scores_stale`: what an in-place pixel rewrite has to record, the single writer that records it, the set-covering predicate that clears it, and the surfaces that render it. The scores it qualifies — which scorer writes which column, and why every `*_score` column is mirrored on `VersionImageState` — are `docs/dev/scoring.md` § The scorers and their columns, which this file leans on rather than restates. The export preview pair that is the bit's costliest consumer is `docs/dev/export.md`.
+This file covers `Image.scores_stale`: what an in-place pixel rewrite has to record, the single writer that records it, the set-covering predicate that clears it, and the surfaces that render it. The scores it qualifies — which scorer writes which column, and why every `*_score` column is mirrored on `VersionImageState` — are `docs/dev/scoring.md` § The scorers and their columns, which this file leans on rather than restates. The export preview pair that is the bit's costliest consumer is `docs/dev/export.md`. `Image.rating_stale` is this bit's sibling — same single writer, same "only for a row that carries the thing it qualifies" rule, and a deliberately different *clear* predicate, which is why it is a second column and not a reuse; see `docs/dev/rating.md` § Two staleness bits, not one.
 
 ## What the bit records
 

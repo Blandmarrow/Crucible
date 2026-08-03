@@ -272,6 +272,35 @@ def parse_license_filter_param(value: str) -> list[str] | None:
     return normalize_license_filter(parsed)
 
 
+def parse_rating_filter_param(value: str) -> list[int] | None:
+    """Parse a JSON-array rating_filter query param into rating tiers.
+
+    A list of ints in 0–4, where **0 means unrated** (``aesthetic_rating IS
+    NULL``) and 1–4 are the tiers Cut → Keep. One param rather than the license
+    pair's ``license_filter`` + ``license_missing``: license splits them because
+    ``""`` is ambiguous (a legitimate free-text license value), while ``0`` sits
+    unambiguously outside the rating domain — and the chip UI needs OR across
+    "some tiers **or** unrated", which two independent params cannot express.
+
+    Anything outside 0–4, a non-integer, or a non-list is a **400**, never a
+    silent narrowing. The same reason `parse_license_filter_param` refuses:
+    dropping an entry the caller asked for returns a page that claims to be the
+    requested filter and is not, and the caller cannot tell.
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(400, "rating_filter must be a JSON array of integers 0-4")
+    if not isinstance(parsed, list):
+        raise HTTPException(400, "rating_filter must be a JSON array of integers 0-4")
+    # `bool` is an `int` subclass, so `True` would otherwise pass as tier 1.
+    if not all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 4 for x in parsed):
+        raise HTTPException(400, "rating_filter entries must be integers 0-4 (0 = unrated)")
+    return sorted(set(parsed)) or None
+
+
 def slugify_filename(name: str) -> str:
     """Convert an arbitrary name into a safe filename stem (lowercase, underscores, max 200 chars)."""
     s = name.lower().strip()
@@ -584,10 +613,10 @@ def score_columns(cls: type) -> frozenset[str]:
 
 
 def record_in_place(img: "Image", op: str, **params) -> None:
-    """Record that an operation overwrote an image's file, in the two columns that carry it.
+    """Record that an operation overwrote an image's file, in the three columns that carry it.
 
-    **The single writer of both `Image.processing_history` and
-    `Image.scores_stale`.** Every path that rewrites an image's pixels in place —
+    **The single writer of `Image.processing_history`, `Image.scores_stale` and
+    `Image.rating_stale`.** Every path that rewrites an image's pixels in place —
     batch and single resize, batch and single crop, LUT, upscale, crop-to-detection,
     video frame re-extraction — must go through this and nothing else. That is what
     keeps the two columns from drifting: a site that appends history by hand records
@@ -604,13 +633,24 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     run that actually measured something refreshes every score the row carries
     (`routers/quality.py`).
 
-    **The two columns deliberately diverge**: the history entry is the durable
+    `rating_stale` is the same statement about `Image.aesthetic_rating` — the
+    human judged pixels that no longer exist — and is written on exactly the same
+    terms: only for a row that carries a rating, and never `False`.
+
+    **The three columns deliberately diverge**: the history entry is the durable
     "these pixels were rewritten" record and pass 2's skip guard, so it is written
-    either way, while the bit qualifies a *measurement* — a row that carries no
-    score has none to invalidate, and marking it would put a "scores describe
-    pixels that no longer exist" warning on the commonest workflow there is
-    (upload → resize → export). It is never written `False` here: clearing is the
-    quality job's job.
+    either way, while each bit qualifies something the row may not have — a row
+    that carries no score has no measurement to invalidate, and marking it would
+    put a "scores describe pixels that no longer exist" warning on the commonest
+    workflow there is (upload → resize → export); a row nobody has rated has no
+    judgement to invalidate either. Neither bit is ever written `False` here:
+    clearing is somebody else's job.
+
+    **And the two bits are separate because their clear predicates diverge.** A
+    quality run that re-measures clears `scores_stale`; nothing but a human
+    looking again clears `rating_stale` (the sole clear site is
+    `POST /images/bulk-rating`). Folding them into one column would let a
+    re-score silently declare a stale *judgement* current.
 
     List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
     by equality, so mutating the loaded list in place looks unchanged and the
@@ -631,6 +671,8 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     # pinned by `backend/tests/test_scores_stale.py`.
     if any(getattr(img, c) is not None for c in score_columns(type(img))):
         img.scores_stale = True
+    if img.aesthetic_rating is not None:
+        img.rating_stale = True
 
 
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:

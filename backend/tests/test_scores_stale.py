@@ -303,6 +303,56 @@ def test_record_in_place_writes_both_columns_and_cannot_raise():
     assert [e["op"] for e in row.processing_history] == ["lut", "resize"]
 
 
+def test_record_in_place_marks_a_rated_row_and_leaves_an_unrated_one_alone():
+    """`rating_stale` is the same statement as `scores_stale`, about a different
+    kind of datum: the human judged pixels that no longer exist.
+
+    Same shape, same reason — a row nobody has rated has no judgement to
+    invalidate, so marking it would put a "this decision was made about different
+    pixels" warning on the commonest workflow there is. And the two bits are
+    genuinely independent: an edit to a rated-but-unscored row sets one and not
+    the other.
+    """
+    from backend.utils import record_in_place
+
+    row = Image()
+    row.scores_stale = False
+    row.rating_stale = False
+    record_in_place(row, "resize", width=10, height=10)
+    assert row.rating_stale is False
+    assert row.scores_stale is False
+
+    row.aesthetic_rating = 4
+    record_in_place(row, "resize", width=8, height=8)
+    assert row.rating_stale is True
+    # Independent of the score bit, which has nothing to invalidate here.
+    assert row.scores_stale is False
+    assert [e["op"] for e in row.processing_history] == ["resize", "resize"]
+
+
+def test_record_in_place_never_writes_rating_stale_false():
+    """Clearing is `POST /images/bulk-rating`'s job and nobody else's — a human
+    looking again is the only thing that makes a judgement current.
+
+    That is exactly why this is its own bit and not a reuse of `scores_stale`:
+    the *clear* predicates diverge, and one column would let a re-score declare a
+    stale judgement fresh.
+    """
+    from backend.utils import record_in_place
+
+    row = Image()
+    row.scores_stale = False
+    row.rating_stale = True
+    # No rating on the row at all — the branch that could write it does not run,
+    # and nothing else may write `False`.
+    record_in_place(row, "lut", lut="warm.cube")
+    assert row.rating_stale is True
+
+    row.aesthetic_rating = 1
+    record_in_place(row, "lut", lut="warm.cube")
+    assert row.rating_stale is True
+
+
 def test_an_in_place_edit_on_an_unscored_image_records_the_history_but_not_the_bit(tmp_path):
     """The headline of this fix, over a real endpoint.
 
@@ -454,6 +504,9 @@ def test_no_score_column_is_deferred():
     attrs = inspect(Image).attrs
     deferred = [c for c in score_columns(Image) if getattr(attrs[c], "deferred", False)]
     assert not deferred, f"score columns must stay eagerly loaded: {deferred}"
+    # `aesthetic_rating` is read by the same helper in the same place, for the
+    # same reason, and so carries the same rule.
+    assert not getattr(attrs["aesthetic_rating"], "deferred", False)
 
 
 # ---------------------------------------------------------------------------

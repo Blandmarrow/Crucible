@@ -52,6 +52,11 @@ export interface BulkThumbnailParams extends BulkFilterParams {
   includeFlagged?: boolean;
   label?: string;
 }
+export interface BulkRatingParams extends BulkFilterParams {
+  /** 1–4, or `null` to clear the rating. `0` is the *filter's* unrated
+   *  sentinel and is never a stored value — the backend rejects it (422). */
+  rating: number | null;
+}
 
 export interface ImageListParams {
   dataset_id: string;
@@ -96,6 +101,12 @@ export interface ImageListParams {
   license_filter?: string;
   /** true = only images with no license at either level. */
   license_missing?: boolean;
+  /** JSON array of rating tiers, where `0` means unrated —
+   *  `JSON.stringify([4, 0])` is "Keep or still unrated". One param rather than
+   *  the license pair's filter+missing, because the chip row needs that OR;
+   *  build it with `encodeRatingFilter` from `constants/rating.ts`. Anything
+   *  outside 0–4 is a 400, never a silently narrowed filter. */
+  rating_filter?: string;
 }
 
 /** What "the current view" means, minus which slice of it is on screen and minus
@@ -245,6 +256,20 @@ export const imagesApi = {
       source_url: params.source_url ?? null,
       license: params.license ?? null,
       attribution: params.attribution ?? null,
+    }).then((r) => r.data),
+  /** Set (or clear, with `rating: null`) the keep/cut rating on a scope.
+   *
+   *  Also the only thing that clears `rating_stale` — assigning a rating means a
+   *  human looked at the pixels as they are now, even when the value is
+   *  unchanged. There is no single-image twin; a keyboard shortcut posts a
+   *  one-element id list. */
+  bulkRating: (datasetId: string, params: BulkRatingParams) =>
+    client.post<{ updated: number }>("/images/bulk-rating", {
+      dataset_id: datasetId,
+      image_ids: params.imageIds ?? null,
+      quality_flags: params.qualityFlags ?? null,
+      subfolder: params.subfolder ?? null,
+      rating: params.rating,
     }).then((r) => r.data),
   /** Re-cut the thumbnails for a scope — the repair for a run that reported
    *  `thumbnails_stale`. Returns a `regenerate_thumbnails` job; 507 when the

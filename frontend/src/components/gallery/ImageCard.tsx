@@ -7,6 +7,7 @@ import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
 import LicenseBadge from "../common/LicenseBadge";
+import { ratingColor, ratingLabel, ratingShort } from "../../constants/rating";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
@@ -103,6 +104,12 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
 
   // Style-match meter. On by default, and the pref gates the *request* as well as
   // the render — TanStack dedupes the per-card call down to one per dataset.
+  // Rating badge. On by default — an unrated card renders nothing, so it costs
+  // nothing on a dataset nobody has triaged, and there is no request behind it
+  // to gate (the value ships in the list payload either way).
+  const showRating = useUiPrefsStore((s) => s.galleryRatingBadge);
+  const rating = showRating ? image.aesthetic_rating : null;
+
   const showStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
   const styleDist = useStyleDistribution(datasetId, showStyleMeter);
   const stylePct = showStyleMeter ? percentileOf(image.style_similarity_score, styleDist?.quantiles) : null;
@@ -169,8 +176,36 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
             beside them because it qualifies every one of them, and it must be in
             this condition or a card whose only marker is the stale bit renders
             an empty cluster. */}
-        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || image.scores_stale) && (
+        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || image.scores_stale || rating != null) && (
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
+            {/* The rating leads the cluster: it is the one marker a human wrote,
+                and the numeral is also the key that sets it. A stale rating
+                keeps its colour but goes dashed and half-lit — the decision is
+                still the user's last word, it was just made about pixels that
+                have since been rewritten. */}
+            {rating != null && (
+              <span
+                data-testid="rating-badge"
+                data-rating={String(rating)}
+                data-rating-stale={image.rating_stale ? "true" : "false"}
+                title={
+                  image.rating_stale
+                    ? `Rated ${ratingLabel(rating)} — but this image was edited in place afterwards. Re-rate it to confirm.`
+                    : `Rated ${ratingLabel(rating)}`
+                }
+                style={{
+                  minWidth: 18, height: 18, padding: "0 4px", borderRadius: 4,
+                  background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)",
+                  display: "grid", placeContent: "center",
+                  border: `1px ${image.rating_stale ? "dashed" : "solid"} ${ratingColor(rating)}`,
+                  color: ratingColor(rating),
+                  opacity: image.rating_stale ? 0.65 : 1,
+                  font: '600 11px "Geist Mono", monospace',
+                }}
+              >
+                {ratingShort(rating)}
+              </span>
+            )}
             {isNsfw && (
               <span title="NSFW" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></svg>

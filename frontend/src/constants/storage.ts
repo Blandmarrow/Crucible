@@ -25,6 +25,7 @@ export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" |
 export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
+export const GALLERY_RATING_BADGE_KEY    = "gallery-rating-badge";    // "true" | "false" (ON by default — read with !== "false")
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -108,4 +109,14 @@ export function getGalleryLicenseBadge(): boolean {
  *  is gated on this flag so the request is not even made when it is off. */
 export function getGalleryStyleMeter(): boolean {
   return localStorage.getItem(GALLERY_STYLE_METER_KEY) !== "false";
+}
+
+/** Whether gallery cards show the keep/cut rating badge. **On** by default,
+ *  hence `!== "false"` — same read as the style meter above.
+ *
+ *  It costs nothing on a dataset nobody has rated: an unrated card renders no
+ *  badge, and the value ships in the list payload either way, so there is no
+ *  request to gate. */
+export function getGalleryRatingBadge(): boolean {
+  return localStorage.getItem(GALLERY_RATING_BADGE_KEY) !== "false";
 }

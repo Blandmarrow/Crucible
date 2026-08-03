@@ -68,8 +68,24 @@ SCORE_COLUMNS = {c.key for c in Image.__table__.columns if c.key.endswith("_scor
 # `info={"qualifies": "<score column>"}` on the model and nothing else.
 SCORE_QUALIFIERS = {c.key for c in Image.__table__.columns if "qualifies" in c.info}
 
+# Columns that are neither a score nor a qualifier and must still be carried by
+# every rebuild path: authored data that nothing recomputes. `aesthetic_rating`
+# is the first — a human's keep/cut decision, which no `*_score` suffix and no
+# `qualifies` key can honestly describe (it qualifies nothing; it *is* the
+# datum). They enrol by declaring `info={"carried": True}` on the model and
+# nothing else, exactly like the `qualifies` mechanism above.
+CARRIED_BY_INFO = {c.key for c in Image.__table__.columns if c.info.get("carried")}
+
 # What every field-by-field rebuild path must carry.
-CARRIED_COLUMNS = SCORE_COLUMNS | SCORE_QUALIFIERS
+CARRIED_COLUMNS = SCORE_COLUMNS | SCORE_QUALIFIERS | CARRIED_BY_INFO
+
+# The derivative constructors — the *other* half of the travel rule. These build
+# a **new picture** from an existing one (crop, crop+upscale, crop-to-detection,
+# upscale, LUT), and a rating is a judgement about pixels that no longer exist
+# there, so it must not come along. Nothing but the guard below says so: they
+# carry provenance via `**copy_provenance(...)`, which cannot leak a rating, but
+# an explicit kwarg added in passing would go unnoticed.
+MUST_NOT_CARRY = CARRIED_BY_INFO
 
 # Columns that live on `Image` and deliberately have no `VersionImageState`
 # counterpart. Every entry needs a reason, because the default answer for a new
@@ -360,6 +376,72 @@ def test_scores_stale_is_mirrored_and_diffed():
     selected = {c.key for c in version_service._DIFF_COLS}
     assert "scores_stale" in selected
     assert "scores_stale" in version_service._DIFF_COMPARE_FIELDS
+
+
+def test_the_rating_pair_is_mirrored_and_diffed():
+    """The `aesthetic_rating`/`rating_stale` twin of the guard above.
+
+    The mirror itself is already forced by
+    `test_every_image_column_is_mirrored_on_version_image_state`; what that
+    cannot say is which side of `_DIFF_COLS`' immutable-lineage carve-out these
+    fall on. A rating is authored *mutable* data — a human re-rates between two
+    snapshots, and that is exactly a difference the diff exists to show — so both
+    are compared as well as carried, and a restore therefore reverts a rating.
+    """
+    for col in ("aesthetic_rating", "rating_stale"):
+        assert col in _columns(VersionImageState)
+        selected = {c.key for c in version_service._DIFF_COLS}
+        assert col in selected, f"{col} is mirrored but not selected for the diff"
+        assert col in version_service._DIFF_COMPARE_FIELDS
+
+
+def test_the_rating_is_carried_but_is_not_a_score_or_a_qualifier():
+    """The enrolment mechanism, pinned the way `SCORE_QUALIFIERS` is.
+
+    `info={"carried": True}` dropped in passing (adding `index=True`, say) would
+    collapse `CARRIED_BY_INFO` to the empty set and silently un-enrol the pair
+    from `test_every_rebuild_path_carries_every_score`, with the whole suite
+    still green. And neither may be mistaken for a score: `SCORE_COLUMNS` is
+    suffix-derived and drives float-seeding guards, while `qualifies` means "this
+    column says how to read a score" — which a rating does not do.
+    """
+    assert {"aesthetic_rating", "rating_stale"} <= CARRIED_BY_INFO, (
+        "the rating pair lost its info={'carried': True} on backend/models/image.py, "
+        "which silently un-enrols it from test_every_rebuild_path_carries_every_score"
+    )
+    assert CARRIED_BY_INFO.isdisjoint(SCORE_COLUMNS)
+    assert CARRIED_BY_INFO.isdisjoint(SCORE_QUALIFIERS)
+
+
+def test_no_derivative_path_inherits_a_rating():
+    """The travel rule's second half: a rating does **not** reach a derivative.
+
+    Crop, crop+upscale, crop-to-detection, upscale and LUT all build a *new*
+    picture, and a keep/cut decision made about the original says nothing about
+    it. Today they carry provenance via `**copy_provenance(...)`, which returns
+    exactly five keys and so cannot leak one — but nothing stops an explicit
+    kwarg being added alongside, which is the failure this guards. Read from the
+    AST for the same reason as every other structural guard here.
+    """
+    from backend.routers import detection, images as images_router, lut, upscaling
+
+    sites = {
+        "images.crop (crop-only + crop+upscale)": images_router.crop,
+        "detection.crop_to_detection": detection.crop_to_detection,
+        "upscaling.run_upscale": upscaling.run_upscale,
+        "lut.run_lut": lut.run_lut,
+    }
+    leaked: dict[str, list[str]] = {}
+    for label, func in sites.items():
+        calls = _ctor_kwargs(func, "Image")
+        assert calls, f"no Image(...) found in {label} — did it move?"
+        found = sorted({k for c in calls for k in c if k in MUST_NOT_CARRY})
+        if found:
+            leaked[label] = found
+    assert not leaked, (
+        f"derivative paths passing a rating column: {leaked} — a derivative is a "
+        "new picture and has not been judged; leave it unrated"
+    )
 
 
 def test_scores_stale_is_not_mistaken_for_a_score_column():

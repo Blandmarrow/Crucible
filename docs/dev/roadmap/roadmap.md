@@ -5,7 +5,8 @@ session collapsed what were three separate threads (V2.5, the marker layer, the 
 style head) into **one feature shipping in three stages**, and added a manual rating column
 that was in none of them. One thread remains independent: DINOv3 (§5). The token UI (§6)
 **shipped on 2026-08-02** and its section is deleted per the lifecycle rule below; its
-durable rationale now lives in `docs/dev/settings.md` § API Keys tab.
+durable rationale now lives in `docs/dev/settings.md` § API Keys tab. The rating column (§1)
+**shipped on 2026-08-03**, likewise deleted, its rationale now in `docs/dev/rating.md`.
 
 **Lifecycle**: this file is transient, like the video arc's `roadmap.md` (retired in
 `dd53b13`) and the detection/SAM 3 roadmap (retired in `f31a9dc`). When a stage lands, move
@@ -38,8 +39,8 @@ of work as §N, and those numbers never move; the build order is this table alon
 |---|---|---|---|
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
 | ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/scoring.md`; this section is deleted per this file's own lifecycle rule. |
-| 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
-| 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
+| ✓ | **Rating column** (§1) | — | **Shipped 2026-08-03.** `Image.aesthetic_rating` + `rating_stale`, the gallery/export/stats/restore surfaces. Now documented in `docs/dev/rating.md`; this section is deleted per this file's own lifecycle rule. |
+| 3 | **The learned head** (§3) | §1, §2 | The expensive one. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
 
 **§6 led on a code reason, not just its size**, and that reason is now settled: it removed
@@ -52,10 +53,10 @@ relies on the ambient `HF_TOKEN` that `services/secrets_service.py::sync_env` ma
 singleton is **not** frozen — it is a plain mutable pydantic instance. Nothing may assign to
 it, but that is a chosen invariant, not something the type enforces.)
 
-**§1 no longer leads, but its own argument is unchanged**: it is a hard prerequisite for §3
-*and* stands alone, so if it turns out nobody rates anything, that is discovered for the
-price of a column rather than after building a trainer. Nothing in §2 touched the rating
-column, so moving it third cost it nothing.
+**§1's argument held all the way through**: it was a hard prerequisite for §3 *and* stood
+alone, so if it turns out nobody rates anything, that is discovered for the price of a
+column rather than after building a trainer. §3 now has the label column it needs; whether
+it is worth building is a question the ratings themselves answer.
 
 ## Decisions overturned on 2026-08-02
 
@@ -163,59 +164,6 @@ Cheap to get wrong twice, so recorded explicitly.
   of this file asserted. Per *decision* the two are comparable. The real argument for tier
   sort is information per decision, not speed — see § Why tier sort.
 
-## 1. The rating column — third
-
-Read `docs/dev/gallery.md`, `docs/dev/image-filters.md`, `docs/dev/bulk-ops.md`,
-`docs/dev/export.md` and `docs/dev/versioning-service.md`.
-
-**Decided — four buckets, decision language.** `Keep / Probably / Probably not / Cut`,
-stored as a nullable small int 1–4 in `Image.aesthetic_rating`.
-
-- **Four, not five**, deliberately: an odd number gives a middle bucket, and a middle bucket
-  is where everything lands. No neutral option forces a call to one side.
-- **Decision language, not quality language** ("Keep", not "Great"). It is far easier to
-  answer consistently because it is a call you already make. The cost is that it is
-  *contextual* — "Keep" in a weak dataset is worse than "Cut" in a strong one — which is
-  what the anchor set in §3 exists to absorb. If §3 is never built, that cost never
-  materialises, because a rating you read yourself needs no cross-dataset calibration.
-
-**Decided — it is authored, mutable data.** Therefore mirrored on `VersionImageState` *and*
-present in both `_DIFF_COLS` and `_DIFF_COMPARE_FIELDS`, the same treatment `scores_stale`
-gets and for the same reason. `test_video_lineage_mirrors.py` fails CI without the mirror.
-
-**Decided — `rating_stale` is its own bit, never `scores_stale`.** They have different clear
-predicates: `scores_stale` is cleared by a quality run that actually re-measured, whereas a
-stale *rating* can only be cleared by a human looking at the image again — no job can do it.
-Sharing the bit lets a routine re-score mark stale ratings trustworthy, which then feeds
-labels about deleted pixels into §3's fit. `utils.record_in_place` stays the single writer
-of both, so the existing invariant in `CLAUDE.md` is extended, not broken.
-
-**Decided — travel rules.** The rating travels on cross-dataset move and copy (moving a file
-does not change your opinion of it, so it behaves like a caption). Derivatives — crop,
-upscale, LUT, crop-to-detection — do **not** inherit it: a derivative has different pixels
-and deserves its own call, and inheriting would put an unjudged image into §3's training set
-under the user's name. This makes `aesthetic_rating` a new entry in the field-by-field
-rebuild paths that `CLAUDE.md` § Key invariants describes, with the opposite disposition to
-`source_video_id`.
-
-Sites in this stage:
-
-| Site | What lands |
-|---|---|
-| `Image.aesthetic_rating`, `Image.rating_stale` | Migration, model, `VersionImageState` mirror, both diff lists |
-| Gallery | Card badge, filter chips, sort option, keyboard <kbd>1</kbd>–<kbd>4</kbd> on the selection |
-| `SelectionToolbar` | Bulk assign across a selection and across select-all-matching-filters |
-| `ImageFilterParams` | Filter param shared by `GET /images/`, `/count` and `/ids` |
-| Export | Include **and** exclude by rating |
-| Stats | Rating distribution and the unrated count |
-
-**The include-filter hazard is real and was accepted knowingly.** "Only Keep" over a dataset
-where 214 of 1,970 images are rated exports 214 images and reports success — nothing errors,
-and the export is 89% short of what was meant. This is precisely the failure the earlier
-"never a filter" rule existed to prevent. The mitigation is that the filter must state its
-own population against the unrated count *before* it runs ("214 match · 1,715 unrated and
-therefore excluded"), not that the filter is withheld.
-
 ## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
@@ -231,7 +179,9 @@ under a single dataset. The per-dataset half is the picker §2 shipped (see
 Score images page. One new routed page, not two; note the *seventh* site in
 `docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
 
-The page exists from §1 (rating queue, history, bulk work) and grows a **Train** tab in §3.
+**§1 shipped without it.** Scope was confirmed as existing surfaces only — the gallery's
+keys and chips, the selection toolbar, `ImageDetailPage` — so this page arrives with §3, and
+arrives already carrying a rated corpus rather than an empty queue.
 
 ### Why tier sort
 
@@ -354,14 +304,12 @@ DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spe
 
 ## Still open
 
-**Nothing here blocks §1.** What used to lead this list — where the aesthetic model
-selection lives — was settled as a per-run choice with a sticky default and shipped with
-§2; it is now documented behaviour in `docs/dev/scoring.md`, not a question.
+Everything remaining is a §3 question. What used to lead this list — where the aesthetic
+model selection lives — was settled as a per-run choice with a sticky default and shipped
+with §2; it is now documented behaviour in `docs/dev/scoring.md`, not a question.
 
 - How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
   per-user or per-install? Larger is more stable and costs re-rating it every session.
-- Restoring an old snapshot reinstates ratings as of that snapshot, overwriting any given
-  since. Correct, and surprising the first time — decide whether the restore modal says so.
 - Whether the head's uncertainty sampling should weight the boundary the user acts on
   (Probably-not / Cut) above the others.
 
@@ -371,8 +319,9 @@ selection lives — was settled as a per-run choice with a sticky default and sh
 - A masked secret echoed back as its own new value (§6, shipped) — closed structurally
   rather than by convention: the read shape nests (`{masked, source}`) while the write shape
   is plain strings, so echoing a GET into a PATCH is a **422**, not a silent save.
-- **Reusing `scores_stale` for ratings** (§1) — different clear predicates, so a routine
-  re-score would mark stale ratings trustworthy.
+- **Reusing `scores_stale` for ratings** (§1, shipped) — different clear predicates, so a
+  routine re-score would mark stale ratings trustworthy. Closed by giving the rating its own
+  `rating_stale` bit; see `docs/dev/rating.md` § Two staleness bits, not one.
 - **Synthetic pairs counted at face value** (§3) — 800 tier decisions yield ~128,000 pairs
   carrying 800 decisions' worth of information. Fit unweighted and the standard errors shrink
   by roughly 13×: the accuracy tile looks superb and the ordering is confidently wrong.

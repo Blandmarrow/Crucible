@@ -31,6 +31,11 @@ class ImageOut(BaseModel):
     # True when the pixels were rewritten in place after the scores above were
     # measured — see `backend/utils.py::record_in_place`.
     scores_stale: bool = False
+    # The human keep/cut decision: 4 = Keep … 1 = Cut, null = unrated. Higher is
+    # better. `rating_stale` is its own bit, not `scores_stale` — the pixels were
+    # rewritten after the judgement was made.
+    aesthetic_rating: int | None = None
+    rating_stale: bool = False
     dino_layer_scores: dict | None = None
     has_dino_layer_embeddings: bool = False
     quality_flags: dict[str, Any]
@@ -88,6 +93,9 @@ class ImageListItem(BaseModel):
     # True when the pixels were rewritten in place after the scores above were
     # measured — drives the gallery card's warning badge.
     scores_stale: bool = False
+    # Drives the gallery card's rating badge and its stale marker.
+    aesthetic_rating: int | None = None
+    rating_stale: bool = False
     dino_layer_scores: dict | None = None
     quality_flags: dict[str, Any]
     generation_metadata: dict | None = None
@@ -161,6 +169,14 @@ class ImageFilterParams(BaseModel):
         None, description="JSON array of effective license ids; empty = no filter"
     )
     license_missing: bool | None = None
+    # One param, not the license pair's `*_filter` + `*_missing`. License splits
+    # them because `""` is ambiguous — it is also a legitimate free-text license
+    # value — while `0` is unambiguously outside the 1–4 rating domain, and the
+    # chip UI genuinely needs OR across "some tiers **or** unrated", which two
+    # independent params cannot express.
+    rating_filter: str | None = Field(
+        None, description="JSON array of ints 0–4 where 0 means unrated; empty = no filter"
+    )
 
 
 class ImageIdsParams(ImageFilterParams):
@@ -323,6 +339,25 @@ class BulkProvenanceRequest(BulkFilterBase, ProvenanceEdit):
 
 
 class BulkProvenanceResult(BaseModel):
+    updated: int
+
+
+class BulkRatingRequest(BulkFilterBase):
+    """Set (or clear) the keep/cut rating on a selection.
+
+    `rating=None` clears it — there is no sentinel, because JSON `null` already
+    means exactly that and the domain is 1–4 with nothing else in it.
+
+    The **sole clear site** for `Image.rating_stale`: assigning a rating means a
+    human looked at the current pixels, even if the value is unchanged. Clearing
+    to NULL clears the bit too — no rating, nothing stale.
+    """
+    rating: int | None = Field(None, ge=1, le=4)
+    # False, matching BulkProvenanceRequest and bulk_rename.
+    include_flagged: bool = False
+
+
+class BulkRatingResult(BaseModel):
     updated: int
 
 

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { versioningApi } from "../../api/versioning";
 import { useJobSSE } from "../../hooks/useSSE";
@@ -22,6 +23,19 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
 
   useJobSSE(jobId);
   const jobProgress = useJobStore((s) => (jobId ? s.activeJobs.get(jobId) : undefined));
+
+  // What this restore costs in ratings. Fetched when the dialog opens rather
+  // than with the version list: it is a comparison against the *current* rows,
+  // so it is only meaningful at the moment the user is about to commit.
+  const { data: impact } = useQuery({
+    queryKey: ["rating-impact", datasetId, version.id],
+    queryFn: () => versioningApi.ratingImpact(datasetId, version.id),
+    staleTime: 0,
+  });
+  // "Remove" deletes the extras instead of reverting them, so they only count
+  // toward the warning under that mode.
+  const ratingAtRisk =
+    (impact?.will_change ?? 0) + (handleExtra === "remove" ? impact?.extras_rated ?? 0 : 0);
 
   useEffect(() => {
     if (jobProgress?.status === "completed") {
@@ -103,15 +117,51 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
             </div>
           </div>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-            <input
-              type="checkbox"
-              checked={preRestore}
-              onChange={(e) => setPreRestore(e.target.checked)}
-              disabled={isRunning}
-            />
-            Auto-snapshot current state before restoring
-          </label>
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={preRestore}
+                onChange={(e) => setPreRestore(e.target.checked)}
+                disabled={isRunning}
+              />
+              Auto-snapshot current state before restoring
+            </label>
+
+            {/* The rating cost, beside the safety checkbox and deliberately not
+                in the amber box below: that box is about files that are
+                *unrecoverable*, while a reverted rating is recovered by exactly
+                this checkbox. The styling escalates only when the count is real
+                and the user has switched the safety net off — that combination
+                is the one where hand-made work is genuinely about to vanish.
+                Renders nothing at zero. */}
+            {ratingAtRisk > 0 && (
+              <p
+                data-testid="rating-impact"
+                style={{
+                  fontSize: 12, marginTop: 6, marginBottom: 0,
+                  color: preRestore ? "var(--fg-mute)" : "var(--warn)",
+                  fontWeight: preRestore ? 400 : 500,
+                }}
+              >
+                {impact!.will_change > 0 && (
+                  <>
+                    {impact!.will_change.toLocaleString()} keep/cut rating
+                    {impact!.will_change !== 1 ? "s" : ""} will be reverted
+                    {impact!.will_clear > 0 && ` (${impact!.will_clear.toLocaleString()} cleared)`}
+                  </>
+                )}
+                {impact!.will_change > 0 && handleExtra === "remove" && impact!.extras_rated > 0 && " · "}
+                {handleExtra === "remove" && impact!.extras_rated > 0 && (
+                  <>
+                    {impact!.extras_rated.toLocaleString()} rated image
+                    {impact!.extras_rated !== 1 ? "s" : ""} not in this snapshot will be deleted
+                  </>
+                )}
+                {!preRestore && ". Nothing is snapshotting the current ratings first."}
+              </p>
+            )}
+          </div>
 
           <div style={{
             fontSize: 12, color: "var(--warn)",

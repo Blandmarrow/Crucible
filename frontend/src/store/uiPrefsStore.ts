@@ -2,10 +2,12 @@ import { create } from "zustand";
 import {
   GALLERY_CHECKBOX_SIZE_KEY,
   GALLERY_LICENSE_BADGE_KEY,
+  GALLERY_RATING_BADGE_KEY,
   GALLERY_STYLE_METER_KEY,
   clampGalleryCheckboxSize,
   getGalleryCheckboxSize,
   getGalleryLicenseBadge,
+  getGalleryRatingBadge,
   getGalleryStyleMeter,
 } from "../constants/storage";
 
@@ -32,6 +34,11 @@ interface UiPrefsStore {
    *  `enabled`, so switching it off stops the fetch, not just the render. */
   galleryStyleMeter: boolean;
   setGalleryStyleMeter: (on: boolean) => void;
+  /** Whether gallery cards show the keep/cut rating badge. On by default.
+   *  Unlike the style meter there is no request to gate — the rating ships in
+   *  the list payload regardless — so this is a render toggle only. */
+  galleryRatingBadge: boolean;
+  setGalleryRatingBadge: (on: boolean) => void;
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -50,5 +57,10 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
   setGalleryStyleMeter: (on) => {
     localStorage.setItem(GALLERY_STYLE_METER_KEY, String(on));
     set({ galleryStyleMeter: on });
+  },
+  galleryRatingBadge: getGalleryRatingBadge(),
+  setGalleryRatingBadge: (on) => {
+    localStorage.setItem(GALLERY_RATING_BADGE_KEY, String(on));
+    set({ galleryRatingBadge: on });
   },
 }));

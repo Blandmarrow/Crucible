@@ -160,6 +160,8 @@ export default function SettingsPage() {
   const setGalleryLicenseBadge = useUiPrefsStore((s) => s.setGalleryLicenseBadge);
   const galleryStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
   const setGalleryStyleMeter = useUiPrefsStore((s) => s.setGalleryStyleMeter);
+  const galleryRatingBadge = useUiPrefsStore((s) => s.galleryRatingBadge);
+  const setGalleryRatingBadge = useUiPrefsStore((s) => s.setGalleryRatingBadge);
 
   // Captioning defaults
   const [captionDefaultModel, setCaptionDefaultModel] = useState(
@@ -611,6 +613,28 @@ export default function SettingsPage() {
                   }}
                 />
                 Show the style match meter on gallery cards
+              </label>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Keep/cut rating on cards</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                The numeral you pressed — 4 Keep, 3 Probably, 2 Probably not, 1 Cut — in the corner of
+                each rated card. Unrated images show nothing, so this costs nothing on a dataset you
+                have not triaged. A dashed badge means the image was edited in place after you rated
+                it, and the decision is worth confirming.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }} data-testid="rating-badge-toggle">
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={galleryRatingBadge}
+                  onChange={(e) => {
+                    setGalleryRatingBadge(e.target.checked);
+                    toast.success("Preference saved");
+                  }}
+                />
+                Show the keep/cut rating on gallery cards
               </label>
             </div>
 

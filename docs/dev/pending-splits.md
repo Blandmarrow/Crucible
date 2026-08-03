@@ -46,6 +46,32 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
+## CLAUDE.md
+
+- **Moves:** the seven longest bullets of § Architecture → § Key invariants — the path
+  traversal guard, the provenance block, the `VersionImageState` mirror rule,
+  `record_in_place`, the stem-keyed derived artifact rule, the fs-mutation-before-commit
+  rule, and the Windows served-file rule — leaving one-line statements that name the topic
+  file and the failure mode
+- **New file:** docs/dev/invariants.md
+- **Why here:** § Key invariants is 2,780 of the file's 5,470 words and is the only section
+  that grows on nearly every branch, because a new invariant has nowhere else to go. It is
+  also the section least suited to being always-resident in the form it has taken: each
+  bullet has accreted its own postmortem's worth of reasoning, and what a conversation
+  actually needs resident is the *rule* plus a pointer. Splitting the reasoning out leaves
+  CLAUDE.md around 2,900 words with every rule still stated, and gives the reasoning a file
+  with room to keep growing. The other three sections are structural (Commands, the
+  Documentation Map, Maintaining this documentation) and must stay.
+- **Watch for:** this is the one file guaranteed to be in every conversation's context, so
+  the seam is a judgement about *what must be resident*, not about size — a rule that loses
+  its statement here stops being enforced at all. Every bullet moved needs a one-line
+  survivor, not a deletion. Several topic files point at these bullets by `§` name
+  (`docs/dev/scores-stale.md`, `docs/dev/video-reextract.md`, `docs/dev/file-browser.md`,
+  `docs/dev/versioning-service.md`, `docs/dev/rating.md`) and the checker cannot see any of
+  them; grep `§ Key invariants` across `docs/` and `backend/` before and after. The new file
+  needs a Documentation Map row of its own, and the Map's own § Maintaining this
+  documentation rules apply to it.
+
 ## docs/dev/backend-infrastructure.md
 
 - **Moves:** § Database (1,142 words — the largest section by a factor of two), plus its

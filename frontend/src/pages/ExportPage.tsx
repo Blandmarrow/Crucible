@@ -12,6 +12,7 @@ import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
+import { RATING_OPTIONS } from "../constants/rating";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { aestheticModelLabel } from "../constants/aestheticModels";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
@@ -79,6 +80,9 @@ interface ExportFilters {
   commercialOnly: boolean;
   excludeUnlicensed: boolean;
   excludeNoDerivatives: boolean;
+  filterRating: boolean;
+  ratingMin: number;
+  excludeRatings: number[];
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -96,6 +100,11 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   commercialOnly: false,
   excludeUnlicensed: false,
   excludeNoDerivatives: false,
+  // Off by default, and deliberately so: turning it on drops every unrated
+  // image, which on a dataset nobody has triaged is the whole dataset.
+  filterRating: false,
+  ratingMin: 3,
+  excludeRatings: [],
 };
 
 export default function ExportPage() {
@@ -146,6 +155,9 @@ export default function ExportPage() {
   const [commercialOnly, setCommercialOnly] = useState(filters.commercialOnly);
   const [excludeUnlicensed, setExcludeUnlicensed] = useState(filters.excludeUnlicensed);
   const [excludeNoDerivatives, setExcludeNoDerivatives] = useState(filters.excludeNoDerivatives);
+  const [filterRating, setFilterRating] = useState(filters.filterRating);
+  const [ratingMin, setRatingMin] = useState(filters.ratingMin);
+  const [excludeRatings, setExcludeRatings] = useState<Set<number>>(new Set(filters.excludeRatings));
   const [filterStyleSim, setFilterStyleSim] = useState(filters.filterStyleSim);
   const [styleSimMin, setStyleSimMin] = useState(filters.styleSimMin);
   const [subfolderFilterActive, setSubfolderFilterActive] = useState(filters.subfolderFilterActive);
@@ -190,6 +202,8 @@ export default function ExportPage() {
     commercial_only: false,
     exclude_unlicensed: false,
     exclude_no_derivatives: false,
+    rating_min: null as number | null,
+    exclude_ratings: null as number[] | null,
   });
 
   useEffect(() => {
@@ -208,13 +222,15 @@ export default function ExportPage() {
         commercial_only: commercialOnly,
         exclude_unlicensed: excludeUnlicensed,
         exclude_no_derivatives: excludeNoDerivatives,
+        rating_min: filterRating ? ratingMin : null,
+        exclude_ratings: excludeRatings.size > 0 ? [...excludeRatings] : null,
       });
     }, 350);
     // Cancel, not flush: this timer only drives the preview query, which should
     // not fire for a state the user has already navigated away from. Persistence
     // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives, filterRating, ratingMin, excludeRatings]);
 
   // Persist "filters" config — per-dataset, debounced.
   useDebouncedPersist(
@@ -231,6 +247,8 @@ export default function ExportPage() {
       commercialOnly,
       excludeUnlicensed,
       excludeNoDerivatives,
+      filterRating, ratingMin,
+      excludeRatings: [...excludeRatings],
     },
   );
 
@@ -263,6 +281,9 @@ export default function ExportPage() {
     setCommercialOnly(next.commercialOnly);
     setExcludeUnlicensed(next.excludeUnlicensed);
     setExcludeNoDerivatives(next.excludeNoDerivatives);
+    setFilterRating(next.filterRating);
+    setRatingMin(next.ratingMin);
+    setExcludeRatings(new Set(next.excludeRatings));
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -290,6 +311,8 @@ export default function ExportPage() {
     commercial_only: commercialOnly,
     exclude_unlicensed: excludeUnlicensed,
     exclude_no_derivatives: excludeNoDerivatives,
+    rating_min: filterRating ? ratingMin : null,
+    exclude_ratings: excludeRatings.size > 0 ? [...excludeRatings] : null,
   });
 
   const exportMutation = useMutation({
@@ -323,6 +346,12 @@ export default function ExportPage() {
   const toggleFlag = (key: string) => setExcludeFlags((prev) => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  const toggleExcludeRating = (value: number) => setExcludeRatings((prev) => {
+    const next = new Set(prev);
+    if (next.has(value)) next.delete(value); else next.add(value);
     return next;
   });
 
@@ -371,6 +400,9 @@ export default function ExportPage() {
     setCommercialOnly(EXPORT_FILTERS_DEFAULTS.commercialOnly);
     setExcludeUnlicensed(EXPORT_FILTERS_DEFAULTS.excludeUnlicensed);
     setExcludeNoDerivatives(EXPORT_FILTERS_DEFAULTS.excludeNoDerivatives);
+    setFilterRating(EXPORT_FILTERS_DEFAULTS.filterRating);
+    setRatingMin(EXPORT_FILTERS_DEFAULTS.ratingMin);
+    setExcludeRatings(new Set(EXPORT_FILTERS_DEFAULTS.excludeRatings));
     setFilterStyleSim(EXPORT_FILTERS_DEFAULTS.filterStyleSim);
     setStyleSimMin(EXPORT_FILTERS_DEFAULTS.styleSimMin);
     setSubfolderFilterActive(EXPORT_FILTERS_DEFAULTS.subfolderFilterActive);
@@ -401,6 +433,7 @@ export default function ExportPage() {
     { label: "Flagged",       count: preview?.excluded_flagged,       show: excludeFlags.size > 0 },
     { label: "Low style sim", count: preview?.excluded_style_sim,     show: filterStyleSim },
     { label: "License",       count: preview?.excluded_license,      show: commercialOnly || excludeUnlicensed || excludeNoDerivatives || licenseFilter.size > 0 },
+    { label: "Rating",        count: preview?.excluded_by_rating,     show: filterRating || excludeRatings.size > 0 },
   ].filter((r) => r.show);
 
   return (
@@ -477,6 +510,46 @@ export default function ExportPage() {
                     disabled={!filterAesthetic} style={{ width: 64, textAlign: "center" }}
                   />
                 </label>
+
+                {/* Keep/cut rating — include. Shaped like the aesthetic row
+                    above, and it inherits that row's sharp edge: an unrated
+                    image has no value to compare, so switching this on drops
+                    every image nobody has looked at. The summary panel states
+                    that population before the export runs. */}
+                <label className="row-flex" style={{ gap: 8 }} data-testid="export-rating-min">
+                  <input type="checkbox" className="checkbox" checked={filterRating} onChange={(e) => setFilterRating(e.target.checked)} />
+                  <span style={{ fontSize: 12.5 }}>Rating ≥</span>
+                  <select
+                    className="select"
+                    value={ratingMin}
+                    onChange={(e) => setRatingMin(Number(e.target.value))}
+                    disabled={!filterRating}
+                    style={{ width: "auto" }}
+                  >
+                    {RATING_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.value} — {o.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* Keep/cut rating — exclude. Shaped like the flag checkboxes:
+                    naming a tier drops it, and an unrated image is never named,
+                    so "exclude Cut" leaves the untriaged alone. */}
+                <div>
+                  <div style={{ fontSize: 12.5, color: "var(--fg-mute)", marginBottom: 5 }}>Exclude rated:</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4 }}>
+                    {RATING_OPTIONS.map(({ value, label }) => (
+                      <label key={value} className="row-flex" style={{ gap: 8 }}>
+                        <input
+                          type="checkbox" className="checkbox"
+                          checked={excludeRatings.has(value)}
+                          onChange={() => toggleExcludeRating(value)}
+                        />
+                        <span style={{ fontSize: 12 }}>{value} — {label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Has caption */}
                 <label className="row-flex" style={{ gap: 8 }}>
@@ -902,6 +975,30 @@ export default function ExportPage() {
                           images. Re-run quality scoring to refresh them.
                         </>
                       )}
+                    </div>
+                  )}
+
+                  {/* Unrated population — shown only while the rating *include*
+                      filter is on, because that is the filter that silently
+                      drops them: an unrated image has no value to compare
+                      against the threshold. Without this line "214 will export"
+                      reads as a verdict on the dataset when it is really a
+                      verdict on the part of it somebody has looked at. */}
+                  {filterRating && !!preview.unrated_count && (
+                    <div
+                      data-testid="unrated-advisory"
+                      style={{
+                        marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
+                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        fontSize: 12, color: "var(--warn)",
+                      }}
+                    >
+                      {preview.will_export.toLocaleString()} will export ·{" "}
+                      {preview.unrated_count.toLocaleString()} image
+                      {preview.unrated_count !== 1 ? "s have" : " has"} no rating and{" "}
+                      {preview.unrated_count !== 1 ? "are" : "is"} therefore excluded by
+                      "Rating ≥". Rate them in the gallery (select, then press 1–4), or switch
+                      the threshold off to include them.
                     </div>
                   )}
 

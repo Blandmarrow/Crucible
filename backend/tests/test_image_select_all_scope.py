@@ -47,6 +47,10 @@ async def _seed(env, dataset_id: str) -> None:
             # (which is unset here, so they read as "missing").
             license="CC-BY-4.0" if i % 3 == 1 else None,
             source_timestamp_ms=i * 100 if i % 5 else None,
+            # Tiers 1–4 on four fifths of the rows, the rest unrated — so the
+            # `0` entry (unrated) has something to select and something to
+            # exclude.
+            aesthetic_rating=(i % 5) or None,
         ))
     async with env.Session() as db:
         db.add_all(rows)
@@ -79,6 +83,10 @@ FILTER_SHAPES = {
     "license_missing": {"license_missing": "true"},
     "license_filter": {"license_filter": json.dumps(["CC-BY-4.0"])},
     "score_filters": {"score_filters": json.dumps([{"field": "aesthetic_score", "min": 5}])},
+    "rating_keep": {"rating_filter": json.dumps([4])},
+    "rating_unrated": {"rating_filter": json.dumps([0])},
+    # The shape the license pair cannot express: some tiers OR unrated.
+    "rating_keep_or_unrated": {"rating_filter": json.dumps([4, 0])},
     "combined": {"captioned": "true", "subfolder": "sub/deep", "search": "cat"},
     "matches_nothing": {"search": "no-such-image"},
 }
@@ -106,6 +114,11 @@ def test_count_matches_the_grid_paged_to_exhaustion(tmp_path):
             assert counts["unfiltered"] == 24
             assert counts["matches_nothing"] == 0
             assert len(set(counts.values())) >= 5, counts
+            # The OR really is a union, not an intersection or a last-wins.
+            assert counts["rating_keep_or_unrated"] == (
+                counts["rating_keep"] + counts["rating_unrated"]
+            )
+            assert counts["rating_unrated"] == 5
 
     run(scenario())
 
@@ -138,6 +151,10 @@ def test_ids_match_the_grid_order_for_several_sorts(tmp_path):
                 # timestamp, the rest are not frames at all.
                 {"sort": "source_timestamp_ms", "order": "asc"},
                 {"sort": "source_timestamp_ms", "order": "desc"},
+                # The other nulls-last column: unrated is *no answer*, so it sits
+                # at the end in both directions rather than below "Cut".
+                {"sort": "aesthetic_rating", "order": "desc"},
+                {"sort": "aesthetic_rating", "order": "asc"},
                 # Coerced to created_at rather than rejected.
                 {"sort": "not_a_column", "order": "desc"},
             ]
@@ -198,6 +215,12 @@ def test_bad_input_is_rejected_identically_by_all_three(tmp_path):
                 # A blank entry in the license list is a 400 rather than a silent
                 # narrowing — `license_missing` is how "no license" is expressed.
                 {"license_filter": json.dumps(["CC-BY-4.0", ""])},
+                # Out of the 0–4 domain, non-integer, and not a list at all —
+                # each a 400 rather than a silently narrowed filter.
+                {"rating_filter": json.dumps([4, 9])},
+                {"rating_filter": json.dumps(["4"])},
+                {"rating_filter": json.dumps({"rating": 4})},
+                {"rating_filter": "not json"},
             ]
             for path in ("/images/", "/images/count", "/images/ids"):
                 for extra in bad:

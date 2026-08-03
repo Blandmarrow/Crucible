@@ -14,6 +14,7 @@ Three fully implemented export formats, all with identical filter and processing
 - Captioned-only filter
 - Per-flag exclusions (blurry, noisy, near-uniform, watermarked, duplicate, NSFW, AI artifacts)
 - Minimum style similarity filter
+- **Rating ≥** and **Exclude rated** — include or exclude by your keep/cut decision. The include threshold also drops every *unrated* image (an unrated image has no rating to compare), so the summary panel states how many that is before you run anything → [details](rating.md)
 - Image format conversion (original / JPEG with quality setting)
 - Resize longest side (downscale only)
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`

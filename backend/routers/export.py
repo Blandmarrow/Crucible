@@ -58,6 +58,11 @@ class KohyaExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -92,6 +97,11 @@ class AIToolkitExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -124,6 +134,11 @@ class PlainExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Keep/cut rating. Two params, matching the two shapes already here:
+    # `rating_min` behaves like `aesthetic_min` (an unrated image has no value to
+    # compare, so it is excluded), `exclude_ratings` like `exclude_flags`.
+    rating_min: int | None = Field(default=None, ge=1, le=4)
+    exclude_ratings: list[int] | None = None
     label: str | None = None
 
 
@@ -149,6 +164,35 @@ def _parse_labels_json_param(value: str, param_name: str) -> list[str] | None:
     if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
         raise HTTPException(status_code=400, detail=f"{param_name} must be a JSON array of strings")
     return _normalize_mask_labels(parsed)
+
+
+def _parse_ratings(values: list[int] | None) -> list[int] | None:
+    """Validate an `exclude_ratings` body list: tiers 1–4, nothing else.
+
+    `0` is the *filter's* unrated sentinel on `GET /images/` and is not a tier —
+    "drop the unrated" is what `rating_min` already says — so it is a 400 here
+    rather than a clause that silently means something different from the gallery.
+    Same request-path-only rule as `_parse_flags`.
+    """
+    if not values:
+        return None
+    invalid = [v for v in values if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 4]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"exclude_ratings must be tiers 1-4: {invalid}")
+    return sorted(set(values))
+
+
+def _parse_ratings_json(s: str) -> list[int] | None:
+    """The preview's query-param form of `_parse_ratings` — a JSON array."""
+    if not s:
+        return None
+    try:
+        parsed = json.loads(s)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="exclude_ratings must be a JSON array of integers 1-4")
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="exclude_ratings must be a JSON array of integers 1-4")
+    return _parse_ratings(parsed)
 
 
 def _parse_flags(s: str) -> list[str]:
@@ -195,6 +239,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -236,6 +281,8 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -257,6 +304,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -297,6 +345,8 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -318,6 +368,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    exclude_ratings = _parse_ratings(body.exclude_ratings)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -356,6 +407,8 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                rating_min=body.rating_min,
+                exclude_ratings=exclude_ratings,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -385,6 +438,8 @@ async def preview(
     commercial_only: bool = Query(default=False),
     exclude_unlicensed: bool = Query(default=False),
     exclude_no_derivatives: bool = Query(default=False),
+    rating_min: int | None = Query(default=None, ge=1, le=4),
+    exclude_ratings: str = Query(default="", description="JSON array of rating tiers 1-4 to drop"),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
@@ -406,4 +461,6 @@ async def preview(
         commercial_only=commercial_only,
         exclude_unlicensed=exclude_unlicensed,
         exclude_no_derivatives=exclude_no_derivatives,
+        rating_min=rating_min,
+        exclude_ratings=_parse_ratings_json(exclude_ratings),
     )

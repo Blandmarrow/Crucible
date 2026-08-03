@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, parse_rating_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -37,6 +37,8 @@ from backend.schemas.image import (
     BulkDeleteRequest,
     BulkProvenanceRequest,
     BulkProvenanceResult,
+    BulkRatingRequest,
+    BulkRatingResult,
     BulkRenameRequest,
     BulkThumbnailRequest,
     ImageCropRequest,
@@ -132,12 +134,24 @@ _ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
     "nsfw_score",
     # Frame lineage. Both get an explicit nulls-last ordering below.
     "source_timestamp_ms", "source_shot_index",
+    # The keep/cut rating. Deliberately **not** in `_ALLOWED_SCORE_FIELDS`, which
+    # also drives the score filters and the Stats histograms — a rating is not a
+    # measurement, it has its own filter (`rating_filter`) and its own Stats
+    # panel. Nulls-last below, so unrated images sit at the end either way.
+    "aesthetic_rating",
 }
 
 # Lineage sorts need nulls-last plus a stable tiebreak; the generic branch has
 # neither, so an ASC sort would float every non-frame image to the top and leave
 # equal-timestamp frames in whatever order SQLite scanned them.
-_NULLS_LAST_SORT_FIELDS = frozenset({"source_timestamp_ms", "source_shot_index"})
+#
+# `aesthetic_rating` joins them for the same reason read the other way round:
+# "unrated" is not "worse than Cut", it is *no answer*, so it belongs at the end
+# of a best-first sort **and** at the end of a worst-first one. Ordinary
+# nulls-first-on-ASC would bury every rating under the unrated majority.
+_NULLS_LAST_SORT_FIELDS = frozenset({
+    "source_timestamp_ms", "source_shot_index", "aesthetic_rating",
+})
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -379,6 +393,22 @@ def _apply_image_filters(q, f: ImageFilterParams):
             if parsed:
                 q = q.where(effective_license.in_(parsed))
 
+    # Rating tiers, where `0` means unrated. One param and one OR, because the
+    # chip row's whole point is "Keep **or** Probably **or** still unrated" — a
+    # `license_filter`/`license_missing` pair would AND two independent clauses
+    # and could never express it. Out-of-domain entries are a 400 from
+    # `parse_rating_filter_param`, never a silent narrowing.
+    if f.rating_filter:
+        tiers = parse_rating_filter_param(f.rating_filter) or []
+        if tiers:
+            rated = [t for t in tiers if t != 0]
+            clauses = []
+            if rated:
+                clauses.append(Image.aesthetic_rating.in_(rated))
+            if 0 in tiers:
+                clauses.append(Image.aesthetic_rating.is_(None))
+            q = q.where(or_(*clauses))
+
     return q
 
 
@@ -403,10 +433,11 @@ def _apply_image_ordering(q, sort: str, order: str):
         # below: an entry there could never be reached.
         return q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
     if sort in _NULLS_LAST_SORT_FIELDS:
-        # NULL here means "not a video frame", which belongs at the end whichever
-        # direction the frames run in, with `created_at` breaking the ties that
-        # two frames at the same timestamp or in the same shot would otherwise
-        # leave to SQLite's scan order.
+        # NULL here means "not a video frame" — or, for `aesthetic_rating`, "not
+        # yet judged" — which belongs at the end whichever direction the values
+        # run in, with `created_at` breaking the ties that two frames at the same
+        # timestamp, or two images at the same rating, would otherwise leave to
+        # SQLite's scan order.
         direction = sort_col.desc() if order == "desc" else sort_col.asc()
         return q.order_by(direction.nulls_last(), Image.created_at.asc())
     return q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
@@ -789,6 +820,55 @@ async def bulk_provenance(body: BulkProvenanceRequest, db: AsyncSession = Depend
     # No refresh_stats: it recomputes counts/sizes, none of which provenance
     # touches. The license breakdown is computed live by GET /datasets/{id}/stats.
     return BulkProvenanceResult(updated=updated)
+
+
+@router.post("/bulk-rating", response_model=BulkRatingResult)
+async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db)):
+    """Set (or clear) the keep/cut rating on a selection.
+
+    The scope triple and the cross-dataset busy guard are `bulk_provenance`'s,
+    for the same reason: an explicit `image_ids` selection can span datasets, so
+    scope by `dataset_id` only when the selection is a whole-dataset/subfolder
+    one and guard every dataset actually touched.
+
+    **The sole clear site for `Image.rating_stale`.** Assigning a rating means a
+    human looked at the pixels as they are now, so the bit goes down in the same
+    `.values()` — even when the value is unchanged, because looking again is the
+    whole event the bit is about. Clearing to NULL clears it too: no rating,
+    nothing stale. Nothing else may write `False` there (`utils.record_in_place`
+    is the only writer of the `True`), and that divergence from `scores_stale`'s
+    clear predicate — a quality run that re-measured — is exactly why the two are
+    separate columns.
+
+    No single-image PATCH twin: none exists for any other field except
+    provenance, and the keyboard paths post a one-element id list.
+    """
+    subq = _apply_bulk_filters(
+        select(Image.id, Image.dataset_id),
+        body.image_ids, body.subfolder, body.quality_flags,
+        include_flagged=body.include_flagged,
+    )
+    if not body.image_ids:
+        subq = subq.where(Image.dataset_id == body.dataset_id)
+    rows = (await db.execute(subq)).all()
+    touched = {r.dataset_id for r in rows} or {body.dataset_id}
+    for ds_id in touched:
+        ensure_not_busy(ds_id)
+
+    ids = [r.id for r in rows]
+    updated = 0
+    for batch in chunked(ids):
+        result = await db.execute(
+            sa_update(Image)
+            .where(Image.id.in_(list(batch)))
+            .values(aesthetic_rating=body.rating, rating_stale=False)
+        )
+        updated += result.rowcount or 0
+    await db.commit()
+    # No refresh_stats, as in bulk_provenance: it recomputes counts and sizes,
+    # neither of which a rating touches. The rating distribution is computed live
+    # by GET /datasets/{id}/stats.
+    return BulkRatingResult(updated=updated)
 
 
 @router.patch("/{image_id}/provenance", response_model=ImageOut)
@@ -2086,6 +2166,12 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 # still pointing at a video the target does not contain. The
                 # timestamp and shot index stay — they are facts about the frame,
                 # not about which dataset holds it.
+                #
+                # The same in-place shape is why `aesthetic_rating`/`rating_stale`
+                # are absent here and *still* travel: this UPDATE names only the
+                # columns it changes, so an unnamed column comes along by
+                # construction. It is the one "travels" path that looks
+                # unhandled — the copy twin below has to carry them explicitly.
                 source_video_id=None,
                 **materialized[img_id],
             )
@@ -2120,7 +2206,8 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         Image.blur_score,
         Image.noise_score, Image.uniformity_score, Image.watermark_score, Image.color_score,
         Image.saturation_score, Image.luminance_score, Image.style_similarity_score,
-        Image.scores_stale, Image.dino_layer_scores,
+        Image.scores_stale, Image.aesthetic_rating, Image.rating_stale,
+        Image.dino_layer_scores,
         Image.generation_metadata, Image.processing_history, Image.sort_order, Image.created_at,
         Image.source_name, Image.source_url, Image.license, Image.attribution,
         Image.source_meta,
@@ -2244,6 +2331,14 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             luminance_score=row.luminance_score,
             style_similarity_score=row.style_similarity_score,
             scores_stale=row.scores_stale,
+            # Authored data about *this picture*, so it travels across the
+            # dataset boundary intact — unlike `source_video_id` above, which is
+            # a pointer into the source dataset. The move twin
+            # (`batch_move_dataset`) needs no equivalent: it is an in-place
+            # `sa_update` naming only the columns it changes, so an unnamed
+            # column travels automatically.
+            aesthetic_rating=row.aesthetic_rating,
+            rating_stale=row.rating_stale,
             dino_layer_scores=row.dino_layer_scores,
             generation_metadata=row.generation_metadata,
             processing_history=row.processing_history,

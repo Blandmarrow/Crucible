@@ -21,8 +21,10 @@ import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import SetProvenanceModal from "./SetProvenanceModal";
+import SetRatingModal from "./SetRatingModal";
 import { invalidateProvenanceScope } from "../../constants/queryKeys";
 import { useCustomLicenses } from "../../hooks/useCustomLicenses";
+import { ratingLabel } from "../../constants/rating";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -85,6 +87,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
   const [showMoveDataset, setShowMoveDataset] = useState(false);
   const [showProvenance, setShowProvenance] = useState(false);
+  const [showRating, setShowRating] = useState(false);
   const [showCopyDataset, setShowCopyDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
@@ -274,6 +277,26 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(`Updated ${data.updated} image${data.updated !== 1 ? "s" : ""}`);
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Setting source/license failed")),
+  });
+
+  const ratingMutation = useMutation({
+    mutationFn: (rating: number | null) => imagesApi.bulkRating(datasetId, { imageIds: ids, rating }),
+    onSuccess: (data, rating) => {
+      // The whole dataset-content scope, never an inline key list: a rating
+      // moves the gallery cards, the Stats distribution *and* the Export
+      // preview's counts, and an open pane showing any of them would otherwise
+      // sit on numbers that no longer hold (constants/queryKeys.ts).
+      invalidateDatasetContentScope(qc, datasetId);
+      qc.invalidateQueries({ queryKey: ["export-preview"] });
+      setShowRating(false);
+      clear();
+      toast.success(
+        rating === null
+          ? `Cleared the rating on ${data.updated} image${data.updated !== 1 ? "s" : ""}`
+          : `Rated ${data.updated} image${data.updated !== 1 ? "s" : ""} ${ratingLabel(rating)}`
+      );
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Setting the rating failed")),
   });
 
   const moveDatasetMutation = useMutation({
@@ -523,6 +546,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowRating(true)}
+          title="Set the keep/cut rating (or press 1–4 in the gallery)"
+          data-testid="toolbar-set-rating"
+        >
+          <Star size={14} /> Rate
         </button>
         <button
           className="btn-ghost btn-sm flex items-center gap-1.5"
@@ -1158,6 +1189,17 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           onClose={() => setShowProvenance(false)}
           sourceInfo={datasetBreakdown}
           customLicenses={customLicenses}
+        />
+      )}
+
+      {/* Set rating modal */}
+      {showRating && (
+        <SetRatingModal
+          count={count}
+          isPending={ratingMutation.isPending}
+          onConfirm={(rating) => ratingMutation.mutate(rating)}
+          onClose={() => setShowRating(false)}
+          sourceInfo={datasetBreakdown}
         />
       )}
 

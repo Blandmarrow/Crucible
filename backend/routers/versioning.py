@@ -2,16 +2,17 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, or_
+from sqlalchemy import case, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import BackgroundJob, Dataset
-from backend.models.versioning import DatasetBranch, DatasetVersion
+from backend.models import BackgroundJob, Dataset, Image
+from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.schemas.versioning import (
     BranchCreate, BranchOut,
     CheckoutRequest,
     DiffOut,
+    RatingImpact,
     RestoreRequest, SnapshotCreate, VersionOut, VersionUpdate,
 )
 from backend.services import version_service
@@ -293,6 +294,76 @@ async def diff_versions(
 
     result = await version_service.diff_versions(db, dataset_id, v1, v2)
     return result
+
+
+@router.get("/{dataset_id}/versions/{version_id}/rating-impact", response_model=RatingImpact)
+async def rating_impact(
+    dataset_id: str, version_id: str, db: AsyncSession = Depends(get_db)
+):
+    """How many keep/cut ratings a restore of this version would change.
+
+    A rating is hand-made work that nothing can recompute, and a restore reverts
+    it like every other mirrored column — so `RestoreConfirmModal` states the
+    number before the user commits. Read-only, and ungated on versioning mode
+    like the other read routes.
+
+    `func.coalesce(col, 0)` on both sides rather than `IS DISTINCT FROM`, which
+    SQLite does not support. `0` is safe as the stand-in for NULL precisely
+    because it is outside the stored 1–4 domain — the same fact the gallery's
+    `rating_filter` sentinel rests on.
+    """
+    ver = await db.get(DatasetVersion, version_id)
+    if ver is None or ver.dataset_id != dataset_id:
+        raise HTTPException(404, "Version not found")
+
+    snap_rating = func.coalesce(VersionImageState.aesthetic_rating, 0)
+    live_rating = func.coalesce(Image.aesthetic_rating, 0)
+
+    changed_q = (
+        select(
+            func.count().label("will_change"),
+            func.coalesce(
+                func.sum(case((VersionImageState.aesthetic_rating.is_(None), 1), else_=0)), 0
+            ).label("will_clear"),
+        )
+        .select_from(VersionImageState)
+        .join(Image, Image.id == VersionImageState.image_id)
+        .where(
+            VersionImageState.version_id == version_id,
+            VersionImageState.is_present.is_(True),
+            # The restore only writes rows that are still in this dataset.
+            Image.dataset_id == dataset_id,
+            snap_rating != live_rating,
+        )
+    )
+    row = (await db.execute(changed_q)).one()
+
+    # Rated images the version does not contain. Deleted rather than reverted
+    # under handle_extra_images="remove", so the modal reports them separately —
+    # the mode decides which sentence is true.
+    in_version = (
+        select(VersionImageState.image_id)
+        .where(
+            VersionImageState.version_id == version_id,
+            VersionImageState.is_present.is_(True),
+            VersionImageState.image_id.isnot(None),
+        )
+    )
+    extras_rated = (await db.execute(
+        select(func.count())
+        .select_from(Image)
+        .where(
+            Image.dataset_id == dataset_id,
+            Image.aesthetic_rating.isnot(None),
+            Image.id.notin_(in_version),
+        )
+    )).scalar_one()
+
+    return RatingImpact(
+        will_change=row.will_change or 0,
+        will_clear=int(row.will_clear or 0),
+        extras_rated=extras_rated or 0,
+    )
 
 
 @router.get("/{dataset_id}/versions/{version_id}", response_model=VersionOut)

@@ -53,7 +53,9 @@ If the card you drag is part of the current selection, the **whole selection mov
 
 Whether moved files are also renamed to match the target subfolder follows the same **auto-rename** preference as the selection toolbar's "Move to subfolder" action. The toolbar route remains available for moving to a subfolder that doesn't exist yet.
 
-**The sidebar remembers which folders you left open.** Click the arrow at the left of a row to expand or collapse it; the tree comes back the way you left it when you return from an image, switch pages, or reopen Crucible entirely — per dataset, so a deep working folder stays put. **Reset filters** clears your filters and selected folder but leaves the tree open where it was. And whenever a folder becomes the selected one — you clicked it, you came back to it, or you followed a link to it from a video's extraction history — it opens to show the folders inside it, along with every branch above it, so you can see both where you are and what is filed under it. Collapsing the folder you are in still sticks; it only opens when you pick it.
+**The sidebar remembers which folders you left open.** Click the arrow at the left of a row to expand or collapse it; the tree comes back the way you left it when you return from an image, switch pages, or reopen Crucible entirely — per dataset, so a deep working folder stays put. **Reset filters** clears your filters and selected folder but leaves the tree open where it was. And whenever you pick a folder — by clicking it, or by following a link to it from a video's extraction history — it opens to show the folders inside it, along with every branch above it, so you can see both where you are and what is filed under it.
+
+**Collapsing the folder you are standing in sticks**, including across leaving the page and coming back: the tree returns the way you left it, not the way selecting the folder first drew it. The branches *above* the folder you are in do reopen, because otherwise the folder you are standing in would be off screen. Following a link to a folder always opens it — that is an arrival, not a return.
 
 ### Renaming and re-nesting a subfolder
 

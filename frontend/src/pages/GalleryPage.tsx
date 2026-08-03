@@ -335,20 +335,49 @@ export default function GalleryPage() {
     return () => clearTimeout(t);
   }, [detectionLabelInput, detectionLabel]);
 
-  // Selecting a folder opens it, and opens everything above it. The ancestors are what
-  // make the row *reachable* — `activeSubfolder` arrives from three places that know
-  // nothing about the tree's shape (the restored blob, the deep link applied during
-  // render, and a sidebar click), and the first two can name a folder nested inside closed
-  // branches, selecting a row nobody can see. The path itself is what makes picking a
-  // folder show what is filed under it, the way every other tree behaves.
+  // Selecting a folder opens it, and opens everything above it: the path itself is what makes
+  // picking a folder show what is filed under it, the way every other tree behaves, and the
+  // ancestors are what make the row visible at all.
   //
-  // Keyed on `activeSubfolder`, so it fires on the *change* and not afterwards: collapsing
-  // the folder you are standing in stays collapsed. Returning `prev` unchanged when
-  // everything is already open is what stops this re-running itself. A childless path is
-  // harmless in the set — both the toggle and the render bail on `hasChildren`.
+  // The path *itself* goes in only when the selection actually changed since the last run,
+  // which a dep array alone does not give you: an effect fires on **mount** whether or not
+  // its dep moved, and GalleryPage unmounts on every trip to the image detail view. Without
+  // `seenSubfolder` the return trip re-added `activeSubfolder`, re-opening a folder the user
+  // deliberately collapsed while standing in it — the persisted blob had it right and this
+  // effect overrode it. Four traps, each load-bearing:
+  //
+  //  - It remembers the *value*, not a `useRef(true)` first-run flag. StrictMode
+  //    double-invokes mount effects in dev, so a flag flipped by run #1 makes run #2 look
+  //    like a real change and the bug comes back — only under `npm run dev`, since the e2e
+  //    suite serves the production bundle where StrictMode is inert. A value makes both runs
+  //    decide the same thing.
+  //  - The seed is `undefined` when a link named a subfolder, so the effect sees a change and
+  //    opens it: a deep link is an arrival, not a restore. `usePaneGallerySubfolder` returns
+  //    `undefined` for "no link asked for anything" and `""` for a real link to the dataset
+  //    root, so the test is `!== undefined` and never truthiness.
+  //  - Ordering holds: the render-phase apply block above runs before the commit, so on a
+  //    deep-linked mount the effect already sees the linked value.
+  //  - The ref is written *before* the `!activeSubfolder` bail. Arriving with
+  //    `?source_video_id=` clears the selection; a stale value left behind would make the
+  //    user's next click on that same folder look like a no-op and not open it.
+  //
+  // Ancestors go in on every run, by design: they are what make the row *reachable*, and
+  // `activeSubfolder` arrives from three places that know nothing about the tree's shape (the
+  // restored blob, the deep link applied during render, and a sidebar click), the first two of
+  // which can name a folder nested inside closed branches. So collapsing `alpha` while standing
+  // in `alpha/inner` does re-open `alpha` on the way back — otherwise the active row is off
+  // screen — while `alpha/inner` itself stays shut. Returning `prev` unchanged when everything
+  // is already open is what stops this re-running itself. A childless path is harmless in the
+  // set — both the toggle and the render bail on `hasChildren`.
+  const seenSubfolder = useRef<string | undefined>(
+    linkedSubfolder !== undefined ? undefined : (saved?.activeSubfolder ?? undefined)
+  );
   useEffect(() => {
+    const previous = seenSubfolder.current;
+    seenSubfolder.current = activeSubfolder;
     if (!activeSubfolder) return;
-    const needed = [...ancestorPaths(activeSubfolder), activeSubfolder];
+    const needed = ancestorPaths(activeSubfolder);
+    if (activeSubfolder !== previous) needed.push(activeSubfolder);
     setExpandedPaths(prev => {
       if (needed.every(p => prev.has(p))) return prev;
       const next = new Set(prev);
@@ -1263,7 +1292,15 @@ export default function GalleryPage() {
             ref={setActivatorNodeRef}
             {...listeners}
             {...attributes}
-            onClick={() => { setActiveSubfolder(node.path); resetPage(); }}
+            // Opening the folder is done here as well as in the activeSubfolder effect:
+            // re-clicking the row you are already standing in sets the same value, which
+            // React bails out of, so the effect never fires and a collapsed active folder
+            // would stay shut with no way to open it but the ▶ toggle.
+            onClick={() => {
+              setActiveSubfolder(node.path);
+              setExpandedPaths(prev => (prev.has(node.path) ? prev : new Set(prev).add(node.path)));
+              resetPage();
+            }}
             title={node.path}
             style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",

@@ -392,6 +392,10 @@ export default function ImageDetailPage() {
   // `imageId`, so letting the arrow keys through would re-query the preview for a
   // *different* image while the dialog still names the old one.
   const formModalOpen = showCropDetect || showReextract;
+  // Every overlay this page renders. One set, read by both key effects below: they had
+  // drifted, and the arrow/rating one was the loser — `showDetectModal` is a bare
+  // `fixed inset-0` div with no `role="dialog"`, so nothing else would have caught it.
+  const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
 
   // The keep/cut rating. A one-element id list rather than a single-image PATCH:
   // no such endpoint exists for any field but provenance, and the bulk one
@@ -418,7 +422,7 @@ export default function ImageDetailPage() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (showDeleteConfirm || formModalOpen) return;
+      if (anyModalOpen) return;
       const target = e.target as HTMLElement;
       const inTextField =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -432,7 +436,7 @@ export default function ImageDetailPage() {
         return;
       }
       if (inTextField) return;
-      if (e.key === " " && imageId && !showDetectModal) {
+      if (e.key === " " && imageId) {
         e.preventDefault();
         toggle(imageId, datasetId ?? "");
         return;
@@ -450,7 +454,7 @@ export default function ImageDetailPage() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, showDeleteConfirm, showDetectModal, formModalOpen, toggle, imageId, datasetId, rateImage, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
+  }, [prevId, nextId, goTo, anyModalOpen, toggle, imageId, datasetId, rateImage, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   // Delete opens the confirm. Guarded on the active pane like the arrow keys
   // above: `splitPane` clones the current view, so without it one keypress opens
@@ -458,7 +462,6 @@ export default function ImageDetailPage() {
   // pane's VideoStrip. `paneCtx &&` is load-bearing: outside split-pane mode it
   // is null and an unconditional compare would kill the binding.
   useEffect(() => {
-    const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Delete") return;
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
@@ -470,7 +473,7 @@ export default function ImageDetailPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showDetectModal, showDeleteConfirm, formModalOpen, paneCtx, activePaneId]);
+  }, [anyModalOpen, paneCtx, activePaneId]);
 
   const { data: image, isLoading: imageLoading, isError: imageError } = useQuery({
     queryKey: ["image", imageId],

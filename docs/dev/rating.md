@@ -101,9 +101,14 @@ paths post a one-element id list.
 
 Keys `1`–`4` and `0` act on the current selection in the gallery and on the current image in
 `ImageDetailPage`. Both use the same guard shape — pane (`paneCtx.paneId !== activePaneId`),
-modal, and INPUT/TEXTAREA/SELECT/`isContentEditable`. The gallery asks the DOM for
-`[role="dialog"]` rather than enumerating state flags: `SelectionToolbar` opens modals the
-page never learns about, and `useModalBehavior` puts that role on every panel in the app.
+modal, and INPUT/TEXTAREA/SELECT/`isContentEditable`. The two answer the modal half
+differently. The gallery asks the DOM for `[role="dialog"]` rather than enumerating state
+flags: `SelectionToolbar` opens modals the page never learns about, and `useModalBehavior`
+puts that role on every panel in the app. `ImageDetailPage` cannot ask the DOM — its detect
+overlay is a bare `fixed inset-0` div carrying no dialog role — so it reads a single hoisted
+`anyModalOpen` covering every overlay the page renders, shared with the Delete-key effect
+below it. One set, because two hand-written lists in one file are what drifted apart and let
+`3` rate the image behind an open Run Detection.
 An empty selection produces a toast, never a silent no-op — the keys are invisible, so
 nothing happening reads as "broken" rather than "select something first".
 
@@ -151,7 +156,10 @@ version-vs-*current* comparison anywhere else. One join of the version's state r
 is unavailable on SQLite, and `0` is safe because it is outside the 1–4 domain. It returns
 `will_change`, `will_clear` (rated after the snapshot, so the restore clears them) and
 `extras_rated`, counted apart because under `handle_extra_images="remove"` those rows are
-**deleted**, not reverted.
+**deleted**, not reverted. All three count rows that exist *now* — the change/clear query
+inner-joins `images`, and the extras query counts live rows only — so a rated image deleted
+since the snapshot is re-created by the restore with its snapshotted rating and appears in
+none of the figures.
 
 `RestoreConfirmModal` renders the count beside the auto-snapshot checkbox, never in the
 amber box — that box is about files that are *unrecoverable*, whereas a reverted rating is

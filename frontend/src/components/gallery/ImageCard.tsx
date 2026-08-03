@@ -102,14 +102,14 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 
-  // Style-match meter. On by default, and the pref gates the *request* as well as
-  // the render — TanStack dedupes the per-card call down to one per dataset.
   // Rating badge. On by default — an unrated card renders nothing, so it costs
   // nothing on a dataset nobody has triaged, and there is no request behind it
   // to gate (the value ships in the list payload either way).
   const showRating = useUiPrefsStore((s) => s.galleryRatingBadge);
   const rating = showRating ? image.aesthetic_rating : null;
 
+  // Style-match meter. On by default, and the pref gates the *request* as well as
+  // the render — TanStack dedupes the per-card call down to one per dataset.
   const showStyleMeter = useUiPrefsStore((s) => s.galleryStyleMeter);
   const styleDist = useStyleDistribution(datasetId, showStyleMeter);
   const stylePct = showStyleMeter ? percentileOf(image.style_similarity_score, styleDist?.quantiles) : null;

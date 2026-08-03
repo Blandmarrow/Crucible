@@ -724,6 +724,10 @@ export default function GalleryPage() {
             : `Rated ${r.updated.toLocaleString()} image${r.updated !== 1 ? "s" : ""} ${ratingLabel(rating)}`
         );
         invalidateDatasetContentScope(qc, datasetId);
+        // Listed by hand, like the other two rating writers: `export-preview` is
+        // deliberately outside DATASET_CONTENT_SCOPE, and a rating filter in a
+        // split-pane Export preview otherwise shows counts from before this write.
+        qc.invalidateQueries({ queryKey: ["export-preview"] });
       })
       .catch((err) => toast.error(apiErrorDetail(err, "Could not set the rating")));
   }, [datasetId, qc, selectedIdsHere]);

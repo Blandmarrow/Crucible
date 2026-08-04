@@ -235,14 +235,16 @@ def test_dino_all_layers_records_its_mode(tmp_path):
 
             run_row = await _run_row(env, ds["id"])
             assert run_row.embedding_type == "dino_all_layers"
-            assert run_row.dino_layer is None
+            # The layer whose value is in `style_similarity_score` — the request
+            # carried no layer, but the run picked one and the descriptor says which.
+            assert run_row.dino_layer == DEFAULT_DINO_LAYER
             assert run_row.scored_count == 3
 
-            # The stored score is layer 12, and the per-layer breakdown is complete.
+            # The stored score is the default layer, and the breakdown is complete.
             async with env.Session() as db:
                 img = await db.get(Image, imgs[1]["id"])
                 assert sorted(img.dino_layer_scores, key=int) == [str(i) for i in range(1, 13)]
-                assert img.style_similarity_score == img.dino_layer_scores["12"]
+                assert img.style_similarity_score == img.dino_layer_scores[str(DEFAULT_DINO_LAYER)]
 
     run(scenario())
 

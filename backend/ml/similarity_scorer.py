@@ -18,14 +18,22 @@ import numpy as np
 # per-layer loop in `routers/quality.py`, which hoists the CLIP score out of the
 # layer loop for speed — so they are constants rather than literals and
 # `backend/tests/test_similarity_scorer.py` asserts the two agree.
-STYLE_CLIP_WEIGHT = 0.38
-STYLE_DINO_WEIGHT = 0.62
+#
+# 0.30/0.70 at layer 9, not the original 0.38/0.62 on the final embedding: a
+# twelve-configuration sweep across illustration, animation and photography
+# (`backend/scripts/style_gate_report.md`) put the final embedding last on every
+# model and every dataset tested, and moving the read to the middle of the stack
+# took mean AUC from 0.7166 to 0.9244 with no new model and no new column. A
+# score made at one blend is not comparable to one made at another, which is why
+# `StyleSimilarityRun` records the pair per run.
+STYLE_CLIP_WEIGHT = 0.30
+STYLE_DINO_WEIGHT = 0.70
 
 # The DINOv2 transformer layer the `*_all_layers` modes report as the headline
 # `style_similarity_score`, and the layer the frontend pickers default to.
 # `frontend/src/constants/styleModes.ts` carries the same number; the drift guard
 # in `backend/tests/test_similarity_scorer.py` asserts they agree.
-DEFAULT_DINO_LAYER = 12
+DEFAULT_DINO_LAYER = 9
 
 _LAYER_BLOB_SIZE = 12 * 768 * 2  # 12 layers × 768 dims × float16
 

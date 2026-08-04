@@ -140,7 +140,23 @@ def match_rows(rows: list[dict], entries: list[str], label: str) -> set[str]:
 
 
 # --------------------------------------------------------------------------- scoring
-def score_mode(mode: str, refs: list[dict], cands: list[dict], top: int = 20) -> dict:
+# The blend `style_gate_report.md`'s published tables were produced at. The app's
+# shipped weights have since moved to 0.30/0.70, and `compute_combined_similarity`
+# defaults to whatever is shipped — so calling it with no weights would silently
+# re-tune the gate and stop it reproducing its own report, which is the report's
+# whole trust argument. Overridable with --clip-weight/--dino-weight.
+GATE_CLIP_WEIGHT = 0.38
+GATE_DINO_WEIGHT = 0.62
+
+
+def score_mode(
+    mode: str,
+    refs: list[dict],
+    cands: list[dict],
+    top: int = 20,
+    clip_weight: float = GATE_CLIP_WEIGHT,
+    dino_weight: float = GATE_DINO_WEIGHT,
+) -> dict:
     """Rank ``cands`` for one mode. Returns the ranking plus its coverage and spread.
 
     Rows missing an embedding this mode needs are excluded and reported, never scored.
@@ -171,6 +187,8 @@ def score_mode(mode: str, refs: list[dict], cands: list[dict], top: int = 20) ->
             [c["clip_embedding"] for c in usable_cands],
             [r[dino_col] for r in usable_refs],
             [c[dino_col] for c in usable_cands],
+            clip_weight,
+            dino_weight,
         )
     else:
         col = cols[0]
@@ -647,7 +665,10 @@ def run(args) -> None:
             f"Unknown mode(s): {', '.join(unknown)}. Known: {', '.join(MODE_COLUMNS)}"
         )
 
-    results = [score_mode(m, refs, cands, args.top) for m in modes]
+    results = [
+        score_mode(m, refs, cands, args.top, args.clip_weight, args.dino_weight)
+        for m in modes
+    ]
     for res in results:
         if res["skipped"]:
             print(f"  {res['mode']}: skipped — {res['reason']}")
@@ -739,6 +760,11 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=20, help="rows shown in the top/bottom bands")
     ap.add_argument("--layers", action="store_true",
                     help="also sweep the 12 DINOv2 layers (imports torch)")
+    ap.add_argument("--clip-weight", type=float, default=GATE_CLIP_WEIGHT,
+                    help=f"combined-mode CLIP weight (default {GATE_CLIP_WEIGHT}, the "
+                         "blend style_gate_report.md's tables were produced at)")
+    ap.add_argument("--dino-weight", type=float, default=GATE_DINO_WEIGHT,
+                    help=f"combined-mode DINOv2 weight (default {GATE_DINO_WEIGHT})")
     ap.add_argument("--db", default=str(DEFAULT_DB), help="opened read-only; never written")
     default_out = os.path.join(
         os.environ.get("CLAUDE_SCRATCH", tempfile.gettempdir()), "style_gate.html"

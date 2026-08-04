@@ -16,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
-from backend.ml.similarity_scorer import STYLE_CLIP_WEIGHT, STYLE_DINO_WEIGHT
+from backend.ml.similarity_scorer import (
+    DEFAULT_DINO_LAYER,
+    STYLE_CLIP_WEIGHT,
+    STYLE_DINO_WEIGHT,
+)
 from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
 from backend.models.style_run import REFERENCE_IDS_STORED_MAX
 from backend.services import version_service
@@ -32,6 +36,13 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 # Per-layer DINOv2 blob layout: 12 transformer layers × 768 dims × float16.
 _DINO_LAYERS = 12
 _DINO_DIM = 768
+
+# The descriptor tail every style-similarity branch returns beside `updated` and
+# `skipped`, so `_record_style_run` reads what the run *did* rather than re-reading
+# `body` — the same argument as `aesthetic_marker` in `score_quality`. This is the
+# shape for a mode that neither blends nor names a numbered layer (`clip`, and
+# `dino` on the post-layernorm final embedding).
+_UNBLENDED_FINAL = {"dino_layer": None, "clip_weight": None, "dino_weight": None}
 
 # The six columns the technical block of the scoring loop writes, in one go.
 _TECHNICAL_SCORE_COLUMNS = frozenset({
@@ -124,8 +135,18 @@ class StyleSimilarityRequest(BaseModel):
     image_ids: list[str] | None = None  # scope scoring to these images only (None = whole dataset)
     reference_image_ids: list[str] = []
     reference_embeddings: list[str] = []  # base64-encoded float16 bytes (from embed-references)
-    embedding_type: str = "clip"  # "clip" | "dino" | "combined"
-    dino_layer: int | None = None  # 1–12; only when embedding_type == "dino"
+    # "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers".
+    embedding_type: str = "clip"
+    # 1–12, honoured by both `dino` and `combined`; ignored by the `*_all_layers`
+    # modes, which score every layer.
+    #
+    # **`None` is a sentinel, not "unspecified"**: it selects the post-layernorm
+    # `dino_embedding` column, which is a *different vector* from
+    # `dino_layer_embeddings`' layer 12 (`hidden_states[12]`, pre-layernorm).
+    # Defaulting this to `DEFAULT_DINO_LAYER` would silently repoint every existing
+    # API client — `backend/scripts/style_gate.py` among them — onto a column they
+    # never asked for. The picker default lives in the frontend, where it belongs.
+    dino_layer: int | None = None
 
 
 @router.post("/score")
@@ -436,6 +457,53 @@ async def aesthetic_coverage(
     }
 
 
+@router.get("/embedding-coverage/{dataset_id}")
+async def embedding_coverage(
+    dataset_id: str,
+    subfolder: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """How many images carry each embedding a style run needs, within the page's scope.
+
+    Style similarity is the one workflow whose prerequisite is another run: every
+    mode 400s when the column it reads is empty, and until now the only way to find
+    that out was to press the button. This is what lets the Score page say so
+    first — and disable *Score similarity* when the answer is zero, which is a
+    guaranteed 400.
+
+    A dedicated endpoint for the same reason as `aesthetic_coverage` above: it needs
+    the page's own subfolder scope and a refetch every time a scoring job finishes,
+    and pulling the whole `get_dataset_stats` aggregation onto the Score page for
+    three counts would be the expensive way round.
+
+    Explicitly **not** a field on `GET /style-similarity/{id}` — that endpoint is on
+    the gallery render path via `ImageCard`, and this is a Score-page question.
+
+    `func.count` over a `deferred=True` LargeBinary is a column expression evaluated
+    in SQLite; no blob is loaded, so counting `dino_layer_embeddings` does not read
+    18 KB per row.
+    """
+    scope = [Image.dataset_id == dataset_id]
+    if subfolder is not None:
+        scope.append(Image.subfolder == normalize_subfolder(subfolder))
+
+    total, clip, dino, dino_layers = (await db.execute(
+        select(
+            func.count(Image.id),
+            func.count(Image.clip_embedding),
+            func.count(Image.dino_embedding),
+            func.count(Image.dino_layer_embeddings),
+        ).where(*scope)
+    )).one()
+
+    return {
+        "total": total,
+        "clip": clip,
+        "dino": dino,
+        "dino_layers": dino_layers,
+    }
+
+
 @router.post("/embed-references")
 async def embed_references(files: list[UploadFile] = File(...)):
     """Compute CLIP embeddings for uploaded reference images.
@@ -474,12 +542,16 @@ async def _record_style_run(body: StyleSimilarityRequest, db: AsyncSession, resu
             run = StyleSimilarityRun(dataset_id=body.dataset_id)
             db.add(run)
         run.embedding_type = body.embedding_type
-        run.dino_layer = body.dino_layer
-        # NULL on a non-blending mode is the only correct value; `embedding_type`
-        # in the same row is what tells that apart from a pre-migration row.
-        blends = body.embedding_type in ("combined", "combined_all_layers")
-        run.clip_weight = STYLE_CLIP_WEIGHT if blends else None
-        run.dino_weight = STYLE_DINO_WEIGHT if blends else None
+        # From `result`, not from `body`. `dino_layer` here means "the layer whose
+        # value is in `style_similarity_score`", which for an `*_all_layers` run is
+        # `DEFAULT_DINO_LAYER` and not the `None` the request carried; reading the
+        # body would record a different fact from the one the run computed. Same
+        # argument as `aesthetic_marker` in `score_quality`. NULL weights on a
+        # non-blending mode are the correct value, and `embedding_type` in the same
+        # row is what tells that apart from a row predating the columns.
+        run.dino_layer = result.get("dino_layer")
+        run.clip_weight = result.get("clip_weight")
+        run.dino_weight = result.get("dino_weight")
         run.reference_image_ids = list(body.reference_image_ids[:REFERENCE_IDS_STORED_MAX])
         run.reference_count = len(body.reference_image_ids)
         run.external_reference_count = len(body.reference_embeddings)
@@ -583,7 +655,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
         await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
         await db.commit()
-        return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
+        return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows), **_UNBLENDED_FINAL}
 
     # --- DINOv2 branch ---
     if body.embedding_type == "dino":
@@ -609,7 +681,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
             await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
             await db.commit()
-            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
+            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows), **_UNBLENDED_FINAL}
         else:
             # Per-layer mode
             layer = body.dino_layer
@@ -639,7 +711,8 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
             await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
             await db.commit()
-            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
+            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows),
+                    "dino_layer": layer, "clip_weight": None, "dino_weight": None}
 
     # --- Combined branch ---
     if body.embedding_type in ("combined", "combined_all_layers"):
@@ -712,7 +785,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                     layer_scores: dict[str, float] = {
                         str(l + 1): blended_by_layer[l][n] for l in range(_DINO_LAYERS)
                     }
-                    results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
+                    results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores[str(DEFAULT_DINO_LAYER)]})
                 return results
 
             updated = await _score_all_layers_paginated(
@@ -722,7 +795,9 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             )
             if updated == 0:
                 raise HTTPException(status_code=400, detail="No dataset images have both CLIP and per-layer DINOv2 embeddings. Run per-layer embedding extraction first.")
-            return {"updated": updated, "skipped": total_images - updated}
+            return {"updated": updated, "skipped": total_images - updated,
+                    "dino_layer": DEFAULT_DINO_LAYER,
+                    "clip_weight": STYLE_CLIP_WEIGHT, "dino_weight": STYLE_DINO_WEIGHT}
 
         # Single layer or final layer combined score
         if use_layer_col:
@@ -766,7 +841,12 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         scores = await loop.run_in_executor(None, compute_combined_similarity, ref_clip, cand_clip, ref_dino, cand_dino)
         await db.execute(update(Image), [{"id": r[0], "style_similarity_score": s} for r, s in zip(cand_rows_full, scores)])
         await db.commit()
-        return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full)}
+        # `layer` is None when the run used `dino_embedding`, the post-layernorm
+        # final vector — which is not any of the twelve numbered layers, so None is
+        # the honest record rather than a missing one.
+        return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full),
+                "dino_layer": layer,
+                "clip_weight": STYLE_CLIP_WEIGHT, "dino_weight": STYLE_DINO_WEIGHT}
 
     # --- All DINOv2 layers branch ---
     if body.embedding_type == "dino_all_layers":
@@ -791,7 +871,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             results = []
             for n, img_id in enumerate(ids):
                 layer_scores = {str(l + 1): float(round(float(dino_by_layer[l][n]), 4)) for l in range(_DINO_LAYERS)}
-                results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
+                results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores[str(DEFAULT_DINO_LAYER)]})
             return results
 
         updated = await _score_all_layers_paginated(
@@ -801,9 +881,10 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         )
         if updated == 0:
             raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for dataset images. Run per-layer embedding extraction first.")
-        return {"updated": updated, "skipped": total_images - updated}
+        return {"updated": updated, "skipped": total_images - updated,
+                "dino_layer": DEFAULT_DINO_LAYER, "clip_weight": None, "dino_weight": None}
 
-    raise HTTPException(status_code=422, detail=f"Unknown embedding_type '{body.embedding_type}'. Use 'clip', 'dino', 'combined', or 'dino_all_layers'.")
+    raise HTTPException(status_code=422, detail=f"Unknown embedding_type '{body.embedding_type}'. Use 'clip', 'dino', 'combined', 'dino_all_layers', or 'combined_all_layers'.")
 
 
 @router.get("/style-similarity/{dataset_id}")

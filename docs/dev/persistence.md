@@ -60,7 +60,10 @@ because a hand-off needs two ends:
   entries long. `GalleryPage` owns both, but `ImageDetailPage` is the other end: it rewrites
   the `page`/`scrollTop` of the first and reads and rewrites the second. A registry row would
   be honest here; they are listed as exceptions rather than promoted because the shapes are
-  page-private and documented where they are used, in `docs/dev/image-detail.md`.
+  documented where they are used, in `docs/dev/image-detail.md`. `gallery-state-*` is still
+  page-private; `gallery-nav-*` no longer is — its shape, its read/write pair and the
+  `injectNavId`/`removeNavId` mutators live in `frontend/src/utils/galleryNav.ts`, because
+  three independent inline casts of it let the writer drop filters the reader needed.
 - `"caption-prompt-presets"` (`store/promptPresetsStore.ts`) — a *statically* named key that is
   nonetheless declared inline, because zustand's `persist` middleware takes its name in the
   store module. The registry cannot hold it without the store reaching back into

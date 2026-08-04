@@ -39,7 +39,7 @@ import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
-import { getGalleryPageSize } from "../constants/storage";
+import { injectNavId, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
@@ -145,29 +145,6 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
       )}
     </div>
   );
-}
-
-function mutateNavIds(datasetId: string, transform: (ids: string[]) => string[]) {
-  try {
-    const raw = sessionStorage.getItem(`gallery-nav-${datasetId}`);
-    if (!raw) return;
-    const ctx = JSON.parse(raw) as { ids: string[]; [k: string]: unknown };
-    sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify({ ...ctx, ids: transform(ctx.ids) }));
-  } catch { /* ignore */ }
-}
-
-function injectNavId(datasetId: string, afterId: string, newId: string) {
-  mutateNavIds(datasetId, (ids) => {
-    const next = [...ids];
-    const idx = ids.indexOf(afterId);
-    if (idx >= 0) next.splice(idx + 1, 0, newId);
-    else next.push(newId);
-    return next;
-  });
-}
-
-function removeNavId(datasetId: string, removedId: string) {
-  mutateNavIds(datasetId, (ids) => ids.filter(id => id !== removedId));
 }
 
 export default function ImageDetailPage() {
@@ -278,48 +255,58 @@ export default function ImageDetailPage() {
     return { words, tokens, tokenColor };
   }, [captionText, tokens]);
 
-  const pageSize = getGalleryPageSize();
-
   // Navigation context written by GalleryPage — re-read whenever imageId changes (we may have
   // updated sessionStorage just before navigating, so the fresh read gets the new page's data)
-  const navCtx = useMemo(() => {
-    if (!datasetId) return null;
-    try {
-      const raw = sessionStorage.getItem(`gallery-nav-${datasetId}`);
-      return raw
-        ? (JSON.parse(raw) as { ids: string[]; page: number; sort: string; order: string; captionedFilter: boolean | null })
-        : null;
-    } catch { return null; }
-  }, [datasetId, imageId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const navCtx = useMemo(
+    () => (datasetId ? readNavContext(datasetId) : null),
+    [datasetId, imageId] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const currentIndex = navCtx ? navCtx.ids.indexOf(imageId ?? "") : -1;
-  // "at end" means last slot of a full page — there may be a next page
-  const atEnd = !!navCtx && currentIndex === navCtx.ids.length - 1 && navCtx.ids.length === pageSize;
+  // "at end" means last slot of a full page — there may be a next page. The page
+  // size comes from the context, not from `getGalleryPageSize()`: the gallery
+  // captures it once at mount, so re-reading the setting here made the two
+  // disagree when it was changed mid-session.
+  //
+  // Strict equality, not `>=`: `injectNavId` grows `ids` to `limit + 1` after a
+  // crop/upscale/LUT, which disables Next until the user goes back to the gallery.
+  // That is deliberate — creating an image shifts server-side paging by one, so a
+  // relaxed test would land on a duplicate.
+  const atEnd = !!navCtx && currentIndex === navCtx.ids.length - 1 && navCtx.ids.length === navCtx.limit;
   const atStart = currentIndex === 0 && !!navCtx && navCtx.page > 1;
 
+  // Both boundary queries replay the grid's *whole* filter set, so ← / → cannot
+  // step out of the folder (or the search, quality, score, detection, license or
+  // frame-lineage filter) the gallery was showing. `dataset_id` sits after the
+  // spread: the URL's dataset always wins over a stale stored one.
+  //
+  // The keys carry `filters` and `limit` for the same reason. TanStack's `hashKey`
+  // sorts plain-object keys and drops `undefined` props — the same props axios
+  // omits from the query string — so the hash and the request agree by
+  // construction, and an object rebuilt by `JSON.parse` hashes like the memo did.
   const { data: nextPageData } = useQuery({
-    queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.sort, navCtx?.order, navCtx?.captionedFilter, "next"],
+    queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "next"],
     queryFn: () => imagesApi.list({
+      ...navCtx!.filters,
       dataset_id: datasetId!,
       page: navCtx!.page + 1,
-      limit: pageSize,
+      limit: navCtx!.limit,
       sort: navCtx!.sort,
       order: navCtx!.order,
-      captioned: navCtx?.captionedFilter ?? undefined,
     }),
     enabled: atEnd,
     staleTime: 60_000,
   });
 
   const { data: prevPageData } = useQuery({
-    queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.sort, navCtx?.order, navCtx?.captionedFilter, "prev"],
+    queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "prev"],
     queryFn: () => imagesApi.list({
+      ...navCtx!.filters,
       dataset_id: datasetId!,
       page: navCtx!.page - 1,
-      limit: pageSize,
+      limit: navCtx!.limit,
       sort: navCtx!.sort,
       order: navCtx!.order,
-      captioned: navCtx?.captionedFilter ?? undefined,
     }),
     enabled: atStart,
     staleTime: 60_000,
@@ -339,15 +326,19 @@ export default function ImageDetailPage() {
     // When crossing a page boundary, update the nav context so subsequent navigation
     // continues through the new page, and sync the gallery's saved page so Back lands correctly.
     if (navCtx && datasetId) {
-      let newCtx: typeof navCtx | null = null;
+      let newCtx: GalleryNavContext | null = null;
       if (atEnd && id === nextId && nextPageData?.length) {
         newCtx = { ...navCtx, ids: nextPageData.map((i) => i.id), page: navCtx.page + 1 };
       } else if (atStart && id === prevId && prevPageData?.length) {
         newCtx = { ...navCtx, ids: prevPageData.map((i) => i.id), page: navCtx.page - 1 };
       }
       if (newCtx) {
-        sessionStorage.setItem(`gallery-nav-${datasetId}`, JSON.stringify(newCtx));
-        // Also update gallery state so "Back" returns to the right page
+        writeNavContext(datasetId, newCtx);
+        // Also update gallery state so "Back" returns to the right page. That blob
+        // persists the subfolder, caption, quality, license and lineage filters but
+        // *not* `search`, `detectionLabel` or `scoreFilters`, so with one of those
+        // three active Back can land on page N of a wider list. Do not special-case
+        // it here — skipping the patch just swaps one wrong page for another.
         try {
           const raw = localStorage.getItem(`gallery-state-${datasetId}`);
           if (raw) {

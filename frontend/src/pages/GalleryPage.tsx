@@ -19,6 +19,7 @@ import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
 import { showImportSummaryToast } from "../utils/importToast";
+import { writeNavContext } from "../utils/galleryNav";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
@@ -596,7 +597,7 @@ export default function GalleryPage() {
     [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
   );
 
-  const { data: images = [], isLoading, refetch } = useQuery({
+  const { data: images = [], isLoading, isPlaceholderData, refetch } = useQuery({
     queryKey: imagesQueryKey,
     queryFn: () =>
       imagesApi.list({
@@ -753,14 +754,30 @@ export default function GalleryPage() {
     }
   }, [images, isLoading, saved]);
 
+  // What the detail view's ← / → step through. The whole `filterParams` memo goes
+  // in — the same object the grid queries with — so the boundary prefetch cannot
+  // ask for a page of a *different* result set (paging past the last image of a
+  // subfolder used to land in the middle of the whole dataset).
+  //
+  // `ids` and `filters` must be written as one pair. With `keepPreviousData` the
+  // old tiles stay on screen across a filter change while `images` keeps its
+  // previous identity, so without the bail this fires immediately with ids from
+  // filter set A and `filters` = B. Holding the old, self-consistent context until
+  // the new page lands is the correct behaviour: it still describes what is on
+  // screen.
   useEffect(() => {
+    if (isPlaceholderData) return;
     if (images.length > 0 && datasetId) {
-      sessionStorage.setItem(
-        `gallery-nav-${datasetId}`,
-        JSON.stringify({ ids: images.map((i) => i.id), page, sort: sortOpt.sort, order: sortOpt.order, captionedFilter: captionedFilter ?? null })
-      );
+      writeNavContext(datasetId, {
+        ids: images.map((i) => i.id),
+        page,
+        limit: pageSize,
+        sort: sortOpt.sort,
+        order: sortOpt.order,
+        filters: filterParams,
+      });
     }
-  }, [images, datasetId, page, sortOpt, captionedFilter]);
+  }, [images, isPlaceholderData, datasetId, page, pageSize, sortOpt, filterParams]);
 
   const reorderMutation = useMutation({
     mutationFn: (updates: { id: string; sort_order: number }[]) =>

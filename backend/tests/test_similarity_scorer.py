@@ -115,6 +115,27 @@ def test_slice_layer_embedding_rejects_an_out_of_range_layer(layer):
         slice_layer_embedding(_layer_emb(1), layer)
 
 
+def test_the_frontend_default_layer_agrees_with_the_backend():
+    """Cross-language drift guard.
+
+    `frontend/src/constants/styleModes.ts` carries its own `DEFAULT_DINO_LAYER` —
+    it has to, since the pickers cannot read Python — and nothing at runtime
+    couples the two. If they drift, the picker offers a layer whose value is not
+    the one the `*_all_layers` modes store as the headline, and the only symptom is
+    a number that quietly disagrees with itself. Precedent: `test_scores_stale.py`'s
+    AST guard and `test_video_lineage_mirrors.py`'s structural check.
+    """
+    import re
+    from pathlib import Path
+
+    ts = Path(__file__).resolve().parents[2] / "frontend/src/constants/styleModes.ts"
+    m = re.search(r"export const DEFAULT_DINO_LAYER\s*=\s*(\d+)", ts.read_text(encoding="utf-8"))
+    assert m, f"DEFAULT_DINO_LAYER not found in {ts} — was it renamed?"
+    assert int(m.group(1)) == DEFAULT_DINO_LAYER, (
+        f"{ts.name} says {m.group(1)}, similarity_scorer says {DEFAULT_DINO_LAYER}"
+    )
+
+
 def test_the_module_imports_no_torch():
     """The whole reason the slicer moved here. Structural, not a string search — the
     module docstring says "import torch" while explaining why it must not do it."""

@@ -19,7 +19,7 @@ import numpy as np
 # layer loop for speed — so they are constants rather than literals and
 # `backend/tests/test_similarity_scorer.py` asserts the two agree.
 #
-# 0.30/0.70 at layer 9, not the original 0.38/0.62 on the final embedding: a
+# 0.30/0.70, not the original 0.38/0.62 on the final embedding: a
 # twelve-configuration sweep across illustration, animation and photography
 # (`backend/scripts/style_gate_report.md`) put the final embedding last on every
 # model and every dataset tested, and moving the read to the middle of the stack
@@ -33,7 +33,16 @@ STYLE_DINO_WEIGHT = 0.70
 # `style_similarity_score`, and the layer the frontend pickers default to.
 # `frontend/src/constants/styleModes.ts` carries the same number; the drift guard
 # in `backend/tests/test_similarity_scorer.py` asserts they agree.
-DEFAULT_DINO_LAYER = 9
+#
+# 7 and not 9 since 2026-08-04b. Every sweep before that scored *separability*
+# with subject free to vary, so a layer could win by matching content rather than
+# look; two crossed runs that hold one of the two fixed put the style-over-subject
+# crossover at about layer 7, with layer 9 responding more to what is depicted
+# than to how it is drawn. It costs nothing where it can be checked against a
+# published number — 0.9442 against layer 9's 0.9428 on the gate's own
+# configuration. See `docs/dev/style-similarity.md` § Which layer, and why it moved
+# twice.
+DEFAULT_DINO_LAYER = 7
 
 _LAYER_BLOB_SIZE = 12 * 768 * 2  # 12 layers × 768 dims × float16
 

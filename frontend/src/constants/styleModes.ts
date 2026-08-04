@@ -45,7 +45,7 @@ export const STYLE_MODES: StyleModeDef[] = [
   {
     value: "combined",
     label: "CLIP + DINOv2",
-    desc: "0.30 × CLIP + 0.70 × DINOv2, on layer 9 by default. The most reliable of the three across varied references — CLIP and DINOv2 are the pair that genuinely disagree, so blending them is worth more than either alone.",
+    desc: "0.30 × CLIP + 0.70 × DINOv2, on layer 7 by default. The most reliable of the three across varied references — CLIP and DINOv2 are the pair that genuinely disagree, so blending them is worth more than either alone.",
   },
 ];
 
@@ -63,10 +63,17 @@ export const STYLE_MODE_NOTE =
  *  thresholds perfectly well — the two are separate properties that happened to
  *  coincide on one dataset. A sweep across twelve reference configurations found
  *  the *middle* of the stack separates best and the last layer worst, on every
- *  model and every dataset tested. Steering users away from layer 9 would be
- *  steering them away from the default. */
+ *  model and every dataset tested. Steering users away from the middle band would
+ *  be steering them away from the default.
+ *
+ *  The second sentence is the 2026-08-04b addition and it is the one users act on:
+ *  the deeper a layer sits, the more it ranks on *what is depicted* rather than on
+ *  how it is drawn, so a user hunting a look wants the low end of the band and one
+ *  hunting more of the same scene wants the high end. That is a measured tradeoff
+ *  (`docs/dev/style-similarity.md` § Which layer, and why it moved twice), not the
+ *  per-layer semantics `DINO_LAYER_LABELS` still asserts. */
 export const DINO_LAYER_NOTE =
-  "Each transformer block captures increasingly abstract features. The middle of the stack separates styles best — layer 9 is the default and the last layer is measurably the weakest, so raw score range is a poor guide to which layer to use. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
+  "Each transformer block captures increasingly abstract features. The middle of the stack separates styles best — layer 7 is the default and the last layer is measurably the weakest, so raw score range is a poor guide to which layer to use. Deeper layers lean further toward subject and framing over how an image is drawn: try 5–6 to weight the look more heavily, 9–10 to find more of the same scene. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
 
 /** How a stored `embedding_type` reads on screen.
  *
@@ -88,7 +95,7 @@ export function styleModeLabel(mode: string): string {
  *  runtime couples them, so `backend/tests/test_similarity_scorer.py` reads this
  *  file and asserts the two agree — the same shape of guard as
  *  `test_scores_stale.py`'s AST check. */
-export const DEFAULT_DINO_LAYER = 9;
+export const DEFAULT_DINO_LAYER = 7;
 
 /** What the layer dropdown can hold.
  *

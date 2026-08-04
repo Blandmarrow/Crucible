@@ -106,6 +106,11 @@ export default function StyleMatchPanel({ score, stale, distribution, datasetId,
           <>
             {styleModeLabel(run.embedding_type)}
             {run.dino_layer != null && ` · layer ${run.dino_layer}`}
+            {/* Only a blending mode records weights, and only since they became a
+                column — so a null pair is either "does not blend" or "older run",
+                and in both cases there is nothing truthful to print. */}
+            {run.clip_weight != null && run.dino_weight != null &&
+              ` · ${Math.round(run.clip_weight * 100)}/${Math.round(run.dino_weight * 100)} CLIP/DINOv2`}
             {` · ${totalRefs} reference${totalRefs === 1 ? "" : "s"}`}
             {run.updated_at && ` · scored ${formatTimeAgo(run.updated_at)}`}
           </>

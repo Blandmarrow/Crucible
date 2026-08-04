@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -36,7 +36,9 @@ class StyleSimilarityRun(Base):
     `backend/tests/test_video_lineage_mirrors.py` derives its universe from
     `Image.__table__.columns`. A run descriptor is dataset-level state about how a
     column was last computed, not per-image authored data, and a snapshot restore
-    neither reads nor writes it.
+    neither reads nor writes it. That holds for columns added here later — the
+    blend weights below — for the same reason, so a new field on this table needs
+    no `VersionImageState` mirror and no `NOT_MIRRORED` entry.
     """
 
     __tablename__ = "style_similarity_runs"
@@ -55,6 +57,18 @@ class StyleSimilarityRun(Base):
     # migration here to be describable.
     embedding_type: Mapped[str] = mapped_column(String(32), nullable=False)
     dino_layer: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # The blend a `combined` / `combined_all_layers` run used. NULL carries two
+    # meanings — "this row predates the columns" and "this mode does not blend" —
+    # and that is safe rather than sloppy because `embedding_type` sits in the same
+    # row and tells them apart: NULL on a `clip`/`dino`/`dino_all_layers` row is the
+    # only correct value, while NULL on a `combined` row means a run older than
+    # migration c2b8e4f6a1d7. Recorded per run rather than read from
+    # `similarity_scorer`'s constants at display time, because the constants moved
+    # once (0.38/0.62 → 0.30/0.70) and will move again; a score is only comparable
+    # to another score made at the same weights.
+    clip_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dino_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Up to REFERENCE_IDS_STORED_MAX ids, deliberately *not* kept in sync with
     # `images`: a reference deleted after the run is still the truth about what the

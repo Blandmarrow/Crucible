@@ -95,6 +95,9 @@ candidates from out-of-style controls, with subject and framing free to vary how
 happen to. A layer can win that on content alone, because references and positives usually
 share subject matter as well as a look. Two **crossed** runs hold one of the two fixed:
 
+Both are `backend/scripts/style_crossed_probe.py`, the offline companion to
+`style_gate.py`, and both read the DB read-only:
+
 - **Synthetically crossed**: 30 base pictures × 7 restyles (grayscale, warm grade, contrast
   punch, and the three that change the rendering itself — posterised, painterly smear,
   pencil sketch) × 3 framings, asking whether a layer ranks *different picture, same

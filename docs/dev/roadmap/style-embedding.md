@@ -293,7 +293,8 @@ That is the § What is not established bullet on the crossed set, and it applied
 number in this file — including the ones that picked the default.
 
 Two runs, each holding one of style/subject fixed while varying the other. They disagree
-about nothing.
+about nothing. Both are `backend/scripts/style_crossed_probe.py` — see § State of the
+tooling for what re-running does and does not reproduce.
 
 ### Run A — synthetic crossing
 
@@ -608,11 +609,19 @@ Both harness scripts are **uncommitted working-tree changes** as of 2026-08-04:
   Those metrics were previously computed by hand from the JSON sidecar, which is why the
   report's headline table could not be regenerated for a new mode.
 
-The crossed-run harness (2026-08-04b) is **not committed anywhere** — it lived in a session
-scratchpad and is gone. It was four short scripts and is cheap to rebuild from § The crossed
-runs, which states every parameter: the restyle and reframe definitions, the four pair
-classes, the four pools, and the CLIP zero-shot bin prompts. Both runs call
-`dino_embed_offline.extract` / `extract_clip` for embeddings, so the only original code is
-variant generation with Pillow and a rank-based AUC over pair masks. If the ComfyUI crossed
-set gets built, that harness is what scores it and it should land in `backend/scripts/`
-rather than a scratchpad the second time.
+`backend/scripts/style_crossed_probe.py` is the crossed-run harness, committed with the
+layer-7 change. Four subcommands — `synthetic`, `pools`, `combos`, `refs` — one per run in
+this section, with the exact invocations in its module docstring. Extraction goes through
+`dino_embed_offline.extract`/`extract_clip`, so it inherits the app-faithful preprocessing
+and the read-only DB guard; `combos` and `refs` read the `.npz` caches the first two write
+and are numpy-only, so the analysis re-runs where there is no torch.
+`backend/tests/test_style_crossed_probe.py` pins the tie handling in `auc`, the spread
+sampler and the geometry-preserving restyles — the three things that would corrupt a run
+rather than fail it.
+
+**Re-running will not reproduce the tables above to three decimals.** The committed sampler
+takes an even spread through each dataset, while the original run picked three images per
+`test5` creator by hand, so the base sets differ; and `pools` reports its subject-controlled
+column pooled over *all* bins where § Run B quotes the faces bin alone. Every figure lands
+within about 0.02 and every direction and ordering holds — checked at the point of
+committing. Quote the script's own output, not this file, when a number has to be exact.

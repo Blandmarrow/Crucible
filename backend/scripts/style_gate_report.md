@@ -27,7 +27,15 @@ testing.
   proposes — stack references → mean → L2-renormalise → cosine — so the harness calls that
   function and `compute_combined_similarity` directly rather than a lookalike. The 0.38/0.62
   blend and the 4-decimal rounding come along with them. A verdict here is therefore a
-  verdict about production code.
+  verdict about production code. **As of 2026-08-04 the app no longer ships 0.38/0.62** — a
+  wider sweep moved `combined` to 0.30/0.70 read from layer 9 (see
+  `docs/dev/style-similarity.md` § What the modes are actually worth), and
+  `compute_combined_similarity` defaults to whatever is shipped. `style_gate.py` therefore
+  passes the weights explicitly, from its own `GATE_CLIP_WEIGHT`/`GATE_DINO_WEIGHT`
+  (overridable with `--clip-weight`/`--dino-weight`), so re-running it still reproduces the
+  tables below rather than silently re-tuning them. Everything here remains correct **for
+  the configuration it was measured in**; that configuration was one reference cluster, and
+  the sweep above shows how much rests on that.
 - **The real `dataset_manager.db` is opened read-only and never written.** stdlib `sqlite3`
   over a `file:…?mode=ro` URI, no SQLAlchemy session and no engine — there is no write path
   to get wrong. `style_similarity_score` is untouched by design, which is the point of doing

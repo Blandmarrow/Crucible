@@ -8,8 +8,8 @@ Because it compares embeddings that already exist, it is CPU-only and runs immed
 
 ## Running a style run
 
-- **Embedding model** — see the mode table below. **Start with CLIP**: measured against a deliberately out-of-style control set, it separated in-style from out-of-style images best of the three and matched the *look* — lighting and palette — most closely, while DINOv2 leaned toward subject and framing. All three require the matching embeddings to have been computed first, by a [scoring run](scoring.md#running-a-scoring-run) with the relevant boxes ticked.
-- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. Layer 12 uses the standard embedding; the rest require per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view. Layers 1–8 pack every image into 0.90–0.99, so there is no cut point in them however sensible the ordering — usable spread only appears at layers 10–12.
+- **Embedding model** — see the mode table below. **Start with CLIP + DINOv2**, the default: it is the steadiest of the three across different reference sets, and the two models are the only pair that genuinely disagree, so blending them is worth more than either alone. All three require the matching embeddings to have been computed first, by a [scoring run](scoring.md#running-a-scoring-run) with the relevant boxes ticked — the panel tells you when they are missing, and refuses to run rather than failing.
+- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. **Layer 9 is the default**, because the middle of the stack separates styles best and the last layer is measurably the weakest — do not read a layer's raw score range as a guide to its usefulness. *Final embedding* is a separate option from *Layer 12*: it uses the standard `dino_embedding`, which is a different vector from layer 12 and scores differently. Every numbered layer, and *All layers*, need per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view.
 - **Reference images** — pick them from the dataset, or drag in local files from outside it. Local files are always embedded with CLIP, so choosing them restricts the run to the CLIP model.
 - **Copy reference IDs** — beside *Score similarity*, copies the selected dataset references' image IDs to the clipboard as a comma-separated list, for pasting into a script or an API call. Dragged-in local files have no ID and are not included.
 
@@ -19,14 +19,14 @@ Scoring writes a `style_similarity_score` per image, which the gallery and Stati
 
 | Mode | Description |
 |---|---|
-| `clip` | Cosine similarity of CLIP ViT-L-14 embeddings. Separates in-style from out-of-style best of the three, and matches lighting and palette |
-| `dino` | Cosine similarity of DINOv2 final-layer (or any of 12 layers) embeddings. Spends a wider numeric range but separates less well, and drifts toward subject and framing |
-| `combined` | Weighted blend: 38% CLIP + 62% DINOv2. Tracks `dino` closely rather than giving a genuinely third opinion |
+| `clip` | Cosine similarity of CLIP ViT-L-14 embeddings. Matches on lighting and palette. Strong on some reference sets and weak on others, more so than the DINOv2 modes |
+| `dino` | Cosine similarity of DINOv2 embeddings, from a chosen layer. Spends a wider numeric range, leans toward subject and framing, and is steadier than CLIP across reference sets |
+| `combined` | Weighted blend: 30% CLIP + 70% DINOv2, layer 9 by default. The most reliable of the three across varied references |
 | `dino_all_layers` / `combined_all_layers` | Score each of the 12 DINOv2 layers independently and store all results |
 
 ## Reading the score
 
-**The raw score is a cosine, and its scale depends entirely on which mode produced it.** On the same set of images, CLIP scores span roughly 0.53–0.93 while DINOv2 spans 0.05–0.70, and a per-layer run below layer 10 compresses everything into 0.90–0.99. A bare "0.62" therefore means something different in each mode, and a fixed good/bad threshold would mean five different things at once.
+**The raw score is a cosine, and its scale depends entirely on what produced it.** On the same set of images, CLIP scores span roughly 0.53–0.93 while DINOv2 spans 0.05–0.70, a low-layer run compresses everything into a few hundredths, and the same mode at a different blend weight is a different scale again. A bare "0.62" therefore means something different in each case, and a fixed good/bad threshold would mean several things at once.
 
 So Crucible reports a **percentile** instead — where an image falls among that dataset's own style scores. That is comparable no matter which mode ran, and it is what the meters below show:
 
@@ -36,8 +36,28 @@ So Crucible reports a **percentile** instead — where an image falls among that
 Two caveats the page states rather than hides:
 
 - **A run scored from a selection can leave older scores in place.** The rest of the dataset keeps its scores from an earlier run, so the percentile mixes two runs. The Style match block says so in amber — but only when scores from an earlier run really do survive, not merely because the run started from a selection. Selecting everything in the gallery and scoring it covers the whole dataset, and gets no note.
-- **A dataset scored before Crucible recorded run details, or duplicated from another dataset, has no run to report.** The meter and the raw score still work — the percentile comes from the dataset's own scores either way — but the block says the mode and references are unknown.
+- **A dataset scored before Crucible recorded run details, or duplicated from another dataset, has no run to report.** The meter and the raw score still work — the percentile comes from the dataset's own scores either way — but the block says the mode and references are unknown. The same applies to the blend weights on a run scored before Crucible started recording them.
 
 A dataset with only one scored image, or with every score identical, gets no meter: there is nothing to rank against, so only the raw number is shown.
+
+## How good is it, really?
+
+Honest numbers, because the scale of the score does not carry them. Measured as "do the
+in-style images outrank the out-of-style ones", across twelve reference sets spanning
+illustration, animation and photography:
+
+- **Sorting one medium from another** — anime screencaps from painted illustration, say — is
+  the easy case, and the default gets it nearly always right.
+- **Matching a style *within* one medium** — telling six photographers' looks apart — is much
+  harder, and the default gets it right roughly six times in seven. Treat the ranking as a
+  strong hint to review, not a verdict.
+- **No single mode is best.** CLIP was the clear winner against one reference set and the
+  clear loser against a different set drawn from *the same images*. That is why the mode
+  descriptions in the app say what each model pays attention to rather than quoting a score.
+
+Layer 9 and the 30/70 blend replaced an older default on 2026-08-04, and scores written
+before then are not comparable with scores written after. The **Style match** block on the
+image detail page names the mode, the layer and the weights for exactly this reason; a
+dataset scored under the old default is worth re-running.
 
 Style similarity sits outside the [stale-score](scoring.md#stale-scores) machinery in one direction: it is neither refreshed by a re-scoring run nor blocking one.

@@ -182,6 +182,33 @@ staleness sweep while still recording the seam.
   mirror-the-user-doc naming convention gives no name for free — image-processing-models.md
   is a proposal, not a constraint.
 
+## docs/dev/style-similarity.md
+
+- **Moves:** § Making the score readable — the run descriptor and the percentile (804 words)
+  and everything under it — § `GET /quality/style-similarity/{dataset_id}` (366), § The
+  client-side percentile contract (170), § The rendered surfaces (297),
+  § `DinoLayerBreakdown` (165), § Invalidation (88)
+- **New file:** docs/dev/style-reading.md (mirrors docs/style-similarity.md § Reading the
+  score, whose heading is already the same line)
+- **Why here:** this is the second seam the file's own C1 entry predicted, and it held —
+  the § Making the score readable heading *is* the line. Above it the file is about
+  **producing** a number: the five modes, what each is measurably worth, the blend and where
+  it lives, the layer picker, the coverage prerequisite. Below it the file is about
+  **reading** one: the descriptor row, the quantile endpoint, `percentileOf`'s degenerate
+  cases, the three meters. A reader arrives for exactly one — changing the meter never needs
+  the AUC campaign, and retuning the blend never needs the clamp contract. The seam leaves
+  ~2,100 producing and ~1,890 reading, both at or under the ~2,100 target, which is unusually
+  clean. § The shared mode copy (83) stays with the producing half — it is the picker's copy,
+  not a rendered score.
+- **Watch for:** § Making the score readable opens with "The gate above is also the argument
+  for everything in this section", a `§`-level back-reference to the measurement campaign
+  that becomes cross-file. `docs/dev/gallery.md` and `docs/dev/image-detail.md` both cite
+  § Making the score readable by name and would need repointing; `docs/dev/statistics.md`
+  (the `"style"` cache slot) and `docs/dev/scores-stale.md` cite the file generally and stay.
+  § The layer picker has three values, not two and § `DinoLayerBreakdown` are two halves of
+  one story about layer 12 and end up on opposite sides — leave an explicit pointer between
+  them. CLAUDE.md's Map row becomes two.
+
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)

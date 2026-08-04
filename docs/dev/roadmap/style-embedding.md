@@ -284,14 +284,12 @@ dataset-class-specific and the default should not move.
 
 ## Proposed stages
 
-Deliberately ordered so the cheapest, least committal win comes first.
-
-### Stage 1 — change the layer and the weight, no new model
-
-`combined` already accepts a `dino_layer`, so 30% CLIP + 70% DINOv2 layer 9 is reachable
-today and worth **0.7166 → 0.9244**. It needs no gated model, no new column and no
-migration: a default layer, and `compute_combined_similarity`'s weights. This is most of the
-available win at none of the cost, and it is independently useful if DINOv3 is never adopted.
+Deliberately ordered so the cheapest, least committal win comes first. **Stages 1 and 2a
+shipped together on 2026-08-04 and are deleted from here per this file's lifecycle** —
+`combined` is now 30% CLIP + 70% DINOv2 on layer 9, both `*_all_layers` modes read
+`DEFAULT_DINO_LAYER`, and no mode description quotes an AUC. Their durable rationale is in
+`docs/dev/style-similarity.md` and, for users, `docs/style-similarity.md`. They shipped
+together because a default the UI argued against would have been worse than either alone.
 
 ### Stage 2 — DINOv3 as a second embedding source
 
@@ -301,14 +299,6 @@ which is exactly why this needs a discriminator — see the trap below.
 
 Worth **0.7904 → 0.9065** pooled, but the honest split is 0.96 on cross-medium sorting and
 0.85 on within-medium style matching. Ship the copy against the second number.
-
-### Stage 2a — say what the score means
-
-Not a model change, and arguably ahead of Stage 2 in value per hour. `STYLE_MODES`
-currently tells the user CLIP "separates best of the three (AUC 0.97)". That figure came
-from one reference set on one dataset; the same mode scores 0.6144 on a second reference set
-of the *same* images and 0.7399 on photographs. Whatever ships, the descriptions need to
-stop quoting a single number as a property of the mode.
 
 ### Stage 3 — dense features
 
@@ -324,13 +314,12 @@ the above measures it.
   cosine-compared — unrelated embedding spaces — producing meaningless rankings with no
   error and no visibly wrong number. `StyleSimilarityRun` records the mode and the layer but
   **not the model**. A discriminator on the embedding columns is load-bearing, not a nicety.
-- **`dino_embedding` is not layer 12.** The stored final embedding is taken after the
-  model's final normalisation; `dino_layer_embeddings`'s layer 12 is taken before it. They
-  score differently — 0.9417 versus 0.9611 on one configuration — so they are not
-  interchangeable even though both are "the end of the model".
-- **`dino_all_layers` writes layer 12's value** as the headline `style_similarity_score`.
-  That default is wrong for either model and would be actively misleading for DINOv3, whose
-  layer 12 is its weakest.
+- ~~**`dino_embedding` is not layer 12.**~~ **Closed 2026-08-04.** The layer picker is
+  three-valued now (`number | "final" | "all"`), so the two are separately selectable rather
+  than one being folded into the other; `docs/dev/style-similarity.md` carries the fact.
+- ~~**`dino_all_layers` writes layer 12's value**~~ **Closed 2026-08-04** — both all-layers
+  modes write `DEFAULT_DINO_LAYER`'s. Still worth re-checking when a second model lands:
+  the constant is DINOv2's best band, and DINOv3's optimum sits elsewhere.
 - **Licensing and gating are unchanged.** All `facebook/dinov3-*` repos are `gated: manual`
   under a custom DINOv3 Licence, not Apache-2.0, and a fine-grained token additionally needs
   gated-repo read scope or the fetch 403s. `transformers>=4.56` is required; the floor in
@@ -340,13 +329,19 @@ the above measures it.
 
 ## Touchpoints when a stage lands
 
-`model_name` in `backend/ml/model_manager.py`; `_LAYER_BLOB_SIZE` and
-`slice_layer_embedding` in `backend/ml/dino_scorer.py`; the weights in
-`backend/ml/similarity_scorer.py::compute_combined_similarity`; the layer table and findings
-in `docs/dev/style-similarity.md`; the scorer row in `docs/dev/scoring.md`; `STYLE_MODES`,
-`STYLE_MODE_NOTE` and `DINO_LAYER_NOTE` in `frontend/src/constants/styleModes.ts` (all three
-carry claims this file revises); the per-layer picker in `QualityPage`; and
+`model_name` in `backend/ml/model_manager.py`; `_LAYER_BLOB_SIZE`, `slice_layer_embedding`
+and the three constants (`STYLE_CLIP_WEIGHT`, `STYLE_DINO_WEIGHT`, `DEFAULT_DINO_LAYER`) in
+`backend/ml/similarity_scorer.py` — they moved there out of `dino_scorer` so the router's
+combined branch stays torch-free; the layer table and findings in
+`docs/dev/style-similarity.md`; the scorer row in `docs/dev/scoring.md`; `STYLE_MODES`,
+`STYLE_MODE_NOTE`, `DINO_LAYER_NOTE` and the frontend's own `DEFAULT_DINO_LAYER` in
+`frontend/src/constants/styleModes.ts` (a backend test asserts the last agrees with
+Python's); the per-layer picker in `QualityPage` and `SelectionToolbar`; and
 `frontend/e2e/quality.spec.ts`.
+
+A **model** discriminator is the one descriptor field `StyleSimilarityRun` still lacks —
+`clip_weight`/`dino_weight` landed with Stage 1, so the pattern and the migration shape are
+now established.
 
 ## State of the tooling
 

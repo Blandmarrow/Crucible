@@ -7,12 +7,29 @@ This file covers scoring an image against a set of *reference* images — the CL
 | `embedding_type` | `dino_layer` | Column(s) written | Description |
 |---|---|---|---|
 | `"clip"` | — | `style_similarity_score` | Cosine similarity of CLIP embeddings |
-| `"dino"` | `null` | `style_similarity_score` | Cosine similarity of DINOv2 final-layer embeddings |
+| `"dino"` | `null` | `style_similarity_score` | Cosine similarity of the post-layernorm `dino_embedding` |
 | `"dino"` | 1–12 | `style_similarity_score` | Cosine similarity using a specific DINOv2 transformer layer (from `dino_layer_embeddings`) |
-| `"combined"` | `null` | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_sim` (final layer) |
-| `"combined"` | 1–12 | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_layer_sim` (specific layer) |
-| `"dino_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Scores each of the 12 DINOv2 layers independently; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
-| `"combined_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Blended score (0.38 CLIP + 0.62 DINOv2) for each of the 12 layers; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
+| `"combined"` | `null` | `style_similarity_score` | `0.30 × clip_sim + 0.70 × dino_sim` (post-layernorm embedding) |
+| `"combined"` | 1–12 | `style_similarity_score` | `0.30 × clip_sim + 0.70 × dino_layer_sim` (specific layer) |
+| `"dino_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Scores each of the 12 DINOv2 layers independently; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to `DEFAULT_DINO_LAYER`'s value |
+| `"combined_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Blended score (0.30 CLIP + 0.70 DINOv2) for each of the 12 layers; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to `DEFAULT_DINO_LAYER`'s value |
+
+**`dino_layer: null` is a sentinel, not "unspecified".** It selects the `dino_embedding`
+column — DINOv2's **post**-layernorm CLS token — while `dino_layer_embeddings`' layer 12 is
+`hidden_states[12]`, **pre**-layernorm. They are different vectors and they score
+differently (0.9417 vs 0.9611 on one sweep). `StyleSimilarityRequest.dino_layer` therefore
+keeps its `None` pydantic default however the picker's default moves: defaulting it to
+`DEFAULT_DINO_LAYER` would silently repoint every existing API client, `style_gate.py`
+among them, onto a column it never asked for. The picker's default lives in the frontend.
+
+**The three numbers that decide what a run means** — the layer, and the two blend weights —
+live in `backend/ml/similarity_scorer.py` as `DEFAULT_DINO_LAYER`, `STYLE_CLIP_WEIGHT` and
+`STYLE_DINO_WEIGHT`, and are the single source for both implementations of the blend (see
+§ Where the blend lives). `frontend/src/constants/styleModes.ts` carries its own copy of the
+layer — it must, since a picker cannot read Python — and
+`backend/tests/test_similarity_scorer.py` reads that file and asserts the two agree, because
+nothing at runtime couples them and a drift's only symptom is a number quietly disagreeing
+with itself.
 
 Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request. `StyleSimilarityRequest` accepts an optional `image_ids: list[str] | None` field; when set, only those images are scored (candidate queries in all embedding-type branches are filtered accordingly). `QualityPage` omits `image_ids` (scores the whole dataset); `SelectionToolbar` passes the current selection.
 
@@ -20,13 +37,67 @@ Local reference files can be embedded on-the-fly via `POST /quality/embed-refere
 
 ## What the modes are actually worth
 
-Measured on 2026-08-02 by `backend/scripts/style_gate.py` (a read-only offline harness that calls these same production functions), against 98 frames of one animated film scored from eight references of one lighting cluster, with **20 out-of-style controls** — bright painted illustrations — mixed in. Full method, tables and verdict in `backend/scripts/style_gate_report.md`. This was Phase 0 of the aesthetic-rating roadmap, and its conclusion is that **the centroid baseline is good enough that style matching does not need a learned head**: AUC 0.94–0.97 separating frames from controls, no control in any mode's top 20.
+Two measurement campaigns, and the second revised the first. `backend/scripts/style_gate.py`
+is a read-only offline harness that calls these same production functions; its report
+(`backend/scripts/style_gate_report.md`) is the 2026-08-02 run, against 98 frames of one
+animated film scored from eight references of one lighting cluster with 20 out-of-style
+controls mixed in. Its conclusion stands and is the reason no learned head is planned for
+style: **the centroid baseline separates well enough** (AUC 0.94–0.97, no control in any
+mode's top 20).
 
-Three things that change what to recommend, none of them visible from the code:
+What did not stand is anything read off that *single reference configuration*. A 2026-08-04
+sweep of twelve configurations across illustration, animation and photography rewrote three
+of its recommendations, and the shape of the correction is worth more than any of the
+numbers:
 
-- **CLIP is the best mode for style matching, and range is a misleading proxy for that.** CLIP's scores occupy a narrow band (0.53–0.93 vs DINOv2's 0.05–0.70) yet it separates best — AUC 0.9733 vs 0.9417, its worst control ranked 75th of 110, and only 15 of 90 frames scored below its best-scoring control against DINOv2's 46. DINOv2 drifts toward *subject and framing*: its top band filled with close-ups of one character that share the reference shots' composition but none of their palette. Both are defensible readings of "style"; the picker's copy should not imply DINOv2 is the more advanced choice.
-- **`combined` is not an independent third opinion.** Spearman ρ 0.9844 against `dino`, sharing 18 of 20 top images — it is DINOv2 with a slight CLIP tilt. CLIP vs DINOv2 (ρ 0.7525) is the only real disagreement, so anything wanting an A/B across "the three modes" is really testing two.
-- **Per-layer scoring below layer ~10 cannot be thresholded.** Every candidate scored 0.90–0.99 on layers 1–8: some ordering survives there (AUC 0.68 at layer 1 rising to ~0.94 by layers 5–9, none beating layer 12's 0.961) but it is compressed into a few hundredths, most of which the 4-decimal rounding spends on the constant part. Usable spread appears only at layers 10–12 (range 0.25 → 0.65). The `DINO_LAYER_LABELS` picker offers all twelve as equals; for filtering they are not.
+- **The last layer is the weakest layer.** DINOv2's post-layernorm `dino_embedding` — what
+  the app scored on until 2026-08-04 — averaged **0.7166** mean AUC over six configurations
+  and fell to **0.4066**, worse than a coin flip, on one of them. Reading layer 9 instead
+  takes the same model to 0.8645, and `combined` at 0.30/0.70 on layer 9 to **0.9244** from
+  the old blend's 0.8246. Layer 12 being worst replicated on every model and every dataset
+  tested, including photographs, and is the most robust result of the campaign. The robust
+  unit is the *band*, roughly layers 5–11, not any single index.
+- **No single AUC is a property of a mode.** CLIP scored 0.9733 on the gate's reference
+  cluster and **0.6144** on an opposing cluster drawn from *the same 118 images*, and 0.7399
+  on photographs. That is why `styleModes.ts` no longer quotes a figure in any mode
+  description — the rule is stated in that file's module doc, because the copy had already
+  been taken back twice.
+- **"Layers 1–8 cannot be thresholded" was the wrong conclusion from a real observation.**
+  The compression is real (every image lands in 0.90–0.99 on DINOv2's low layers) but it
+  does not follow that the band is unusable: a narrow range with clean ordering thresholds
+  fine, and a mid-layer configuration with a range of 0.129 reached 0.9909 best-threshold
+  accuracy. Range and separability are separate properties that coincided on one dataset.
+- **`combined` is worth more than either half, and is not just DINOv2 with a tilt.** The
+  gate's ρ 0.9844 against `dino` was measured at the old weights on the final embedding.
+  CLIP and the DINO family remain the only pair that genuinely disagree (ρ 0.7525), and at a
+  mid layer the blend beats both components alone.
+
+**What to promise.** ~0.98 AUC is the ceiling for sorting *across* media — anime screencaps
+from painterly illustration — and **~0.85 is the realistic figure for style matching inside
+one medium**. The photograph test (six photographers, style label = the photographer) was
+pre-registered at ~0.93 and failed at 0.8220 for the shipped configuration. Every signal
+dropped there, including the old one, so it is a property of the task rather than of any
+model: telling six photographers apart is a far finer discrimination than telling two media
+apart. UI copy promising more is promising the easy case.
+
+The full method, the leave-one-out validation and the untested corners (DINOv3, dense
+features) are in `docs/dev/roadmap/style-embedding.md` while that file exists.
+
+### Where the blend lives
+
+The weights have **two** implementations and always did: `compute_combined_similarity` in
+`backend/ml/similarity_scorer.py`, and the per-layer loop in `routers/quality.py`, which
+hoists the CLIP score out of the layer loop for speed and so cannot call it. Both now route
+their arithmetic tail through `blend_scores` — the embeddings seam is not where the
+duplication lived — and `backend/tests/test_style_similarity_run_http.py` asserts the two
+agree end to end.
+
+`slice_layer_embedding` and `_LAYER_BLOB_SIZE` live in `similarity_scorer` rather than
+`dino_scorer`, and `similarity_scorer` **must stay numpy-only** (a structural AST test pins
+it). `dino_scorer` is `import torch` at module scope, and while the slicer lived there the
+quality router's combined branch imported torch on every `combined` request — so in CI that
+branch was an ImportError → 500, and the weights, the branch with the most arithmetic in
+it, had no coverage of any kind. `dino_scorer` re-exports both names for existing callers.
 
 `style_similarity_score` is the one score column a re-scoring run cannot refresh, and so the sole member of `_UNREFRESHABLE_SCORE_COLUMNS` — see `docs/dev/scores-stale.md` § The clear predicate for why that is a boundary rather than an oversight.
 
@@ -41,9 +112,28 @@ strong DINOv2 one, or meaningless on a layer-3 run where every image lands in 0.
 
 **`StyleSimilarityRun` (`backend/models/style_run.py`) is the missing descriptor.** One row
 per dataset, `dataset_id` unique, overwritten by every successful run — it describes the
-values *currently* in the column, not a history. It holds the mode, the layer, up to
-`REFERENCE_IDS_STORED_MAX = 64` reference ids, the true reference counts, the scored/skipped
-counts and `scoped_image_count`.
+values *currently* in the column, not a history. It holds the mode, the layer, the blend
+weights, up to `REFERENCE_IDS_STORED_MAX = 64` reference ids, the true reference counts, the
+scored/skipped counts and `scoped_image_count`.
+
+**Every recorded field comes from the run's `result` dict, not from `body`.** Each of the
+six success returns carries `dino_layer` / `clip_weight` / `dino_weight` alongside `updated`
+and `skipped`, and `_record_style_run` reads them from there — the `aesthetic_marker`
+pattern in `score_quality`, and for the same reason: the recorded value and the computation
+become one decision rather than two reads that can drift. It is not cosmetic here.
+`dino_layer` means **"the layer whose value is in `style_similarity_score`"**, and an
+`*_all_layers` request carries no layer at all while its stored headline comes from
+`DEFAULT_DINO_LAYER`; reading `body.dino_layer` would record `null` for a run that did pick
+a layer.
+
+**`clip_weight`/`dino_weight` (migration `c2b8e4f6a1d7`) are nullable, and NULL carries two
+meanings** — "predates the columns" and "this mode does not blend". Safe rather than sloppy
+because `embedding_type` sits in the same row and disambiguates: NULL on a `clip` row is the
+only correct value, NULL on a `combined` row is a pre-migration run. No backfill, for the
+same reason as the table itself — a `combined` row already present *was* scored at
+0.38/0.62, but writing that in claims a record where there is only an inference. The
+migration deliberately shipped **one commit before** the retune, so no run exists whose
+weights are unrecorded and a bisect cannot land between the two.
 
 Three decisions worth not re-deriving:
 
@@ -52,7 +142,9 @@ Three decisions worth not re-deriving:
   whole Stats aggregation on every style run; `DatasetOut` is also hand-built field by field
   in `list_datasets`, the trap `CLAUDE.md` names for `video_count`. The `VersionImageState`
   mirroring rule does **not** reach it: that guard derives its universe from
-  `Image.__table__.columns`, and this is a new table describing dataset-level state.
+  `Image.__table__.columns`, and this is a new table describing dataset-level state — which
+  also holds for a column added to it later, so the weights needed no mirror and no
+  `NOT_MIRRORED` entry.
 - **No backfill, and none is possible.** An already-scored dataset could have used any of
   five modes against any reference set, and neither is recoverable from the column. Existing
   datasets get no row and the UI says *"the run details were not recorded"*.
@@ -126,6 +218,52 @@ The service half is in `backend/services/dataset_service.py` — it must be, to 
   `"stats"` and `"scores"`. See `docs/dev/statistics.md` for the `_STATS_CACHE_MAX` budget
   effect; do not change the constant to compensate.
 
+## `GET /quality/embedding-coverage/{dataset_id}`
+
+Style similarity is the one workflow whose prerequisite is *another run*, and every branch
+answers 400 when the column it reads is empty — so until this existed the only way to find
+out was to press the button. One query, four counts (`clip_embedding`, `dino_embedding`,
+`dino_layer_embeddings`, total) within the Score page's own `subfolder` scope. `func.count`
+over a `deferred=True` LargeBinary is a column expression evaluated in SQLite, so counting
+the 18 KB per-layer blobs loads none of them.
+
+A dedicated endpoint for the same reason as its neighbour `aesthetic_coverage`, whose
+docstring carries the argument: it needs the page's subfolder scope and a refetch on every
+finished scoring job, and pulling the whole `get_dataset_stats` aggregation onto the Score
+page for four counts is the expensive way round. Deliberately **not** a field on
+`GET /style-similarity/{id}` — that one is on the gallery render path via `ImageCard`, and
+this is a Score-page question.
+
+`describeEmbeddingGap` in `styleModes.ts` turns the counts into a sentence. For the
+two-column `combined` modes it takes the **minimum** of the two counts, an upper bound on
+the rows carrying both rather than the exact figure: exact where it has to be (`covered === 0`
+iff the intersection is empty, which is the case that disables *Score similarity*, a
+guaranteed 400) and approximate only in the advisory partial warning. A partial gap warns
+and does not block — a scoped run over the covered images is legitimate, and the response
+already reports `skipped`. `"embedding-coverage"` is in `DATASET_CONTENT_SCOPE`
+(`constants/queryKeys.ts`), or the warning outlives the very run that fixes it.
+
+## The layer picker has three values, not two
+
+`DinoLayerChoice` is `number | "final" | "all"`. Both pickers used to normalise "Layer 12" to
+`null`, which the backend reads as the post-layernorm `dino_embedding` — so the app could
+never score DINOv2's actual layer 12, and the picker was quietly lying about which vector it
+had chosen. "Final embedding" is now its own option; `1..12` sends `dino_layer`; `"all"`
+selects the corresponding `*_all_layers` mode. The backend needed no change.
+
+`normalizeDinoLayer` is applied at the load boundary because `loadPersisted` **shallow-merges**
+onto the defaults: a `QUALITY_WORKFLOW` blob written before this type existed carries
+`dinoLayer: null` straight through the merge and would render an empty `<select>`. `null`
+normalises to `"final"` — exactly what that stored value used to score — and anything
+unrecognised to `DEFAULT_DINO_LAYER`. `QualityPage`'s only load boundary for it is the
+`useState` initialiser; the pane-mode dataset-change reload re-reads the *filters* blob,
+which does not carry the layer.
+
+Ticking **DINOv2 embeddings** auto-ticks **per-layer embeds**, on the false→true edge only
+(a `prevRunDino` ref), because every layer except "final" reads a column the plain DINOv2
+run does not write. Auto-ticked rather than defaulted on, so nobody who ignores style
+similarity pays for a 1.2 GB model, and unticking it afterwards sticks.
+
 ## The client-side percentile contract
 
 `frontend/src/utils/percentile.ts` is pure and has three call sites. There is **no frontend
@@ -175,13 +313,19 @@ pixels).
 ## `DinoLayerBreakdown` — the axis it used to lie about
 
 `ImageDetailPage`'s per-layer bar chart normalised each bar to `maxScore` *within the image*,
-so one bar always read 100% however poor the match — and since layers 1–8 compress every
-image into 0.90–0.99, it rendered twelve near-full bars for a picture matching nothing. It
-now uses a **fixed 0–1 axis** (`clamp(score) * 100`) with stated `0` / `1.0` end labels,
-de-emphasises layers 1–9 (0.45 opacity, `--fg-mute` fill) with a caption explaining the
-compression, keeps `--accent` for layers 10–12, and marks layer 12 `stored` — it is the one
-written to `style_similarity_score`. Layers 1–9 are dimmed, never hidden: the numbers are
-stored data and this is the only place to see them.
+so one bar always read 100% however poor the match — and since the low layers compress every
+image into a narrow band, it rendered twelve near-full bars for a picture matching nothing.
+It uses a **fixed 0–1 axis** (`clamp(score) * 100`) with stated `0` / `1.0` end labels.
+
+**No layer is dimmed, and that is a correction.** An earlier version greyed out everything
+below layer 10 on the strength of the 0.90–0.99 compression; the wider sweep found the
+middle of the stack separates *best*, so the panel would have been arguing against the
+layer the app now scores on. Range is not separability.
+
+The `stored` badge takes a **`storedLayer` prop** from `run.dino_layer` rather than
+hardcoding `12`. Falling back to `DEFAULT_DINO_LAYER` when the descriptor is missing would
+lie about an old row whose headline genuinely was layer 12; null renders no badge at all,
+matching `StyleMatchPanel`'s "the run details were not recorded" pattern.
 
 ## Invalidation
 

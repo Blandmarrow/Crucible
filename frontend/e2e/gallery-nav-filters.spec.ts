@@ -20,7 +20,7 @@ import { createDatasetViaApi, uploadViaApi } from './helpers'
 async function seedGalleryState(
   page: Page,
   datasetId: string,
-  state: { activeSubfolder: string; sortIdx: number },
+  state: { activeSubfolder: string; sortIdx: number; page?: number },
 ) {
   await page.addInitScript(
     ([dsId, s]) => {
@@ -28,7 +28,7 @@ async function seedGalleryState(
       localStorage.setItem(
         `gallery-state-${dsId}`,
         JSON.stringify({
-          page: 1,
+          page: (s as { page?: number }).page ?? 1,
           sortIdx: (s as { sortIdx: number }).sortIdx,
           captionedFilter: null,
           scrollTop: 0,
@@ -151,4 +151,125 @@ test('arrow nav across a page boundary stays at the dataset root', async ({ page
     `gallery-nav-${ds.id}`,
   )
   expect(stored.filters.subfolder).toBe('')
+})
+
+// Deleting from the detail view has to leave ← / → working. A delete shifts
+// server-side paging by one, so the handler re-fetches the current page instead of
+// splicing the id out of the stored list, and the shared invalidation helper
+// *resets* the boundary-prefetch cache so the arrows cannot step onto a row the
+// server no longer has.
+
+/** Delete whatever image the detail view is showing, via the Delete key and the
+ *  confirm dialog. Returns once the toast confirms the request finished — the
+ *  navigation that follows is what each test then asserts on. */
+async function deleteCurrentImage(page: Page) {
+  await page.keyboard.press('Delete')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Delete' }).click()
+  await expect(page.getByText('Image deleted')).toBeVisible()
+}
+
+/** `n` root images named `01_x.png` … , page size 2, name-ascending. */
+async function seedNumbered(request: APIRequestContext, name: string, n: number) {
+  const ds = await createDatasetViaApi(request, `${name}-${Date.now()}`)
+  for (let i = 1; i <= n; i++) {
+    await uploadViaApi(request, ds.id, `0${i}_x.png`)
+  }
+  return { ds, ids: await idsByFilename(request, ds.id) }
+}
+
+// Page size 2 over 01…05: page 1 = 01,02 | page 2 = 03,04 | page 3 = 05.
+//
+// Fails without the cache reset: opening 02 prefetches page 2 as [03, 04] and
+// caches it for 60 s under a key nothing else in the app touches. Deleting 02
+// shifts page 1 to [01, 03] — so → from 03 reads the stale entry, finds 03 as the
+// first row of "page 2", and steps onto the image already on screen.
+test('deleting at a page boundary does not re-serve the pre-delete page', async ({ page, request }) => {
+  const { ds, ids } = await seedNumbered(request, 'nav-del-boundary', 5)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 3 · 5 images')).toBeVisible()
+
+  // The last image of page 1: `atEnd`, so the boundary prefetch runs and the stale
+  // entry the broken build serves actually exists by the time we delete.
+  await page.getByTestId('gallery-tile').nth(1).click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['02_x.png']}$`))
+  await expect(page.getByTitle('Next image (→)')).toBeEnabled()
+
+  await deleteCurrentImage(page)
+
+  // 03 slid up into the deleted slot — still the second of two on page 1.
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['03_x.png']}$`))
+  await expect(page.getByText('2 / 2')).toBeVisible()
+
+  // …and the row after it is 04, not the 03 the stale page-2 entry starts with.
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['04_x.png']}$`))
+})
+
+// Fails without the refresh: splicing leaves `ids.length === limit - 1`, so `atEnd`
+// (a strict `=== limit`) is false forever and → dies at the end of the page — the
+// exact workflow the arrows exist for, arrowing through a folder deleting the bad
+// ones.
+test('deleting mid-page keeps Next working to the end of the page and across it', async ({ page, request }) => {
+  const { ds, ids } = await seedNumbered(request, 'nav-del-midpage', 6)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 3 · 6 images')).toBeVisible()
+
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['01_x.png']}$`))
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+
+  await deleteCurrentImage(page)
+
+  // Page 1 is now [02, 03] — a *full* page, which is what keeps → alive below.
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['02_x.png']}$`))
+  await expect(page.getByText('1 / 2')).toBeVisible()
+
+  // Clicked, not keyed: the button is disabled until the boundary prefetch lands,
+  // so the click waits where a keypress would simply be dropped.
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['03_x.png']}$`))
+  // The end of the refreshed page: one more → must cross into page 2.
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['04_x.png']}$`))
+  await expect(page.getByText('p.2')).toBeVisible()
+})
+
+// Deleting the only image of the last page: the refreshed page is empty, so the
+// context has to step *back* — id list and `page` together, or it describes an
+// empty page and both arrows die.
+test('deleting the only image of the last page falls back to the previous page', async ({ page, request }) => {
+  const { ds, ids } = await seedNumbered(request, 'nav-del-lastpage', 5)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4, page: 3 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 3 of 3 · 5 images')).toBeVisible()
+
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['05_x.png']}$`))
+  // `atStart`, so the previous page is prefetched — the fallback reads it.
+  await expect(page.getByTitle('Previous image (←)')).toBeEnabled()
+
+  await deleteCurrentImage(page)
+
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['04_x.png']}$`))
+  await expect(page.getByText('2 / 2')).toBeVisible()
+  await expect(page.getByText('p.2')).toBeVisible()
+
+  // Both arrows still describe page 2, and Next is disabled only because the page
+  // the delete emptied really is gone.
+  await page.getByTitle('Previous image (←)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['03_x.png']}$`))
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['04_x.png']}$`))
+  await expect(page.getByTitle('Next image (→)')).toBeDisabled()
+
+  // The `gallery-state` patch moved with the context, so Back lands on page 2.
+  await page.getByRole('button', { name: 'Back' }).click()
+  await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
 })

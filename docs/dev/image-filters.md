@@ -3,8 +3,10 @@
 The image listing endpoint (`backend/routers/images.py::list_images`) carries a long tail of
 filter params beyond `dataset_id`/`subfolder` — score ranges, quality flags, dimensions and
 format, detection and mask predicates, caption length, license and frame lineage. They are one
-shared contract with six consumers, which is why they live in their own file: the gallery's
-filter bar (`docs/dev/gallery.md` § Gallery filters), the Statistics page's bar click-through
+shared contract with seven consumers, which is why they live in their own file: the gallery's
+filter bar (`docs/dev/gallery.md` § Gallery filters) and the detail view's boundary prefetch,
+which replays that same memo out of the stored nav context
+(`docs/dev/image-detail.md`), the Statistics page's bar click-through
 into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
 (`docs/dev/video-ui.md`), the license filters shared with export
 (`docs/dev/provenance.md`, `docs/dev/export-licensing.md`), and the two endpoints in

@@ -76,4 +76,10 @@ export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string
   for (const k of DATASET_CONTENT_SCOPE) {
     qc.invalidateQueries({ queryKey: [k, datasetId] });
   }
+  // Reset, not invalidate: an invalidated entry is still *served* while it refetches,
+  // and this one is a navigation target — the detail view's → would step onto the id
+  // it holds before the refetch lands. `resetQueries` blanks `data` through a dispatch
+  // the observers see, then refetches the active one. `["gallery-nav", undefined]`
+  // matches nothing, the same no-op as the loop above.
+  qc.resetQueries({ queryKey: ["gallery-nav", datasetId] });
 }

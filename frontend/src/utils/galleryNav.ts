@@ -27,7 +27,8 @@
  *    `undefined` ones are gone), so a shallow "did the filters change?" compare
  *    between the two would always say yes.
  */
-import type { ImageFilterParams } from "../api/images";
+import type { ImageFilterParams, ImageListParams } from "../api/images";
+import { SORT_OPTIONS } from "../constants/galleryOptions";
 import { getGalleryPageSize } from "../constants/storage";
 
 /** Normalized and total — everything the detail view needs to reconstruct the
@@ -79,9 +80,12 @@ export function readNavContext(datasetId: string): GalleryNavContext | null {
       ids: stored.ids as string[],
       page: typeof stored.page === "number" ? stored.page : 1,
       limit: typeof stored.limit === "number" ? stored.limit : getGalleryPageSize(),
-      // Fallbacks are `SORT_OPTIONS[0]` — the gallery's own default ordering.
-      sort: typeof stored.sort === "string" ? stored.sort : "created_at",
-      order: typeof stored.order === "string" ? stored.order : "desc",
+      // Fallbacks are `SORT_OPTIONS[0]`, not the gallery's default: that is
+      // `getGalleryDefaultSort()`, a user setting. A blob written by the gallery
+      // always carries both fields, so this branch is reachable only from a
+      // hand-edited one — the first entry is the stable choice there.
+      sort: typeof stored.sort === "string" ? stored.sort : SORT_OPTIONS[0].sort,
+      order: typeof stored.order === "string" ? stored.order : SORT_OPTIONS[0].order,
       filters,
     };
   } catch {
@@ -94,6 +98,26 @@ export function writeNavContext(datasetId: string, ctx: GalleryNavContext): void
   try {
     sessionStorage.setItem(navKey(datasetId), JSON.stringify(ctx));
   } catch { /* ignore */ }
+}
+
+/** The listing request for one page of a stored context. The three call sites — the
+ *  two boundary prefetches and the post-delete refresh — must send byte-identical
+ *  params or they describe different result sets. `dataset_id` sits *after* the
+ *  spread: the stored blob carries whatever dataset was current when the gallery
+ *  wrote it, and the URL wins. */
+export function navPageParams(
+  datasetId: string,
+  ctx: GalleryNavContext,
+  page: number,
+): ImageListParams {
+  return {
+    ...ctx.filters,
+    dataset_id: datasetId,
+    page,
+    limit: ctx.limit,
+    sort: ctx.sort,
+    order: ctx.order,
+  };
 }
 
 /** Rewrite just the id list, leaving the page/filters describing it alone.

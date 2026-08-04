@@ -39,7 +39,7 @@ import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection } from "../types";
-import { injectNavId, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
+import { injectNavId, navPageParams, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
@@ -145,6 +145,28 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
       )}
     </div>
   );
+}
+
+/** Patch the page GalleryPage will restore to, so "Back" returns to the page the
+ *  arrows actually ended on. Called from both places that move the nav context
+ *  across a page boundary: `goTo` crossing a boundary, and the delete that empties
+ *  the last page.
+ *
+ *  That blob persists the subfolder, caption, quality, license and lineage filters
+ *  but *not* `search`, `detectionLabel` or `scoreFilters`, so with one of those
+ *  three active Back can land on page N of a wider list. Do not special-case it
+ *  here — skipping the patch just swaps one wrong page for another.
+ *
+ *  It writes GalleryPage's key, not `gallery-nav`, so it stays here rather than in
+ *  `utils/galleryNav.ts`. */
+function syncGalleryStatePage(datasetId: string, page: number) {
+  try {
+    const raw = localStorage.getItem(`gallery-state-${datasetId}`);
+    if (raw) {
+      const state = JSON.parse(raw);
+      localStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page, scrollTop: 0 }));
+    }
+  } catch {}
 }
 
 export default function ImageDetailPage() {
@@ -271,7 +293,9 @@ export default function ImageDetailPage() {
   // Strict equality, not `>=`: `injectNavId` grows `ids` to `limit + 1` after a
   // crop/upscale/LUT, which disables Next until the user goes back to the gallery.
   // That is deliberate — creating an image shifts server-side paging by one, so a
-  // relaxed test would land on a duplicate.
+  // relaxed test would land on a duplicate. It cuts the other way too: a list left
+  // one *short* never satisfies this test either, which is why the delete below
+  // re-fetches the page instead of splicing the id out.
   const atEnd = !!navCtx && currentIndex === navCtx.ids.length - 1 && navCtx.ids.length === navCtx.limit;
   const atStart = currentIndex === 0 && !!navCtx && navCtx.page > 1;
 
@@ -286,28 +310,14 @@ export default function ImageDetailPage() {
   // construction, and an object rebuilt by `JSON.parse` hashes like the memo did.
   const { data: nextPageData } = useQuery({
     queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "next"],
-    queryFn: () => imagesApi.list({
-      ...navCtx!.filters,
-      dataset_id: datasetId!,
-      page: navCtx!.page + 1,
-      limit: navCtx!.limit,
-      sort: navCtx!.sort,
-      order: navCtx!.order,
-    }),
+    queryFn: () => imagesApi.list(navPageParams(datasetId!, navCtx!, navCtx!.page + 1)),
     enabled: atEnd,
     staleTime: 60_000,
   });
 
   const { data: prevPageData } = useQuery({
     queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "prev"],
-    queryFn: () => imagesApi.list({
-      ...navCtx!.filters,
-      dataset_id: datasetId!,
-      page: navCtx!.page - 1,
-      limit: navCtx!.limit,
-      sort: navCtx!.sort,
-      order: navCtx!.order,
-    }),
+    queryFn: () => imagesApi.list(navPageParams(datasetId!, navCtx!, navCtx!.page - 1)),
     enabled: atStart,
     staleTime: 60_000,
   });
@@ -334,18 +344,7 @@ export default function ImageDetailPage() {
       }
       if (newCtx) {
         writeNavContext(datasetId, newCtx);
-        // Also update gallery state so "Back" returns to the right page. That blob
-        // persists the subfolder, caption, quality, license and lineage filters but
-        // *not* `search`, `detectionLabel` or `scoreFilters`, so with one of those
-        // three active Back can land on page N of a wider list. Do not special-case
-        // it here — skipping the patch just swaps one wrong page for another.
-        try {
-          const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-          if (raw) {
-            const state = JSON.parse(raw);
-            localStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page: newCtx.page, scrollTop: 0 }));
-          }
-        } catch {}
+        syncGalleryStatePage(datasetId, newCtx.page);
       }
     }
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
@@ -688,17 +687,66 @@ export default function ImageDetailPage() {
 
   const deleteMutation = useMutation({
     mutationFn: () => imagesApi.batchDelete([imageId!]),
-    onSuccess: () => {
-      if (!datasetId) return;
-      invalidateDatasetContentScope(qc, datasetId);
+    // Re-derives the nav context from the server rather than splicing the deleted
+    // id out. A delete shifts server-side paging by one, so page N now ends with a
+    // row the stored list has never seen — and a spliced list is `limit - 1` long,
+    // which makes `atEnd` false forever and kills → for the rest of the session.
+    //
+    // Three orderings are load-bearing:
+    //   1. Fetch first, mutate the cache second. Removing `["image", imageId]`
+    //      before the await lets the next render rebuild that query and refetch the
+    //      id just deleted; 404s are not retried, so the user gets a flash of the
+    //      "Image not found" screen for the length of the refresh.
+    //   2. `setShowDeleteConfirm(false)` stays *after* the await — the arrow keys are
+    //      suppressed while it is true. Closing the dialog first re-arms → for a whole
+    //      extra round trip, and TanStack live-swaps this closure on every commit, so a
+    //      keypress in that window would feed the handler a different
+    //      `imageId`/`navCtx`/`currentIndex` and the `paneGo` below would yank the user.
+    //   3. The fetch is wrapped in try/catch: a throw inside `onSuccess` routes to
+    //      `onError`, and a delete that succeeded would toast "Delete failed".
+    //
+    // Accepted consequence: a derivative `injectNavId` spliced in (crop / upscale /
+    // LUT) that does not sort onto page N drops out of the arrow sequence until the
+    // user revisits the gallery.
+    onSuccess: async () => {
+      if (!datasetId || !imageId) return;
+      let newCtx: GalleryNavContext | null = null;
+      let target: string | null = null;
+
+      if (navCtx && currentIndex >= 0) {   // -1 = deep link with a foreign context: skip
+        try {
+          const rows = await imagesApi.list(navPageParams(datasetId, navCtx, navCtx.page));
+          newCtx = { ...navCtx, ids: rows.map((r) => r.id) };
+          // The row that slid into the deleted slot. `rows.length - 1` rather than
+          // `currentIndex - 1`: a concurrent delete can shrink the page by more than one.
+          target = rows[currentIndex]?.id ?? rows[rows.length - 1]?.id ?? null;
+          if (!target && navCtx.page > 1 && prevPageData?.length) {
+            // Deleted the only image of the last page. Stepping back has to move `page`
+            // too, or the context describes an empty page and both arrows die.
+            newCtx = { ...navCtx, ids: prevPageData.map((i) => i.id), page: navCtx.page - 1 };
+            target = prevPageData[prevPageData.length - 1].id;
+          }
+        } catch {
+          // Server unreachable. The splice leaves `ids.length === limit - 1`, so Next
+          // dies at the end of this page until the user returns to the gallery — the
+          // very bug the refresh exists to avoid, accepted only on this path. Do not
+          // promote it.
+          newCtx = null;
+          removeNavId(datasetId, imageId);
+          target = nextId ?? prevId;
+        }
+        if (newCtx) writeNavContext(datasetId, newCtx);
+        if (newCtx && newCtx.page !== navCtx.page) syncGalleryStatePage(datasetId, newCtx.page);
+      } else {
+        target = nextId ?? prevId;
+      }
+
+      invalidateDatasetContentScope(qc, datasetId);   // also resets ["gallery-nav", datasetId]
       qc.removeQueries({ queryKey: ["image", imageId] });
-      if (imageId) removeNavId(datasetId, imageId);
       setShowDeleteConfirm(false);
       toast.success("Image deleted");
-      if (nextId) {
-        paneGo(`/datasets/${datasetId}/image/${nextId}`, { page: "image-detail", datasetId, imageId: nextId }, { replace: true });
-      } else if (prevId) {
-        paneGo(`/datasets/${datasetId}/image/${prevId}`, { page: "image-detail", datasetId, imageId: prevId }, { replace: true });
+      if (target) {
+        paneGo(`/datasets/${datasetId}/image/${target}`, { page: "image-detail", datasetId, imageId: target }, { replace: true });
       } else {
         paneGo(`/datasets/${datasetId}/gallery`, { page: "gallery", datasetId }, { replace: true });
       }

@@ -42,14 +42,15 @@ def _layer_emb(seed: int) -> bytes:
     return m.astype(np.float16).tobytes()
 
 
-def test_the_shipped_blend_is_38_62():
+def test_the_shipped_blend_is_30_70():
     """The constants *and* that the function actually applies them.
 
-    Asserting only the constants would pass a `blend_scores` that ignored them.
+    Asserting only the constants would pass a `blend_scores` that ignored them, and
+    a silent retune has no other symptom — every score simply moves.
     """
-    assert STYLE_CLIP_WEIGHT == 0.38
-    assert STYLE_DINO_WEIGHT == 0.62
-    assert blend_scores([0.5], [0.9]) == [round(0.38 * 0.5 + 0.62 * 0.9, 4)]
+    assert STYLE_CLIP_WEIGHT == 0.30
+    assert STYLE_DINO_WEIGHT == 0.70
+    assert blend_scores([0.5], [0.9]) == [round(0.30 * 0.5 + 0.70 * 0.9, 4)]
 
 
 def test_the_weights_sum_to_one():
@@ -57,7 +58,10 @@ def test_the_weights_sum_to_one():
     assert STYLE_CLIP_WEIGHT + STYLE_DINO_WEIGHT == pytest.approx(1.0)
 
 
-def test_the_default_dino_layer_is_in_range():
+def test_the_default_dino_layer_is_the_measured_one():
+    """Layer 9, not the final embedding. The sweep in `style_gate_report.md` put the
+    final embedding last on every model and every dataset tested."""
+    assert DEFAULT_DINO_LAYER == 9
     assert 1 <= DEFAULT_DINO_LAYER <= _LAYERS
 
 

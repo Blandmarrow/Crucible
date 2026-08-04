@@ -56,6 +56,12 @@ class StyleSimilarityRun(Base):
     # `str` validated by the branch chain, and a mode added there must not need a
     # migration here to be describable.
     embedding_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # **The layer whose value is in `style_similarity_score`** — not the request's
+    # `dino_layer` field. For an `*_all_layers` run the request carries no layer at
+    # all while the stored headline comes from `DEFAULT_DINO_LAYER`, so this is
+    # written from what the run computed rather than from what was asked for. NULL
+    # means the score came from the post-layernorm `dino_embedding`, which is not
+    # one of the twelve numbered layers.
     dino_layer: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # The blend a `combined` / `combined_all_layers` run used. NULL carries two

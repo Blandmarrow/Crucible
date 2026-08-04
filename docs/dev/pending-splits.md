@@ -208,6 +208,10 @@ staleness sweep while still recording the seam.
   § The layer picker has three values, not two and § `DinoLayerBreakdown` are two halves of
   one story about layer 12 and end up on opposite sides — leave an explicit pointer between
   them. CLAUDE.md's Map row becomes two.
+- **2026-08-04b:** the file grew ~375 words when the default moved to layer 7 and
+  § Which layer, and why it moved twice was added under § What the modes are actually worth.
+  That lands wholly in the *producing* half, so the seam is unchanged — the producing side is
+  now ~2,475 and the split is more overdue, not differently shaped.
 
 ## docs/gallery.md
 

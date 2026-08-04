@@ -56,7 +56,9 @@ numbers:
   takes the same model to 0.8645, and `combined` at 0.30/0.70 on layer 9 to **0.9244** from
   the old blend's 0.8246. Layer 12 being worst replicated on every model and every dataset
   tested, including photographs, and is the most robust result of the campaign. The robust
-  unit is the *band*, roughly layers 5–11, not any single index.
+  unit is the *band*, roughly layers 5–11, not any single index — which is why the default
+  moved again, to 7, without any of these numbers changing. See § Which layer, and why it
+  moved twice.
 - **No single AUC is a property of a mode.** CLIP scored 0.9733 on the gate's reference
   cluster and **0.6144** on an opposing cluster drawn from *the same 118 images*, and 0.7399
   on photographs. That is why `styleModes.ts` no longer quotes a figure in any mode
@@ -82,6 +84,38 @@ apart. UI copy promising more is promising the easy case.
 
 The full method, the leave-one-out validation and the untested corners (DINOv3, dense
 features) are in `docs/dev/roadmap/style-embedding.md` while that file exists.
+
+### Which layer, and why it moved twice
+
+Both moves happened on 2026-08-04: the final embedding → layer 9 on the sweep above, then
+layer 9 → **layer 7** on a second pair of runs that asked a different question.
+
+Every sweep before the second pair scored *separability* — can the signal tell in-style
+candidates from out-of-style controls, with subject and framing free to vary however they
+happen to. A layer can win that on content alone, because references and positives usually
+share subject matter as well as a look. Two **crossed** runs hold one of the two fixed:
+
+- **Synthetically crossed**: 30 base pictures × 7 restyles (grayscale, warm grade, contrast
+  punch, and the three that change the rendering itself — posterised, painterly smear,
+  pencil sketch) × 3 framings, asking whether a layer ranks *different picture, same
+  rendering* above *same picture, restyled*.
+- **Real pools**: three drawn styles that share one subject domain — two anime films and an
+  SDXL set, all gothic vampire imagery — plus photographs, with subject then held fixed by
+  CLIP zero-shot subject bins.
+
+Both put the crossover at about layer 7. On the real pools, layer 9 ranks same-subject pairs
+above same-style pairs (0.737 against 0.682), layers 5–6 do the reverse (0.674 against 0.707
+at layer 5), and layer 7 sits near the balance point; layer 12 is furthest into subject on
+both runs. That is what the picker copy means by suggesting 5–6 for a look and 9–10 for more
+of the same scene.
+
+Two things this does not claim. **The move is close to free, not a gain**: on the gate's own
+published configuration layer 7 scores 0.9442 against layer 9's 0.9428, and on the
+photographer test the blend gives up 0.011 — on a test that itself rewards subject matching,
+since a photographer repeats subjects. And **with subject genuinely held fixed, every
+configuration measured lands at 0.65–0.66 AUC**, so the layer choice is arguing over a small
+part of a weak signal. The design that would separate style from subject by construction
+rather than by binning is specified in the roadmap.
 
 ### Where the blend lives
 

@@ -59,9 +59,11 @@ def test_the_weights_sum_to_one():
 
 
 def test_the_default_dino_layer_is_the_measured_one():
-    """Layer 9, not the final embedding. The sweep in `style_gate_report.md` put the
-    final embedding last on every model and every dataset tested."""
-    assert DEFAULT_DINO_LAYER == 9
+    """Layer 7, not the final embedding. The sweep in `style_gate_report.md` put the
+    final embedding last on every model and every dataset tested, and the crossed
+    runs that followed put the style-over-subject crossover at about layer 7 — see
+    `docs/dev/style-similarity.md` § Which layer, and why it moved twice."""
+    assert DEFAULT_DINO_LAYER == 7
     assert 1 <= DEFAULT_DINO_LAYER <= _LAYERS
 
 

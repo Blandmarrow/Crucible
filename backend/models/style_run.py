@@ -23,9 +23,10 @@ class StyleSimilarityRun(Base):
     spans 0.05–0.70, a low-layer run compresses everything into a few hundredths,
     and the same mode at a different blend weight is a different scale again.
     Without this row a stored "0.62" is uninterpretable. The shipped defaults have
-    already moved once (0.38/0.62 on the final embedding → 0.30/0.70 on layer 9,
-    2026-08-04), which is what turned "nice to have" into "a score written on one
-    side of that change is not comparable to one written on the other".
+    already moved twice on one day (0.38/0.62 on the final embedding → 0.30/0.70 on
+    layer 9 → the same blend on layer 7, both 2026-08-04), which is what turned
+    "nice to have" into "a score written on one side of that change is not
+    comparable to one written on the other".
 
     **Why a table and not columns on `Dataset`.** `Dataset.updated_at` is half the
     `get_dataset_stats` cache validator (`dataset_service.get_dataset_stats`), so

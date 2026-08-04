@@ -71,7 +71,7 @@ test('quality page renders its panels and scopes to a subfolder', async ({ page,
 // writes, and every mode answers 400 when the column it reads is empty. This
 // dataset has none, which makes the whole check deterministic and GPU-free — and
 // it is the cheapest end-to-end proof of GET /quality/embedding-coverage.
-test('style similarity defaults to layer 9 and refuses to run without embeddings', async ({ page, request }) => {
+test('style similarity defaults to layer 7 and refuses to run without embeddings', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-style-${Date.now()}`)
   await uploadViaApi(request, ds.id, 'a.png')
 
@@ -88,10 +88,10 @@ test('style similarity defaults to layer 9 and refuses to run without embeddings
   // which also exercises the mode -> layer effect.
   await page.getByRole('button', { name: 'CLIP + DINOv2', exact: true }).click()
 
-  // Layer 9, not "Layer 12"/final. The final embedding is a separate option
+  // Layer 7, not "Layer 12"/final. The final embedding is a separate option
   // because it is a different vector, not a relabelling of layer 12.
   const layer = page.locator('select').filter({ hasText: 'Final embedding' })
-  await expect(layer).toHaveValue('9')
+  await expect(layer).toHaveValue('7')
 
   // Nothing in this dataset has CLIP or per-layer DINOv2 embeddings, so the run
   // would be a guaranteed 400 — the page says so instead of letting it fail.

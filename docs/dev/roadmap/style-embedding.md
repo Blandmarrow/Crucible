@@ -1,7 +1,10 @@
 # Roadmap — the style-similarity embedding: which model, which layer, which blend
 
 Measured on 2026-08-04 against `test3` (118 images), `test4` (24) and `test5` (90 real
-photographs). Nothing here is implemented. This file supersedes `roadmap.md` § 5 (DINOv3),
+photographs), then again the same day (**2026-08-04b**) against a crossed set built from
+those plus `test2` and `data/final` — see § The crossed runs. Stages 1 and 2a have shipped
+and are deleted per the lifecycle below; everything still described as a stage is
+unimplemented. This file supersedes `roadmap.md` § 5 (DINOv3),
 which deferred the question on the assumption that adopting DINOv3 meant swapping the
 backbone; the measurements say the backbone is the least interesting half of the change.
 
@@ -173,13 +176,14 @@ stored as a stable per-image value. The raw blend gives up 0.004 and keeps that 
   within one medium or between two synthetic ones. A user dataset holding both is untested.
 - **The `test4` style groupings were a human judgement** made from a contact sheet. A
   different grouping is a different experiment.
-- **No dataset here is *crossed*, so style and composition are never separated.** Every
-  configuration measures separability with subject and framing free to vary however they
-  happen to; none holds subject fixed while style varies, which is the only design that can
-  say whether a signal ranks on *look* or on *layout*. This is the single largest
-  unaddressed confound in the file and it applies to every layer, model and blend measured
-  here — including the shipped default. See § Does layer 9 make it more of a composition
-  matcher? and the crossed set specified in § The photo dataset that settled it.
+- ~~**No dataset here is *crossed*, so style and composition are never separated.**~~
+  **Addressed 2026-08-04b** — see § The crossed runs, which holds subject fixed two
+  different ways and moved the default to layer 7 as a result. It remains true of every
+  number *above* that section: they all measure separability with subject and framing free
+  to vary, so any one of them can be won on content. What replaces the bullet: the crossed
+  runs control subject by construction (Run A) or by binning (Run B), never both, and
+  neither separates layout from subject within "content". The set that would remove the
+  remaining caveats is in § The dataset that would settle it properly.
 - **The six configurations are not independent** — they draw from two image pools.
 - **No GPU numbers.** Everything ran on CPU: DINOv3 @224 is 10.7 img/s, @512 is 2.0 img/s,
   DINOv2 @224 is 8.1 img/s. VRAM and GPU throughput are unmeasured.
@@ -241,7 +245,7 @@ Nouhailler (0.918 against 0.923). Those are exactly the two pairs that share a *
 into the set. The signal is still partly a subject matcher, which no change in this file
 fixes.
 
-### Does layer 9 make it *more* of a composition matcher?
+### Does layer 9 make it *more* of a composition matcher? — **answered 2026-08-04b**
 
 Raised in review on 2026-08-04, on the strength of `DINO_LAYER_LABELS` calling layer 9
 "Scene composition": if that is what the layer encodes, then moving the default there turns
@@ -255,28 +259,187 @@ only as "a human-readable description". All twelve strings are a gloss on the ge
 low-level→semantic depth intuition. Nothing in either campaign measured a layer and
 concluded "composition". See the trap below — the label should not survive in that form.
 
-**What the numbers say, and it is only indirect.** The strongest available counter-evidence
-is the *worst* configuration rather than the mean, because `test4`'s groups were assigned by
-**rendering style, not subject** — painterly nature, painterly creatures, gothic interiors,
-with content varying inside each group. A signal that had become more compositional should
-get worse there. It did the opposite:
+**The indirect argument that was all this file had.** The strongest available
+counter-evidence was the *worst* configuration rather than the mean, because `test4`'s groups
+were assigned by **rendering style, not subject** — painterly nature, painterly creatures,
+gothic interiors, with content varying inside each group. A signal that had become more
+compositional should get worse there. It did the opposite (0.8246 → 0.9244 mean, 0.6374 →
+0.8756 worst), and the same direction held on `test5` (0.7562 → 0.8220). Both are
+*aggregate* results on sets never designed to separate style from composition, so they ruled
+out "layer 9 is largely a composition matcher" and said nothing about the sharper version.
 
-| | mean | worst configuration |
-|---|---|---|
-| App before 2026-08-04 (0.38/0.62, final embedding) | 0.8246 | 0.6374 |
-| 30% CLIP + 70% DINOv2 layer 9 | 0.9244 | **0.8756** |
+**Now answered directly** — see § The crossed runs. The answer is in two parts and only the
+first is the question as asked:
 
-Same direction on `test5`, where the label is the photographer and subjects vary within each
-body of work: 0.7562 → 0.8220.
+1. **The retune did not move toward composition; it moved away.** Layer 12 is the
+   framing-locked layer, not layer 9. Under layer 12 a reframe costs far more than a
+   complete restyle (0.274); under layer 9 the two are nearer even (0.660). On every crossed
+   measure layer 9 sits between layer 12 and the mid band, never past layer 12.
+2. **The underlying worry is real anyway, for layer 9 and for everything deeper.** At layer
+   9 the signal ranks same-subject pairs above same-style pairs; layers 5–6 do the reverse;
+   the crossover is about layer 7. So the complaint was right about the *feature* while
+   being wrong about the *change*.
 
-**What that does not settle.** Both are *aggregate* results on sets that were never designed
-to separate style from composition, so they rule out "layer 9 is largely a composition
-matcher" and say nothing about the sharper version — that layer 9 trades one leakage for
-another in a way no dataset here can see. The § What is not established bullet on the
-crossed set is the same gap seen from the other side, and the crossed set specified below is
-what would resolve it. Until then this is **open**, not answered. Note also that the
-per-layer sweeps in both campaigns scored *separability*, never "separability given matched
-subject" — the question has not been asked of the data, let alone answered.
+**The default moved to 7 on the strength of it** (2026-08-04b) — Stage 2a's layer, retuned
+once more. That is the whole of the action taken; the blend weights did not move.
+
+## The crossed runs — what a separability sweep could not see
+
+Run on **2026-08-04b**, after the retune, to answer the section above. Everything earlier in
+this file scores **separability**: can the signal put in-style candidates above out-of-style
+controls, with subject and framing free to vary however they happen to. A layer can win that
+on content alone, because references and positives share subject matter as well as a look.
+That is the § What is not established bullet on the crossed set, and it applied to every
+number in this file — including the ones that picked the default.
+
+Two runs, each holding one of style/subject fixed while varying the other. They disagree
+about nothing.
+
+### Run A — synthetic crossing
+
+30 base pictures (18 from `test5`, 12 from `test3`) × 7 restyles × 3 framings = 630 images,
+embedded through the same path the app uses (`dino_embed_offline.extract`, DINOv2 per-layer
++ CLIP). The restyles come in two families: **tone** (grayscale, warm grade, contrast punch)
+and **rendering** (posterised, painterly median smear, pencil-sketch dodge). The second
+family is the one that stands in for art style. Framings are the full frame and two 62%
+reframes from opposite corners.
+
+That yields four pair classes, always within one medium: STYLE (different picture, same
+restyle), PICTURE (same picture, same framing, restyled), FRAMING (same picture, same
+restyle, reframed), NOTHING. Every metric is an AUC, which is what makes them comparable
+across layers whose raw cosine ranges differ by an order of magnitude — a mean or a
+threshold is not.
+
+Rendering restyles, all 30 bases:
+
+| signal | sees a shared style | sees the same picture | reframe vs restyle | style over same picture |
+|---|---|---|---|---|
+| L5 | 0.792 | 0.760 | 0.823 | 0.474 |
+| L7 | 0.721 | 0.903 | 0.825 | 0.308 |
+| L9 | 0.618 | 0.960 | 0.660 | 0.105 |
+| L12 | 0.517 | 0.996 | **0.274** | 0.007 |
+| final embedding | 0.535 | 0.997 | 0.291 | 0.004 |
+| CLIP | 0.585 | 0.944 | 0.516 | 0.106 |
+| 0.30/0.70 @L7 | 0.658 | 0.969 | 0.684 | 0.138 |
+| 0.30/0.70 @L9 | 0.618 | 0.980 | 0.608 | 0.076 |
+| 0.38/0.62 @final | 0.560 | 0.998 | 0.311 | 0.004 |
+
+Column 3 is the direct layout probe: **below 0.5 means a reframe costs more than a complete
+restyle**. It is monotone in depth and layer 12 is its floor, which is the first half of the
+answer above. Column 4 is the product question — given "the same picture re-rendered" versus
+"a different picture in the reference style", how often does the reference style win? At the
+shipped setting, 8% of the time.
+
+On the 12 illustration bases alone the mid band is much stronger: layer 7 reaches 0.865 /
+0.639 on columns 1 and 4 — the only setting measured anywhere that prefers a shared style to
+the same picture more often than not — against layer 9's 0.709 / 0.295 and layer 12's 0.548
+/ 0.033.
+
+### Run B — real pools, subject controlled by binning
+
+Four pools whose style label is external (the source), no synthetic edits anywhere:
+`vhd` 149 frames (*Vampire Hunter D: Bloodlust*, from `test2`), `hell` 118 (`test3`), `sdxl`
+126 SDXL illustrations (`data/final`), `photo` 90 (`test5`). The first three are the point:
+all three are **dark gothic vampire imagery in three different renderings**, so the subject
+domain is shared and the rendering is what varies. Subject is then held fixed explicitly by
+binning every image with CLIP zero-shot ("a close-up of a face", "an outdoor landscape", …)
+and re-scoring inside one bin.
+
+| signal | all 4 pools | 3 drawn only | faces bin only | subject leak |
+|---|---|---|---|---|
+| L5 | 0.729 | 0.707 | 0.654 | **0.674** |
+| L6 | 0.738 | **0.716** | 0.651 | 0.693 |
+| L7 | 0.733 | 0.704 | 0.654 | 0.720 |
+| L9 | 0.735 | 0.682 | 0.654 | 0.737 |
+| L12 | 0.678 | 0.643 | 0.637 | 0.710 |
+| CLIP | 0.745 | 0.696 | 0.655 | 0.721 |
+| 0.30/0.70 @L7 | 0.762 | **0.726** | 0.659 | 0.742 |
+| 0.30/0.70 @L9 | 0.763 | 0.717 | 0.660 | 0.757 |
+| 0.38/0.62 @final | 0.730 | 0.677 | 0.647 | 0.751 |
+
+*3 drawn only* removes the medium cue. *faces bin only* additionally fixes the subject
+(4,606 same-style / 6,272 cross-style pairs). *subject leak* is the mirror: among pairs the
+style label calls **different**, how strongly does the signal still rank same-subject pairs
+top? The margin between the last two columns is the whole finding:
+
+| | L5 | L6 | L7 | L9 | L12 | CLIP | 0.30/0.70 @L9 |
+|---|---|---|---|---|---|---|---|
+| style − subject | **+0.033** | **+0.023** | −0.016 | −0.055 | −0.067 | −0.025 | −0.040 |
+
+### What the two runs establish
+
+- **The crossover is about layer 7.** Below it style outranks subject; above it subject wins
+  and keeps winning to the end of the stack. Both runs put it in the same place, from
+  opposite directions.
+- **Layer 12 is the composition-locked layer, not layer 9.** The label was pointing at the
+  wrong end of the stack.
+- **Moving 9 → 7 is close to free where a published number exists.** Re-running the gate's
+  own configuration reproduces its per-layer table exactly and puts layer 7 at **0.9442**
+  against layer 9's **0.9428**. On `test5` the blend gives up 0.011 (0.726 against 0.737) —
+  on a test that rewards subject matching, since a photographer repeats subjects. Its
+  subject-controlled subsets invert that ordering (flowers: L7 0.615, L9 0.583).
+- **The absolute ceiling with subject held fixed is ~0.66**, for every layer, CLIP included.
+  Three unmistakably different art styles, matched subject, and nothing measured does better
+  than two calls in three. The layer argument is over a small part of a weak signal, and
+  § What to promise in `docs/dev/style-similarity.md` now says so.
+
+### Why one layer and not all twelve
+
+Asked in the same review: if each layer encodes something different, why not combine them?
+Measured on the same two runs, the premise is mostly false and the naive answer is harmful.
+
+The layers are not twelve independent measurements. Correlating each layer's pairwise
+similarity vector with every other's gives 0.84–0.96 between neighbours; the first principal
+component carries **54%** of the variance across all twelve and three components carry 85%.
+A residual stream guarantees this — layer N+1 is layer N plus an update.
+
+| combination | shared style | style over same picture | illustration only | `test5` | +CLIP |
+|---|---|---|---|---|---|
+| L7 alone | 0.721 | **0.308** | **0.639** | 0.689 | 0.726 |
+| all 12, plain mean | 0.596 | 0.029 | 0.128 | 0.669 | 0.727 |
+| all 12, standardised mean | 0.725 | 0.179 | 0.398 | 0.676 | 0.721 |
+| L5–L9, plain mean | 0.697 | 0.210 | 0.487 | 0.690 | 0.727 |
+| L5–L9, standardised mean | 0.732 | 0.275 | 0.553 | 0.685 | 0.721 |
+| L3–L7, standardised mean | **0.790** | 0.420 | 0.591 | 0.651 | 0.699 |
+
+Three things follow. **A plain mean of all twelve is worse than any single mid layer** —
+early layers compress every image into 0.90–0.99 and so contribute a near-constant offset,
+which hands the ranking to whichever layers have the widest spread, i.e. the deep
+content-locked ones. "Use everything" is approximately "use layer 11–12". **Standardising
+first fixes that but breaks the stored score** — it needs population statistics, so an
+image's score would move when the dataset gains or loses images, which is the same objection
+that rejected the z-scored blend in § 6. **And it does not escape the tradeoff**: L3–L7 is
+the best style-preferring combination measured and simultaneously the worst on `test5`.
+Combining layers buys a weighted point on the same style-versus-subject line a single layer
+sits on. The one genuine complementarity found anywhere in this work is CLIP × DINO, and the
+app already ships it.
+
+### What these runs do not settle
+
+- **Run A's restyles are PIL filters**, not an artist's hand, and the sketch/smear renderings
+  are somewhat out of distribution for the backbone.
+- **Run A's reframes remove content as well as change layout**, so "framing" there is not
+  purely framing.
+- **Run B's pools still differ in content** — each film has its own characters and palette,
+  so even the faces bin holds *different faces*. The subject control is a binning, not a
+  design, and it can only understate the confound.
+- **CLIP zero-shot bins are noisy**, and `test3` carries ~20 painted-illustration controls
+  that dilute the `hell` pool.
+- **One backbone.** Everything here is DINOv2-base; whether DINOv3's crossover sits at the
+  same depth is unmeasured, and Stage 2 should re-run both probes rather than assume it.
+- **Neither run separates subject from composition.** "Same picture" is the same subject
+  *and* the same layout; only the reframe column probes layout alone. The finding is
+  style-versus-**content**; composition is the part of content that column isolates.
+
+### The dataset that would settle it properly
+
+The crossed photo set specified below broke style against subject for photography by hand.
+The illustration equivalent no longer needs curation, because the app can generate it:
+**one ComfyUI plan, 6 fixed subject prompts × 5 style tokens or style LoRAs × 4 seeds = 120
+images**, where style and subject are crossed *by construction* and neither label is
+inferred. That removes every caveat in the list above except the backbone one. It is the
+natural next experiment and it costs GPU time rather than judgement — see
+`docs/dev/comfyui.md` for plans and pinned params.
 
 ## The photo dataset that settled it
 
@@ -330,8 +493,10 @@ dataset-class-specific and the default should not move.
 
 Deliberately ordered so the cheapest, least committal win comes first. **Stages 1 and 2a
 shipped together on 2026-08-04 and are deleted from here per this file's lifecycle** —
-`combined` is now 30% CLIP + 70% DINOv2 on layer 9, both `*_all_layers` modes read
-`DEFAULT_DINO_LAYER`, and no mode description quotes an AUC. Their durable rationale is in
+`combined` is now 30% CLIP + 70% DINOv2, both `*_all_layers` modes read
+`DEFAULT_DINO_LAYER`, and no mode description quotes an AUC. `DEFAULT_DINO_LAYER` was
+retuned once more the same day, from 9 to **7**, on § The crossed runs; the blend weights
+did not move. Their durable rationale is in
 `docs/dev/style-similarity.md` and, for users, `docs/style-similarity.md`. They shipped
 together because a default the UI argued against would have been worse than either alone.
 
@@ -353,6 +518,13 @@ It renders in the layer picker on two screens and against every bar in `DinoLaye
 directly beside the layer the app now recommends, so it is doing real persuasive work in
 both directions: in review it made a reader distrust the new default for a reason that turns
 out to be unfounded, and it could as easily make the next reader trust it for one.
+
+**The crossed runs make this worse, not better.** "Scene composition" on layer 9 is now
+measurably pointing at the wrong end of the stack — layer **12** is the framing-locked one
+(reframe-vs-restyle 0.274 against layer 9's 0.660), and the label sits two rows above it.
+`DINO_LAYER_NOTE` has meanwhile gained a *measured* per-depth claim (deeper leans to subject,
+5–6 for the look, 9–10 for the scene), so the picker now shows a sourced statement and an
+unsourced one side by side, in the same idiom.
 
 Two options, in order of preference:
 
@@ -394,6 +566,14 @@ the above measures it.
   composition matcher? had to be written at all. The general form: anything this file's
   findings get rendered next to must be checkable back to a measurement, or it will be read
   as one. Stage 2b is the fix.
+- **A separability sweep cannot see the subject confound, and reads as though it can.**
+  Every per-layer and per-blend number above § The crossed runs answers "do in-style
+  candidates outrank out-of-style controls" on sets where in-style images also share subject
+  matter — so a signal that ranks on content scores well and looks like a style matcher. The
+  first campaign chose a default that way, and the crossed runs moved it one layer. The
+  general form: when a metric's positives share two properties, it measures neither until
+  one of them is held fixed. Any future sweep here states which of style/subject it fixed,
+  or it is measuring the same thing again.
 - **Licensing and gating are unchanged.** All `facebook/dinov3-*` repos are `gated: manual`
   under a custom DINOv3 Licence, not Apache-2.0, and a fine-grained token additionally needs
   gated-repo read scope or the fetch 403s. `transformers>=4.56` is required; the floor in
@@ -427,3 +607,12 @@ Both harness scripts are **uncommitted working-tree changes** as of 2026-08-04:
   separation metrics (AUC, best threshold, accuracy, control positions, worst-control rank).
   Those metrics were previously computed by hand from the JSON sidecar, which is why the
   report's headline table could not be regenerated for a new mode.
+
+The crossed-run harness (2026-08-04b) is **not committed anywhere** — it lived in a session
+scratchpad and is gone. It was four short scripts and is cheap to rebuild from § The crossed
+runs, which states every parameter: the restyle and reframe definitions, the four pair
+classes, the four pools, and the CLIP zero-shot bin prompts. Both runs call
+`dino_embed_offline.extract` / `extract_clip` for embeddings, so the only original code is
+variant generation with Pillow and a rank-based AUC over pair masks. If the ComfyUI crossed
+set gets built, that harness is what scores it and it should land in `backend/scripts/`
+rather than a scratchpad the second time.

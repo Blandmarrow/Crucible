@@ -9,7 +9,7 @@ Because it compares embeddings that already exist, it is CPU-only and runs immed
 ## Running a style run
 
 - **Embedding model** — see the mode table below. **Start with CLIP + DINOv2**, the default: it is the steadiest of the three across different reference sets, and the two models are the only pair that genuinely disagree, so blending them is worth more than either alone. All three require the matching embeddings to have been computed first, by a [scoring run](scoring.md#running-a-scoring-run) with the relevant boxes ticked — the panel tells you when they are missing, and refuses to run rather than failing.
-- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. **Layer 9 is the default**, because the middle of the stack separates styles best and the last layer is measurably the weakest — do not read a layer's raw score range as a guide to its usefulness. *Final embedding* is a separate option from *Layer 12*: it uses the standard `dino_embedding`, which is a different vector from layer 12 and scores differently. Every numbered layer, and *All layers*, need per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view.
+- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. **Layer 7 is the default**, because the middle of the stack separates styles best and the last layer is measurably the weakest — do not read a layer's raw score range as a guide to its usefulness. The deeper the layer, the more it ranks on *what is in the picture* rather than on how it is drawn, so **try layers 5–6 to weight the look more heavily and 9–10 to find more of the same subject and framing**. *Final embedding* is a separate option from *Layer 12*: it uses the standard `dino_embedding`, which is a different vector from layer 12 and scores differently. Every numbered layer, and *All layers*, need per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view.
 - **Reference images** — pick them from the dataset, or drag in local files from outside it. Local files are always embedded with CLIP, so choosing them restricts the run to the CLIP model.
 - **Copy reference IDs** — beside *Score similarity*, copies the selected dataset references' image IDs to the clipboard as a comma-separated list, for pasting into a script or an API call. Dragged-in local files have no ID and are not included.
 
@@ -21,7 +21,7 @@ Scoring writes a `style_similarity_score` per image, which the gallery and Stati
 |---|---|
 | `clip` | Cosine similarity of CLIP ViT-L-14 embeddings. Matches on lighting and palette. Strong on some reference sets and weak on others, more so than the DINOv2 modes |
 | `dino` | Cosine similarity of DINOv2 embeddings, from a chosen layer. Spends a wider numeric range, leans toward subject and framing, and is steadier than CLIP across reference sets |
-| `combined` | Weighted blend: 30% CLIP + 70% DINOv2, layer 9 by default. The most reliable of the three across varied references |
+| `combined` | Weighted blend: 30% CLIP + 70% DINOv2, layer 7 by default. The most reliable of the three across varied references |
 | `dino_all_layers` / `combined_all_layers` | Score each of the 12 DINOv2 layers independently and store all results |
 
 ## Reading the score
@@ -54,8 +54,13 @@ illustration, animation and photography:
 - **No single mode is best.** CLIP was the clear winner against one reference set and the
   clear loser against a different set drawn from *the same images*. That is why the mode
   descriptions in the app say what each model pays attention to rather than quoting a score.
+- **Part of what it matches is the subject, not the style.** Both figures above come from
+  sets where in-style images also tend to share subject matter, so some of that accuracy is
+  the picture rather than the look. Tested against images that deliberately hold the subject
+  fixed and vary only the rendering, every setting drops to roughly two right calls in three.
+  Choosing a lower layer shifts the balance toward the look; it does not remove the effect.
 
-Layer 9 and the 30/70 blend replaced an older default on 2026-08-04, and scores written
+Layer 7 and the 30/70 blend replaced an older default on 2026-08-04, and scores written
 before then are not comparable with scores written after. The **Style match** block on the
 image detail page names the mode, the layer and the weights for exactly this reason; a
 dataset scored under the old default is worth re-running.

@@ -77,8 +77,8 @@ interface CropArea { x: number; y: number; width: number; height: number; }
  *  on the strength of one reference set's compression, which turned out to be a
  *  property of that measurement rather than of the layers: the wider sweep in
  *  `backend/scripts/style_gate_report.md` found the middle of the stack separates
- *  *best*, and layer 9 is now what the app scores on. Dimming it would have the
- *  panel arguing against its own default.
+ *  *best*, and a mid layer is now what the app scores on. Dimming it would have
+ *  the panel arguing against its own default.
  *
  *  `storedLayer` is which layer the dataset's run put in `style_similarity_score`,
  *  read from the run descriptor rather than hardcoded — an old row's headline

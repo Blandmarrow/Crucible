@@ -911,7 +911,7 @@ export default function QualityPage() {
               <div className="form-row">
                 <div className="lbl-col">
                   <h4>DINOv2 layer</h4>
-                  <p>{DINO_LAYER_NOTE} Layer 12 uses the pre-computed <span className="mono">dino_embedding</span>; every other layer requires per-layer embeddings.</p>
+                  <p>{DINO_LAYER_NOTE} <em>Final embedding</em> uses the <span className="mono">dino_embedding</span> column; every numbered layer, and <em>All layers</em>, require per-layer embeddings.</p>
                 </div>
                 <select
                   className="select"

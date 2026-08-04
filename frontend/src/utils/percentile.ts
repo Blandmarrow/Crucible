@@ -5,11 +5,13 @@ import { styleModeLabel } from "../constants/styleModes";
  * Placing one style-similarity score inside its dataset's own distribution.
  *
  * `Image.style_similarity_score` is a raw cosine whose scale depends entirely on
- * the mode that produced it — CLIP spans ~0.53–0.93 on the same images DINOv2
- * spans 0.05–0.70, and a per-layer run below layer 10 compresses everything into
- * 0.90–0.99. A fixed good/warn/bad threshold would therefore mean five different
- * things in five modes, which is the defect, not the fix. A percentile over the
- * dataset's own scores is mode-invariant by construction.
+ * what produced it — CLIP spans ~0.53–0.93 on the same images DINOv2 spans
+ * 0.05–0.70, a low-layer run compresses everything into 0.90–0.99, and the same
+ * mode at a different blend weight is a different scale again. A fixed
+ * good/warn/bad threshold would therefore mean several different things at once,
+ * which is the defect, not the fix. A percentile over the dataset's own scores is
+ * invariant to all of it by construction — which is also why the meter's *length*
+ * carries the meaning and its colour never does.
  *
  * There is **no frontend unit-test runner in this repo**, so every degenerate
  * input is handled defensively here and the shapes that produce them are

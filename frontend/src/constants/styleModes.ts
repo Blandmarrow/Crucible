@@ -8,12 +8,19 @@
  *  detail Style match block) now names a mode read back from a stored run
  *  descriptor. Consume by `.map()` so drift becomes structurally impossible.
  *
- *  The copy states what the Phase-0 gate measured (`backend/scripts/style_gate_report.md`,
- *  summarised in `docs/dev/style-similarity.md`) rather than what the modes sound
- *  like. The previous wording — "CLIP for general images; DINOv2 for object-shape
- *  similarity" — implied DINOv2 was the upgrade; on the gate's 118 images CLIP
- *  separated best (AUC 0.9733 vs 0.9417) and `combined` tracked DINOv2 at
- *  Spearman ρ 0.9844, so it is a tilt on DINOv2 rather than a third opinion.
+ *  **No mode description quotes an AUC**, and that is a rule rather than an
+ *  omission. The copy here twice said what one measurement found and twice had to
+ *  be taken back: "CLIP for general images; DINOv2 for object-shape similarity"
+ *  implied DINOv2 was the upgrade, and its replacement — "CLIP separates best of
+ *  the three (AUC 0.97)" — was true of exactly one reference set. On a second
+ *  reference cluster drawn from *the same 118 images* that mode scored 0.6144, and
+ *  0.7399 on photographs. A single number presented as a property of a mode is a
+ *  claim the feature cannot keep; what each mode *attends to* is stable, so that
+ *  is what the copy says.
+ *
+ *  For the honest range: ~0.98 AUC is the ceiling for sorting across media
+ *  (anime screencaps from painterly illustration), ~0.85 is realistic for style
+ *  matching inside one medium. See `docs/dev/style-similarity.md`.
  */
 export type StyleMode = "clip" | "dino" | "combined";
 
@@ -28,30 +35,38 @@ export const STYLE_MODES: StyleModeDef[] = [
   {
     value: "clip",
     label: "CLIP",
-    desc: "Separates best of the three (AUC 0.97). Matches on lighting and palette — the closest of the three to \"looks like these references\".",
+    desc: "Matches on lighting and palette — the closest of the three to \"looks like these references\". Strong on some reference sets and weak on others, more so than the DINOv2 modes.",
   },
   {
     value: "dino",
     label: "DINOv2",
-    desc: "Spends a wider range but separates less well (AUC 0.94), and drifts toward subject and framing rather than palette.",
+    desc: "Spends a wider numeric range, and leans toward subject and framing rather than palette. Steadier than CLIP across different reference sets.",
   },
   {
     value: "combined",
     label: "CLIP + DINOv2",
-    desc: "0.38 × CLIP + 0.62 × DINOv2. Tracks DINOv2 closely (ρ 0.98) rather than giving an independent third opinion.",
+    desc: "0.30 × CLIP + 0.70 × DINOv2, on layer 9 by default. The most reliable of the three across varied references — CLIP and DINOv2 are the pair that genuinely disagree, so blending them is worth more than either alone.",
   },
 ];
 
 /** Shown under the picker on both screens. The last clause is the one that
  *  matters most: it is why a stored score needs its run descriptor to be read. */
 export const STYLE_MODE_NOTE =
-  "All modes require embeddings computed first. Scores from different modes are not comparable — a run overwrites the previous one for every image it covers.";
+  "All modes require embeddings computed first. Scores from different modes, layers or blend weights are not comparable — a run overwrites the previous one for every image it covers, and the image detail page names what produced the score you are looking at.";
 
-/** Shown under the per-layer picker. The gate's per-layer sweep found layers 1–8
- *  compress every image into 0.90–0.99, which is an ordering with no cut point
- *  in it. */
+/** Shown under the per-layer picker — visible copy on both screens, never a
+ *  `title=` (see SelectionToolbar).
+ *
+ *  This replaces a claim that turned out to be wrong in the direction that
+ *  mattered: it said layers 1–8 were unusable because they compress every image
+ *  into 0.90–0.99. The compression is real, but a narrow band with clean ordering
+ *  thresholds perfectly well — the two are separate properties that happened to
+ *  coincide on one dataset. A sweep across twelve reference configurations found
+ *  the *middle* of the stack separates best and the last layer worst, on every
+ *  model and every dataset tested. Steering users away from layer 9 would be
+ *  steering them away from the default. */
 export const DINO_LAYER_NOTE =
-  "Each transformer block captures increasingly abstract features. Usable spread only appears at layers 10–12: on layers 1–8 every image scores 0.90–0.99, so there is no threshold to cut on. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
+  "Each transformer block captures increasingly abstract features. The middle of the stack separates styles best — layer 9 is the default and the last layer is measurably the weakest, so raw score range is a poor guide to which layer to use. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
 
 /** How a stored `embedding_type` reads on screen.
  *

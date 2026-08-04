@@ -10,5 +10,9 @@ export const DINO_LAYER_LABELS: Record<string, string> = {
   "9":  "Scene composition",
   "10": "High-level context",
   "11": "Abstract semantics",
-  "12": "Final representation",
+  // Not "Final representation": the layer picker now offers a separate "Final
+  // embedding" option for the post-layernorm `dino_embedding` column, and two
+  // options both calling themselves final would be exactly the confusion the
+  // three-valued picker exists to remove. This is `hidden_states[12]`.
+  "12": "Last block, pre-layernorm",
 };

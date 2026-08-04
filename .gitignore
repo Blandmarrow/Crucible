@@ -31,3 +31,4 @@ alembic/__pycache__/
 .coverage
 frontend/playwright-report/
 frontend/test-results/
+dataset_manager.db.bak-20260804-075652-pre-rating-downgrade

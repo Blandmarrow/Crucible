@@ -69,6 +69,10 @@ const DATASET_CONTENT_SCOPE = [
   "score-values",
   "tag-cooccurrence",
   "style-distribution",
+  // The Score page's missing-embeddings warning. Without this line the warning
+  // survives the very run that fixes it — the counts it reads are per-column
+  // aggregates over exactly these rows.
+  "embedding-coverage",
 ] as const;
 
 export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string | undefined) {

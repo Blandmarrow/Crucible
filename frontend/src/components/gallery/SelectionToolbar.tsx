@@ -33,7 +33,10 @@ import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 import { detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
-import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
+import {
+  STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, DEFAULT_DINO_LAYER,
+  type StyleMode, type DinoLayerChoice,
+} from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
 interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
@@ -77,7 +80,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [selectedRefIds, setSelectedRefIds] = useState<Set<string>>(new Set());
   const [externalRefFiles, setExternalRefFiles] = useState<File[]>([]);
   const [embeddingType, setEmbeddingType] = useState<StyleMode>("clip");
-  const [dinoLayer, setDinoLayer] = useState<number | "all" | null>("all");
+  // No persistence here (unlike QualityPage), so this takes the measured default
+  // immediately rather than inheriting a stored one.
+  const [dinoLayer, setDinoLayer] = useState<DinoLayerChoice>(DEFAULT_DINO_LAYER);
   const [scoreJobLabel, setScoreJobLabel] = useState("");
   const [scoreJobId, setScoreJobId] = useState<string | null>(null);
   const [captionJobId, setCaptionJobId] = useState<string | null>(null);
@@ -846,22 +851,31 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
                   {(embeddingType === "dino" || embeddingType === "combined") && externalRefFiles.length === 0 && (
                     <div>
-                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }} title={DINO_LAYER_NOTE}>DINOv2 layer</div>
+                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>DINOv2 layer</div>
                       <select
                         className="select w-full"
-                        value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}
+                        value={String(dinoLayer)}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (v === "all") setDinoLayer("all");
-                          else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
+                          setDinoLayer(v === "all" || v === "final" ? v : Number(v));
                         }}
                         style={{ fontSize: 12 }}
                       >
                         {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
                           <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
                         ))}
+                        {/* Not a relabelling of "Layer 12": this is the post-layernorm
+                            `dino_embedding` column, layer 12 is `hidden_states[12]`. */}
+                        <option value="final">Final embedding — post-layernorm CLS token</option>
                         <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
                       </select>
+                      {/* Visible copy, not a `title=`. QualityPage has always shown
+                          this note in full; carrying it only as a tooltip here made
+                          it invisible on touch and to keyboard users, for the one
+                          control where the choice is least obvious. */}
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "6px 0 0", lineHeight: 1.45 }}>
+                        {DINO_LAYER_NOTE}
+                      </p>
                     </div>
                   )}
 

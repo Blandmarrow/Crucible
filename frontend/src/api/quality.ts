@@ -78,6 +78,16 @@ export interface StyleDistribution {
   run: StyleRunDescriptor | null;
 }
 
+/** Per-column embedding counts within a scope. Each is the number of images whose
+ *  column is non-NULL, so `clip < total` means a partial run: a scoped style run
+ *  over the covered images is still legitimate, and the response reports `skipped`. */
+export interface EmbeddingCoverage {
+  total: number;
+  clip: number;
+  dino: number;
+  dino_layers: number;
+}
+
 export const qualityApi = {
   score: (params: {
     dataset_id: string;
@@ -150,4 +160,16 @@ export const qualityApi = {
    *  card, not a navigation. */
   styleDistribution: (dataset_id: string) =>
     client.get<StyleDistribution>(`/quality/style-similarity/${dataset_id}`).then((r) => r.data),
+
+  /** How many images carry each embedding a style run needs, in the Score page's
+   *  subfolder scope. Style similarity is the one workflow whose prerequisite is
+   *  another run, and every mode 400s when its column is empty — this is what lets
+   *  the page say so before the button is pressed. Deliberately not folded into
+   *  `styleDistribution`, which is on the gallery render path. */
+  embeddingCoverage: (dataset_id: string, subfolder?: string) =>
+    client
+      .get<EmbeddingCoverage>(`/quality/embedding-coverage/${dataset_id}`, {
+        params: subfolder !== undefined ? { subfolder } : undefined,
+      })
+      .then((r) => r.data),
 };

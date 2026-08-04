@@ -13,7 +13,10 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
-import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, styleModeLabel, type StyleMode } from "../constants/styleModes";
+import {
+  STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, styleModeLabel, normalizeDinoLayer,
+  describeEmbeddingGap, DEFAULT_DINO_LAYER, type StyleMode, type DinoLayerChoice,
+} from "../constants/styleModes";
 import { AESTHETIC_MODELS, aestheticModelLabel, type AestheticModel } from "../constants/aestheticModels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
@@ -36,7 +39,7 @@ interface QualityWorkflow {
   runNsfw: boolean;
   runDinoLayers: boolean;
   embeddingType: StyleMode;
-  dinoLayer: number | "all" | null;
+  dinoLayer: DinoLayerChoice;
 }
 
 /** Rank a duplicate group best-first for *Keep best*, nulls **last**.
@@ -229,7 +232,7 @@ const QUALITY_WORKFLOW_DEFAULTS: QualityWorkflow = {
   runNsfw: false,
   runDinoLayers: false,
   embeddingType: "clip",
-  dinoLayer: "all",
+  dinoLayer: DEFAULT_DINO_LAYER,
 };
 
 interface QualityFilters {
@@ -273,7 +276,10 @@ export default function QualityPage() {
   const [jobLabel, setJobLabel] = useState("");
   const [runDinoLayers, setRunDinoLayers] = useState(workflow.runDinoLayers);
   const [embeddingType, setEmbeddingType] = useState<StyleMode>(workflow.embeddingType);
-  const [dinoLayer, setDinoLayer] = useState<number | "all" | null>(workflow.dinoLayer);
+  // Normalised at the load boundary: `loadPersisted` shallow-merges, so a blob
+  // written before `DinoLayerChoice` existed carries `dinoLayer: null` straight
+  // through and would render an empty `<select>`.
+  const [dinoLayer, setDinoLayer] = useState<DinoLayerChoice>(() => normalizeDinoLayer(workflow.dinoLayer));
 
   // Remembered "filters" config — per-dataset.
   const [filters] = useState(() =>
@@ -310,8 +316,22 @@ export default function QualityPage() {
   const embeddingTypeInitialized = useRef(false);
   useEffect(() => {
     if (!embeddingTypeInitialized.current) { embeddingTypeInitialized.current = true; return; }
-    if (embeddingType === "clip") setDinoLayer("all");
+    // CLIP hides the layer picker, so whatever is held becomes invisible state.
+    // Landing on the measured default means switching back to a DINOv2 mode shows
+    // the layer we recommend rather than whatever was left behind.
+    if (embeddingType === "clip") setDinoLayer(DEFAULT_DINO_LAYER);
   }, [embeddingType]);
+
+  // Per-layer embeddings are what every layer except "final" reads, so ticking
+  // DINOv2 without them leaves the layer picker pointing at an empty column.
+  // Auto-ticked on the *first* check rather than defaulted on, so a user who never
+  // touches style similarity does not pay for a 1.2 GB model; unticking it after
+  // sticks, because `prevRunDino` only fires on the false -> true edge.
+  const prevRunDino = useRef(runDino);
+  useEffect(() => {
+    if (runDino && !prevRunDino.current) setRunDinoLayers(true);
+    prevRunDino.current = runDino;
+  }, [runDino]);
 
   // Persist the "workflow" config (scoring toggles/style settings) — global, debounced.
   // No new storage key: `loadPersisted`'s shallow merge onto the defaults means
@@ -390,6 +410,16 @@ export default function QualityPage() {
     queryFn: () => qualityApi.aestheticCoverage(datasetId!, activeSubfolder),
     enabled: !!datasetId,
   });
+  // Which embeddings the current mode needs, and how many images have them.
+  // `enabled`-gated on the collapsed section: a user who never opens Style
+  // similarity never fires it. Same subfolder scope as the aesthetic one above.
+  const { data: embeddingCoverage } = useQuery({
+    queryKey: ["embedding-coverage", datasetId, activeSubfolder ?? null],
+    queryFn: () => qualityApi.embeddingCoverage(datasetId!, activeSubfolder),
+    enabled: !!datasetId && showStyleSection,
+  });
+  const styleGap = describeEmbeddingGap(embeddingCoverage, embeddingType, dinoLayer);
+
   const coverageByModel = Object.entries(aestheticCoverage?.by_model ?? {});
   // Rows another model already scored — exactly what the re-score offer targets,
   // and the same predicate the server applies for `only_mismatched`.
@@ -844,7 +874,11 @@ export default function QualityPage() {
           <h3>Style similarity</h3>
           <div style={{ flex: 1 }} />
           <span className="mono" style={{ color: "var(--fg-dim)", fontSize: 11 }}>Cosine similarity to reference embeddings</span>
-          <button className="icon-btn" onClick={() => setShowStyleSection((v) => !v)}>
+          <button
+            className="icon-btn"
+            onClick={() => setShowStyleSection((v) => !v)}
+            aria-label={showStyleSection ? "Collapse style similarity" : "Expand style similarity"}
+          >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d={showStyleSection ? "M3 10l5-5 5 5" : "M3 6l5 5 5-5"}/>
             </svg>
@@ -881,16 +915,19 @@ export default function QualityPage() {
                 </div>
                 <select
                   className="select"
-                  value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}
+                  value={String(dinoLayer)}
                   onChange={(e) => {
                     const v = e.target.value;
-                    if (v === "all") setDinoLayer("all");
-                    else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
+                    setDinoLayer(v === "all" || v === "final" ? v : Number(v));
                   }}
                 >
                   {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
                     <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
                   ))}
+                  {/* A separate option from "Layer 12", not a relabelling of it: this
+                      is the post-layernorm `dino_embedding` column, layer 12 is the
+                      pre-layernorm `hidden_states[12]`. */}
+                  <option value="final">Final embedding — post-layernorm CLS token</option>
                   <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
                 </select>
               </div>
@@ -912,6 +949,24 @@ export default function QualityPage() {
               )}
             </div>
 
+            {/* The prerequisite this workflow has and no other does. Zero covered
+                images is a guaranteed 400, so the button goes with it; a partial
+                gap is only a warning, because scoring the covered images is a
+                legitimate run and the response reports what it skipped. */}
+            {styleGap && externalRefFiles.length === 0 && (
+              <div className="form-row">
+                <div className="lbl-col" />
+                <p
+                  data-testid="style-embedding-warning"
+                  style={{ fontSize: 12, color: "var(--warn)", margin: 0, lineHeight: 1.5 }}
+                >
+                  {styleGap.covered === 0
+                    ? `No image in this scope has ${styleGap.needs}. Run scoring above with the matching boxes ticked first — this mode has nothing to compare.`
+                    : `Only ${styleGap.covered} of ${styleGap.total} images in this scope have ${styleGap.needs}. The rest will be skipped.`}
+                </p>
+              </div>
+            )}
+
             <div className="form-row">
               <div className="lbl-col">
                 <h4>Action</h4>
@@ -921,7 +976,16 @@ export default function QualityPage() {
                 <button
                   className="btn primary"
                   onClick={() => similarityMutation.mutate()}
-                  disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
+                  disabled={
+                    (selectedRefIds.size === 0 && externalRefFiles.length === 0)
+                    || similarityMutation.isPending
+                    || (styleGap?.covered === 0 && externalRefFiles.length === 0)
+                  }
+                  title={
+                    styleGap?.covered === 0 && externalRefFiles.length === 0
+                      ? `No image in this scope has ${styleGap.needs}, so this run would fail. Score them first.`
+                      : undefined
+                  }
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
                     <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>

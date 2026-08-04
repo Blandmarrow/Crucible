@@ -68,20 +68,25 @@ interface CropArea { x: number; y: number; width: number; height: number; }
 /** The twelve per-layer DINOv2 cosines, on a **fixed 0–1 axis**.
  *
  *  It used to normalise each bar to the largest score *within the image*, so one
- *  bar always read 100% however poor the match — and since layers 1–8 compress
- *  every image into 0.90–0.99 (the Phase-0 gate's per-layer sweep, see
- *  `backend/scripts/style_gate_report.md`), the panel rendered twelve near-full
- *  bars for a picture that matched nothing. A fixed axis with stated end labels is
- *  the fix: the bar lengths now mean the same thing here as they do in the next
- *  image.
+ *  bar always read 100% however poor the match — and since the low layers compress
+ *  every image into a narrow band, the panel rendered twelve near-full bars for a
+ *  picture that matched nothing. A fixed axis with stated end labels is the fix:
+ *  the bar lengths now mean the same thing here as they do in the next image.
  *
- *  Layers 1–9 are de-emphasised rather than hidden — the numbers are stored data
- *  and this is the only place to see them — and layer 12 is marked, because that
- *  is the one written to `style_similarity_score`.
+ *  **No layer is dimmed.** An earlier version greyed out everything below layer 10
+ *  on the strength of one reference set's compression, which turned out to be a
+ *  property of that measurement rather than of the layers: the wider sweep in
+ *  `backend/scripts/style_gate_report.md` found the middle of the stack separates
+ *  *best*, and layer 9 is now what the app scores on. Dimming it would have the
+ *  panel arguing against its own default.
+ *
+ *  `storedLayer` is which layer the dataset's run put in `style_similarity_score`,
+ *  read from the run descriptor rather than hardcoded — an old row's headline
+ *  genuinely was layer 12, so falling back to the current default would lie about
+ *  it. Null (no descriptor, or a run scored off the final embedding) renders no
+ *  badge at all, matching `StyleMatchPanel`'s "run details were not recorded".
  */
-const DINO_MEANINGFUL_LAYER = 10;
-
-function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
+function DinoLayerBreakdown({ scores, storedLayer }: { scores: Record<string, number>; storedLayer: number | null }) {
   const [open, setOpen] = useState(true);
   const layers = Array.from({ length: 12 }, (_, i) => String(i + 1))
     .filter((k) => scores[k] !== undefined);
@@ -106,19 +111,18 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
             // itself, comparable across images and across layers.
             const pct = Math.max(0, Math.min(1, score)) * 100;
             const label = DINO_LAYER_LABELS[k] ?? `Layer ${k}`;
-            const weak = Number(k) < DINO_MEANINGFUL_LAYER;
-            const stored = k === "12";
+            const stored = storedLayer != null && Number(k) === storedLayer;
             return (
-              <div key={k} style={{ display: "grid", gridTemplateColumns: "20px 1fr auto", alignItems: "center", gap: 6, opacity: weak ? 0.45 : 1 }}>
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "20px 1fr auto", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 10, color: "var(--fg)", textAlign: "right", fontFamily: "monospace" }}>{k}</span>
                 <div style={{ position: "relative", height: 14, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }} title={label}>
-                  <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${pct}%`, background: weak ? "var(--fg-mute)" : "var(--accent)", borderRadius: 3, transition: "width .3s" }} />
+                  <div style={{ position: "absolute", inset: "0 auto 0 0", width: `${pct}%`, background: "var(--accent)", borderRadius: 3, transition: "width .3s" }} />
                   <span style={{ position: "absolute", left: 4, top: 0, lineHeight: "14px", fontSize: 9, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", maxWidth: "calc(100% - 8px)" }}>
                     {label}
                     {stored && (
                       <span
                         style={{ marginLeft: 6, fontSize: 8, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--fg-dim)" }}
-                        title="Layer 12 is the value written to style_similarity_score — the score every other screen shows."
+                        title={`Layer ${storedLayer} is the value this dataset's run wrote to style_similarity_score — the score every other screen shows.`}
                       >
                         stored
                       </span>
@@ -137,9 +141,9 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
             <span style={{ minWidth: 32 }} />
           </div>
           <p style={{ fontSize: 10, color: "var(--fg-dim)", margin: "4px 0 0", lineHeight: 1.4 }}>
-            Fixed 0–1 axis. Layers 1–9 are dimmed because they discriminate weakly:
-            every image scores 0.90–0.99 on layers 1–8, so the ordering there has no
-            cut point in it. Usable spread appears at layers 10–12.
+            Fixed 0–1 axis, so a bar means the same thing here as on the next image.
+            A layer's usefulness is not its raw score: the low layers score high on
+            almost everything, and the middle of the stack separates best.
           </p>
         </div>
       )}
@@ -1703,7 +1707,10 @@ export default function ImageDetailPage() {
           )}
 
           {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 ? (
-            <DinoLayerBreakdown scores={image.dino_layer_scores} />
+            <DinoLayerBreakdown
+              scores={image.dino_layer_scores}
+              storedLayer={styleDistribution?.run?.dino_layer ?? null}
+            />
           ) : image.has_dino_layer_embeddings ? (
             <p className="text-[11px] text-fg opacity-50 mt-1">
               Per-layer embeddings stored — run style similarity with "All layers" to score them.

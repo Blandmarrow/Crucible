@@ -42,6 +42,7 @@ from pathlib import Path
 from backend.ml.similarity_scorer import (
     compute_combined_similarity,
     compute_style_similarity,
+    slice_layer_embedding,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -271,14 +272,13 @@ def separation(ranking: list[dict], top: int) -> dict:
 def _slice_layer(blob: bytes, layer: int, n_layers: int, dim: int) -> bytes:
     """One layer's float16 bytes out of a stacked per-layer blob.
 
-    For the shipped 12 × 768 geometry this defers to ``dino_scorer.slice_layer_embedding``,
-    so the gate keeps exercising production code on the production column; an extra
-    embedding set with a different shape gets the same arithmetic without loosening that
-    function's bounds check. Torch-free by default: ``dino_scorer`` imports torch at module
-    top, so the import stays inside this function and nowhere else."""
+    For the shipped 12 × 768 geometry this defers to
+    ``similarity_scorer.slice_layer_embedding``, so the gate keeps exercising production
+    code on the production column; an extra embedding set with a different shape gets the
+    same arithmetic without loosening that function's bounds check. It used to live in
+    ``dino_scorer`` (``import torch`` at module top), which is why the import sat inside
+    this function; ``similarity_scorer`` is numpy-only, so it no longer has to."""
     if (n_layers, dim) == (12, 768):
-        from backend.ml.dino_scorer import slice_layer_embedding
-
         return slice_layer_embedding(blob, layer)
 
     expected = n_layers * dim * 2

@@ -182,37 +182,6 @@ staleness sweep while still recording the seam.
   mirror-the-user-doc naming convention gives no name for free — image-processing-models.md
   is a proposal, not a constraint.
 
-## docs/dev/image-similarity.md
-
-- **Moves:** § Style similarity in full — its mode table, § What the modes are actually
-  worth, § Making the score readable — the run descriptor and the percentile, and every
-  subsection under it (2,437 words, more than half the file)
-- **New file:** docs/dev/style-similarity.md (mirrors docs/scoring.md § Style similarity,
-  whose own second seam names the same subject)
-- **Why here:** the file has been two subsystems under one title since it was written, and
-  its own `# Title` says so — "duplicates **and** style". They share nothing but the word
-  *similarity*: duplicates are pHash Hamming distance, a grouping pass inside the technical
-  scorer, and a destructive resolution UI; style is CLIP/DINOv2 cosines, a synchronous
-  CPU-only endpoint, a run descriptor table, a percentile contract and three rendered
-  meters. A reader arrives for exactly one. Splitting there leaves ~2,300 and ~2,440 — both
-  over the ~2,100 target, which is the honest cost of a file that is two full subsystems
-  rather than one that grew a tail. If the style half needs a second seam it is between the
-  *scoring* (modes, gate findings, all-layers vectorization) and the *reading* (descriptor,
-  endpoint, percentile, surfaces) — the § Making the score readable heading is already that
-  line.
-- **Watch for:** the duplicates half is cited from `docs/dev/scoring.md`,
-  `docs/dev/bulk-ops.md` and `docs/dev/video.md`; the style half from
-  `docs/dev/scores-stale.md` (§ The clear predicate, in both directions),
-  `docs/dev/statistics.md` (the `"style"` cache slot), `docs/dev/gallery.md` (the card
-  meter), `docs/dev/image-detail.md` (the Style match block and the layer breakdown) and
-  `docs/dev/persistence.md` (the meter key). CLAUDE.md's Documentation Map row names both
-  subjects and has to become two rows. `backend/scripts/style_gate_report.md` is the source
-  the gate findings summarise and points back here by name. Several of these are `§`-level
-  pointers the checker cannot verify — grep `image-similarity.md` across `docs/`,
-  `CLAUDE.md` and `backend/scripts/` before and after. The user doc the new file mirrors is
-  a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
-  first and produces a docs/style-similarity.md, the names line up for free.
-
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)
@@ -260,6 +229,12 @@ session that appended the style-similarity percentile material to § Style simil
 seam held as recorded, and the staying half landed at ~2,100 words. That half is still over
 the 2,500 user budget's 60% target, so its recorded second seam stands: § Style similarity
 is now the largest section and is a separate CPU-only workflow with its own concepts.
+
+`docs/dev/image-similarity.md` → `docs/dev/style-similarity.md` was executed on 2026-08-04, at
+the start of the session that retuned the style score to layer 9 at 0.30/0.70 — the seam held
+as recorded, and both halves landed close to the entry's prediction (~2,305 duplicates,
+~2,725 style). The style half is still over the ~2,100 target, so its recorded second seam
+stands: § Making the score readable is the line between the *scoring* and the *reading*.
 
 `docs/dev/gallery.md` → `docs/dev/gallery-dnd.md` was executed on 2026-08-03, at the start of
 the session that added subfolder rename and re-nesting — the seam held as recorded, and

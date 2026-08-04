@@ -9,7 +9,7 @@
  *  descriptor. Consume by `.map()` so drift becomes structurally impossible.
  *
  *  The copy states what the Phase-0 gate measured (`backend/scripts/style_gate_report.md`,
- *  summarised in `docs/dev/image-similarity.md`) rather than what the modes sound
+ *  summarised in `docs/dev/style-similarity.md`) rather than what the modes sound
  *  like. The previous wording — "CLIP for general images; DINOv2 for object-shape
  *  similarity" — implied DINOv2 was the upgrade; on the gate's 118 images CLIP
  *  separated best (AUC 0.9733 vs 0.9417) and `combined` tracked DINOv2 at

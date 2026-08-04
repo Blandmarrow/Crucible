@@ -46,7 +46,7 @@ Images and datasets carry `source_name` / `source_url` / `license` / `attributio
 ### Style match & the DINOv2 layer breakdown
 
 Two blocks below the flat scores grid, both about `style_similarity_score` and both owned by
-`docs/dev/image-similarity.md` § Making the score readable — read it before changing either.
+`docs/dev/style-similarity.md` § Making the score readable — read it before changing either.
 What matters at this page's level:
 
 - **`components/image/StyleMatchPanel.tsx`** replaced a bare `Style match 62%` row *inside*

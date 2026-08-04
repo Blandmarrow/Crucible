@@ -206,6 +206,6 @@ not an inability to order. Nothing here suggests a learned head would repay a tr
 labelling UI. Style stays on the centroid baseline; the aesthetic-rating head in roadmap
 §§1–3 remains about *aesthetic quality*, which this run says nothing about.
 
-Three findings carried into `docs/dev/image-similarity.md`, all cheap to act on: CLIP is the
+Three findings carried into `docs/dev/style-similarity.md`, all cheap to act on: CLIP is the
 default worth recommending for style matching; the three modes are two signals, not three;
 and the DINOv2 per-layer picker offers nine layers that cannot be thresholded.

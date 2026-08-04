@@ -2,7 +2,7 @@
 
 This file covers the per-image measurement half of quality: the quality scorers and the columns they write, the failure contract every scorer follows when it cannot measure, the flag thresholds and where they are configured, and what the frontend e2e suite reaches.
 
-Two subjects that used to share this title now have their own files. `docs/dev/scores-stale.md` covers the `scores_stale` bit that qualifies every score documented here — one writer, one clear predicate, three rendered surfaces. `docs/dev/image-similarity.md` covers the comparisons *between* images: pHash duplicate grouping and the CLIP/DINOv2 style-similarity flow — including the `StyleSimilarityRun` descriptor and `GET /quality/style-similarity/{dataset_id}`, which exist because `style_similarity_score` is the one score column whose *scale* depends on which mode wrote it, so unlike everything documented here it cannot be read on its own.
+Three subjects that used to share this title now have their own files. `docs/dev/scores-stale.md` covers the `scores_stale` bit that qualifies every score documented here — one writer, one clear predicate, three rendered surfaces. The comparisons *between* images have two: `docs/dev/image-similarity.md` for pHash duplicate grouping, and `docs/dev/style-similarity.md` for the CLIP/DINOv2 style-similarity flow — including the `StyleSimilarityRun` descriptor and `GET /quality/style-similarity/{dataset_id}`, which exist because `style_similarity_score` is the one score column whose *scale* depends on which mode wrote it, so unlike everything documented here it cannot be read on its own.
 
 The scorers are loaded and evicted through the shared model manager — see `docs/dev/ml-models.md`.
 

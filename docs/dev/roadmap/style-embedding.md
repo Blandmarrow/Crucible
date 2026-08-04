@@ -11,12 +11,12 @@ Read that section before acting on any number above it, because the headline fig
 next few sections are from illustration and animation only.
 
 **Lifecycle**: transient, same as its sibling `roadmap.md`. When a stage lands, move its
-durable rationale into `docs/dev/image-similarity.md` and delete the stage from here; delete
+durable rationale into `docs/dev/style-similarity.md` and delete the stage from here; delete
 the file when everything is done. It sits in this subfolder deliberately —
 `scripts/check_docs.py` globs `docs/dev/*.md` non-recursively, so files here carry no
 Documentation Map row and no word budget.
 
-Read `docs/dev/image-similarity.md` and `backend/scripts/style_gate_report.md` first. The
+Read `docs/dev/style-similarity.md` and `backend/scripts/style_gate_report.md` first. The
 published numbers in both remain correct for the configuration they were measured in; what
 follows shows that configuration was narrower than it looked.
 
@@ -104,7 +104,7 @@ below), so **the robust unit is the band, roughly layers 5–11, not any single 
 
 ### 3. This revises a published claim
 
-`docs/dev/image-similarity.md` and `styleModes.ts` both state that per-layer scoring below
+`docs/dev/style-similarity.md` and `styleModes.ts` both state that per-layer scoring below
 layer ~10 cannot be thresholded, because layers 1–8 compress every image into 0.90–0.99.
 That is true of DINOv2 and does not generalise. DINOv3 @512 layer 7 has a range of 0.129 —
 narrow — and a best-threshold accuracy of **0.9909**. A narrow band with clean ordering
@@ -343,7 +343,7 @@ the above measures it.
 `model_name` in `backend/ml/model_manager.py`; `_LAYER_BLOB_SIZE` and
 `slice_layer_embedding` in `backend/ml/dino_scorer.py`; the weights in
 `backend/ml/similarity_scorer.py::compute_combined_similarity`; the layer table and findings
-in `docs/dev/image-similarity.md`; the scorer row in `docs/dev/scoring.md`; `STYLE_MODES`,
+in `docs/dev/style-similarity.md`; the scorer row in `docs/dev/scoring.md`; `STYLE_MODES`,
 `STYLE_MODE_NOTE` and `DINO_LAYER_NOTE` in `frontend/src/constants/styleModes.ts` (all three
 carry claims this file revises); the per-layer picker in `QualityPage`; and
 `frontend/e2e/quality.spec.ts`.

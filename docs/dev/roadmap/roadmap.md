@@ -155,10 +155,14 @@ Cheap to get wrong twice, so recorded explicitly.
 
 - `waifu-scorer-v3`'s exact layer ordering (ReLU/Dropout placement between the layers its
   tensor shapes reveal). No reference implementation was found. Still held back.
-- Whether V2.5 or DINOv3 is actually better *on this user's footage*. Both claims are
-  upstream marketing, unmeasured here.
-- DINOv3's benefit for a **global CLS-token** style embedding. Its headline gains are on
-  dense tasks; Crucible only uses the CLS token.
+- Whether V2.5 is actually better *on this user's footage*. Upstream marketing, unmeasured
+  here. (The DINOv3 half of this bullet was **measured on 2026-08-04** — see
+  `docs/dev/roadmap/style-embedding.md`.)
+- ~~DINOv3's benefit for a **global CLS-token** style embedding.~~ **Measured 2026-08-04.**
+  The suspicion was right — as a CLS-token swap DINOv3 is worth little, and on one dataset
+  it is worse than DINOv2. The benefit is at the *middle* layers, which neither this file
+  nor `docs/dev/image-similarity.md` considered. See
+  `docs/dev/roadmap/style-embedding.md`. Its dense-feature gains remain untested.
 - The claim that tier sort is "3-4× faster per image" than pairwise, which an earlier draft
   of this file asserted. Per *decision* the two are comparable. The real argument for tier
   sort is information per decision, not speed — see § Why tier sort.
@@ -328,7 +332,14 @@ Four tiles, three of which are nearly free:
 `source_video_id` is an indexed FK that already means "same shot", which is the spec's
 `source_group` constraint at no cost.
 
-## 5. DINOv3 — deferred, opt-in only
+## 5. DINOv3 — superseded by `docs/dev/roadmap/style-embedding.md`
+
+**Superseded on 2026-08-04.** This section framed the question as a backbone *swap*, and
+measurement says that is the least interesting half: the larger win is which **layer** is
+read, and it is available on DINOv2 with no new model at all. The sibling file carries the
+numbers, the proposed stages and the photo dataset that would settle it. Everything below is
+kept because it remains true and the trap is now closer to being hit — but the decision it
+records has been reopened.
 
 Read `docs/dev/image-similarity.md`.
 

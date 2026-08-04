@@ -57,6 +57,17 @@ MODE_COLUMNS = {
     "combined": ("clip_embedding", "dino_embedding"),
 }
 
+# Modes scored as the 0.38/0.62 CLIP blend rather than a plain cosine, mapped to the column
+# they blend CLIP *with*. A `--extra-embeddings` set registers one of these too, so a rival
+# checkpoint is compared on both axes the app offers rather than only the raw one.
+COMBINED_SOURCES = {"combined": "dino_embedding"}
+
+# Per-layer blob geometry for each sweepable mode: (column, n_layers, dim). The app stores
+# 12 × 768 float16 because that is DINOv2-base's shape; an extra set declares its own, so a
+# checkpoint with a different depth or width sweeps correctly instead of failing a length
+# assertion written for the shipped one.
+LAYER_SOURCES = {"dino": ("dino_layer_embeddings", 12, 768)}
+
 
 # --------------------------------------------------------------------------- read-only DB
 def connect_ro(db_path: Path) -> sqlite3.Connection:
@@ -128,7 +139,7 @@ def match_rows(rows: list[dict], entries: list[str], label: str) -> set[str]:
 
 
 # --------------------------------------------------------------------------- scoring
-def score_mode(mode: str, refs: list[dict], cands: list[dict]) -> dict:
+def score_mode(mode: str, refs: list[dict], cands: list[dict], top: int = 20) -> dict:
     """Rank ``cands`` for one mode. Returns the ranking plus its coverage and spread.
 
     Rows missing an embedding this mode needs are excluded and reported, never scored.
@@ -152,12 +163,13 @@ def score_mode(mode: str, refs: list[dict], cands: list[dict]) -> dict:
             "ranking": [],
         }
 
-    if mode == "combined":
+    if mode in COMBINED_SOURCES:
+        dino_col = COMBINED_SOURCES[mode]
         scores = compute_combined_similarity(
             [r["clip_embedding"] for r in usable_refs],
             [c["clip_embedding"] for c in usable_cands],
-            [r["dino_embedding"] for r in usable_refs],
-            [c["dino_embedding"] for c in usable_cands],
+            [r[dino_col] for r in usable_refs],
+            [c[dino_col] for c in usable_cands],
         )
     else:
         col = cols[0]
@@ -185,6 +197,7 @@ def score_mode(mode: str, refs: list[dict], cands: list[dict]) -> dict:
         "excluded": skipped,
         "ranking": ranking,
         **spread(scores),
+        **separation(ranking, top),
     }
 
 
@@ -200,25 +213,101 @@ def spread(scores: list[float]) -> dict:
     }
 
 
-def layer_sweep(refs: list[dict], cands: list[dict], top: int) -> list[dict]:
-    """Optional per-DINOv2-layer sweep. Torch-free by default: ``dino_scorer`` imports torch
-    at module top, so ``slice_layer_embedding`` is imported *here* and nowhere else."""
-    from backend.ml.dino_scorer import slice_layer_embedding
+def separation(ranking: list[dict], top: int) -> dict:
+    """How cleanly a mode's scores tell a real frame from an out-of-style control.
 
-    usable_refs = [r for r in refs if r["dino_layer_embeddings"]]
-    usable_cands = [c for c in cands if c["dino_layer_embeddings"]]
+    This is the falsifiable half of the gate and the only half that ranks one mode above
+    another, so it lives in the script rather than being derived by hand from the JSON
+    sidecar afterwards — the numbers in ``style_gate_report.md``'s separation table were,
+    which is why that table could not be regenerated for a new mode.
+
+    - ``auc`` — probability a randomly chosen frame outranks a randomly chosen control
+      (0.5 = coin flip, 1.0 = perfect), by the Mann-Whitney identity with ties at half a
+      point. Ties matter here: on the compressed early layers most pairs *are* tied, and
+      counting a tie as a win would report a separation that does not exist.
+    - ``best_threshold`` / ``accuracy`` — the best single cut point, since the score is
+      ultimately a thing users filter on.
+    - ``worst_control_rank`` / ``frames_below_best_control`` — the shape of the failure.
+      A mode can hold a good AUC while one control lands near the top; the rank says so and
+      the mean does not.
+
+    Returns ``{}`` when the ranking has no controls — there is nothing to separate.
+    """
+    controls = [r["score"] for r in ranking if r["control"]]
+    frames = [r["score"] for r in ranking if not r["control"]]
+    if not controls or not frames:
+        return {}
+
+    wins = sum(
+        1.0 if f > c else 0.5 if f == c else 0.0
+        for f in frames for c in controls
+    )
+    auc = wins / (len(frames) * len(controls))
+
+    best_acc, best_t = 0.0, None
+    for cut in sorted({r["score"] for r in ranking}):
+        # "score >= cut ⇒ frame" — the direction the UI sorts and filters in.
+        correct = sum(1 for f in frames if f >= cut) + sum(1 for c in controls if c < cut)
+        acc = correct / len(ranking)
+        if acc > best_acc:
+            best_acc, best_t = acc, cut
+
+    best_control = max(controls)
+    worst_rank = next(i for i, r in enumerate(ranking, 1) if r["control"] and r["score"] == best_control)
+
+    return {
+        "auc": round(auc, 4),
+        "best_threshold": best_t,
+        "accuracy": round(best_acc, 4),
+        "controls_in_top": sum(1 for r in ranking[:top] if r["control"]),
+        "controls_in_bottom": sum(1 for r in ranking[-top:] if r["control"]),
+        "n_control": len(controls),
+        "worst_control_rank": worst_rank,
+        "frames_below_best_control": sum(1 for f in frames if f < best_control),
+        "n_frames": len(frames),
+    }
+
+
+def _slice_layer(blob: bytes, layer: int, n_layers: int, dim: int) -> bytes:
+    """One layer's float16 bytes out of a stacked per-layer blob.
+
+    For the shipped 12 × 768 geometry this defers to ``dino_scorer.slice_layer_embedding``,
+    so the gate keeps exercising production code on the production column; an extra
+    embedding set with a different shape gets the same arithmetic without loosening that
+    function's bounds check. Torch-free by default: ``dino_scorer`` imports torch at module
+    top, so the import stays inside this function and nowhere else."""
+    if (n_layers, dim) == (12, 768):
+        from backend.ml.dino_scorer import slice_layer_embedding
+
+        return slice_layer_embedding(blob, layer)
+
+    expected = n_layers * dim * 2
+    if len(blob) != expected:
+        raise ValueError(f"Expected {expected}-byte layer blob, got {len(blob)}")
+    if not (1 <= layer <= n_layers):
+        raise ValueError(f"layer must be 1–{n_layers}, got {layer}")
+    offset = (layer - 1) * dim * 2
+    return blob[offset : offset + dim * 2]
+
+
+def layer_sweep(refs: list[dict], cands: list[dict], top: int, source: str = "dino") -> list[dict]:
+    """Per-layer sweep of one mode's stacked CLS blobs."""
+    column, n_layers, dim = LAYER_SOURCES[source]
+
+    usable_refs = [r for r in refs if r.get(column)]
+    usable_cands = [c for c in cands if c.get(column)]
     if not usable_refs or not usable_cands:
         print(
-            f"  ! layers: {len(usable_refs)}/{len(refs)} refs and "
-            f"{len(usable_cands)}/{len(cands)} candidates carry dino_layer_embeddings — skipped"
+            f"  ! layers[{source}]: {len(usable_refs)}/{len(refs)} refs and "
+            f"{len(usable_cands)}/{len(cands)} candidates carry {column} — skipped"
         )
         return []
 
     out = []
-    for layer in range(1, 13):
+    for layer in range(1, n_layers + 1):
         scores = compute_style_similarity(
-            [slice_layer_embedding(r["dino_layer_embeddings"], layer) for r in usable_refs],
-            [slice_layer_embedding(c["dino_layer_embeddings"], layer) for c in usable_cands],
+            [_slice_layer(r[column], layer, n_layers, dim) for r in usable_refs],
+            [_slice_layer(c[column], layer, n_layers, dim) for c in usable_cands],
         )
         ranking = sorted(
             (
@@ -229,11 +318,13 @@ def layer_sweep(refs: list[dict], cands: list[dict], top: int) -> list[dict]:
             reverse=True,
         )
         out.append({
+            "source": source,
             "layer": layer,
             "candidates": len(usable_cands),
             "top_ids": [r["id"] for r in ranking[:top]],
             "ranking": ranking,
             **spread(scores),
+            **separation(ranking, top),
         })
     return out
 
@@ -271,6 +362,82 @@ def agreement(results: list[dict], top: int) -> list[dict]:
                 "bottom_overlap": len(bot_a & bot_b),
             })
     return pairs
+
+
+# --------------------------------------------------------- extra (non-DB) embedding sets
+def attach_extra_embeddings(rows: list[dict], spec: str) -> list[str]:
+    """Load ``name=path.npz`` sets from ``backend/scripts/dino_embed_offline.py`` onto ``rows``.
+
+    A rival checkpoint's embeddings cannot go in the DB to be compared: ``dino_embedding``
+    holds exactly one model's output with no column saying which, so writing DINOv3 there
+    would destroy the DINOv2 vectors this report's published numbers came from. They ride
+    on the in-memory rows instead, under column names the mode table then refers to, and the
+    read-only guarantee stays intact.
+
+    Registers two modes per set — the raw cosine (``<name>``) and the 0.38/0.62 CLIP blend
+    (``combined_<name>``) — plus its per-layer geometry, read from the file rather than
+    assumed, so a checkpoint of a different depth or width is swept correctly.
+
+    Returns the mode names registered, in the order given.
+    """
+    added: list[str] = []
+    by_id = {r["id"]: r for r in rows}
+
+    for entry in [e.strip() for e in spec.split(",") if e.strip()]:
+        if "=" not in entry:
+            raise SystemExit(f"--extra-embeddings wants name=path.npz, got {entry!r}")
+        name, _, path = entry.partition("=")
+        name, path = name.strip(), Path(path.strip()).expanduser()
+        if not name.isidentifier():
+            raise SystemExit(f"--extra-embeddings name {name!r} must be a plain identifier")
+        if name in MODE_COLUMNS:
+            raise SystemExit(f"--extra-embeddings name {name!r} collides with a built-in mode")
+        if not path.is_file():
+            raise SystemExit(f"--extra-embeddings: no such file {path}")
+
+        import numpy as np  # local: the DB-only path stays numpy-free
+
+        data = np.load(path, allow_pickle=False)
+        ids = [str(i) for i in data["ids"]]
+        cls = data["cls"]
+        # CLIP sets carry no per-layer blob — the app stores only the final image feature —
+        # so the sweep is skipped for them rather than faked with a one-layer stack.
+        layers = data["layers"] if "layers" in data else None
+
+        cls_col, layer_col = f"{name}_embedding", f"{name}_layers"
+        for r in rows:
+            r[cls_col] = None
+            r[layer_col] = None
+        hits = 0
+        for i, image_id in enumerate(ids):
+            row = by_id.get(image_id)
+            if row is None:
+                continue  # an image in the npz but not this dataset — silently not ours
+            row[cls_col] = cls[i].tobytes()
+            if layers is not None:
+                row[layer_col] = layers[i].tobytes()
+            hits += 1
+
+        MODE_COLUMNS[name] = (cls_col,)
+        MODE_COLUMNS[f"combined_{name}"] = ("clip_embedding", cls_col)
+        COMBINED_SOURCES[f"combined_{name}"] = cls_col
+        if layers is not None:
+            LAYER_SOURCES[name] = (layer_col, int(layers.shape[1]), int(layers.shape[2]))
+        added += [name, f"combined_{name}"]
+
+        model = str(data["model"]) if "model" in data else "?"
+        size = int(data["size"]) if "size" in data else 0
+        shape = (f"{layers.shape[1]} layers × {layers.shape[2]} dims" if layers is not None
+                 else f"{cls.shape[1]} dims, no per-layer blob")
+        print(f"  + {name}: {hits}/{len(rows)} images matched from {path.name} "
+              f"({model} @ {size}px · {shape})")
+        if hits == 0:
+            raise SystemExit(
+                f"--extra-embeddings {name}: not one id in {path.name} is in this dataset — "
+                "the npz was almost certainly extracted from a different one"
+            )
+
+    return added
 
 
 # --------------------------------------------------------------------------- report
@@ -342,6 +509,30 @@ def build_html(ctx: dict) -> str:
             )
     parts.append("</table>")
 
+    scored_sep = [r for r in ctx["results"] if not r["skipped"] and r.get("auc") is not None]
+    if scored_sep:
+        parts.append("<h2>Separation — does the control set sink?</h2>")
+        parts.append(
+            '<p class="meta">AUC is the probability a randomly chosen frame outranks a randomly '
+            'chosen control (0.5 = coin flip). Range and separation are different properties: a '
+            'mode can spend a wide band and still order badly.</p>'
+        )
+        parts.append(
+            '<table><tr><th>mode</th><th>AUC</th><th>best threshold</th><th>acc</th>'
+            f'<th>control in bottom {ctx["top"]}</th><th>control in top {ctx["top"]}</th>'
+            "<th>worst control rank</th><th>frames below best control</th></tr>"
+        )
+        for res in scored_sep:
+            parts.append(
+                f'<tr><td>{res["mode"]}</td><td><b>{res["auc"]}</b></td>'
+                f'<td>{res["best_threshold"]}</td><td>{res["accuracy"]}</td>'
+                f'<td>{res["controls_in_bottom"]}/{res["n_control"]}</td>'
+                f'<td>{res["controls_in_top"]}/{res["n_control"]}</td>'
+                f'<td>{res["worst_control_rank"]} of {res["candidates"]}</td>'
+                f'<td>{res["frames_below_best_control"]} of {res["n_frames"]}</td></tr>'
+            )
+        parts.append("</table>")
+
     if ctx["agreement"]:
         parts.append("<h2>Cross-mode agreement</h2>")
         parts.append(
@@ -369,22 +560,25 @@ def build_html(ctx: dict) -> str:
         parts.append(f'<h3>Top {ctx["top"]}</h3>' + row_html(res["ranking"][: ctx["top"]]))
         parts.append(f'<h3>Bottom {ctx["top"]}</h3>' + row_html(res["ranking"][-ctx["top"]:]))
 
-    if ctx["layers"]:
-        parts.append("<h2>DINOv2 per-layer sweep</h2>")
+    for source in dict.fromkeys(lay.get("source", "dino") for lay in ctx["layers"]):
+        rows_for_source = [lay for lay in ctx["layers"] if lay.get("source", "dino") == source]
+        parts.append(f"<h2>{html.escape(source)} per-layer sweep</h2>")
         base_top = {r["id"] for r in next(
-            (x["ranking"][: ctx["top"]] for x in ctx["results"] if x["mode"] == "dino" and not x["skipped"]),
+            (x["ranking"][: ctx["top"]] for x in ctx["results"]
+             if x["mode"] == source and not x["skipped"]),
             [],
         )}
         parts.append(
             '<table><tr><th>layer</th><th>min</th><th>median</th><th>max</th><th>range</th>'
-            f'<th>stdev</th><th>top-{ctx["top"]} overlap with final-layer dino</th></tr>'
+            f'<th>stdev</th><th>AUC</th><th>top-{ctx["top"]} overlap with {html.escape(source)} '
+            "final layer</th></tr>"
         )
-        for lay in ctx["layers"]:
+        for lay in rows_for_source:
             overlap = len(base_top & set(lay["top_ids"])) if base_top else "-"
             parts.append(
                 f'<tr><td>{lay["layer"]}</td><td>{lay["min"]}</td><td>{lay["median"]}</td>'
                 f'<td>{lay["max"]}</td><td><b>{lay["range"]}</b></td><td>{lay["stdev"]}</td>'
-                f'<td>{overlap}</td></tr>'
+                f'<td>{lay.get("auc", "-")}</td><td>{overlap}</td></tr>'
             )
         parts.append("</table>")
 
@@ -432,6 +626,8 @@ def run(args) -> None:
           f"dino {sum(1 for r in rows if r['dino_embedding'])}, "
           f"layers {sum(1 for r in rows if r['dino_layer_embeddings'])}")
 
+    extra_modes = attach_extra_embeddings(rows, args.extra_embeddings) if args.extra_embeddings else []
+
     ref_ids = match_rows(rows, parse_spec(args.refs), "--refs")
     if not ref_ids:
         raise SystemExit("No references resolved — pass ids or filenames via --refs.")
@@ -444,26 +640,37 @@ def run(args) -> None:
     print(f"{len(refs)} references (excluded from the ranking), {len(cands)} candidates, "
           f"{sum(1 for c in cands if c['_control'])} of them control")
 
-    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
-    unknown = [m for m in modes if m not in MODES]
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()] + extra_modes
+    unknown = [m for m in modes if m not in MODE_COLUMNS]
     if unknown:
-        raise SystemExit(f"Unknown mode(s): {', '.join(unknown)}. Known: {', '.join(MODES)}")
+        raise SystemExit(
+            f"Unknown mode(s): {', '.join(unknown)}. Known: {', '.join(MODE_COLUMNS)}"
+        )
 
-    results = [score_mode(m, refs, cands) for m in modes]
+    results = [score_mode(m, refs, cands, args.top) for m in modes]
     for res in results:
         if res["skipped"]:
             print(f"  {res['mode']}: skipped — {res['reason']}")
-        else:
-            print(f"  {res['mode']}: {res['candidates']} scored, {res['excluded']} excluded · "
-                  f"min {res['min']} median {res['median']} max {res['max']} "
-                  f"range {res['range']} stdev {res['stdev']}")
+            continue
+        print(f"  {res['mode']}: {res['candidates']} scored, {res['excluded']} excluded · "
+              f"min {res['min']} median {res['median']} max {res['max']} "
+              f"range {res['range']} stdev {res['stdev']}")
+        if res.get("auc") is not None:
+            print(f"      AUC {res['auc']} · best t {res['best_threshold']} acc {res['accuracy']} · "
+                  f"control in bottom {res['controls_in_bottom']}/{res['n_control']} "
+                  f"top {res['controls_in_top']}/{res['n_control']} · "
+                  f"worst control rank {res['worst_control_rank']}/{res['candidates']} · "
+                  f"{res['frames_below_best_control']}/{res['n_frames']} frames below it")
 
     pairs = agreement(results, args.top)
     for p in pairs:
         print(f"  {p['modes'][0]} vs {p['modes'][1]}: rho {p['spearman']} · "
               f"top {p['top_overlap']}/{args.top} · bottom {p['bottom_overlap']}/{args.top}")
 
-    layers = layer_sweep(refs, cands, args.top) if args.layers else []
+    layers = []
+    if args.layers:
+        for source in ["dino"] + [m for m in extra_modes if m in LAYER_SOURCES]:
+            layers += layer_sweep(refs, cands, args.top, source)
 
     thumbs: dict[str, str] = {}
     for r in rows:
@@ -525,6 +732,10 @@ def main() -> None:
     ap.add_argument("--control", default=None,
                     help="same syntax as --refs; images flagged as an out-of-style control")
     ap.add_argument("--modes", default=",".join(MODES), help=f"default {','.join(MODES)}")
+    ap.add_argument("--extra-embeddings", default=None,
+                    help="comma list of name=path.npz from dino_embed_offline.py. Each adds "
+                         "a '<name>' and a 'combined_<name>' mode (and a per-layer sweep "
+                         "under --layers) without any embedding entering the DB.")
     ap.add_argument("--top", type=int, default=20, help="rows shown in the top/bottom bands")
     ap.add_argument("--layers", action="store_true",
                     help="also sweep the 12 DINOv2 layers (imports torch)")

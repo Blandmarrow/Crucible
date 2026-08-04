@@ -6,19 +6,13 @@ import torch
 
 from backend.ml import device as _device
 
+# Re-exported, not defined here. Both moved to `similarity_scorer` (numpy-only)
+# because this module is `import torch` at module scope, and the quality router
+# needs the slicer on every `combined` request — including on a torch-free
+# runner, where importing it from here was an ImportError → 500.
+from backend.ml.similarity_scorer import _LAYER_BLOB_SIZE, slice_layer_embedding  # noqa: F401
+
 logger = logging.getLogger(__name__)
-
-_LAYER_BLOB_SIZE = 12 * 768 * 2  # 12 layers × 768 dims × float16
-
-
-def slice_layer_embedding(blob: bytes, layer: int) -> bytes:
-    """Return the 768-dim float16 bytes for a specific DINOv2 layer (1-indexed)."""
-    if not (1 <= layer <= 12):
-        raise ValueError(f"layer must be 1–12, got {layer}")
-    if len(blob) != _LAYER_BLOB_SIZE:
-        raise ValueError(f"Expected {_LAYER_BLOB_SIZE}-byte layer blob, got {len(blob)}")
-    offset = (layer - 1) * 768 * 2
-    return blob[offset : offset + 768 * 2]
 
 
 def extract_dino_embedding_sync(image_path: str, model_entry) -> bytes:

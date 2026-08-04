@@ -508,7 +508,11 @@ async def compute_style_similarity(
 
 async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession) -> dict:
     from backend.ml.similarity_scorer import compute_style_similarity as _cosine_sim
-    from backend.ml.similarity_scorer import compute_combined_similarity
+    from backend.ml.similarity_scorer import (
+        blend_scores,
+        compute_combined_similarity,
+        slice_layer_embedding,
+    )
 
     loop = asyncio.get_running_loop()
 
@@ -602,7 +606,6 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows)}
         else:
             # Per-layer mode
-            from backend.ml.dino_scorer import slice_layer_embedding
             layer = body.dino_layer
             if not (1 <= layer <= 12):
                 raise HTTPException(status_code=422, detail="dino_layer must be between 1 and 12.")
@@ -634,7 +637,6 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
 
     # --- Combined branch ---
     if body.embedding_type in ("combined", "combined_all_layers"):
-        from backend.ml.dino_scorer import slice_layer_embedding
         if body.reference_embeddings:
             raise HTTPException(status_code=400, detail="External reference files are CLIP-only. Combined mode requires reference images from the dataset.")
         layer = body.dino_layer  # None → use dino_embedding; int → use dino_layer_embeddings slice
@@ -684,12 +686,26 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                 cand = np.stack([_decode_dino_layers(b) for b in dino_blobs])  # (N, 12, 768)
                 # Per-layer cosine sim to the normalized mean ref (matches compute_style_similarity).
                 dino_by_layer = [cand[:, l, :] @ mean_refs[l] for l in range(_DINO_LAYERS)]
+                # One `blend_scores` call per layer (12 per chunk) rather than
+                # `12 × N` inline expressions — the single source of truth for the
+                # weights, and strictly fewer Python-level operations. The CLIP
+                # hoist above is untouched.
+                blended_by_layer = [
+                    blend_scores(
+                        clip_scores,
+                        [float(round(float(v), 4)) for v in dino_by_layer[l]],
+                    )
+                    for l in range(_DINO_LAYERS)
+                ]
                 results = []
                 for n, img_id in enumerate(ids):
-                    layer_scores: dict[str, float] = {}
-                    for l in range(_DINO_LAYERS):
-                        d = float(round(float(dino_by_layer[l][n]), 4))
-                        layer_scores[str(l + 1)] = round(0.38 * clip_scores[n] + 0.62 * d, 4)
+                    # A fresh dict per row, written through a Core `update(Image)`
+                    # that never loaded the old value — so `CLAUDE.md`'s
+                    # never-mutate-a-JSON-column rule is satisfied by construction.
+                    # Do not "optimise" this into a merge onto the existing dict.
+                    layer_scores: dict[str, float] = {
+                        str(l + 1): blended_by_layer[l][n] for l in range(_DINO_LAYERS)
+                    }
                     results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores["12"]})
                 return results
 

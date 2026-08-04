@@ -8,10 +8,12 @@ descriptor is written: `POST /style-similarity` is a thin wrapper whose whole re
 for existing is that the six success returns inside `_score_style_similarity` write
 it once, and its failure paths — which all raise `HTTPException` — write it never.
 
-Driving the real endpoint is possible in CI because `backend/ml/similarity_scorer.py`
-imports only numpy: the `clip`, `dino` final-layer and `dino_all_layers` branches
-never touch torch. The per-layer and `combined` branches import `dino_scorer`, so the
-one test that needs a layer carries `needs_torch`.
+Driving the real endpoint is possible in CI because every branch now reaches only
+`backend/ml/similarity_scorer.py`, which imports numpy and nothing else.
+`slice_layer_embedding` used to live in `dino_scorer` (`import torch` at module
+scope), which put the per-layer and `combined` branches out of reach of a torch-free
+runner — and so left the blend weights, the branch with the most arithmetic in it,
+with no coverage at all.
 
 Embeddings are seeded as float16 blobs straight through `env.Session()` — extracting
 real ones needs CLIP.
@@ -21,7 +23,13 @@ from sqlalchemy import select
 
 from backend.models.image import Image
 from backend.models.style_run import StyleSimilarityRun
-from backend.tests.conftest import API, api_env, needs_torch, png_bytes, run, upload_image
+from backend.ml.similarity_scorer import (
+    DEFAULT_DINO_LAYER,
+    blend_scores,
+    compute_style_similarity,
+    slice_layer_embedding,
+)
+from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
 
 _DIM = 768
 _LAYERS = 12
@@ -237,7 +245,6 @@ def test_dino_all_layers_records_its_mode(tmp_path):
     run(scenario())
 
 
-@needs_torch
 def test_a_per_layer_run_records_the_layer(tmp_path):
     """`dino_layer` is half the descriptor's meaning: below layer ~10 every score
     compresses into 0.90–0.99, so "0.94" without the layer says nothing."""
@@ -261,5 +268,155 @@ def test_a_per_layer_run_records_the_layer(tmp_path):
             run_row = await _run_row(env, ds["id"])
             assert run_row.embedding_type == "dino"
             assert run_row.dino_layer == 7
+
+    run(scenario())
+
+
+async def _three_combined_images(env, name: str = "combined") -> tuple[dict, list[dict]]:
+    """Three images carrying CLIP, final-layer DINOv2 and per-layer DINOv2 blobs."""
+    ds = await env.create_dataset(name)
+    imgs = []
+    for i in range(3):
+        img = await upload_image(env, ds["id"], f"c{i}.png", png_bytes((i * 35, 15, 45)))
+        await _seed(
+            env, img["id"],
+            clip_embedding=_emb(i),
+            dino_embedding=_emb(500 + i),
+            dino_layer_embeddings=_layer_emb(i),
+        )
+        imgs.append(img)
+    return ds, imgs
+
+
+def test_combined_all_layers_writes_the_default_layer_as_the_headline(tmp_path):
+    """`style_similarity_score` is the value of one layer, and which one is a decision.
+
+    The stored score is what the gallery meter, the Stats histogram and every score
+    filter read; the other eleven layers are only visible in `DinoLayerBreakdown`.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "cal")
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "combined_all_layers",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["updated"] == 3
+
+            async with env.Session() as db:
+                img = await db.get(Image, imgs[1]["id"])
+                assert sorted(img.dino_layer_scores, key=int) == [str(i) for i in range(1, 13)]
+                assert img.style_similarity_score == img.dino_layer_scores[str(DEFAULT_DINO_LAYER)]
+
+    run(scenario())
+
+
+def test_combined_all_layers_blends_at_the_shipped_weights(tmp_path):
+    """The assertion the inline literals never had.
+
+    `combined_all_layers` re-implements the blend in `routers/quality.py` — it hoists
+    the CLIP score out of the layer loop for speed — so it is a second copy of a
+    number that lives in `similarity_scorer`. Nothing had ever checked the two agree.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "weights")
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "combined_all_layers",
+            })
+            assert r.status_code == 200, r.text
+
+            # Recompute layer 3 for image 1 straight from the seeded blobs.
+            ref_clip, ref_layers = _emb(0), _layer_emb(0)
+            cand_clip, cand_layers = _emb(1), _layer_emb(1)
+            expected = blend_scores(
+                compute_style_similarity([ref_clip], [cand_clip]),
+                compute_style_similarity(
+                    [slice_layer_embedding(ref_layers, 3)],
+                    [slice_layer_embedding(cand_layers, 3)],
+                ),
+            )[0]
+
+            async with env.Session() as db:
+                img = await db.get(Image, imgs[1]["id"])
+                assert img.dino_layer_scores["3"] == expected
+
+    run(scenario())
+
+
+def test_combined_at_a_layer_matches_the_shipped_blend(tmp_path):
+    """The single-layer `combined` branch, which goes through
+    `compute_combined_similarity` rather than the hoisted per-layer loop."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "one-layer")
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "combined",
+                "dino_layer": 5,
+            })
+            assert r.status_code == 200, r.text
+
+            expected = blend_scores(
+                compute_style_similarity([_emb(0)], [_emb(2)]),
+                compute_style_similarity(
+                    [slice_layer_embedding(_layer_emb(0), 5)],
+                    [slice_layer_embedding(_layer_emb(2), 5)],
+                ),
+            )[0]
+
+            async with env.Session() as db:
+                img = await db.get(Image, imgs[2]["id"])
+                assert img.style_similarity_score == expected
+
+    run(scenario())
+
+
+def test_the_final_embedding_and_layer_12_are_different_vectors(tmp_path):
+    """The trap the layer picker used to hide.
+
+    `dino_layer: null` scores against `dino_embedding` — the **post**-layernorm CLS
+    token — while `dino_layer_embeddings`' layer 12 is `hidden_states[12]`,
+    **pre**-layernorm. They are not the same vector, so "Layer 12" and "no layer" are
+    two different runs and a picker that folds one into the other is lying. Seeded
+    blobs make the point unambiguously; real ones differ for the reason above.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "final-vs-12")
+
+            final = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "dino",
+            })
+            assert final.status_code == 200, final.text
+            async with env.Session() as db:
+                final_score = (await db.get(Image, imgs[1]["id"])).style_similarity_score
+
+            at_12 = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "dino",
+                "dino_layer": 12,
+            })
+            assert at_12.status_code == 200, at_12.text
+            async with env.Session() as db:
+                layer_12_score = (await db.get(Image, imgs[1]["id"])).style_similarity_score
+
+            assert final_score != layer_12_score
+
+            # And the descriptor distinguishes them, which is the only way a reader
+            # of the column can tell which run wrote it.
+            run_row = await _run_row(env, ds["id"])
+            assert run_row.dino_layer == 12
 
     run(scenario())

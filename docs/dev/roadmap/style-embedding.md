@@ -173,6 +173,13 @@ stored as a stable per-image value. The raw blend gives up 0.004 and keeps that 
   within one medium or between two synthetic ones. A user dataset holding both is untested.
 - **The `test4` style groupings were a human judgement** made from a contact sheet. A
   different grouping is a different experiment.
+- **No dataset here is *crossed*, so style and composition are never separated.** Every
+  configuration measures separability with subject and framing free to vary however they
+  happen to; none holds subject fixed while style varies, which is the only design that can
+  say whether a signal ranks on *look* or on *layout*. This is the single largest
+  unaddressed confound in the file and it applies to every layer, model and blend measured
+  here — including the shipped default. See § Does layer 9 make it more of a composition
+  matcher? and the crossed set specified in § The photo dataset that settled it.
 - **The six configurations are not independent** — they draw from two image pools.
 - **No GPU numbers.** Everything ran on CPU: DINOv3 @224 is 10.7 img/s, @512 is 2.0 img/s,
   DINOv2 @224 is 8.1 img/s. VRAM and GPU throughput are unmeasured.
@@ -233,6 +240,43 @@ Nouhailler (0.918 against 0.923). Those are exactly the two pairs that share a *
 (architecture, flowers) while differing sharply in treatment — the deliberate probe built
 into the set. The signal is still partly a subject matcher, which no change in this file
 fixes.
+
+### Does layer 9 make it *more* of a composition matcher?
+
+Raised in review on 2026-08-04, on the strength of `DINO_LAYER_LABELS` calling layer 9
+"Scene composition": if that is what the layer encodes, then moving the default there turns
+style similarity into "which image is framed most like the references" — and the original
+complaint about the final embedding was that it *drifts toward subject and framing*, so the
+fix would be doubling down on the failure mode.
+
+**The label is not evidence.** `frontend/src/constants/dinoLabels.ts` arrived in `16ca82f`
+("Bug & efficiency fixes") with no citation, and `docs/dev/frontend-core.md` describes it
+only as "a human-readable description". All twelve strings are a gloss on the generic
+low-level→semantic depth intuition. Nothing in either campaign measured a layer and
+concluded "composition". See the trap below — the label should not survive in that form.
+
+**What the numbers say, and it is only indirect.** The strongest available counter-evidence
+is the *worst* configuration rather than the mean, because `test4`'s groups were assigned by
+**rendering style, not subject** — painterly nature, painterly creatures, gothic interiors,
+with content varying inside each group. A signal that had become more compositional should
+get worse there. It did the opposite:
+
+| | mean | worst configuration |
+|---|---|---|
+| App before 2026-08-04 (0.38/0.62, final embedding) | 0.8246 | 0.6374 |
+| 30% CLIP + 70% DINOv2 layer 9 | 0.9244 | **0.8756** |
+
+Same direction on `test5`, where the label is the photographer and subjects vary within each
+body of work: 0.7562 → 0.8220.
+
+**What that does not settle.** Both are *aggregate* results on sets that were never designed
+to separate style from composition, so they rule out "layer 9 is largely a composition
+matcher" and say nothing about the sharper version — that layer 9 trades one leakage for
+another in a way no dataset here can see. The § What is not established bullet on the
+crossed set is the same gap seen from the other side, and the crossed set specified below is
+what would resolve it. Until then this is **open**, not answered. Note also that the
+per-layer sweeps in both campaigns scored *separability*, never "separability given matched
+subject" — the question has not been asked of the data, let alone answered.
 
 ## The photo dataset that settled it
 
@@ -300,6 +344,29 @@ which is exactly why this needs a discriminator — see the trap below.
 Worth **0.7904 → 0.9065** pooled, but the honest split is 0.96 on cross-medium sorting and
 0.85 on within-medium style matching. Ship the copy against the second number.
 
+### Stage 2b — stop the layer labels asserting things nobody measured
+
+Cheap, independent of Stage 2, and the only item here that is a *defect* rather than an
+improvement. `DINO_LAYER_LABELS` gives all twelve layers a confident semantic name — "Object
+parts", "Scene composition", "Abstract semantics" — none of which came from a measurement.
+It renders in the layer picker on two screens and against every bar in `DinoLayerBreakdown`,
+directly beside the layer the app now recommends, so it is doing real persuasive work in
+both directions: in review it made a reader distrust the new default for a reason that turns
+out to be unfounded, and it could as easily make the next reader trust it for one.
+
+Two options, in order of preference:
+
+1. **Replace the semantics with what was actually measured** — the low band's compression
+   (every image lands in a few hundredths of each other) and the mid band separating best —
+   phrased as depth position plus an observed property, not as a claim about features.
+2. **Drop to bare layer numbers.** No information is lost that the breakdown chart does not
+   already show, and the honest state of knowledge is that the app does not know what any
+   individual layer represents.
+
+Whichever, the labels must stop implying a per-layer semantics the evidence does not carry.
+Touchpoints: `frontend/src/constants/dinoLabels.ts`, its line in
+`docs/dev/frontend-core.md`, and `frontend/e2e/quality.spec.ts` if a label is asserted on.
+
 ### Stage 3 — dense features
 
 Untested and separate: patch-level features for prompt-free subject masks (export loss
@@ -320,6 +387,13 @@ the above measures it.
 - ~~**`dino_all_layers` writes layer 12's value**~~ **Closed 2026-08-04** — both all-layers
   modes write `DEFAULT_DINO_LAYER`'s. Still worth re-checking when a second model lands:
   the constant is DINOv2's best band, and DINOv3's optimum sits elsewhere.
+- **An unsourced label is indistinguishable from a finding once it is on screen.**
+  `DINO_LAYER_LABELS` is twelve confident semantic claims with no measurement behind any of
+  them, sitting in the picker beside a default that *was* measured — so a reader has no way
+  to tell which of the two is evidence. It is the reason § Does layer 9 make it more of a
+  composition matcher? had to be written at all. The general form: anything this file's
+  findings get rendered next to must be checkable back to a measurement, or it will be read
+  as one. Stage 2b is the fix.
 - **Licensing and gating are unchanged.** All `facebook/dinov3-*` repos are `gated: manual`
   under a custom DINOv3 Licence, not Apache-2.0, and a fine-grained token additionally needs
   gated-repo read scope or the fetch 403s. `transformers>=4.56` is required; the floor in

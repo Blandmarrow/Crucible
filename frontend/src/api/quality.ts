@@ -42,6 +42,13 @@ export interface StyleRunDescriptor {
    *  read through `styleModeLabel`, which renders an unknown value verbatim. */
   embedding_type: string;
   dino_layer: number | null;
+  /** The blend a `combined` / `combined_all_layers` run used. Null on a mode that
+   *  does not blend — and also on a `combined` run predating the columns, which
+   *  `embedding_type` is what distinguishes. Recorded per run because the shipped
+   *  weights have moved (0.38/0.62 → 0.30/0.70) and two scores are only comparable
+   *  when they were blended the same way. */
+  clip_weight: number | null;
+  dino_weight: number | null;
   /** Capped at 64 server-side; `reference_count` is the true number. Deliberately
    *  not kept in sync with `images`, so an id here may no longer resolve. */
   reference_image_ids: string[];

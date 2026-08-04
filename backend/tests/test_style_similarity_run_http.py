@@ -25,6 +25,8 @@ from backend.models.image import Image
 from backend.models.style_run import StyleSimilarityRun
 from backend.ml.similarity_scorer import (
     DEFAULT_DINO_LAYER,
+    STYLE_CLIP_WEIGHT,
+    STYLE_DINO_WEIGHT,
     blend_scores,
     compute_style_similarity,
     slice_layer_embedding,
@@ -310,6 +312,81 @@ def test_combined_all_layers_writes_the_default_layer_as_the_headline(tmp_path):
                 img = await db.get(Image, imgs[1]["id"])
                 assert sorted(img.dino_layer_scores, key=int) == [str(i) for i in range(1, 13)]
                 assert img.style_similarity_score == img.dino_layer_scores[str(DEFAULT_DINO_LAYER)]
+
+    run(scenario())
+
+
+def test_combined_records_the_weights_it_used(tmp_path):
+    """A score is only comparable to another made at the same blend, so the weights
+    are a fact about the run rather than a constant read at display time."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "recorded")
+
+            for mode in ("combined", "combined_all_layers"):
+                r = await env.client.post(f"{API}/quality/style-similarity", json={
+                    "dataset_id": ds["id"],
+                    "reference_image_ids": [imgs[0]["id"]],
+                    "embedding_type": mode,
+                })
+                assert r.status_code == 200, r.text
+
+                run_row = await _run_row(env, ds["id"])
+                assert run_row.clip_weight == STYLE_CLIP_WEIGHT, mode
+                assert run_row.dino_weight == STYLE_DINO_WEIGHT, mode
+
+            # And the GET carries them — the payload is hand-built field by field,
+            # so an added column is invisible rather than an error.
+            g = await env.client.get(f"{API}/quality/style-similarity/{ds['id']}")
+            assert g.status_code == 200, g.text
+            assert g.json()["run"]["clip_weight"] == STYLE_CLIP_WEIGHT
+            assert g.json()["run"]["dino_weight"] == STYLE_DINO_WEIGHT
+
+    run(scenario())
+
+
+def test_clip_and_dino_runs_leave_the_weights_null(tmp_path):
+    """NULL on a non-blending mode is the correct value, not a missing one — and
+    `embedding_type` is what tells it apart from a run predating the columns."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "unblended")
+
+            for mode in ("clip", "dino", "dino_all_layers"):
+                r = await env.client.post(f"{API}/quality/style-similarity", json={
+                    "dataset_id": ds["id"],
+                    "reference_image_ids": [imgs[0]["id"]],
+                    "embedding_type": mode,
+                })
+                assert r.status_code == 200, r.text
+
+                run_row = await _run_row(env, ds["id"])
+                assert run_row.embedding_type == mode
+                assert run_row.clip_weight is None, mode
+                assert run_row.dino_weight is None, mode
+
+    run(scenario())
+
+
+def test_a_later_unblended_run_clears_the_weights(tmp_path):
+    """The descriptor is overwritten, not merged. A `combined` run followed by a
+    `clip` one must not leave the blend behind describing a run that did not use it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_combined_images(env, "cleared")
+
+            for mode in ("combined", "clip"):
+                r = await env.client.post(f"{API}/quality/style-similarity", json={
+                    "dataset_id": ds["id"],
+                    "reference_image_ids": [imgs[0]["id"]],
+                    "embedding_type": mode,
+                })
+                assert r.status_code == 200, r.text
+
+            run_row = await _run_row(env, ds["id"])
+            assert run_row.embedding_type == "clip"
+            assert run_row.clip_weight is None
+            assert run_row.dino_weight is None
 
     run(scenario())
 

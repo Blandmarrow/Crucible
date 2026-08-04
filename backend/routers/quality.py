@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
+from backend.ml.similarity_scorer import STYLE_CLIP_WEIGHT, STYLE_DINO_WEIGHT
 from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
 from backend.models.style_run import REFERENCE_IDS_STORED_MAX
 from backend.services import version_service
@@ -474,6 +475,11 @@ async def _record_style_run(body: StyleSimilarityRequest, db: AsyncSession, resu
             db.add(run)
         run.embedding_type = body.embedding_type
         run.dino_layer = body.dino_layer
+        # NULL on a non-blending mode is the only correct value; `embedding_type`
+        # in the same row is what tells that apart from a pre-migration row.
+        blends = body.embedding_type in ("combined", "combined_all_layers")
+        run.clip_weight = STYLE_CLIP_WEIGHT if blends else None
+        run.dino_weight = STYLE_DINO_WEIGHT if blends else None
         run.reference_image_ids = list(body.reference_image_ids[:REFERENCE_IDS_STORED_MAX])
         run.reference_count = len(body.reference_image_ids)
         run.external_reference_count = len(body.reference_embeddings)
@@ -828,9 +834,14 @@ async def style_similarity_distribution(dataset_id: str, db: AsyncSession = Depe
 
     return {
         **dist,
+        # Hand-built field by field, so a column added to `StyleSimilarityRun`
+        # without a line here is invisible: no error, just a field the client never
+        # sees. Same trap `CLAUDE.md` names for `DatasetOut.video_count`.
         "run": None if run is None else {
             "embedding_type": run.embedding_type,
             "dino_layer": run.dino_layer,
+            "clip_weight": run.clip_weight,
+            "dino_weight": run.dino_weight,
             "reference_image_ids": run.reference_image_ids or [],
             "reference_count": run.reference_count,
             "external_reference_count": run.external_reference_count,

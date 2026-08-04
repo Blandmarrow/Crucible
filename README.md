@@ -289,6 +289,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
+| Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
 | Duplicate Resolution | [docs/duplicates.md](docs/duplicates.md) |
 | Object Detection | [docs/detection.md](docs/detection.md) |
 | Batch Editing & Image Processing | [docs/editing.md](docs/editing.md) |

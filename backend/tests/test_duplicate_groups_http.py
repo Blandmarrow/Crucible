@@ -384,3 +384,171 @@ def test_the_response_is_still_a_list_of_lists(tmp_path):
             assert all(isinstance(m, dict) for g in payload["groups"] for m in g)
 
     run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Orphaned flags (PM-022)
+#
+# `is_duplicate` is a *relationship* to the row `duplicate_of` names, so a delete
+# that removes a group's root can leave a survivor flagged as a duplicate of
+# nothing — visible on the Stats Duplicate card, the gallery flag filter and
+# badge, and export's `exclude_flags`. Every delete path now prunes it, between
+# the row DELETEs and the commit.
+#
+# The rule is deliberately narrow: a flagged survivor is orphaned **iff** its
+# root is gone **and** it is the only surviving flagged member of its group. Two
+# survivors with a dead root are still duplicates of each other, which
+# `get_duplicates` already renders as a group with no `kept` row.
+# ---------------------------------------------------------------------------
+
+
+async def _flags(env, image_id: str) -> dict:
+    """Read one row's `quality_flags` from a *fresh* session — the mutation
+    reassigns a copied dict, and an in-place edit would look unchanged to
+    SQLAlchemy and skip the UPDATE while still reading back correctly from the
+    session that made it."""
+    async with env.Session() as db:
+        row = await db.get(Image, image_id)
+        return dict((row.quality_flags or {}) if row else {})
+
+
+async def _duplicate_count(env, dataset_id: str) -> int:
+    stats = (await env.client.get(f"{API}/datasets/{dataset_id}/stats")).json()
+    return stats["quality_flag_counts"].get("duplicate", 0)
+
+
+def test_two_survivors_of_a_dead_root_keep_their_flags(tmp_path):
+    """The prune must not over-reach. They are still duplicates of each other,
+    and the group is exactly what the Quality page should keep offering to
+    resolve."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _seed_group(env, ds["id"], ["gone.png", "a.png", "b.png"])
+
+            r = await env.client.delete(f"{API}/images/{imgs[0]['id']}")
+            assert r.status_code in (200, 204), r.text
+
+            for m in imgs[1:]:
+                flags = await _flags(env, m["id"])
+                assert flags.get("is_duplicate") is True, flags
+                assert flags.get("duplicate_of") == imgs[0]["id"], flags
+
+            groups = (await env.client.get(
+                f"{API}/quality/duplicates/{ds['id']}")).json()["groups"]
+            assert len(groups) == 1 and len(groups[0]) == 2
+            assert await _duplicate_count(env, ds["id"]) == 2
+
+    run(scenario())
+
+
+def test_the_last_survivor_of_a_dead_root_is_unflagged(tmp_path):
+    """Prune a group by hand down to one image and that image is not a duplicate
+    of anything. Before the fix it stayed flagged forever — a re-scan was
+    additive and repaired nothing."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _seed_group(env, ds["id"], ["gone.png", "a.png", "b.png"])
+
+            for victim in (imgs[0], imgs[1]):
+                r = await env.client.delete(f"{API}/images/{victim['id']}")
+                assert r.status_code in (200, 204), r.text
+
+            assert await _flags(env, imgs[2]["id"]) == {}
+            assert (await env.client.get(
+                f"{API}/quality/duplicates/{ds['id']}")).json()["groups"] == []
+            assert await _duplicate_count(env, ds["id"]) == 0
+
+    run(scenario())
+
+
+def test_batch_delete_prunes_the_survivor(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _seed_group(env, ds["id"], ["gone.png", "a.png", "b.png"])
+
+            r = await env.client.request(
+                "DELETE", f"{API}/images/batch/delete",
+                json=[imgs[0]["id"], imgs[1]["id"]],
+            )
+            assert r.status_code in (200, 204), r.text
+
+            assert await _flags(env, imgs[2]["id"]) == {}
+            assert await _duplicate_count(env, ds["id"]) == 0
+
+    run(scenario())
+
+
+def test_bulk_deleting_every_duplicate_leaves_the_root_clean_and_nothing_flagged(tmp_path):
+    """The natural "delete every duplicate" prune: scope the bulk delete to the
+    `is_duplicate` flag, which takes every member and leaves the root. The root
+    was never flagged, so nothing should be left pointing anywhere."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _seed_group(env, ds["id"], ["root.png", "a.png", "b.png"])
+
+            r = await env.client.post(f"{API}/images/bulk-delete", json={
+                "dataset_id": ds["id"],
+                "quality_flags": ["is_duplicate"],
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["deleted"] == 2
+
+            assert await _flags(env, imgs[0]["id"]) == {}
+            assert (await env.client.get(
+                f"{API}/quality/duplicates/{ds['id']}")).json()["groups"] == []
+            assert await _duplicate_count(env, ds["id"]) == 0
+
+    run(scenario())
+
+
+def test_deleting_a_subfolder_holding_the_root_prunes_the_survivor(tmp_path):
+    """`POST /filesystem/delete` destroys registered rows like any other delete,
+    so it prunes like any other delete — between its row DELETEs and the flush
+    that precedes the `rmtree`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            root = await upload_image(env, ds["id"], "root.png", png_bytes((5, 20, 30)),
+                                      subfolder="sub")
+            member = await upload_image(env, ds["id"], "copy.png", png_bytes((15, 20, 30)))
+            async with env.Session() as db:
+                row = await db.get(Image, member["id"])
+                row.quality_flags = {"is_duplicate": True, "duplicate_of": root["id"]}
+                await db.commit()
+
+            async with env.Session() as db:
+                folder = str(Path((await db.get(Image, root["id"])).file_path).parent)
+
+            r = await env.client.post(f"{API}/filesystem/delete", json={"path": folder})
+            assert r.status_code == 200, r.text
+
+            assert await _flags(env, member["id"]) == {}
+            assert await _duplicate_count(env, ds["id"]) == 0
+
+    run(scenario())
+
+
+def test_a_partial_resolve_prunes_the_survivor_it_was_not_told_about(tmp_path):
+    """`resolve_duplicates` only clears the ids the caller listed in `keep_ids`.
+    A call that deletes the root and one member without naming the survivor left
+    it flagged against a deleted root; the backstop after the `keep_ids` loop
+    catches it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _seed_group(env, ds["id"], ["root.png", "a.png", "b.png"])
+
+            r = await env.client.post(f"{API}/quality/duplicates/resolve", json={
+                "keep_ids": [],
+                "delete_ids": [imgs[0]["id"], imgs[1]["id"]],
+            })
+            assert r.status_code == 204, r.text
+
+            assert await _flags(env, imgs[2]["id"]) == {}
+            assert await _duplicate_count(env, ds["id"]) == 0
+
+    run(scenario())

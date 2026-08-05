@@ -21,6 +21,10 @@ from backend.models.style_run import REFERENCE_IDS_STORED_MAX
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import get_style_distribution, refresh_stats
+from backend.services.duplicate_service import (
+    apply_duplicate_groups,
+    prune_orphaned_duplicate_flags,
+)
 from backend.utils import chunked, contained_path, normalize_subfolder, score_columns
 from backend.workers.job_queue import job_queue
 
@@ -352,47 +356,50 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         if body.run_technical:
             await _flag_duplicates(job_id, body.dataset_id, int(thresholds.duplicate_threshold))
 
-    async def _flag_duplicates(job_id: str, dataset_id: str, duplicate_threshold: int) -> None:
-        from backend.database import AsyncSessionLocal
-        from backend.ml.technical_scorer import find_duplicates_sync
-
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(Image.id, Image.phash).where(
-                    Image.dataset_id == dataset_id,
-                    Image.phash.isnot(None),
-                )
-            )
-            phashes = [(r.id, r.phash) for r in result.all()]
-
-        # The dedup scan (either dispatch path) is uninterruptible once started;
-        # skip it entirely if cancelled.
-        job_queue.raise_if_cancelled(job_id)
-        fn = functools.partial(find_duplicates_sync, phashes, duplicate_threshold)
-        groups = await asyncio.get_running_loop().run_in_executor(None, fn)
-
-        # Map each duplicate image id to the group root it should point at.
-        dup_of: dict[str, str] = {}
-        for group in groups:
-            keep = group[0]
-            for dup_id in group[1:]:
-                dup_of[dup_id] = keep
-        if not dup_of:
-            return
-
-        async with AsyncSessionLocal() as session:
-            affected_ids = list(dup_of.keys())
-            for chunk in chunked(affected_ids):
-                result = await session.execute(select(Image).where(Image.id.in_(chunk)))
-                for img in result.scalars().all():
-                    flags = dict(img.quality_flags or {})
-                    flags["is_duplicate"] = True
-                    flags["duplicate_of"] = dup_of[img.id]
-                    img.quality_flags = flags
-            await session.commit()
-
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(images)}
+
+
+async def _flag_duplicates(job_id: str, dataset_id: str, duplicate_threshold: int) -> None:
+    """Re-derive the whole dataset's duplicate grouping and store it.
+
+    Module level rather than a closure over the scoring job: it already takes
+    exactly the three values it needs, and this is the dataset's authoritative
+    recomputation — worth being callable and readable on its own.
+    """
+    from backend.database import AsyncSessionLocal
+    from backend.ml.technical_scorer import find_duplicates_sync
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Image.id, Image.phash).where(
+                Image.dataset_id == dataset_id,
+                Image.phash.isnot(None),
+            )
+        )
+        phashes = [(r.id, r.phash) for r in result.all()]
+
+    # The dedup scan (either dispatch path) is uninterruptible once started;
+    # skip it entirely if cancelled.
+    job_queue.raise_if_cancelled(job_id)
+    fn = functools.partial(find_duplicates_sync, phashes, duplicate_threshold)
+    groups = await asyncio.get_running_loop().run_in_executor(None, fn)
+
+    # Map each duplicate image id to the group root it should point at.
+    dup_of: dict[str, str] = {}
+    for group in groups:
+        keep = group[0]
+        for dup_id in group[1:]:
+            dup_of[dup_id] = keep
+
+    # No `if not dup_of: return`. Zero groups is not "nothing to do" — it is
+    # precisely the case that has to clear every stale flag in the dataset, and
+    # it is what makes a Technical re-scan the repair path for drift written by
+    # an older build or by an earlier run at a looser `duplicate_threshold`.
+    # `apply_duplicate_groups` owns both directions; see PM-022.
+    async with AsyncSessionLocal() as session:
+        await apply_duplicate_groups(session, dataset_id, dup_of)
+        await session.commit()
 
 
 @router.get("/aesthetic-coverage/{dataset_id}")
@@ -934,6 +941,7 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     # Every `IN (...)` here is `chunked()`: the Quality page's bulk bar resolves
     # every filtered group in one call, so `delete_ids` is a few thousand rows on
     # a large dataset rather than the handful this endpoint was first written for.
+    dataset_ids: set[str] = set()
     if body.delete_ids:
         rows = []
         for chunk in chunked(body.delete_ids):
@@ -987,4 +995,11 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
             flags.pop("is_duplicate", None)
             flags.pop("duplicate_of", None)
             img.quality_flags = flags
+    # Backstop for a *partial* resolve: the loop above only clears the ids the
+    # caller listed, so deleting a group's root while keeping a survivor the
+    # caller did not name would leave that survivor flagged against a row that no
+    # longer exists (PM-022). After the loop, so its pending clears are part of
+    # the state the prune counts survivors against. `dataset_ids` is empty for a
+    # keep-only call, which makes this a no-op rather than a needless scan.
+    await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()

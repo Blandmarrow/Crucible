@@ -35,6 +35,7 @@ from backend.schemas.video import (
 from backend.services import version_service, video_extract
 from backend.services.dataset_busy import busy, ensure_not_busy
 from backend.services.dataset_service import refresh_stats
+from backend.services.duplicate_service import prune_orphaned_duplicate_flags
 from backend.services.image_service import generate_thumbnail, get_image_info
 from backend.services.video_frames import clamp_crop
 from backend.services.video_service import claimed_poster_stems, generate_poster, measure_duration_ms
@@ -935,6 +936,11 @@ async def _delete_previous_frames(
         # limit is not the patched-up one a Debian container reports.
         for chunk in chunked([r.id for r in rows]):
             await session.execute(sa_delete(Image).where(Image.id.in_(chunk)))
+        # Replaced frames are ordinary Image rows and may be a duplicate group's
+        # root, which would leave a survivor elsewhere in the dataset flagged
+        # against a row that no longer exists (PM-022). Before the commit, so it
+        # is atomic with the deletes and ahead of the unlinks below.
+        await prune_orphaned_duplicate_flags(session, [dataset_id])
         await session.commit()
         # Post-commit epilogue, so it must not be able to change this step's
         # outcome. `missing_ok` covers a file that is already gone, not one the

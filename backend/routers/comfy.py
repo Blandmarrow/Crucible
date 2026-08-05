@@ -1512,6 +1512,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     # rollback already took the images, and the real cleanup if some
                     # later commit had made them durable.
                     try:
+                        # Deliberately **not** a `prune_orphaned_duplicate_flags`
+                        # site (PM-022): these rows were generated seconds ago and
+                        # have never been through a duplicate scan, so nothing is
+                        # flagged and nothing points at them.
                         if row_image_ids:
                             await session.execute(sa_delete(Image).where(Image.id.in_(row_image_ids)))
                         row = await session.get(ComfyRow, row_id) or row

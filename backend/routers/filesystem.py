@@ -20,6 +20,7 @@ from backend.models import Dataset, Image, Video
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
+from backend.services.duplicate_service import prune_orphaned_duplicate_flags
 from backend.services.image_service import extract_generation_metadata, get_image_info
 from backend.utils import (
     chunked,
@@ -744,6 +745,11 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
         await db.execute(delete(Image).where(Image.id.in_(batch)))
     for batch in chunked([v.id for v in vid_rows]):
         await db.execute(delete(Video).where(Video.id.in_(batch)))
+    # `is_duplicate` points at another row, so removing a group's root can leave a
+    # survivor elsewhere in the dataset flagged against nothing. After the row
+    # DELETEs, before the flush that precedes `shutil.rmtree` — one commit, atomic
+    # with the delete and ahead of the filesystem mutation (PM-013, PM-022).
+    await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.flush()
 
     try:

@@ -53,6 +53,7 @@ from backend.services.dataset_service import refresh_stats
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
+from backend.services.duplicate_service import prune_orphaned_duplicate_flags
 from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
 from backend.services.image_service import (
     crop_image_to_dest,
@@ -704,6 +705,11 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
     if p is not None:
         await version_service.mark_image_deleted_in_versions(img.id, str(p), db)
     await db.delete(img)
+    # `is_duplicate` is a relationship to another row, so deleting this one can
+    # orphan a survivor's flag. Between the DELETE and the commit at every such
+    # site: one commit, atomic with the delete, ahead of the unlinks (PM-013,
+    # PM-022).
+    await prune_orphaned_duplicate_flags(db, [dataset_id])
     await db.commit()
     for f in [p, t, txt]:
         if f and f.exists():
@@ -739,6 +745,7 @@ async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db))
             files_to_delete.append(t)
 
     await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
 
     for f in files_to_delete:
@@ -1042,6 +1049,7 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
             files_to_delete.append(t)
 
     await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    await prune_orphaned_duplicate_flags(db, [body.dataset_id])
     await db.commit()
 
     for f in files_to_delete:

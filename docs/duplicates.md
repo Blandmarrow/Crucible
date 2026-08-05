@@ -30,6 +30,12 @@ Next to them are three filters — **All**, **From one video**, and **Mixed or n
 
 Bulk actions always ask for confirmation. The dialog states how many images will be deleted across how many groups, which one it keeps in each, how many of those groups are entirely frames from one video, and how many were skipped — for having no score, or for mixing two aesthetic models. A run over many groups reports progress in the button, and if it fails partway it tells you how many groups it got through — the ones already resolved stay resolved.
 
+## Clearing a group outside this panel
+
+The duplicate mark is a statement about a *pair*, not about one image, so it is kept honest whichever way you thin a group out. Delete copies from the gallery, the lightbox, a bulk delete or the file browser and the last image standing loses its duplicate badge automatically — it is not a duplicate of anything any more. Two or more copies still surviving keep their badges, even when the image the scan had marked *kept* was the one you deleted; they are still duplicates of each other, and the panel keeps offering them as a group.
+
+If a dataset still shows a duplicate count you cannot account for — from an older version of Crucible, or from a scan you have since tightened the threshold on — **re-run scoring with Technical ticked**. The grouping pass is authoritative: it re-marks the images that are duplicates now and clears the mark from every image that is not, so a re-scan is the repair for anything stale. Only the duplicate mark is touched; blurry, watermark and the other flags are left alone.
+
 ## Duplicates that came from the same video
 
 A perceptual hash cannot tell a held animation cel or a stretch of recycled footage from a redundant copy, so frames extracted from one video often land in the same group legitimately. When every frame in a group came from the same video, Crucible says so above the thumbnails and names the video, and each thumbnail shows its timestamp and shot number so you can check before deleting. Groups that mix sources label each frame with its own video instead.

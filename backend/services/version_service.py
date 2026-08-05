@@ -879,6 +879,11 @@ async def restore_snapshot(
     # matching file moves happen at the top of Pass 3a.
     extra_renames: list[tuple[Image, str, str | None]] = []  # (row, old_path, old_thumb)
     if handle_extra_images == "remove":
+        # Deliberately **not** a `prune_orphaned_duplicate_flags` site, unlike every
+        # router that deletes Image rows (PM-022): a restore rewrites `quality_flags`
+        # wholesale from `VersionImageState`, so what this pass leaves behind is
+        # snapshot-defined rather than delete-defined and a prune here would fight
+        # the snapshot. A Technical re-scan is the repair.
         for extra_img in extra_imgs:
             await db.delete(extra_img)
             images_removed += 1

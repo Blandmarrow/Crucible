@@ -3,10 +3,12 @@ import {
   GALLERY_CHECKBOX_SIZE_KEY,
   GALLERY_LICENSE_BADGE_KEY,
   GALLERY_STYLE_METER_KEY,
+  LABEL_HOTKEYS_KEY,
   clampGalleryCheckboxSize,
   getGalleryCheckboxSize,
   getGalleryLicenseBadge,
   getGalleryStyleMeter,
+  getLabelHotkeysEnabled,
 } from "../constants/storage";
 
 /**
@@ -32,6 +34,12 @@ interface UiPrefsStore {
    *  `enabled`, so switching it off stops the fetch, not just the render. */
   galleryStyleMeter: boolean;
   setGalleryStyleMeter: (on: boolean) => void;
+  /** Whether single-key label hotkeys are live in the image detail view. On by
+   *  default. In the store rather than read from localStorage at render time so
+   *  toggling it in Settings reaches an already-mounted detail pane in split
+   *  view — the same reason the three preferences above live here. */
+  labelHotkeysEnabled: boolean;
+  setLabelHotkeysEnabled: (on: boolean) => void;
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -50,5 +58,10 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
   setGalleryStyleMeter: (on) => {
     localStorage.setItem(GALLERY_STYLE_METER_KEY, String(on));
     set({ galleryStyleMeter: on });
+  },
+  labelHotkeysEnabled: getLabelHotkeysEnabled(),
+  setLabelHotkeysEnabled: (on) => {
+    localStorage.setItem(LABEL_HOTKEYS_KEY, String(on));
+    set({ labelHotkeysEnabled: on });
   },
 }));

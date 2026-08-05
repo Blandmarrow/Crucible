@@ -19,6 +19,7 @@ from backend.licenses import (
 )
 from backend.models import Dataset, Image
 from backend.models.detection import Detection
+from backend.services.label_service import label_filter_clause
 from backend.utils import chunked, require_free_space, safe_external_url
 from backend.workers.job_queue import job_queue
 
@@ -564,6 +565,9 @@ async def _run_export_loop(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    label_filter: list[str] | None = None,
+    label_match: str = "any",
+    label_missing: bool | None = None,
     manifest_dir: Path | None = None,
 ) -> dict:
     """
@@ -586,6 +590,14 @@ async def _run_export_loop(
         query = query.where(Image.id.in_(image_ids))
     if subfolders is not None:
         query = query.where(Image.subfolder.in_(subfolders))
+    # Like `subfolders`, the label filter **narrows the query** rather than
+    # appearing in the exclusion tally: it defines which images the export is
+    # about, not an exclusion over a fixed population. So `image_count` shrinks
+    # and no new counter is needed. Built by the same
+    # `label_service.label_filter_clause` the gallery uses, so the two cannot
+    # drift into meaning different things.
+    for clause in label_filter_clause(label_filter, label_match, label_missing):
+        query = query.where(clause)
     query = query.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
     result = await db.execute(query)
     images = result.all()
@@ -774,6 +786,9 @@ async def export_kohya(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    label_filter: list[str] | None = None,
+    label_match: str = "any",
+    label_missing: bool | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -794,6 +809,7 @@ async def export_kohya(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        label_filter=label_filter, label_match=label_match, label_missing=label_missing,
         manifest_dir=Path(output_dir),
     )
 
@@ -838,6 +854,9 @@ async def export_aitoolkit(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    label_filter: list[str] | None = None,
+    label_match: str = "any",
+    label_missing: bool | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -858,6 +877,7 @@ async def export_aitoolkit(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        label_filter=label_filter, label_match=label_match, label_missing=label_missing,
         manifest_dir=Path(output_dir),
     )
 
@@ -900,6 +920,9 @@ async def export_plain(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    label_filter: list[str] | None = None,
+    label_match: str = "any",
+    label_missing: bool | None = None,
     job_id: str | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
@@ -922,6 +945,7 @@ async def export_plain(
         license_filter=license_filter, commercial_only=commercial_only,
         exclude_no_derivatives=exclude_no_derivatives,
         exclude_unlicensed=exclude_unlicensed,
+        label_filter=label_filter, label_match=label_match, label_missing=label_missing,
         manifest_dir=Path(output_dir),
     )
 
@@ -955,6 +979,9 @@ async def preview_export(
     commercial_only: bool = False,
     exclude_unlicensed: bool = False,
     exclude_no_derivatives: bool = False,
+    label_filter: list[str] | None = None,
+    label_match: str = "any",
+    label_missing: bool | None = None,
 ) -> dict:
     exclude_flags = exclude_flags or []
 
@@ -967,6 +994,10 @@ async def preview_export(
     ).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
         query = query.where(Image.subfolder.in_(subfolders))
+    # Narrows, exactly as in `_run_export_loop` — the preview's count must equal
+    # the count the export actually writes.
+    for clause in label_filter_clause(label_filter, label_match, label_missing):
+        query = query.where(clause)
     result = await db.execute(query)
     rows = result.all()
 

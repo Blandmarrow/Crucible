@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createDatasetViaApi } from './helpers'
+import { createDatasetViaApi, uploadViaApi } from './helpers'
 
 // Keyboard behavior added by hooks/useModalBehavior: Escape closes, focus lands
 // inside the panel, and a stacked picker closes only itself.
@@ -62,4 +62,21 @@ test('Escape cancels a destructive confirm; the backdrop does not', async ({ pag
   await page.keyboard.press('Escape')
   await expect(confirm).toHaveCount(0)
   await expect(page.getByRole('heading', { name })).toBeVisible()
+})
+
+// The bulk labels modal joins the shared guard: it uses `useModalBehavior` like
+// every other one, so Escape closes it and focus starts inside the panel.
+test('Escape closes the bulk labels modal', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-modal-labels-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-all-btn').click()
+  await page.getByRole('button', { name: 'Labels' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Edit labels' })
+  await expect(dialog).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
 })

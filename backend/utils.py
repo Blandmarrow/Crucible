@@ -272,6 +272,79 @@ def parse_license_filter_param(value: str) -> list[str] | None:
     return normalize_license_filter(parsed)
 
 
+def parse_id_list_param(value: str | None, param_name: str) -> list[str] | None:
+    """Parse a JSON-array-of-ids query param into a list. None means "no filter".
+
+    The same wire encoding as ``license_filter`` (a JSON array in a string, so the
+    three image endpoints and the export preview all agree), but deliberately
+    *not* ``parse_license_filter_param`` — that one also runs license
+    normalization, which has no meaning for an opaque uuid. Entries are returned
+    verbatim, blanks included: a blank id is meaningless and the caller rejects it
+    with a 400 rather than silently narrowing the list.
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(400, f"{param_name} must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(400, f"{param_name} must be a JSON array of strings")
+    return parsed or None
+
+
+# One `EXISTS` per id is built for `label_match="all"`, so the id count is an
+# expression-tree depth, not just a bind count: SQLite's SQLITE_MAX_EXPR_DEPTH
+# defaults to 1,000 and a longer list turns into an uncaught 500 rather than a
+# 400. Nobody selects a hundred chips — the cap is a guard, not a budget.
+MAX_LABEL_FILTER_IDS = 100
+
+
+def validate_label_filter_params(
+    label_ids: list[str] | None,
+    match: str | None,
+    missing: bool | None,
+) -> list[str]:
+    """Validate the `label_filter`/`label_match`/`label_missing` triple. Returns the ids.
+
+    The **one** validator behind both the three image endpoints and export, so a
+    filter shape the gallery refuses cannot be smuggled in through an export
+    request body and fail an already-enqueued job instead. It lives here beside
+    `parse_id_list_param` — the established home for a client-supplied filter
+    param that raises `HTTPException` — so the service layer stays HTTP-free.
+
+    Four 400s: a blank entry, an unrecognised `match`, `missing=True` alongside a
+    non-empty list, and more than `MAX_LABEL_FILTER_IDS` ids. `match=None` is
+    accepted and means "any" (the image endpoints declare it a plain `str` so a
+    typo is a 400 from here rather than a per-route 422; export declares a
+    `Literal` and gets the 422 — the deliberate asymmetry `_parse_flags` already
+    documents).
+    """
+    ids = list(label_ids or [])
+    if match is not None and match not in ("any", "all"):
+        raise HTTPException(400, f"Invalid label_match: {match} (expected 'any' or 'all')")
+    if any(not lid for lid in ids):
+        # The `license_filter` reasoning: a blank id is meaningless, and dropping
+        # it silently narrows a mixed list while voiding an all-blank one. Both
+        # are silent lies. "No labels at all" is `label_missing=true`.
+        raise HTTPException(
+            400,
+            "label_filter contains an empty entry; use label_missing=true "
+            "to select images with no labels",
+        )
+    if ids and missing is True:
+        # Unsatisfiable, and a query that always returns zero rows is
+        # indistinguishable from a broken filter.
+        raise HTTPException(
+            400, "label_missing=true cannot be combined with a non-empty label_filter"
+        )
+    if len(ids) > MAX_LABEL_FILTER_IDS:
+        raise HTTPException(
+            400, f"label_filter cannot name more than {MAX_LABEL_FILTER_IDS} labels"
+        )
+    return ids
+
+
 def slugify_filename(name: str) -> str:
     """Convert an arbitrary name into a safe filename stem (lowercase, underscores, max 200 chars)."""
     s = name.lower().strip()

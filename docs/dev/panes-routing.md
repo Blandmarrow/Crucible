@@ -44,6 +44,45 @@ All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSize
 - `PaneHeader` — 32 px header per pane: page-type `<select>`, dataset `<select>` (for pages in `NEEDS_DATASET`), split-H / split-V / close buttons.
 - `PageRenderer` — switch over `view.page` → renders the matching lazy page component from `pages/lazyPages.ts`, wrapped in its own `<Suspense>` (see § Route-level code splitting).
 
+#### A pane's dataset is part of a page's identity
+
+Changing a pane's dataset in `PaneHeader` changes `view.datasetId` **without unmounting the
+page** — the one gesture in the app that does. A page seeding per-dataset state in `useState`
+initializers therefore keeps the *previous* dataset's state, while any persist effect with
+`datasetId` in its dep array happily re-fires and writes that state under the **new**
+dataset's key. The old dataset's remembered state is destroyed and the new one's is never
+read.
+
+Three pages carry `key={view.datasetId}` in `PageRenderer` for that reason, so a dataset
+change arrives as a fresh mount:
+
+| Page | What leaked without the key |
+|---|---|
+| `GalleryPage` | the whole `gallery-state-${datasetId}` blob — page, sort, every filter |
+| `TagConsolidatePage` | dataset A's analyzed tag-merge mapping, appliable to B (data corruption) |
+| `VersionsPage` | A's branch id written under B's key, and A's snapshot left in an open confirm dialog while the mutation targets B |
+
+**The other six dataset pages must not be keyed.** `CaptioningPage`, `QualityPage`,
+`StatsPage`, `ExportPage`, `BulkEditPage` and `ComfyPage` already re-seed through a
+`prevDatasetId` effect (e.g. `ExportPage.tsx` ~L301-330) and a remount would *harm* them:
+each holds an `activeJobId`/`detectJobId` in local state with no re-adoption path, so keying
+them drops a running job's progress bar and the `invalidateQueries` its completion fires.
+`ImageDetailPage`/`VideoDetailPage` seed nothing per-dataset and must not be keyed either —
+their arrow navigation changes `imageId` under a constant `datasetId`.
+
+Accepted costs of the three keys: a rescan or import started from the gallery loses its
+completion toast if the pane switches away mid-job (today those effects fire against the
+*wrong* dataset, so the key is a strict improvement); `autoRescannedRef` resets, so
+auto-rescan-on-open can re-fire when returning to a dataset in the same pane, which is
+already what routed mode does on every visit; an in-flight `tag_consolidate` analyze is
+orphaned rather than applied to the wrong dataset.
+
+`App.tsx` needs no equivalent. In routed mode every dataset link derives its id from the
+current match, the only cross-dataset jump is from `DatasetsPage` (a different route element,
+so the gallery has already unmounted), and a hand-typed URL is a full reload — nothing
+changes only `:datasetId` under a live page. `frontend/e2e/gallery-restore.spec.ts` pins the
+gallery case.
+
 **App integration** (`frontend/src/App.tsx`):
 
 - `MainContent` renders `<PaneContainer node={layout}>` when `paneStore.enabled`, otherwise the normal `<Routes>` tree.

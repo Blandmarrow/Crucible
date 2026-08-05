@@ -18,6 +18,7 @@ import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
 import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
+import { labelsApi } from "../api/labels";
 import { showImportSummaryToast } from "../utils/importToast";
 import { writeNavContext } from "../utils/galleryNav";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
@@ -36,6 +37,7 @@ import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY, PERSIST_DEBOUNCE_MS } from "../constants/storage";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
+import { useLabels } from "../hooks/useLabels";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
@@ -140,10 +142,66 @@ function scoreChipLabel(f: ScoreFilter): string {
   return short;
 }
 
+/** Validate the score chips restored from `gallery-state-${datasetId}`, which can have
+ *  been written by a build whose `SCORE_FIELDS` has since changed.
+ *
+ *  The failure this guards is a *lying chip*, not the empty grid `licenseFilter`
+ *  describes: `score_filters` is decoded server-side by a loop that `continue`s past an
+ *  unrecognised field and whose `except (JSONDecodeError, ValueError, AttributeError)`
+ *  abandons the rest of the list, so a bad entry leaves a chip on screen filtering
+ *  nothing *and* can silently drop the entries after it while their chips stay lit.
+ *
+ *  Bounds stay **strings** — the shape `ScoreFilter` declares, and the one
+ *  `scoreChipLabel` tests by truthiness, where `""` ("no bound") is not `0`. That is
+ *  also why the raw state array is what gets persisted and never `scoreFiltersParam`:
+ *  the param form has already collapsed that distinction into numbers.
+ *
+ *  Called from the `useState` initializer, deliberately not reconciled during render the
+ *  way `labelFilter` is: that vocabulary is *fetched* and can change mid-session, while
+ *  `SCORE_FIELDS` is compiled in, so "valid at mount" is "valid forever". A render-phase
+ *  version would also have to loop-guard on an exact is-anything-invalid predicate (this
+ *  returns a fresh array every call), and its `setPage(1)` + `dropScrollRestore()`
+ *  companions would re-create the very restore loss persisting these chips removes. */
+function sanitizeScoreFilters(value: unknown): ScoreFilter[] {
+  if (!Array.isArray(value)) return [];
+  // `null` = unusable, `""` = no bound. Numbers are accepted and stringified so a blob
+  // written by hand still restores. Tested with `Number`, not `parseFloat`, which stops
+  // at the first non-digit and so accepted `"5abc"` — the chip then read `≥ 5abc` while
+  // the request `scoreFiltersParam` built sent `5`. `Number("")` is `0`, hence the
+  // whitespace-only reject before it; the trimmed string is what gets kept, so the chip
+  // and the request agree on the value.
+  const bound = (v: unknown): string | null => {
+    if (v === "" || v === undefined || v === null) return "";
+    if (typeof v !== "string" && typeof v !== "number") return null;
+    const s = String(v).trim();
+    if (!s) return null;
+    return Number.isFinite(Number(s)) ? s : null;
+  };
+  const out: ScoreFilter[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { field, min, max } = entry as { field?: unknown; min?: unknown; max?: unknown };
+    if (typeof field !== "string" || !SCORE_FIELDS.some(s => s.value === field)) continue;
+    const lo = bound(min);
+    const hi = bound(max);
+    if (lo === null || hi === null) continue;
+    // `applyScoreFilter` structurally cannot create a bound-less entry (it returns early
+    // on `!draftMin && !draftMax`); one in the blob would render as a bare field name
+    // filtering nothing at all.
+    if (!lo && !hi) continue;
+    out.push({ field, min: lo, max: hi });
+  }
+  return out;
+}
+
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
+    // `scoreFilters` is `unknown` on purpose: declaring it `ScoreFilter[]` would make
+    // every guard in `sanitizeScoreFilters` read as dead code. The two flat strings
+    // follow the `labelFilter` precedent — declared concrete, `typeof`-guarded at the
+    // read site.
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -198,14 +256,67 @@ export default function GalleryPage() {
       ? [...customLicenses, licenseFilter]
       : customLicenses;
   }, [customLicenses, licenseFilter]);
+  // Labels — the second organisational facet. Ids, not names, because the blob
+  // outlives a rename; the bounds check below drops ids whose label was deleted.
+  const [labelFilter, setLabelFilter] = useState<string[]>(() =>
+    Array.isArray(saved?.labelFilter) ? saved!.labelFilter.filter((x) => typeof x === "string") : [],
+  );
+  const [labelMatch, setLabelMatch] = useState<"any" | "all">(
+    saved?.labelMatch === "all" ? "all" : "any",
+  );
+  const [labelMissing, setLabelMissing] = useState<boolean>(saved?.labelMissing === true);
+
+  // The global label vocabulary. Fetched once app-wide, so this is a cache hit
+  // for every pane after the first.
+  const { labels: allLabels, byId: labelsById, isLoaded: labelsLoaded } = useLabels();
+  const { data: labelCounts } = useQuery({
+    queryKey: ["label-counts", datasetId],
+    queryFn: () => labelsApi.counts(datasetId!),
+    enabled: !!datasetId && allLabels.length > 0,
+    staleTime: 30_000,
+  });
+
+  // Bounds check, the `licenseFilter` precedent above: an id whose label has been
+  // deleted must be dropped, or the grid silently shows zero images with no chip
+  // explaining why.
+  //
+  // Derived during render and gated on `labelsLoaded`, exactly like the
+  // `frameVideoId` guard below — *not* latched behind a mount-once ref, which had
+  // two escapes: a vocabulary that is legitimately empty never reconciled at all
+  // (and the chip row that would explain the filter is hidden in that state), and
+  // a label deleted later in the session was never reconciled either. A pane
+  // switching datasets is not one of them — `PageRenderer` keys this page on the
+  // pane's dataset, so a new dataset arrives as a fresh mount with fresh refs.
+  if (labelsLoaded && labelFilter.some((id) => !labelsById.has(id))) {
+    setLabelFilter(labelFilter.filter((id) => labelsById.has(id)));
+    // `resetPage` itself is declared several hundred lines below, and a ref
+    // bridging the two would still hold the *previous* render's closure here —
+    // no-op on the first render, which is exactly when a restored blob is
+    // reconciled. These are its two statements, both already in scope.
+    setPage(1);
+    dropScrollRestore();
+  }
+
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [detectionLabelInput, setDetectionLabelInput] = useState("");
-  const [detectionLabel, setDetectionLabel] = useState("");
-  const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>([]);
+  // The two debounced text filters. **Both halves of each pair take the restored
+  // value**: the debounce effects below bail only on `input === committed`, so seeding
+  // the committed half alone leaves them unequal and the mount timer commits `""`
+  // 350 ms after arriving back from the detail view — resetting the page and dropping
+  // the scroll restore, which is PM-012 exactly.
+  //
+  // Only the *committed* values are ever persisted, never the drafts: a persisted draft
+  // would force the restore to choose between applying a filter the user never committed
+  // and seeding the pair unequally. Accepted consequence — keystrokes typed inside the
+  // 350 ms before clicking a tile are still lost.
+  const restoredSearch = typeof saved?.search === "string" ? saved.search : "";
+  const [searchInput, setSearchInput] = useState(restoredSearch);
+  const [search, setSearch] = useState(restoredSearch);
+  const restoredDetectionLabel = typeof saved?.detectionLabel === "string" ? saved.detectionLabel : "";
+  const [detectionLabelInput, setDetectionLabelInput] = useState(restoredDetectionLabel);
+  const [detectionLabel, setDetectionLabel] = useState(restoredDetectionLabel);
+  const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>(() => sanitizeScoreFilters(saved?.scoreFilters));
   const [showAddScore, setShowAddScore] = useState(false);
   const [draftField, setDraftField] = useState(SCORE_FIELDS[0].value);
   const [draftMin, setDraftMin] = useState("");
@@ -287,8 +398,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -420,17 +531,26 @@ export default function GalleryPage() {
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
   // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
   // at flush time; the window is the same shared constant either way.
+  //
+  // This and the unmount flush below each `JSON.stringify` a *full literal* and never
+  // merge with what is stored, so a field present in one and missing from the other is
+  // silently deleted on whichever path runs. Keep the two literals identical, field for
+  // field. The dep array is not optional either: `applyScoreFilter` calls `resetPage()`,
+  // a no-op on `page` when it is already 1, so adding the first chip moves no *other*
+  // dep — without `scoreFilters` here the write would only ever be scheduled by some
+  // unrelated later change or by the unmount flush, and a reload (this page has no
+  // `pagehide` listener) would drop it.
   useEffect(() => {
     if (!datasetId) return;
     const t = setTimeout(() => {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -438,11 +558,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -590,11 +710,14 @@ export default function GalleryPage() {
       licenseFilter && licenseFilter !== MISSING_LICENSE
         ? JSON.stringify([licenseFilter])
         : undefined,
-  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]);
+    label_missing: labelMissing ? true : undefined,
+    label_filter: labelFilter.length ? JSON.stringify(labelFilter) : undefined,
+    label_match: labelFilter.length > 1 ? labelMatch : undefined,
+  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]);
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]
   );
 
   const { data: images = [], isLoading, isPlaceholderData, refetch } = useQuery({
@@ -620,7 +743,7 @@ export default function GalleryPage() {
   // full list key. Paging and sort are absent on purpose — neither changes how
   // many images match.
   const { data: totalCount, isPlaceholderData: countIsStale } = useQuery({
-    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
+    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
     queryFn: () => imagesApi.count(filterParams).then((r) => r.count),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -1166,11 +1289,27 @@ export default function GalleryPage() {
     setCaptionedFilter(getGalleryDefaultCaptionFilter());
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
     setLicenseFilter("");
+    setLabelFilter([]);
+    setLabelMatch("any");
+    setLabelMissing(false);
+    // Both halves of each debounced pair, together. Clearing only the committed value
+    // leaves the input non-empty, so 350 ms later the debounce re-commits the old query
+    // and fires `setPage(1)` — Reset undoing itself, in PM-012's silhouette. And these
+    // three are now persisted, so leaving any of them set would have the debounced write
+    // re-create the blob `removeItem` above just deleted.
+    setSearchInput("");
+    setSearch("");
+    setDetectionLabelInput("");
+    setDetectionLabel("");
+    setScoreFilters([]);
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
     // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
     // removes, but it is the tree's shape, not a filter — collapsing everything is not
-    // what "reset filters" promises. The next persist writes the live set back.
+    // what "reset filters" promises. The next persist writes the live set back. The
+    // score form's draft state (`showAddScore`, `draftField`, `draftMin`, `draftMax`) is
+    // left alone for the mirror-image reason: it is form state, not a filter, and is not
+    // persisted either.
     dropScrollRestore();
     // Immediate, unlike the deep-link paths: this is a direct gesture and wants
     // feedback now, not once the new page renders.
@@ -1490,10 +1629,22 @@ export default function GalleryPage() {
           <input
             className="input"
             placeholder="Search filename or caption…"
-            style={{ width: 280 }}
+            // `.search-wrap .input` pads only the left, for the magnifier; the × sits at
+            // `right: 6` and a long query runs under it without this.
+            style={{ width: 280, paddingRight: 24 }}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
+          {/* The one-click way out of a filter that now survives a restart. Clears both
+              halves of the pair synchronously — bypassing the debounce, and keeping them
+              equal — exactly like the detection-label input's × below. */}
+          {searchInput && (
+            <button
+              onClick={() => { setSearchInput(""); setSearch(""); resetPage(); }}
+              style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
+              title="Clear"
+            >×</button>
+          )}
         </div>
 
         <select className="select" style={{ width: "auto" }} value={sortIdx}
@@ -1571,7 +1722,7 @@ export default function GalleryPage() {
           <input
             className="input"
             placeholder="Objects: cat, dog…"
-            style={{ paddingLeft: 26, width: 160 }}
+            style={{ paddingLeft: 26, paddingRight: 24, width: 160 }}
             value={detectionLabelInput}
             onChange={(e) => setDetectionLabelInput(e.target.value)}
             title="Filter by detected object label"
@@ -1584,6 +1735,88 @@ export default function GalleryPage() {
             >×</button>
           )}
         </div>
+
+        {/* Label chips — the second organisational facet. Hidden entirely when
+            the vocabulary is empty, so the filter bar gains nothing until
+            someone has actually defined a label in Settings. */}
+        {allLabels.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Label filters">
+            {allLabels.map((label) => {
+              const on = labelFilter.includes(label.id);
+              const count = labelCounts?.[label.id] ?? 0;
+              return (
+                <button
+                  key={label.id}
+                  aria-pressed={on}
+                  title={`${count} image${count === 1 ? "" : "s"} in this dataset`}
+                  onClick={() => {
+                    // Selecting a label and "unlabelled" at once is
+                    // unsatisfiable — the backend 400s on it — so one clears
+                    // the other.
+                    setLabelMissing(false);
+                    setLabelFilter((prev) =>
+                      prev.includes(label.id) ? prev.filter((id) => id !== label.id) : [...prev, label.id],
+                    );
+                    resetPage();
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12,
+                    cursor: "pointer", whiteSpace: "nowrap",
+                    background: on ? `${label.color}33` : "var(--surface-2)",
+                    border: `1px solid ${on ? label.color : "var(--line)"}`,
+                    color: "var(--fg)",
+                  }}
+                >
+                  <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: label.color }} />
+                  {label.name}
+                  <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>{count}</span>
+                </button>
+              );
+            })}
+
+            {/* Any/All only appears once it can mean something. */}
+            {labelFilter.length > 1 && (
+              <span style={{ display: "inline-flex", gap: 2 }} role="group" aria-label="Label match mode">
+                {(["any", "all"] as const).map((m) => (
+                  <button
+                    key={m}
+                    aria-pressed={labelMatch === m}
+                    onClick={() => { setLabelMatch(m); resetPage(); }}
+                    style={{
+                      padding: "2px 7px", fontSize: 11.5, borderRadius: "var(--r)", cursor: "pointer",
+                      background: labelMatch === m ? "var(--accent)" : "var(--surface-2)",
+                      color: labelMatch === m ? "#fff" : "var(--fg-mute)",
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    {m === "any" ? "Any" : "All"}
+                  </button>
+                ))}
+              </span>
+            )}
+
+            <button
+              aria-pressed={labelMissing}
+              title="Only images carrying no label at all"
+              onClick={() => {
+                setLabelMissing((prev) => {
+                  if (!prev) setLabelFilter([]);
+                  return !prev;
+                });
+                resetPage();
+              }}
+              style={{
+                padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12, cursor: "pointer",
+                background: labelMissing ? "var(--accent)" : "var(--surface-2)",
+                color: labelMissing ? "#fff" : "var(--fg-mute)",
+                border: "1px solid var(--line)", whiteSpace: "nowrap",
+              }}
+            >
+              Unlabelled
+            </button>
+          </div>
+        )}
 
         {/* Multi-score filters */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>

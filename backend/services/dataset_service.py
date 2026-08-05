@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from backend.models import Dataset, Image, StyleSimilarityRun, Video
+from backend.models import Dataset, Image, ImageLabel, StyleSimilarityRun, Video
 from backend.services.caption_service import _write_txt_sidecar
+from backend.services.label_service import copy_labels, live_label_ids
 from backend.services.image_service import (
     extract_generation_metadata,
     extract_embedded_provenance,
@@ -1794,6 +1795,8 @@ async def duplicate_dataset(
     videos_added = 0
     videos_failed = 0
     images_added = 0
+    # source image id -> clone image id, for the label copy after Step 2A's loop.
+    image_id_map: dict[str, str] = {}
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
@@ -1959,7 +1962,7 @@ async def duplicate_dataset(
                 await loop.run_in_executor(
                     None, _copy_image_sync, old_path, new_path, old_thumb, new_thumb
                 )
-                db.add(Image(
+                new_img = Image(
                     id=str(uuid4()),
                     dataset_id=new_ds.id,
                     filename=row.filename,
@@ -2009,7 +2012,9 @@ async def duplicate_dataset(
                     # Raw, not resolved: the new dataset carries the same
                     # provenance defaults, so inheritance stays equivalent.
                     **copy_provenance(row),
-                ))
+                )
+                db.add(new_img)
+                image_id_map[row.id] = new_img.id
                 images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
@@ -2029,6 +2034,11 @@ async def duplicate_dataset(
                     "message": f"Copying {row.filename}",
                 })
 
+        # Labels travel on a duplicate, like provenance and unlike detections.
+        # Outside the loop, so a cancelled duplicate still keeps the labels for
+        # whatever it did copy — the `break` above lands here too.
+        await copy_labels(db, image_id_map)
+
     # --- Step 2B: copy from snapshot ---
     else:
         from backend.models.versioning import VersionImageState
@@ -2042,6 +2052,14 @@ async def duplicate_dataset(
         states = result.scalars().all()
         total = len(states)
         skipped = 0
+
+        # Resolve the snapshot's label ids against the live vocabulary once for
+        # the whole run — exactly as `restore_snapshot` does, and for the same
+        # reason: `VersionImageState.label_ids` carries no FK, so an id may name
+        # a label deleted since the snapshot.
+        snapshot_labels = await live_label_ids(
+            db, {lid for s in states for lid in (s.label_ids or [])}
+        )
 
         for i, state in enumerate(states):
             if job_queue.cancel_requested(job_id):
@@ -2071,7 +2089,7 @@ async def duplicate_dataset(
                     None, _copy_snapshot_image_sync, src_file, new_path, new_thumb, state.caption_text or "",
                 )
 
-                db.add(Image(
+                new_img = Image(
                     id=str(uuid4()),
                     dataset_id=new_ds.id,
                     filename=state.filename,
@@ -2110,7 +2128,14 @@ async def duplicate_dataset(
                     source_timestamp_ms=state.source_timestamp_ms,
                     source_shot_index=state.source_shot_index,
                     **copy_provenance(state),
-                ))
+                )
+                db.add(new_img)
+                # Read off the mirror rather than off any live image: this branch
+                # rebuilds the dataset as the snapshot recorded it.
+                db.add_all([
+                    ImageLabel(image_id=new_img.id, label_id=lid)
+                    for lid in sorted(set(state.label_ids or []) & snapshot_labels)
+                ])
                 images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)

@@ -83,3 +83,29 @@ export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string
   // matches nothing, the same no-op as the loop above.
   qc.resetQueries({ queryKey: ["gallery-nav", datasetId] });
 }
+
+/**
+ * Every query whose data depends on which labels are attached to which images.
+ *
+ * There are four writers — the Settings vocabulary panel, the detail-page panel,
+ * the detail-view hotkey and the gallery's bulk toolbar — which is exactly the
+ * drift this file exists to prevent. A label write moves the vocabulary itself
+ * (`["labels"]`, including every `usage_count`), the grid rows that carry the
+ * dots (`["images", datasetId]`), the open detail pane (`["image"]`), the chip
+ * badges (`["label-counts", datasetId]`) and the Export preview, whose count
+ * narrows with the label filter.
+ *
+ * Every key is invalidated at its **bare prefix**, with no dataset segment —
+ * matching `invalidateProvenanceScope` above and for the same reason. The
+ * vocabulary is app-wide, `useSelectionStore` spans datasets, and the bulk assign
+ * this helper mostly serves explicitly labels a selection that can straddle
+ * several: scoping to one pane's `datasetId` left the other datasets' grids and
+ * chip badges showing counts for assignments that had already happened.
+ */
+export function invalidateLabelScope(qc: QueryClient) {
+  qc.invalidateQueries({ queryKey: ["labels"] });
+  qc.invalidateQueries({ queryKey: ["image"] });
+  qc.invalidateQueries({ queryKey: ["export-preview"] });
+  qc.invalidateQueries({ queryKey: ["images"] });
+  qc.invalidateQueries({ queryKey: ["label-counts"] });
+}

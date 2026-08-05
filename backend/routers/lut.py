@@ -14,6 +14,7 @@ from backend.models import BackgroundJob, Image
 from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
 from backend.services.image_service import generate_thumbnail
+from backend.services.label_service import copy_labels
 from backend.services import version_service
 from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
@@ -110,6 +111,12 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             # unique_filename_with_thumb per its contract).
             occupied_by_dir: dict[Path, set[str]] = {}
             planned_by_dir: dict[Path, set[str]] = {}
+
+            # Copy-mode derivatives: parent id -> new id, drained once after the
+            # loop. A same-dataset derivative carries its parent's labels for the
+            # same reason it carries `copy_provenance` — "this image is a reject"
+            # is a fact about the picture, not about the file.
+            derivative_ids: dict[str, str] = {}
 
             cancelled = False
             for i, img in enumerate(images):
@@ -291,6 +298,7 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     )
                     session.add(new_img)
                     await session.flush()
+                    derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
 
                 await broadcaster.emit(job_id, {
@@ -301,6 +309,9 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                     "image_id": last_image_id,
                 })
                 counts["processed"] += 1
+
+            # After the loop, so a cancelled run still labels what it did copy.
+            await copy_labels(session, derivative_ids)
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:

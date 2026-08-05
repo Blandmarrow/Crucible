@@ -65,6 +65,11 @@ class ImageOut(BaseModel):
     source_timestamp_ms: int | None = None
     source_shot_index: int | None = None
 
+    # Label ids attached to this image. Filled by the router from an explicit
+    # `select(ImageLabel...)` — there is no `Image.labels` relationship, because a
+    # lazy load on an async session raises `MissingGreenlet` only on the live path.
+    label_ids: list[str] = []
+
     model_config = {"from_attributes": True}
 
 
@@ -104,6 +109,9 @@ class ImageListItem(BaseModel):
     # Lineage marker only — the gallery card needs no timestamp or shot index,
     # and this payload is paid per row on every page.
     source_video_id: str | None = None
+    # Drives the coloured dots on `ImageCard`. Filled by the router from one
+    # bucketed query for the whole page, not per row.
+    label_ids: list[str] = []
 
     model_config = {"from_attributes": True}
 
@@ -161,6 +169,16 @@ class ImageFilterParams(BaseModel):
         None, description="JSON array of effective license ids; empty = no filter"
     )
     license_missing: bool | None = None
+    label_filter: str | None = Field(
+        None, description="JSON array of label ids; empty = no filter"
+    )
+    # A plain `str`, deliberately not a `Literal["any", "all"]`: a bad value must
+    # be a **400 from the shared filter validator** (identical across the three
+    # endpoints), not a 422 raised by per-route query parsing before that
+    # validator ever runs. `test_bad_input_is_rejected_identically_by_all_three`
+    # pins that contract.
+    label_match: str | None = None
+    label_missing: bool | None = None
 
 
 class ImageIdsParams(ImageFilterParams):

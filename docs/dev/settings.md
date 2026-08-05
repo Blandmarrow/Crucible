@@ -31,7 +31,7 @@ Five immediate-save preferences:
 - Selection checkbox size (px slider, 14–32, live `GalleryCheckbox` preview). Stored under `GALLERY_CHECKBOX_SIZE_KEY` but owned by `uiPrefsStore`, not read directly — see `docs/dev/persistence.md` § `constants/storage.ts` — the key registry.
 - License badge on cards (`true | false`, off by default). Stored under `GALLERY_LICENSE_BADGE_KEY` but owned by `uiPrefsStore.galleryLicenseBadge` — `ImageCard` subscribes to the store, so a Settings pane and a gallery pane side by side stay in step. Its own group, deliberately **not** inside **Gallery defaults**: that group's copy promises first-open-only application and clearing via the gallery reset button, and neither is true of a global display toggle. When on, **every** card gets a badge — an image with no license anywhere shows the muted "No license" descriptor, which is the state the preference exists to surface. See `docs/dev/provenance.md`.
 - Subfolder rename on move (`on | off`). Stored under `SUBFOLDER_RENAME_KEY`. Read by `SelectionToolbar`'s `moveSubfolderMutation` at mutation time; passed as `rename_on_move` to `POST /images/batch/move-subfolder`.
-- **Gallery defaults** section: default sort (`GALLERY_DEFAULT_SORT_KEY`, index into `SORT_OPTIONS`), default caption filter (`GALLERY_DEFAULT_CAPTION_KEY`, `"all" | "captioned" | "uncaptioned"`), default quality filter (`GALLERY_DEFAULT_QUALITY_KEY`, flag key or `""`). Applied the first time you open a dataset's gallery, before any filter choices have been remembered for it. Once visited, per-dataset `gallery-state-*` state (persisted to `localStorage`) takes precedence — use the Reset filters button in the gallery toolbar to clear it and fall back to these defaults again. A third tier outranks both: a gallery **deep link** (`?subfolder=` / `?source_video_id=`, or the equivalent pane view) is applied once per change during render and overrides the restored subfolder and lineage filter, resetting the page to 1. It never touches the sort or the caption/quality filters, so the precedence above still holds for all three of these defaults. See `docs/dev/gallery.md` and PM-012. Helpers `getGalleryDefaultSort()`, `getGalleryDefaultCaptionFilter()`, `getGalleryDefaultQualityFilter()` in `storage.ts` are used at `useState` init time.
+- **Gallery defaults** section: default sort (`GALLERY_DEFAULT_SORT_KEY`, index into `SORT_OPTIONS`), default caption filter (`GALLERY_DEFAULT_CAPTION_KEY`, `"all" | "captioned" | "uncaptioned"`), default quality filter (`GALLERY_DEFAULT_QUALITY_KEY`, flag key or `""`). Applied the first time you open a dataset's gallery, before any filter choices have been remembered for it. Once visited, per-dataset `gallery-state-*` state (persisted to `localStorage`) takes precedence — use the Reset filters button in the gallery toolbar to clear it and fall back to these defaults again. A third tier outranks both: a gallery **deep link** (`?subfolder=` / `?source_video_id=`, or the equivalent pane view) is applied once per change during render and overrides the restored subfolder and lineage filter, resetting the page to 1. It touches only those two: the sort, the caption/quality filters, the license and label filters, and the search / detection-label / score-chip filters are all left as restored, so the precedence above still holds for all three of these defaults. See `docs/dev/gallery.md` and PM-012. Helpers `getGalleryDefaultSort()`, `getGalleryDefaultCaptionFilter()`, `getGalleryDefaultQualityFilter()` in `storage.ts` are used at `useState` init time.
 
 Constants defined in `docs/dev/frontend-core.md` § Frontend constants and `docs/dev/persistence.md`.
 
@@ -46,6 +46,16 @@ Seven immediate-save preferences (lazy-loads `["captioning-models"]` query only 
 - Rename on caption toggle (`CAPTION_DEFAULT_RENAME_KEY`, default `false`).
 - Save backup toggle (`CAPTION_DEFAULT_SAVE_BACKUP_KEY`, default `false`).
 - **Reset remembered Captioning configuration** ghost button at the bottom of this section: clears the global workflow blob **and every per-dataset `captioning-filters-*` blob**, the latter found by scanning `localStorage` for the prefix rather than by enumerating dataset ids — so the one button forgets the Captioning page's remembered setup everywhere, not only globally. `toast.success` only, no confirm dialog.
+
+## Labels tab
+
+The global label vocabulary — create, rename, recolour, rebind, reorder and delete —
+plus the `labelHotkeysEnabled` toggle. Extracted into
+`components/settings/LabelsPanel.tsx` rather than inlined, following the `SecretField`
+precedent; the tab body is a thin `{activeTab === "labels" && <div className="panel"><LabelsPanel /></div>}`.
+Nothing here is a `ThresholdSettings` field — the vocabulary is its own table behind
+`/labels`, and every edit saves immediately rather than through the page-level Save
+button. See `docs/dev/labels.md`.
 
 ## UI Behavior tab
 

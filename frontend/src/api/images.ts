@@ -96,6 +96,15 @@ export interface ImageListParams {
   license_filter?: string;
   /** true = only images with no license at either level. */
   license_missing?: boolean;
+  /** JSON array of label ids, e.g. `JSON.stringify([id1, id2])` — the same wire
+   *  encoding as `license_filter`. */
+  label_filter?: string;
+  /** "any" (default) or "all". A value outside those two is a 400 from the
+   *  shared filter validator, identically on all three endpoints. */
+  label_match?: "any" | "all";
+  /** true = only images carrying no label at all. Cannot be combined with a
+   *  non-empty `label_filter` — the backend 400s on the unsatisfiable pair. */
+  label_missing?: boolean;
 }
 
 /** What "the current view" means, minus which slice of it is on screen and minus

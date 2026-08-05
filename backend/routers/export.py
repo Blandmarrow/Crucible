@@ -11,9 +11,11 @@ from backend.utils import (
     ALLOWED_FLAG_KEYS,
     InsufficientDiskSpaceError,
     normalize_license_filter,
+    parse_id_list_param,
     parse_license_filter_param,
     require_free_space,
     sanitize_abs_path,
+    validate_label_filter_params,
 )
 from backend.services.export_service import (
     export_aitoolkit,
@@ -58,6 +60,13 @@ class KohyaExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Labels — the second organisational facet. Named `label_filter`, not
+    # `labels`: this body already carries `label` (the job's display name).
+    # None/empty = no label restriction; `label_match` is "any" or "all";
+    # `label_missing=True` selects images carrying no label at all.
+    label_filter: list[str] | None = None
+    label_match: Literal["any", "all"] = "any"
+    label_missing: bool | None = None
     label: str | None = None
 
 
@@ -92,6 +101,13 @@ class AIToolkitExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Labels — the second organisational facet. Named `label_filter`, not
+    # `labels`: this body already carries `label` (the job's display name).
+    # None/empty = no label restriction; `label_match` is "any" or "all";
+    # `label_missing=True` selects images carrying no label at all.
+    label_filter: list[str] | None = None
+    label_match: Literal["any", "all"] = "any"
+    label_missing: bool | None = None
     label: str | None = None
 
 
@@ -124,6 +140,13 @@ class PlainExportRequest(BaseModel):
     # Drops CC BY-ND and friends: an export ships resized/cropped copies, which
     # is what "no derivatives" forbids redistributing.
     exclude_no_derivatives: bool = False
+    # Labels — the second organisational facet. Named `label_filter`, not
+    # `labels`: this body already carries `label` (the job's display name).
+    # None/empty = no label restriction; `label_match` is "any" or "all";
+    # `label_missing=True` selects images carrying no label at all.
+    label_filter: list[str] | None = None
+    label_match: Literal["any", "all"] = "any"
+    label_missing: bool | None = None
     label: str | None = None
 
 
@@ -195,6 +218,10 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -236,6 +263,9 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                label_filter=label_filter,
+                label_match=body.label_match,
+                label_missing=body.label_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -257,6 +287,10 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -297,6 +331,9 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                label_filter=label_filter,
+                label_match=body.label_match,
+                label_missing=body.label_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -318,6 +355,10 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -356,6 +397,9 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
+                label_filter=label_filter,
+                label_match=body.label_match,
+                label_missing=body.label_missing,
                 job_id=job_id,
             )
         async with AsyncSessionLocal() as session:
@@ -385,6 +429,9 @@ async def preview(
     commercial_only: bool = Query(default=False),
     exclude_unlicensed: bool = Query(default=False),
     exclude_no_derivatives: bool = Query(default=False),
+    label_filter: str = Query(default="", description="JSON array of label ids; empty = no filter"),
+    label_match: Literal["any", "all"] = Query(default="any"),
+    label_missing: bool | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
@@ -406,4 +453,9 @@ async def preview(
         commercial_only=commercial_only,
         exclude_unlicensed=exclude_unlicensed,
         exclude_no_derivatives=exclude_no_derivatives,
+        label_filter=validate_label_filter_params(
+            parse_id_list_param(label_filter, "label_filter"), label_match, label_missing
+        ),
+        label_match=label_match,
+        label_missing=label_missing,
     )

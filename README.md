@@ -23,7 +23,7 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 Every step from raw images to a training-ready export, in order:
 
 1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/gallery.md), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
-2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md)
+2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/editing.md)
@@ -52,7 +52,8 @@ Every step from raw images to a training-ready export, in order:
 
 ### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md)
-- **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/gallery.md)
+- **Filter & curate** via search, quality flags, score ranges, and detected object labels — every filter is remembered per dataset, so leaving the gallery and coming back (or restarting) lands you back on the view you were working in → [details](docs/gallery.md)
+- **Label images** with a small shared vocabulary — a second axis of organisation alongside subfolders, so "usable for FX work" can cut across every subject folder. Apply one at a time, with a single keypress while arrowing through a folder, or in bulk across a whole filtered selection; then filter the gallery, or an export, on it. Labels never touch captions and never appear in an exported `.txt` → [details](docs/labels.md)
 
 ### Object detection
 - **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM 2.1 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/detection.md)
@@ -285,6 +286,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 |---|---|
 | Feature index | [docs/features.md](docs/features.md) |
 | Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
+| Labels | [docs/labels.md](docs/labels.md) |
 | Videos & Frame Extraction | [docs/video.md](docs/video.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |

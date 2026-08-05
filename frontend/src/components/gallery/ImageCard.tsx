@@ -7,6 +7,7 @@ import { imagesApi } from "../../api/images";
 import { captionsApi } from "../../api/captions";
 import { useSelectionStore } from "../../store/selectionStore";
 import LicenseBadge from "../common/LicenseBadge";
+import { useLabels } from "../../hooks/useLabels";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import GalleryCheckbox from "./GalleryCheckbox";
 import { usePaneDatasetId } from "../../hooks/usePaneDatasetId";
@@ -98,6 +99,14 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   // switching the preference on. Read from the store, not localStorage, so toggling
   // it in a Settings pane updates a gallery pane that is already mounted.
   const showLicense = useUiPrefsStore((s) => s.galleryLicenseBadge);
+
+  // The vocabulary is global and fetched once, so resolving ids to colours here
+  // costs nothing per card. An id with no row (a label deleted between this
+  // page's fetch and the vocabulary's) is dropped rather than rendered grey.
+  const { byId: labelsById } = useLabels();
+  const labelDots = (image.label_ids ?? [])
+    .map((id) => labelsById.get(id))
+    .filter((l) => l !== undefined);
   const sc = image.aesthetic_score ?? null;
   const cls = scoreClass(sc);
 
@@ -267,6 +276,23 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
               pushing the filename out of the card. The title carries the full text. */}
           {showLicense && (
             <LicenseBadge value={image.license} className="shrink-0 max-w-[45%] truncate" />
+          )}
+          {/* Label dots. Hidden entirely when the vocabulary is empty, so a card
+              gains no dead space for a feature nobody has set up. Names live in
+              the title — a dot is a glance, not a legend. */}
+          {labelDots.length > 0 && (
+            <span
+              style={{ display: "inline-flex", gap: 3, flexShrink: 0 }}
+              title={labelDots.map((l) => l.name).join(", ")}
+              aria-label={`Labels: ${labelDots.map((l) => l.name).join(", ")}`}
+            >
+              {labelDots.map((l) => (
+                <span
+                  key={l.id}
+                  style={{ width: 7, height: 7, borderRadius: "50%", background: l.color }}
+                />
+              ))}
+            </span>
           )}
           {image.generation_metadata && onShowGenMeta && (
             <button

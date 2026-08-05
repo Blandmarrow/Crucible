@@ -23,6 +23,7 @@ import RadioGroup from "../components/common/RadioGroup";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
+import LabelsPanel from "../components/settings/LabelsPanel";
 import SecretField from "../components/settings/SecretField";
 
 type ModelOption = { id: string; label: string; group: string };
@@ -234,7 +235,7 @@ export default function SettingsPage() {
       form.versioning_mode !== thresholds.versioning_mode ||
       form.auto_rescan_on_open !== thresholds.auto_rescan_on_open);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "ui" | "quality" | "versioning" | "providers" | "comfyui" | "secrets">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "labels" | "ui" | "quality" | "versioning" | "providers" | "comfyui" | "secrets">("gallery");
 
   // Gallery checkbox size lives in uiPrefsStore (not local state) so dragging the
   // slider re-renders gallery cards live, including a GalleryPage in another pane.
@@ -368,6 +369,7 @@ export default function SettingsPage() {
       <div className="tabs">
         <button className={`tab${activeTab === "gallery" ? " active" : ""}`} onClick={() => setActiveTab("gallery")}>Gallery</button>
         <button className={`tab${activeTab === "captioning" ? " active" : ""}`} onClick={() => setActiveTab("captioning")}>Captioning</button>
+        <button className={`tab${activeTab === "labels" ? " active" : ""}`} onClick={() => setActiveTab("labels")}>Labels</button>
         <button className={`tab${activeTab === "ui" ? " active" : ""}`} onClick={() => setActiveTab("ui")}>UI Behavior</button>
         <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
@@ -375,6 +377,12 @@ export default function SettingsPage() {
         <button className={`tab${activeTab === "comfyui" ? " active" : ""}`} onClick={() => setActiveTab("comfyui")}>ComfyUI</button>
         <button className={`tab${activeTab === "secrets" ? " active" : ""}`} onClick={() => setActiveTab("secrets")}>API Keys</button>
       </div>
+
+      {activeTab === "labels" && (
+        <div className="panel">
+          <LabelsPanel />
+        </div>
+      )}
 
       {activeTab === "secrets" && (
         <div className="panel">

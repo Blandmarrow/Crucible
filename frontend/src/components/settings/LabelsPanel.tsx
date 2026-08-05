@@ -68,7 +68,18 @@ function ColorSwatchButton({
   onPick: (color: string) => void;
 }) {
   const { open, setOpen, anchorRef, triggerRef } = usePopover<HTMLSpanElement>();
+  // `custom` is a *draft* of `label.color`, never an independent value. The row is
+  // keyed on `label.id`, so this component survives a recolour: a mount-time snapshot
+  // goes stale the instant a palette swatch is picked, and because the blur below
+  // commits on any difference, a bare focus-and-leave would then PATCH the label back
+  // to the colour it had at mount. Resynced during render rather than in an effect,
+  // so the swatch never paints the stale colour for a frame.
   const [custom, setCustom] = useState(label.color);
+  const [syncedColor, setSyncedColor] = useState(label.color);
+  if (syncedColor !== label.color) {
+    setSyncedColor(label.color);
+    setCustom(label.color);
+  }
 
   return (
     <span ref={anchorRef} style={{ position: "relative", display: "inline-flex" }}>

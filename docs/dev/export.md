@@ -41,10 +41,11 @@ query** in `_run_export_loop` and `preview_export`, applied right after the `sub
 where and built by the same `label_service.label_filter_clause` the gallery uses. Like
 `subfolders`, they define which images the export is *about* rather than an exclusion over
 a fixed population — so `image_count` shrinks and no new exclusion counter exists. The
-Export page's control mirrors the gallery's — the same `LabelPicker`, the Any/All toggle,
-the "Unlabelled only" option and the vocabulary bounds-check on a restored preset. It is
-`placement="inline"`: the page body is `overflowY: auto` and would clip an absolutely
-positioned panel (`docs/dev/styling.md` § Anchored popovers).
+Export page's control is the gallery's minus the tallies — the same `LabelPicker`, the
+Any/All toggle, the "Unlabelled only" option and the vocabulary bounds-check on a restored
+preset, but no `counts` prop, so its rows carry no per-label image count the way the
+gallery's do. It is `placement="inline"`: the page body is `overflowY: auto` and would clip
+an absolutely positioned panel (`docs/dev/styling.md` § Anchored popovers).
 
 Validation is **shared with the image endpoints**, not re-implemented: all four
 handlers (the three POSTs and `preview`) call `utils.validate_label_filter_params`,

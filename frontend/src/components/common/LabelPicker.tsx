@@ -16,7 +16,14 @@ interface CheckListProps {
   ariaLabel: string;
   /** Rendered under the list — the Any/All + Unlabelled controls at two call sites. */
   footer?: React.ReactNode;
-  /** Focus the search box on mount (the popover placement wants it, inline does not). */
+  /**
+   * Focus the search box on mount. Derived from `placement` by `LabelPicker`, and
+   * never a call site's choice: a popover opens on top of the page and closes on
+   * Escape, so it may take the keyboard, but an inline panel stays open across
+   * toggles — and `utils/keyboard.ts::isTextEntryTarget` reports any focused
+   * `INPUT` as text entry, so autofocusing one there kills the image detail
+   * view's arrows, Space, Delete and every label hotkey until focus leaves it.
+   */
   autoFocus?: boolean;
 }
 
@@ -140,7 +147,7 @@ export default function LabelPicker({
   const panelId = useId();
 
   const panel = (
-    <LabelCheckList {...list} autoFocus />
+    <LabelCheckList {...list} autoFocus={placement === "popover"} />
   );
 
   return (

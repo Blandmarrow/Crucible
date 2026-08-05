@@ -22,7 +22,7 @@ This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettin
 
 `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
-The Settings page uses a **tab-based layout** with eight tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds, versioning mode, and both ComfyUI fields require an explicit Save. The **ComfyUI tab** holds `comfyui_url` (with a *Test connection* button → `comfyApi.ping`) and `comfy_workflow_dir` (with a `DirPickerModal` Browse), both server-side `ThresholdSettings` columns — see `docs/dev/comfyui.md`.
+The Settings page uses a **tab-based layout** with nine tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds, versioning mode, and both ComfyUI fields require an explicit Save. The **ComfyUI tab** holds `comfyui_url` (with a *Test connection* button → `comfyApi.ping`) and `comfy_workflow_dir` (with a `DirPickerModal` Browse), both server-side `ThresholdSettings` columns — see `docs/dev/comfyui.md`.
 
 ## Gallery tab
 
@@ -56,6 +56,19 @@ precedent; the tab body is a thin `{activeTab === "labels" && <div className="pa
 Nothing here is a `ThresholdSettings` field — the vocabulary is its own table behind
 `/labels`, and every edit saves immediately rather than through the page-level Save
 button. See `docs/dev/labels.md`.
+
+**Recolouring** is a per-row swatch button opening a `usePopover` panel (`docs/dev/styling.md`
+§ Anchored popovers) — twenty swatches in the shared `SwatchGrid`, which the create form
+above the list renders too so the two palettes cannot drift, plus a Custom
+`input[type=color]`. Two rules govern that input, and neither is optional. It commits **on
+blur, never on change**: the OS colour picker fires `onChange` continuously while it is
+dragged, and every one of those would be its own `PATCH /labels/{id}` (the create form's
+identical input *is* live on change, because nothing but local state sits behind it). And
+it is a **draft resynced from `label.color` during render**, not a mount-time snapshot —
+the row is keyed on `label.id`, so picking a palette swatch re-renders the button without
+remounting it, and a stale draft plus the commit-on-blur rule above means a bare
+focus-and-leave PATCHes the label back to the colour it had at mount. Resynced in render
+rather than in an effect so the swatch never paints the old colour for a frame.
 
 ## UI Behavior tab
 

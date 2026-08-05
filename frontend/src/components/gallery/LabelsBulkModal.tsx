@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Tags } from "lucide-react";
 
 import type { Label } from "../../api/labels";
+import { LabelCheckList } from "../common/LabelPicker";
 import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 interface Props {
@@ -21,48 +22,12 @@ interface Props {
  * the request, exactly as it does for `SetProvenanceModal`, so the invalidate →
  * close → clear-selection → toast sequence lives in one place.
  *
- * Add and Remove are separate chip groups rather than a tri-state per label:
- * "add fx to all of these" and "take reject off all of these" are the two things
- * anyone does in bulk, and one endpoint call carries both. A label cannot be in
- * both groups — the server rejects an overlapping body with a 400, and clicking
- * it in one group clears it from the other so that never happens.
+ * Add and Remove are separate searchable checkbox lists rather than a tri-state
+ * per label: "add fx to all of these" and "take reject off all of these" are the
+ * two things anyone does in bulk, and one endpoint call carries both. A label
+ * cannot be in both groups — the server rejects an overlapping body with a 400,
+ * and ticking it in one group clears it from the other so that never happens.
  */
-function ChipGroup({
-  labels, selected, onToggle, groupLabel,
-}: {
-  labels: Label[];
-  selected: Set<string>;
-  onToggle: (id: string) => void;
-  groupLabel: string;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={groupLabel}>
-      {labels.map((l) => {
-        const on = selected.has(l.id);
-        return (
-          <button
-            key={l.id}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onToggle(l.id)}
-            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-            style={{
-              background: on ? `${l.color}33` : "transparent",
-              border: `1px solid ${on ? l.color : "var(--border)"}`,
-            }}
-          >
-            <span
-              aria-hidden
-              style={{ width: 7, height: 7, borderRadius: "50%", background: l.color }}
-            />
-            {l.name}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function LabelsBulkModal({
   count, labels, isPending, onConfirm, onClose, sourceInfo,
 }: Props) {
@@ -97,32 +62,32 @@ export default function LabelsBulkModal({
         {sourceInfo}
 
         {labels.length === 0 ? (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs" style={{ color: "var(--fg-mute)" }}>
             No labels defined yet — create them in Settings → Labels.
           </p>
         ) : (
           <>
             <div className="space-y-1">
               <div className="label !mb-0">Add to all selected</div>
-              <ChipGroup
+              <LabelCheckList
                 labels={labels}
                 selected={add}
                 onToggle={(id) => toggle("add", id)}
-                groupLabel="Labels to add"
+                ariaLabel="Labels to add"
               />
             </div>
 
             <div className="space-y-1">
               <div className="label !mb-0">Remove from all selected</div>
-              <ChipGroup
+              <LabelCheckList
                 labels={labels}
                 selected={remove}
                 onToggle={(id) => toggle("remove", id)}
-                groupLabel="Labels to remove"
+                ariaLabel="Labels to remove"
               />
             </div>
 
-            <p className="text-xs text-gray-500">
+            <p className="text-xs" style={{ color: "var(--fg-mute)" }}>
               Adding a label an image already has changes nothing, and removing one it does not
               have is equally harmless — this is safe to re-run.
             </p>

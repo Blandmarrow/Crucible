@@ -27,13 +27,14 @@ On that tab you can:
   are unique regardless of case, so `Reject` and `reject` cannot both exist
 - **Rename** one by clicking it. A rename is a spelling change and nothing else:
   every image keeps the label, and so does every snapshot that recorded it
-- **Recolour** it from the swatch row — the colour is what you actually read on
-  a gallery card, where the label shows as a small dot
+- **Recolour** it by clicking its swatch, which opens a palette of twenty
+  colours plus a **Custom** picker for anything else. The colour is what you
+  actually read on a gallery card, where the label shows as a small dot
 - **Bind a hotkey** — one key from `a`–`z` or `0`–`9`. Press **Set key**, then
   the key. If another label already owns it you are told which one. Backspace or
   Delete clears the binding
-- **Reorder** with the up/down arrows. The order is the order the chips appear
-  in everywhere else
+- **Reorder** with the up/down arrows. The order is the order the labels are
+  listed in everywhere else
 - **Delete** it. The confirmation names how many images carry it. Deleting
   removes it from all of them, and snapshots that recorded it restore without it
 
@@ -44,7 +45,10 @@ keyboard shortcuts on and off. It is on by default.
 
 **One image at a time** — the image detail page has a **Labels** block directly
 below the detections panel, above the generation-metadata and source/license
-panels. Current labels show as removable chips; the **+** button lists the rest.
+panels. Current labels show as removable chips; the **Labels** button below them
+opens a searchable list of the whole vocabulary, where ticking and unticking
+attaches and detaches. The list stays open, so several labels are several
+clicks rather than several trips.
 
 **With the keyboard** — on the image detail page, pressing a label's bound key
 toggles it on the open image. Toggle, not add: press the same key again to take
@@ -56,8 +60,9 @@ containing every bound letter without labelling anything.
 
 **In bulk** — select images in the gallery (including **Select all**, which
 covers every image matching your current filters across every page), then click
-**Labels** in the selection toolbar. The modal has two chip groups: *Add to all
-selected* and *Remove from all selected*. One label cannot be in both. Applying a
+**Labels** in the selection toolbar. The modal has two searchable checklists:
+*Add to all selected* and *Remove from all selected*. One label cannot be in
+both — ticking it in one unticks it in the other. Applying a
 label an image already has changes nothing, and removing one it does not have is
 equally harmless, so the operation is safe to re-run.
 
@@ -67,22 +72,25 @@ Gallery cards show a small coloured dot per label, beside the filename. Hover fo
 the names. The dots disappear entirely when you have no labels defined, so the
 card gains nothing until you have set one up.
 
-The gallery filter bar grows a **chip per label**, each with the number of images
-carrying it *in this dataset*. Click to narrow the grid. Select two or more and
-an **Any / All** toggle appears — *Any* is the union (images carrying at least
-one of them), *All* the intersection (images carrying every one). An
-**Unlabelled** chip finds images with no label at all; it and the label chips are
-mutually exclusive, since asking for both would match nothing.
+The gallery toolbar has a **Label** dropdown listing every label with the number
+of images carrying it *in this dataset*, and a search box above the list for
+when the vocabulary has grown. Tick one to narrow the grid; the closed button
+then reads the label you picked, so an active filter is visible without opening
+it. Tick two or more and an **Any / All** toggle appears at the foot of the
+list — *Any* is the union (images carrying at least one of them), *All* the
+intersection (images carrying every one). **Unlabelled**, beside it, finds
+images with no label at all; it and the ticked labels are mutually exclusive,
+since asking for both would match nothing. Escape closes the list.
 
-Your chip selection is remembered per dataset, along with the rest of the gallery
+Your selection is remembered per dataset, along with the rest of the gallery
 filters, and **Reset filters** clears it. If a label is deleted while a filter
 that named it is saved, the filter quietly drops it rather than showing an empty
 grid with no explanation.
 
 ## Exporting by label
 
-The Export page's **Filters** panel has the same chip group, with the same
-Any/All toggle and **Unlabelled only** option.
+The Export page's **Filters** panel has the same dropdown, with the same Any/All
+toggle and an **Unlabelled only** option.
 
 A label filter works like **Limit to subfolders** rather than like the quality
 filters: it *narrows* what the export is about instead of excluding images from a

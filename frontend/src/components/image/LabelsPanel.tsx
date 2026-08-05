@@ -1,9 +1,9 @@
-import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { labelsApi } from "../../api/labels";
+import LabelPicker from "../common/LabelPicker";
 import { invalidateLabelScope } from "../../constants/queryKeys";
 import { useLabels } from "../../hooks/useLabels";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -15,18 +15,22 @@ interface Props {
 }
 
 /**
- * The image detail view's label block: what is attached, and a row to attach more.
+ * The image detail view's label block: what is attached, and a picker to change it.
  *
  * Mounted with `key={image.id}` by the page, like `ProvenancePanel`, so the
- * "add" popover never leaks a pending choice across an arrow-key navigation.
+ * picker never leaks a pending choice across an arrow-key navigation.
  *
  * There is no free-text input here on purpose — the vocabulary is managed in
  * Settings, so this panel only ever offers labels that already exist.
+ *
+ * The picker is `placement="inline"`: the right rail it sits in is
+ * `overflow-y: auto`, which would clip an absolutely positioned panel at the
+ * rail's bottom edge. It also stays open across a toggle, so attaching four
+ * labels is four clicks rather than four round trips through the trigger.
  */
 export default function LabelsPanel({ imageId, labelIds }: Props) {
   const qc = useQueryClient();
   const { labels, byId } = useLabels();
-  const [adding, setAdding] = useState(false);
 
   const assign = useMutation({
     mutationFn: (body: { add?: string[]; remove?: string[] }) =>
@@ -36,14 +40,13 @@ export default function LabelsPanel({ imageId, labelIds }: Props) {
   });
 
   const attached = labelIds.map((id) => byId.get(id)).filter((l) => l !== undefined);
-  const available = labels.filter((l) => !labelIds.includes(l.id));
 
   return (
-    <div className="p-4 border-t border-gray-800 space-y-2" role="group" aria-label="Labels">
-      <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Labels</h3>
+    <div className="p-4 space-y-2" style={{ borderTop: "1px solid var(--line)" }} role="group" aria-label="Labels">
+      <h3 className="font-medium text-sm uppercase tracking-wide" style={{ color: "var(--fg-dim)" }}>Labels</h3>
 
       {labels.length === 0 && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs" style={{ color: "var(--fg-mute)" }}>
           No labels defined yet — create them in Settings → Labels.
         </p>
       )}
@@ -61,7 +64,7 @@ export default function LabelsPanel({ imageId, labelIds }: Props) {
                 style={{ width: 7, height: 7, borderRadius: "50%", background: label.color }}
               />
               {label.name}
-              {label.hotkey && <span className="text-gray-500">·{label.hotkey}</span>}
+              {label.hotkey && <span style={{ color: "var(--fg-mute)" }}>·{label.hotkey}</span>}
               <button
                 type="button"
                 aria-label={`Remove label ${label.name}`}
@@ -75,44 +78,29 @@ export default function LabelsPanel({ imageId, labelIds }: Props) {
           ))}
 
           {attached.length === 0 && (
-            <span className="text-xs text-gray-500">None</span>
-          )}
-
-          {available.length > 0 && (
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              aria-label="Add label"
-              aria-expanded={adding}
-              onClick={() => setAdding((a) => !a)}
-            >
-              <Plus size={12} />
-            </button>
+            <span className="text-xs" style={{ color: "var(--fg-mute)" }}>None</span>
           )}
         </div>
       )}
 
-      {adding && available.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {available.map((label) => (
-            <button
-              key={label.id}
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border border-gray-700 hover:border-gray-500"
-              disabled={assign.isPending}
-              onClick={() => {
-                setAdding(false);
-                assign.mutate({ add: [label.id] });
-              }}
-            >
-              <span
-                aria-hidden
-                style={{ width: 7, height: 7, borderRadius: "50%", background: label.color }}
-              />
-              {label.name}
-            </button>
-          ))}
-        </div>
+      {labels.length > 0 && (
+        <LabelPicker
+          placement="inline"
+          labels={labels}
+          selected={labelIds}
+          disabled={assign.isPending}
+          // Deliberately not "Choose labels": Playwright matches an accessible
+          // name as a case-insensitive *substring*, so any inner group whose
+          // name contains "labels" would make the enclosing `role="group"
+          // aria-label="Labels"` ambiguous the moment the picker is open.
+          ariaLabel="Label vocabulary"
+          triggerAriaLabel="Add or remove labels"
+          triggerContent="Labels"
+          active={labelIds.length > 0}
+          onToggle={(id) =>
+            assign.mutate(labelIds.includes(id) ? { remove: [id] } : { add: [id] })
+          }
+        />
       )}
     </div>
   );

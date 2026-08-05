@@ -35,7 +35,7 @@ poster-stem rules), `docs/dev/image-files.md` (naming, collisions and caption si
 
 ## Shared frontend components
 
-**Shared frontend components** recur across the topic files in CLAUDE.md's Documentation Map; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog`, `useModalBehavior` and `ContextMenu` (the pointer-anchored right-click menu, shared by `FileBrowserPage` and `GalleryPage`'s subfolder rows) → `docs/dev/styling.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/datasets-page.md`; `JobProgressBar` → `docs/dev/versioning.md`;
+**Shared frontend components** recur across the topic files in CLAUDE.md's Documentation Map; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog`, `useModalBehavior`, `ContextMenu` (the pointer-anchored right-click menu, shared by `FileBrowserPage` and `GalleryPage`'s subfolder rows), `usePopover` (open/outside-click/Escape for a panel anchored to a *button* — the non-modal sibling of `useModalBehavior`) and `LabelPicker`/`LabelCheckList` (the searchable label checklist behind all four places labels are picked) → `docs/dev/styling.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/datasets-page.md`; `JobProgressBar` → `docs/dev/versioning.md`;
 `NumberField` (any bounded numeric input — never re-clamp per keystroke) →
 `docs/dev/frontend-core.md` for the one-line rule, `docs/dev/video-extract-controls.md`
 § NumberField for the full contract;

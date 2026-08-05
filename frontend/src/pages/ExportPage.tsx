@@ -12,6 +12,7 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import type { SubfolderInfo } from "../types";
 import DirPickerModal from "../components/common/DirPickerModal";
+import LabelPicker from "../components/common/LabelPicker";
 import { FolderOpen } from "lucide-react";
 import { FLAG_OPTIONS } from "../constants/flags";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
@@ -203,14 +204,14 @@ export default function ExportPage() {
     enabled: !!datasetId,
   });
 
-  // The global label vocabulary, for the chip group below. `exportLabels` is the
+  // The global label vocabulary, for the picker below. `exportLabels` is the
   // same list `useLabels` hands the gallery — one cache entry app-wide.
   const { labels: exportLabels, byId: labelsById, isLoaded: labelsLoaded } = useLabels();
 
   // Bounds check, mirroring `licenseFilter` above and GalleryPage's: a persisted
   // preset can name a label deleted since it was saved, and an unknown id would
-  // silently narrow the export to zero images with no chip showing why — the chip
-  // row itself is hidden while the vocabulary is empty, so nothing on screen
+  // silently narrow the export to zero images with nothing showing why — the
+  // picker itself is hidden while the vocabulary is empty, so nothing on screen
   // would explain it.
   //
   // Derived during render and gated on `labelsLoaded`, not latched behind a
@@ -559,53 +560,63 @@ export default function ExportPage() {
                     <div style={{ fontSize: 12.5, marginBottom: 5 }}>
                       Labels{labelFilter.size === 0 && !labelMissing ? " — none selected, all images" : ""}
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }} role="group" aria-label="Label filters">
-                      {exportLabels.map((l) => (
-                        <button
-                          key={l.id}
-                          className={`btn sm${labelFilter.has(l.id) ? " primary" : ""}`}
-                          aria-pressed={labelFilter.has(l.id)}
-                          onClick={() => {
-                            setLabelMissing(false);
-                            setLabelFilter((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(l.id)) next.delete(l.id); else next.add(l.id);
-                              return next;
-                            });
-                          }}
-                        >
-                          <span aria-hidden style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: l.color, marginRight: 5 }} />
-                          {l.name}
-                        </button>
-                      ))}
-                      {labelFilter.size > 1 && (
-                        <span style={{ display: "inline-flex", gap: 3 }} role="group" aria-label="Label match mode">
-                          {(["any", "all"] as const).map((m) => (
-                            <button
-                              key={m}
-                              className={`btn sm${labelMatch === m ? " primary" : ""}`}
-                              aria-pressed={labelMatch === m}
-                              onClick={() => setLabelMatch(m)}
-                            >
-                              {m === "any" ? "Any" : "All"}
-                            </button>
-                          ))}
-                        </span>
-                      )}
-                      <button
-                        className={`btn sm${labelMissing ? " primary" : ""}`}
-                        aria-pressed={labelMissing}
-                        title="Only images carrying no label at all"
-                        onClick={() => {
-                          setLabelMissing((prev) => {
-                            if (!prev) setLabelFilter(new Set());
-                            return !prev;
-                          });
-                        }}
-                      >
-                        Unlabelled only
-                      </button>
-                    </div>
+                    {/* `placement="inline"`: this whole page body is
+                        `overflowY: auto`, which clips an absolutely positioned
+                        panel at the scroll container's edge. */}
+                    <LabelPicker
+                      placement="inline"
+                      labels={exportLabels}
+                      selected={labelFilter}
+                      ariaLabel="Label filters"
+                      triggerAriaLabel="Filter the export by label"
+                      active={labelFilter.size > 0 || labelMissing}
+                      triggerContent={
+                        labelMissing
+                          ? "Unlabelled only"
+                          : labelFilter.size === 0
+                            ? "Choose labels"
+                            : `${labelFilter.size} selected${labelFilter.size > 1 && labelMatch === "all" ? " ·All" : ""}`
+                      }
+                      onToggle={(id) => {
+                        setLabelMissing(false);
+                        setLabelFilter((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(id)) next.delete(id); else next.add(id);
+                          return next;
+                        });
+                      }}
+                      footer={
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                          {labelFilter.size > 1 && (
+                            <span style={{ display: "inline-flex", gap: 3 }} role="group" aria-label="Label match mode">
+                              {(["any", "all"] as const).map((m) => (
+                                <button
+                                  key={m}
+                                  className={`btn sm${labelMatch === m ? " primary" : ""}`}
+                                  aria-pressed={labelMatch === m}
+                                  onClick={() => setLabelMatch(m)}
+                                >
+                                  {m === "any" ? "Any" : "All"}
+                                </button>
+                              ))}
+                            </span>
+                          )}
+                          <button
+                            className={`btn sm${labelMissing ? " primary" : ""}`}
+                            aria-pressed={labelMissing}
+                            title="Only images carrying no label at all"
+                            onClick={() => {
+                              setLabelMissing((prev) => {
+                                if (!prev) setLabelFilter(new Set());
+                                return !prev;
+                              });
+                            }}
+                          >
+                            Unlabelled only
+                          </button>
+                        </div>
+                      }
+                    />
                   </div>
                 )}
 

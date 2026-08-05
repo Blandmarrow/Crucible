@@ -7,7 +7,7 @@ import { createDatasetViaApi, uploadViaApi } from './helpers'
 //
 // Labels are a *second* axis of organisation alongside subfolders, so the thing
 // worth proving end to end is that the same label reached three surfaces from
-// one bulk apply — the chip filter, the card dots, and the detail-view hotkey.
+// one bulk apply — the toolbar filter, the card dots, and the detail-view hotkey.
 test('create a label, bulk-apply it, filter by it, then toggle it off with the hotkey', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `labels-${Date.now()}`)
   for (const n of ['a.png', 'b.png']) {
@@ -39,7 +39,7 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
   await page.getByRole('button', { name: 'Labels', exact: true }).click()
   const modal = page.getByRole('dialog', { name: 'Edit labels' })
   await expect(modal).toBeVisible()
-  await modal.getByRole('group', { name: 'Labels to add' }).getByRole('button', { name }).click()
+  await modal.getByRole('group', { name: 'Labels to add' }).getByRole('checkbox', { name }).check()
   await modal.getByRole('button', { name: 'Apply' }).click()
   await expect(page.getByText(/Labels updated on 2 images/)).toBeVisible()
 
@@ -54,19 +54,32 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
   await expect(page.getByText('1 selected')).toBeVisible()
   await page.getByRole('button', { name: 'Labels', exact: true }).click()
   await expect(modal).toBeVisible()
-  await modal.getByRole('group', { name: 'Labels to remove' }).getByRole('button', { name }).click()
+  await modal.getByRole('group', { name: 'Labels to remove' }).getByRole('checkbox', { name }).check()
   await modal.getByRole('button', { name: 'Apply' }).click()
   await expect(page.getByText(/Labels updated on 1 image/)).toBeVisible()
 
-  // ── The chip filter narrows the grid: 2 → 1, and "Unlabelled" is its complement.
-  const chips = page.getByRole('group', { name: 'Label filters' })
-  await expect(chips.getByRole('button', { name: new RegExp(name) })).toBeVisible()
+  // ── The toolbar filter narrows the grid: 2 → 1, and "Unlabelled" is its
+  // complement. The vocabulary lives behind a dropdown rather than a chip per
+  // label, so every locator here is scoped to the open panel — "Unlabelled" in
+  // particular was page-level while it was a bare toolbar toggle.
+  const labelTrigger = page.getByRole('button', { name: 'Filter by label' })
+  await labelTrigger.click()
+  const panel = page.getByRole('group', { name: 'Label filters' })
+  await expect(panel.getByRole('checkbox', { name: new RegExp(name) })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Unlabelled' }).click()
+  await panel.getByRole('button', { name: 'Unlabelled' }).click()
   await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
 
-  await page.getByRole('button', { name: 'Unlabelled' }).click()
-  await chips.getByRole('button', { name: new RegExp(name) }).click()
+  await panel.getByRole('button', { name: 'Unlabelled' }).click()
+  await panel.getByRole('checkbox', { name: new RegExp(name) }).check()
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+
+  // Escape closes the panel without disturbing the page behind it, and the
+  // collapsed trigger still says what is being filtered — the whole reason the
+  // trigger summarises its own state.
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
+  await expect(labelTrigger).toContainText(name)
   await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
 
   // Reset clears it, and the grid comes back unfiltered.
@@ -90,6 +103,23 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
 
   await page.keyboard.press('f')
   await expect(labelBlock.getByText(name)).toBeVisible()
+
+  // ── The same block's picker is the mouse path to the same assign, and it
+  // stays open across a toggle so several labels can be attached in one visit.
+  // `.click()`, not `.check()`: these boxes are driven by the server's answer,
+  // so the tick only lands once the assign round-trips — `check()` asserts the
+  // state flipped the instant it clicked and fails on the intermediate frame.
+  await page.getByRole('button', { name: 'Add or remove labels' }).click()
+  const vocab = page.getByRole('group', { name: 'Label vocabulary' })
+  await vocab.getByRole('checkbox', { name }).click()
+  await expect(labelBlock.getByText('None')).toBeVisible()
+  await expect(vocab).toBeVisible()
+
+  await vocab.getByRole('checkbox', { name }).click()
+  await expect(vocab.getByRole('checkbox', { name })).toBeChecked()
+
+  await page.keyboard.press('Escape')
+  await expect(vocab).toHaveCount(0)
 })
 
 // The guard that makes the hotkeys usable at all: the caption editor is a

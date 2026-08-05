@@ -38,6 +38,8 @@ import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilt
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { useLabels } from "../hooks/useLabels";
+import { usePopover } from "../hooks/usePopover";
+import LabelPicker from "../components/common/LabelPicker";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
@@ -277,13 +279,13 @@ export default function GalleryPage() {
   });
 
   // Bounds check, the `licenseFilter` precedent above: an id whose label has been
-  // deleted must be dropped, or the grid silently shows zero images with no chip
-  // explaining why.
+  // deleted must be dropped, or the grid silently shows zero images with nothing
+  // in the toolbar explaining why.
   //
   // Derived during render and gated on `labelsLoaded`, exactly like the
   // `frameVideoId` guard below — *not* latched behind a mount-once ref, which had
   // two escapes: a vocabulary that is legitimately empty never reconciled at all
-  // (and the chip row that would explain the filter is hidden in that state), and
+  // (and the picker that would explain the filter is hidden in that state), and
   // a label deleted later in the session was never reconciled either. A pane
   // switching datasets is not one of them — `PageRenderer` keys this page on the
   // pane's dataset, so a new dataset arrives as a fresh mount with fresh refs.
@@ -296,6 +298,26 @@ export default function GalleryPage() {
     setPage(1);
     dropScrollRestore();
   }
+
+  // What the collapsed picker reads. The whole point of the dropdown is that an
+  // engaged label filter is no longer visible as a lit chip, so the trigger has
+  // to say what it is narrowing to.
+  const labelFilterSummary = useMemo(() => {
+    if (labelMissing) return <span>Unlabelled</span>;
+    if (labelFilter.length === 0) return <span style={{ color: "var(--fg-mute)" }}>Label</span>;
+    const first = labelsById.get(labelFilter[0]);
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+        {first && <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: first.color }} />}
+        {first?.name ?? "Label"}
+        {labelFilter.length > 1 && (
+          <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>
+            +{labelFilter.length - 1}{labelMatch === "all" ? " ·All" : ""}
+          </span>
+        )}
+      </span>
+    );
+  }, [labelFilter, labelMatch, labelMissing, labelsById]);
 
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
@@ -802,22 +824,11 @@ export default function GalleryPage() {
   // more than one page — with everything on screen, "all matching" and "this
   // page" are the same click.
   const hasMoreThanPage = totalCount !== undefined && totalCount > images.length;
-  const [selectMenuOpen, setSelectMenuOpen] = useState(false);
-  const selectMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!selectMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (selectMenuRef.current && !selectMenuRef.current.contains(e.target as Node)) setSelectMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectMenuOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [selectMenuOpen]);
-  useEffect(() => { if (!hasMoreThanPage) setSelectMenuOpen(false); }, [hasMoreThanPage]);
+  const {
+    open: selectMenuOpen, setOpen: setSelectMenuOpen,
+    anchorRef: selectMenuRef, triggerRef: selectMenuTriggerRef,
+  } = usePopover<HTMLDivElement>();
+  useEffect(() => { if (!hasMoreThanPage) setSelectMenuOpen(false); }, [hasMoreThanPage, setSelectMenuOpen]);
 
   const totalPages = totalCount !== undefined ? Math.max(1, Math.ceil(totalCount / pageSize)) : undefined;
   // Reachable by deleting the tail of a dataset while parked on its last page.
@@ -1616,435 +1627,460 @@ export default function GalleryPage() {
         </div>
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar. Two independent groups rather than one long wrapping row: the
+          filter side grows every time a facet is added, and in a single row that
+          growth pushed the Upload/Import/Rescan cluster onto a second line while
+          the space to its right sat empty. Now the left group absorbs the wrap
+          and the right group keeps row 1 until it genuinely cannot. */}
       <div style={{
         padding: "14px 28px", borderBottom: "1px solid var(--line)",
-        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap",
         background: "var(--surface-1)", flexShrink: 0,
       }}>
-        <div className="search-wrap">
-          <svg className="search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/>
-          </svg>
-          <input
-            className="input"
-            placeholder="Search filename or caption…"
-            // `.search-wrap .input` pads only the left, for the magnifier; the × sits at
-            // `right: 6` and a long query runs under it without this.
-            style={{ width: 280, paddingRight: 24 }}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          {/* The one-click way out of a filter that now survives a restart. Clears both
-              halves of the pair synchronously — bypassing the debounce, and keeping them
-              equal — exactly like the detection-label input's × below. */}
-          {searchInput && (
-            <button
-              onClick={() => { setSearchInput(""); setSearch(""); resetPage(); }}
-              style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
-              title="Clear"
-            >×</button>
-          )}
-        </div>
-
-        <select className="select" style={{ width: "auto" }} value={sortIdx}
-          onChange={(e) => { setSortIdx(Number(e.target.value)); resetPage(); }}>
-          {SORT_OPTIONS.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
-        </select>
-
-        <select className="select" style={{ width: "auto" }}
-          value={captionedFilter === undefined ? "" : String(captionedFilter)}
-          onChange={(e) => { const v = e.target.value; setCaptionedFilter(v === "" ? undefined : v === "true"); resetPage(); }}>
-          <option value="">All images</option>
-          <option value="true">Captioned only</option>
-          <option value="false">Uncaptioned</option>
-        </select>
-
-        <select className="select" style={{ width: "auto" }} value={qualityFilter}
-          onChange={(e) => { setQualityFilter(e.target.value as QualityFilter); resetPage(); }}>
-          <option value="">All quality</option>
-          <option value="is_blurry">Flagged: blurry</option>
-          <option value="is_noisy">Flagged: noisy</option>
-          <option value="is_uniform">Flagged: near-uniform</option>
-          <option value="has_watermark">Flagged: watermark</option>
-          <option value="is_duplicate">Flagged: duplicate</option>
-          <option value="is_nsfw">Flagged: NSFW</option>
-          <option value="has_ai_artifacts">Flagged: AI artifacts</option>
-        </select>
-
-        <select className="select" style={{ width: "auto" }} value={licenseFilter}
-          aria-label="Filter by license"
-          onChange={(e) => { setLicenseFilter(e.target.value); resetPage(); }}>
-          <option value="">All licenses</option>
-          <option value={MISSING_LICENSE}>Missing license only</option>
-          {LICENSE_OPTIONS.map((l) => (
-            <option key={l.id} value={l.id}>{l.label}</option>
-          ))}
-          {licenseFilterOptions.length > 0 && (
-            <optgroup label="Used in this dataset">
-              {licenseFilterOptions.map((lic) => (
-                <option key={lic} value={lic}>{lic.slice(OTHER_PREFIX.length)}</option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-
-        {/* Frame lineage. Rendered only when the dataset actually has videos —
-            the same "look untouched for image-only datasets" rule VideoStrip
-            follows. Unlike the subfolder sidebar this survives curation: the
-            lineage column does not move when a frame is renamed or re-filed. */}
-        {videos && videos.length > 0 && (
-          <select className="select" style={{ width: "auto", maxWidth: 220 }} value={frameVideoId ?? ""}
-            aria-label="Filter by source video"
-            title={videos.find((v) => v.id === frameVideoId)?.filename ?? "All images"}
-            onChange={(e) => { setFrameVideoId(e.target.value || undefined); resetPage(); }}>
-            <option value="">All images</option>
-            {videos.map((v) => (
-              <option key={v.id} value={v.id}>Frames from {v.filename}</option>
-            ))}
-          </select>
-        )}
-
-        <button
-          className="btn ghost sm"
-          onClick={handleResetFilters}
-          title="Clear remembered sort/filter settings for this dataset and revert to defaults"
-        >
-          Reset filters
-        </button>
-
-        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
-            style={{ position: "absolute", left: 8, width: 13, height: 13, color: "var(--fg-mute)", pointerEvents: "none" }}>
-            <rect x="2" y="3" width="12" height="10" rx="1.5"/>
-            <circle cx="8" cy="8" r="2.5"/>
-          </svg>
-          <input
-            className="input"
-            placeholder="Objects: cat, dog…"
-            style={{ paddingLeft: 26, paddingRight: 24, width: 160 }}
-            value={detectionLabelInput}
-            onChange={(e) => setDetectionLabelInput(e.target.value)}
-            title="Filter by detected object label"
-          />
-          {detectionLabelInput && (
-            <button
-              onClick={() => { setDetectionLabelInput(""); setDetectionLabel(""); resetPage(); }}
-              style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
-              title="Clear"
-            >×</button>
-          )}
-        </div>
-
-        {/* Label chips — the second organisational facet. Hidden entirely when
-            the vocabulary is empty, so the filter bar gains nothing until
-            someone has actually defined a label in Settings. */}
-        {allLabels.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Label filters">
-            {allLabels.map((label) => {
-              const on = labelFilter.includes(label.id);
-              const count = labelCounts?.[label.id] ?? 0;
-              return (
-                <button
-                  key={label.id}
-                  aria-pressed={on}
-                  title={`${count} image${count === 1 ? "" : "s"} in this dataset`}
-                  onClick={() => {
-                    // Selecting a label and "unlabelled" at once is
-                    // unsatisfiable — the backend 400s on it — so one clears
-                    // the other.
-                    setLabelMissing(false);
-                    setLabelFilter((prev) =>
-                      prev.includes(label.id) ? prev.filter((id) => id !== label.id) : [...prev, label.id],
-                    );
-                    resetPage();
-                  }}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12,
-                    cursor: "pointer", whiteSpace: "nowrap",
-                    background: on ? `${label.color}33` : "var(--surface-2)",
-                    border: `1px solid ${on ? label.color : "var(--line)"}`,
-                    color: "var(--fg)",
-                  }}
-                >
-                  <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: label.color }} />
-                  {label.name}
-                  <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>{count}</span>
-                </button>
-              );
-            })}
-
-            {/* Any/All only appears once it can mean something. */}
-            {labelFilter.length > 1 && (
-              <span style={{ display: "inline-flex", gap: 2 }} role="group" aria-label="Label match mode">
-                {(["any", "all"] as const).map((m) => (
-                  <button
-                    key={m}
-                    aria-pressed={labelMatch === m}
-                    onClick={() => { setLabelMatch(m); resetPage(); }}
-                    style={{
-                      padding: "2px 7px", fontSize: 11.5, borderRadius: "var(--r)", cursor: "pointer",
-                      background: labelMatch === m ? "var(--accent)" : "var(--surface-2)",
-                      color: labelMatch === m ? "#fff" : "var(--fg-mute)",
-                      border: "1px solid var(--line)",
-                    }}
-                  >
-                    {m === "any" ? "Any" : "All"}
-                  </button>
-                ))}
-              </span>
+        {/* Filters. Two numbers matter here. `minWidth: 0` is load-bearing —
+            without it the group refuses to shrink below its content and shoves
+            the action group off the row. The 700 px basis is what decides the
+            *line break*: flex breaks lines on the basis, not on the grown width,
+            so a small one (420) let the actions keep row 1 at every width and
+            squeezed the filters into a 400 px column four rows deep with a blank
+            band beside it. At 700 the two groups share row 1 only when the row is
+            genuinely wide enough for both; below that the filters take the whole
+            row and the actions drop to their own, still right-aligned. */}
+        <div style={{
+          flex: "1 1 700px", minWidth: 0,
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        }}>
+          {/* The wrapper carries the sizing, not the input: `.search-wrap` is
+              `inline-flex`, so a percentage width on the input would resolve
+              against its own content. Shrinkable down to 160 so the group can
+              actually give ground before it wraps. */}
+          <div className="search-wrap" style={{ flex: "1 1 200px", minWidth: 160, maxWidth: 280 }}>
+            <svg className="search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/>
+            </svg>
+            <input
+              className="input"
+              placeholder="Search filename or caption…"
+              // `.search-wrap .input` pads only the left, for the magnifier; the × sits at
+              // `right: 6` and a long query runs under it without this.
+              style={{ width: "100%", paddingRight: 24 }}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            {/* The one-click way out of a filter that now survives a restart. Clears both
+                halves of the pair synchronously — bypassing the debounce, and keeping them
+                equal — exactly like the detection-label input's × below. */}
+            {searchInput && (
+              <button
+                onClick={() => { setSearchInput(""); setSearch(""); resetPage(); }}
+                style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
+                title="Clear"
+              >×</button>
             )}
+          </div>
 
-            <button
-              aria-pressed={labelMissing}
-              title="Only images carrying no label at all"
-              onClick={() => {
-                setLabelMissing((prev) => {
-                  if (!prev) setLabelFilter([]);
-                  return !prev;
-                });
+          <select className="select" style={{ width: "auto" }} value={sortIdx}
+            onChange={(e) => { setSortIdx(Number(e.target.value)); resetPage(); }}>
+            {SORT_OPTIONS.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
+          </select>
+
+          <select className="select" style={{ width: "auto" }}
+            value={captionedFilter === undefined ? "" : String(captionedFilter)}
+            onChange={(e) => { const v = e.target.value; setCaptionedFilter(v === "" ? undefined : v === "true"); resetPage(); }}>
+            <option value="">All images</option>
+            <option value="true">Captioned only</option>
+            <option value="false">Uncaptioned</option>
+          </select>
+
+          <select className="select" style={{ width: "auto" }} value={qualityFilter}
+            onChange={(e) => { setQualityFilter(e.target.value as QualityFilter); resetPage(); }}>
+            <option value="">All quality</option>
+            <option value="is_blurry">Flagged: blurry</option>
+            <option value="is_noisy">Flagged: noisy</option>
+            <option value="is_uniform">Flagged: near-uniform</option>
+            <option value="has_watermark">Flagged: watermark</option>
+            <option value="is_duplicate">Flagged: duplicate</option>
+            <option value="is_nsfw">Flagged: NSFW</option>
+            <option value="has_ai_artifacts">Flagged: AI artifacts</option>
+          </select>
+
+          <select className="select" style={{ width: "auto" }} value={licenseFilter}
+            aria-label="Filter by license"
+            onChange={(e) => { setLicenseFilter(e.target.value); resetPage(); }}>
+            <option value="">All licenses</option>
+            <option value={MISSING_LICENSE}>Missing license only</option>
+            {LICENSE_OPTIONS.map((l) => (
+              <option key={l.id} value={l.id}>{l.label}</option>
+            ))}
+            {licenseFilterOptions.length > 0 && (
+              <optgroup label="Used in this dataset">
+                {licenseFilterOptions.map((lic) => (
+                  <option key={lic} value={lic}>{lic.slice(OTHER_PREFIX.length)}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+
+          {/* Frame lineage. Rendered only when the dataset actually has videos —
+              the same "look untouched for image-only datasets" rule VideoStrip
+              follows. Unlike the subfolder sidebar this survives curation: the
+              lineage column does not move when a frame is renamed or re-filed. */}
+          {videos && videos.length > 0 && (
+            <select className="select" style={{ width: "auto", maxWidth: 220 }} value={frameVideoId ?? ""}
+              aria-label="Filter by source video"
+              title={videos.find((v) => v.id === frameVideoId)?.filename ?? "All images"}
+              onChange={(e) => { setFrameVideoId(e.target.value || undefined); resetPage(); }}>
+              <option value="">All images</option>
+              {videos.map((v) => (
+                <option key={v.id} value={v.id}>Frames from {v.filename}</option>
+              ))}
+            </select>
+          )}
+
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+              style={{ position: "absolute", left: 8, width: 13, height: 13, color: "var(--fg-mute)", pointerEvents: "none" }}>
+              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+              <circle cx="8" cy="8" r="2.5"/>
+            </svg>
+            <input
+              className="input"
+              placeholder="Objects: cat, dog…"
+              style={{ paddingLeft: 26, paddingRight: 24, width: 160 }}
+              value={detectionLabelInput}
+              onChange={(e) => setDetectionLabelInput(e.target.value)}
+              title="Filter by detected object label"
+            />
+            {detectionLabelInput && (
+              <button
+                onClick={() => { setDetectionLabelInput(""); setDetectionLabel(""); resetPage(); }}
+                style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
+                title="Clear"
+              >×</button>
+            )}
+          </div>
+
+          {/* Labels — the second organisational facet, behind a dropdown rather
+              than a chip per vocabulary entry: a chip row cost the toolbar
+              permanent width for every label anyone ever defined. Hidden entirely
+              when the vocabulary is empty, so the filter bar gains nothing until
+              someone has actually defined a label in Settings.
+
+              The picker is a pure view over `labelFilter`/`labelMatch`/
+              `labelMissing` — every semantic (the mutual exclusion, the page
+              reset, persistence) stays here. */}
+          {allLabels.length > 0 && (
+            <LabelPicker
+              labels={allLabels}
+              selected={labelFilter}
+              counts={labelCounts}
+              ariaLabel="Label filters"
+              triggerAriaLabel="Filter by label"
+              active={labelFilter.length > 0 || labelMissing}
+              triggerContent={labelFilterSummary}
+              onToggle={(id) => {
+                // Selecting a label and "unlabelled" at once is unsatisfiable —
+                // the backend 400s on it — so one clears the other.
+                setLabelMissing(false);
+                setLabelFilter((prev) =>
+                  prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                );
                 resetPage();
               }}
-              style={{
-                padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12, cursor: "pointer",
-                background: labelMissing ? "var(--accent)" : "var(--surface-2)",
-                color: labelMissing ? "#fff" : "var(--fg-mute)",
-                border: "1px solid var(--line)", whiteSpace: "nowrap",
-              }}
-            >
-              Unlabelled
-            </button>
-          </div>
-        )}
+              footer={
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  {/* Any/All only appears once it can mean something. */}
+                  {labelFilter.length > 1 && (
+                    <span style={{ display: "inline-flex", gap: 2 }} role="group" aria-label="Label match mode">
+                      {(["any", "all"] as const).map((m) => (
+                        <button
+                          key={m}
+                          aria-pressed={labelMatch === m}
+                          onClick={() => { setLabelMatch(m); resetPage(); }}
+                          style={{
+                            padding: "2px 7px", fontSize: 11.5, borderRadius: "var(--r)", cursor: "pointer",
+                            background: labelMatch === m ? "var(--accent)" : "var(--surface-2)",
+                            color: labelMatch === m ? "#fff" : "var(--fg-mute)",
+                            border: "1px solid var(--line)",
+                          }}
+                        >
+                          {m === "any" ? "Any" : "All"}
+                        </button>
+                      ))}
+                    </span>
+                  )}
 
-        {/* Multi-score filters */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {scoreFilters.map((f, i) => (
-            <span
-              key={i}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                padding: "2px 6px 2px 8px", borderRadius: "var(--r)",
-                background: "var(--surface-3)", border: "1px solid var(--accent)",
-                fontSize: 12, color: "var(--fg)", whiteSpace: "nowrap",
-              }}
-            >
-              {scoreChipLabel(f)}
-              <button
-                onClick={() => { setScoreFilters(prev => prev.filter((_, j) => j !== i)); resetPage(); }}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", padding: "0 1px", fontSize: 14, lineHeight: 1, display: "flex", alignItems: "center" }}
-                title="Remove filter"
-              >×</button>
-            </span>
-          ))}
+                  <button
+                    aria-pressed={labelMissing}
+                    title="Only images carrying no label at all"
+                    onClick={() => {
+                      setLabelMissing((prev) => {
+                        if (!prev) setLabelFilter([]);
+                        return !prev;
+                      });
+                      resetPage();
+                    }}
+                    style={{
+                      padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12, cursor: "pointer",
+                      background: labelMissing ? "var(--accent)" : "var(--surface-2)",
+                      color: labelMissing ? "#fff" : "var(--fg-mute)",
+                      border: "1px solid var(--line)", whiteSpace: "nowrap",
+                    }}
+                  >
+                    Unlabelled
+                  </button>
+                </div>
+              }
+            />
+          )}
 
-          {showAddScore ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <select
-                className="select"
-                style={{ width: "auto" }}
-                value={draftField}
-                onChange={e => setDraftField(e.target.value)}
+          {/* Multi-score filters */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {scoreFilters.map((f, i) => (
+              <span
+                key={i}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "2px 6px 2px 8px", borderRadius: "var(--r)",
+                  background: "var(--surface-3)", border: "1px solid var(--accent)",
+                  fontSize: 12, color: "var(--fg)", whiteSpace: "nowrap",
+                }}
               >
-                {SCORE_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
-              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>≥</span>
-              <input
-                className="input"
-                type="number"
-                placeholder="min"
-                value={draftMin}
-                onChange={e => setDraftMin(e.target.value)}
-                style={{ width: 62 }}
-                onKeyDown={e => {
-                  if (e.key === "Enter") applyScoreFilter();
-                  if (e.key === "Escape") { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }
-                }}
-              />
-              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>≤</span>
-              <input
-                className="input"
-                type="number"
-                placeholder="max"
-                value={draftMax}
-                onChange={e => setDraftMax(e.target.value)}
-                style={{ width: 62 }}
-                onKeyDown={e => {
-                  if (e.key === "Enter") applyScoreFilter();
-                  if (e.key === "Escape") { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }
-                }}
-              />
-              <button className="btn sm" onClick={applyScoreFilter} disabled={!draftMin && !draftMax}>Apply</button>
-              <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }}>×</button>
-            </div>
-          ) : (
+                {scoreChipLabel(f)}
+                <button
+                  onClick={() => { setScoreFilters(prev => prev.filter((_, j) => j !== i)); resetPage(); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", padding: "0 1px", fontSize: 14, lineHeight: 1, display: "flex", alignItems: "center" }}
+                  title="Remove filter"
+                >×</button>
+              </span>
+            ))}
+
+            {showAddScore ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <select
+                  className="select"
+                  style={{ width: "auto" }}
+                  value={draftField}
+                  onChange={e => setDraftField(e.target.value)}
+                >
+                  {SCORE_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                </select>
+                <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>≥</span>
+                <input
+                  className="input"
+                  type="number"
+                  placeholder="min"
+                  value={draftMin}
+                  onChange={e => setDraftMin(e.target.value)}
+                  style={{ width: 62 }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") applyScoreFilter();
+                    if (e.key === "Escape") { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }
+                  }}
+                />
+                <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>≤</span>
+                <input
+                  className="input"
+                  type="number"
+                  placeholder="max"
+                  value={draftMax}
+                  onChange={e => setDraftMax(e.target.value)}
+                  style={{ width: 62 }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") applyScoreFilter();
+                    if (e.key === "Escape") { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }
+                  }}
+                />
+                <button className="btn sm" onClick={applyScoreFilter} disabled={!draftMin && !draftMax}>Apply</button>
+                <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => { setShowAddScore(false); setDraftMin(""); setDraftMax(""); }}>×</button>
+              </div>
+            ) : (
+              <button
+                className="btn ghost sm"
+                onClick={() => setShowAddScore(true)}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M8 2v12M2 8h12"/>
+                </svg>
+                Score filter
+              </button>
+            )}
+          </div>
+
+          {/* A sibling of the score block, not a child of it: inside, a row of
+              wrapping score chips would drag it around the toolbar. */}
+          <button
+            className="btn ghost sm"
+            onClick={handleResetFilters}
+            title="Clear remembered sort/filter settings for this dataset and revert to defaults"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            Reset filters
+          </button>
+        </div>
+
+        {/* Actions. `marginLeft: auto` right-aligns the group and `flex: 0 0 auto`
+            keeps it at its natural width, so the filter group is the one that
+            gives ground; it wraps within itself before the outer row breaks. */}
+        <div style={{
+          marginLeft: "auto", flex: "0 0 auto",
+          display: "flex", alignItems: "center", gap: 10,
+          flexWrap: "wrap", justifyContent: "flex-end",
+        }}>
+          {subfolders.length === 0 && !showCreateSubfolder && (
             <button
               className="btn ghost sm"
-              onClick={() => setShowAddScore(true)}
+              onClick={() => { setShowCreateSubfolder(true); setNewSubfolderName(""); }}
               style={{ whiteSpace: "nowrap" }}
             >
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M8 2v12M2 8h12"/>
               </svg>
-              Score filter
+              Subfolder
             </button>
           )}
-        </div>
 
-        <div style={{ flex: 1 }} />
-
-        {subfolders.length === 0 && !showCreateSubfolder && (
-          <button
-            className="btn ghost sm"
-            onClick={() => { setShowCreateSubfolder(true); setNewSubfolderName(""); }}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M8 2v12M2 8h12"/>
-            </svg>
-            Subfolder
-          </button>
-        )}
-
-        {/* "Select all" means every image the filters match — the dataset, or the
-            subfolder if one is active — not the page that happens to be on screen.
-            Page-only lives in the caret menu, because wanting exactly the visible
-            50 is the rarer intent and the one that has an alternative (drag or
-            shift-click). Both are additive: see `selectMany` in the store. */}
-        <div ref={selectMenuRef} style={{ position: "relative", display: "flex" }}>
-          <button
-            className="btn ghost sm"
-            data-testid="select-all-btn"
-            disabled={selectingAll || images.length === 0}
-            title={pageAllSelected
-              ? "Deselect every image selected in this dataset"
-              : hasMoreThanPage
-                ? `Select all ${totalCount!.toLocaleString()} images matching the current filters`
-                : "Select every image matching the current filters"}
-            onClick={() => pageAllSelected ? clearDataset(datasetId ?? "") : selectAllMatching()}
-            style={hasMoreThanPage ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
-            </svg>
-            {selectingAll ? "Selecting…" : pageAllSelected ? "Deselect all" : "Select all"}
-          </button>
-          {hasMoreThanPage && (
+          {/* "Select all" means every image the filters match — the dataset, or the
+              subfolder if one is active — not the page that happens to be on screen.
+              Page-only lives in the caret menu, because wanting exactly the visible
+              50 is the rarer intent and the one that has an alternative (drag or
+              shift-click). Both are additive: see `selectMany` in the store. */}
+          <div ref={selectMenuRef} style={{ position: "relative", display: "flex" }}>
             <button
               className="btn ghost sm"
-              data-testid="select-all-menu-btn"
-              aria-label="Select all options"
-              aria-expanded={selectMenuOpen}
-              onClick={() => setSelectMenuOpen((o) => !o)}
-              style={{ padding: "0 5px", marginLeft: -1, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+              data-testid="select-all-btn"
+              disabled={selectingAll || images.length === 0}
+              title={pageAllSelected
+                ? "Deselect every image selected in this dataset"
+                : hasMoreThanPage
+                  ? `Select all ${totalCount!.toLocaleString()} images matching the current filters`
+                  : "Select every image matching the current filters"}
+              onClick={() => pageAllSelected ? clearDataset(datasetId ?? "") : selectAllMatching()}
+              style={hasMoreThanPage ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined}
             >
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 6l5 5 5-5"/>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>
               </svg>
+              {selectingAll ? "Selecting…" : pageAllSelected ? "Deselect all" : "Select all"}
+            </button>
+            {hasMoreThanPage && (
+              <button
+                className="btn ghost sm"
+                data-testid="select-all-menu-btn"
+                ref={selectMenuTriggerRef}
+                aria-label="Select all options"
+                aria-expanded={selectMenuOpen}
+                onClick={() => setSelectMenuOpen((o) => !o)}
+                style={{ padding: "0 5px", marginLeft: -1, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 6l5 5 5-5"/>
+                </svg>
+              </button>
+            )}
+            {selectMenuOpen && (
+              <div
+                data-testid="select-all-menu"
+                style={{
+                  position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
+                  background: "var(--surface-2)", border: "1px solid var(--line-2)",
+                  borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+                  minWidth: 210, padding: "4px 0", whiteSpace: "nowrap",
+                }}
+              >
+                {[
+                  {
+                    label: `All ${totalCount?.toLocaleString()} matching filters`,
+                    onClick: selectAllMatching,
+                  },
+                  pageAllSelected
+                    ? { label: `Deselect this page (${images.length})`, onClick: () => deselectMany(images.map(i => i.id)) }
+                    : { label: `This page only (${images.length})`, onClick: () => selectMany(images.map(i => i.id), datasetId ?? "") },
+                ].map((a) => (
+                  <button
+                    key={a.label}
+                    onClick={() => { a.onClick(); setSelectMenuOpen(false); }}
+                    style={{
+                      display: "block", width: "100%", padding: "7px 14px", fontSize: 13,
+                      background: "none", border: "none", color: "var(--fg)",
+                      cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {isCustomOrder && (
+            <button
+              className="btn ghost sm"
+              onClick={() => setShowRenumberConfirm(true)}
+              title="Rename files sequentially in current custom order"
+              style={{ whiteSpace: "nowrap" }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M3 4h2M3 8h4M3 12h6M9 2v4l2-2M13 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM13 10v4"/>
+              </svg>
+              Renumber
             </button>
           )}
-          {selectMenuOpen && (
-            <div
-              data-testid="select-all-menu"
-              style={{
-                position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
-                background: "var(--surface-2)", border: "1px solid var(--line-2)",
-                borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
-                minWidth: 210, padding: "4px 0", whiteSpace: "nowrap",
-              }}
-            >
-              {[
-                {
-                  label: `All ${totalCount?.toLocaleString()} matching filters`,
-                  onClick: selectAllMatching,
-                },
-                pageAllSelected
-                  ? { label: `Deselect this page (${images.length})`, onClick: () => deselectMany(images.map(i => i.id)) }
-                  : { label: `This page only (${images.length})`, onClick: () => selectMany(images.map(i => i.id), datasetId ?? "") },
-              ].map((a) => (
-                <button
-                  key={a.label}
-                  onClick={() => { a.onClick(); setSelectMenuOpen(false); }}
-                  style={{
-                    display: "block", width: "100%", padding: "7px 14px", fontSize: 13,
-                    background: "none", border: "none", color: "var(--fg)",
-                    cursor: "pointer", textAlign: "left",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {isCustomOrder && (
-          <button
-            className="btn ghost sm"
-            onClick={() => setShowRenumberConfirm(true)}
-            title="Rename files sequentially in current custom order"
-            style={{ whiteSpace: "nowrap" }}
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M3 4h2M3 8h4M3 12h6M9 2v4l2-2M13 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM13 10v4"/>
-            </svg>
-            Renumber
-          </button>
-        )}
-
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {/* The prefix is not decoration: this select is the Upload button's
-              destination and changes nothing until a file is uploaded, so beside
-              the selection controls a bare "(root)" reads as if it scopes them. */}
-          {subfolders.length > 0 && (
-            <span style={{ fontSize: 12, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>Upload to:</span>
-          )}
-          {subfolders.length > 0 && (
-            <select
-              className="select"
-              style={{ width: "auto", maxWidth: 120 }}
-              value={uploadSubfolder}
-              onChange={(e) => setUploadSubfolder(e.target.value)}
-              title="Upload to subfolder"
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {/* The prefix is not decoration: this select is the Upload button's
+                destination and changes nothing until a file is uploaded, so beside
+                the selection controls a bare "(root)" reads as if it scopes them. */}
+            {subfolders.length > 0 && (
+              <span style={{ fontSize: 12, color: "var(--fg-mute)", whiteSpace: "nowrap" }}>Upload to:</span>
+            )}
+            {subfolders.length > 0 && (
+              <select
+                className="select"
+                style={{ width: "auto", maxWidth: 120 }}
+                value={uploadSubfolder}
+                onChange={(e) => setUploadSubfolder(e.target.value)}
+                title="Upload to subfolder"
+              >
+                <option value="">(root)</option>
+                {subfolders.filter(sf => sf.path !== "").map(sf => (
+                  <option key={sf.path} value={sf.path}>{sf.path}</option>
+                ))}
+              </select>
+            )}
+            <button
+              className="btn ghost"
+              title="Import a folder of images into this dataset"
+              onClick={() => setShowImport(true)}
             >
-              <option value="">(root)</option>
-              {subfolders.filter(sf => sf.path !== "").map(sf => (
-                <option key={sf.path} value={sf.path}>{sf.path}</option>
-              ))}
-            </select>
-          )}
-          <button
-            className="btn ghost"
-            title="Import a folder of images into this dataset"
-            onClick={() => setShowImport(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
-            </svg>
-            Import folder
-          </button>
-          <button
-            className="btn ghost"
-            title="Rescan folder from disk — pick up images and .txt captions added outside the app"
-            disabled={rescanJobId !== null}
-            onClick={() => runRescan(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
-            </svg>
-            {rescanJobId !== null ? "Rescanning…" : "Rescan"}
-          </button>
-          <label className="btn" style={{ cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.65 : 1, pointerEvents: uploading ? "none" : "auto" }}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
-            </svg>
-            {uploading ? "Uploading…" : "Upload"}
-            <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
-              onChange={(e) => e.target.files && handleUpload(e.target.files)} />
-          </label>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M2.5 3.5h4l1.5 2h5.5v7h-11v-9z"/>
+              </svg>
+              Import folder
+            </button>
+            <button
+              className="btn ghost"
+              title="Rescan folder from disk — pick up images and .txt captions added outside the app"
+              disabled={rescanJobId !== null}
+              onClick={() => runRescan(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
+              </svg>
+              {rescanJobId !== null ? "Rescanning…" : "Rescan"}
+            </button>
+            <label className="btn" style={{ cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.65 : 1, pointerEvents: uploading ? "none" : "auto" }}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
+              </svg>
+              {uploading ? "Uploading…" : "Upload"}
+              <input type="file" multiple accept={MEDIA_ACCEPT} style={{ display: "none" }}
+                onChange={(e) => e.target.files && handleUpload(e.target.files)} />
+            </label>
+          </div>
         </div>
       </div>
 

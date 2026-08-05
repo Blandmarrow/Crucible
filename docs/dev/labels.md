@@ -75,7 +75,7 @@ rather than `COLLATE NOCASE` on the column, which would also change every ORDER 
 and comparison on `name`. `hotkey` is normalized with `.lower()` and must match
 `^[a-z0-9]$`, else 400; `color` must match `^#[0-9a-fA-F]{3,8}$` (`_clean_color`),
 because `String(16)` is not enforced by SQLite and the value is interpolated into
-inline CSS on every chip — an unchecked `url(http://…)` is a remote fetch per card.
+inline CSS on every dot and chip — an unchecked `url(http://…)` is a remote fetch per card.
 
 Migrations: `c2a8f6b3d417_add_labels.py`, then
 `a4d7e2f9c188_add_case_insensitive_label_name_index.py` for the functional index
@@ -135,7 +135,7 @@ label id.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/labels/` | `list[LabelOut]` ordered by `sort_order, name`; `usage_count` from one `GROUP BY` |
-| `GET` | `/labels/counts?dataset_id=` | `{counts: {label_id: int}}` for the gallery chip badges, scoped through `images.dataset_id` |
+| `GET` | `/labels/counts?dataset_id=` | `{counts: {label_id: int}}` for the gallery picker's per-label counts, scoped through `images.dataset_id` |
 | `POST` | `/labels/assign` | The single attach/detach endpoint — below |
 | `POST` | `/labels/reorder` | `{ordered_ids}` → `sort_order = index`; 400 unless the id set is the whole vocabulary |
 | `POST` | `/labels/` | 201; 409 on duplicate name (case-insensitive) or hotkey; 400 on bad charset, blank name or non-hex colour |
@@ -241,7 +241,7 @@ stays the only one that mutates the FROM clause, and stays last.
 - `label_match="all"` → one `EXISTS` **per id**, preferred over
   `GROUP BY … HAVING COUNT(...)`, which would need a join and a grouping this
   shared builder must not introduce. Each is index-backed on
-  `ix_image_labels_image_id`, and nobody selects fifty chips.
+  `ix_image_labels_image_id`, and nobody ticks fifty labels.
 
 The 400s live in **`utils.validate_label_filter_params`**, not inline in
 `_apply_image_filters`, because export calls the same function — see
@@ -367,10 +367,11 @@ the five pass the map positionally).
 |---|---|
 | `src/api/labels.ts` | `labelsApi = { list, counts, create, update, remove, reorder, assign }` |
 | `src/hooks/useLabels.ts` | `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below |
-| `src/components/settings/LabelsPanel.tsx` | The Settings tab body — swatches, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
+| `src/components/settings/LabelsPanel.tsx` | The Settings tab body — the 20-colour palette, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
 | `src/components/settings/HotkeyCaptureButton.tsx` | Captures the next keypress while focused |
-| `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an add row |
-| `src/components/gallery/LabelsBulkModal.tsx` | Dumb modal (form state only) with *Add* and *Remove* chip groups |
+| `src/components/common/LabelPicker.tsx` | `LabelCheckList` (searchable checkbox list + `footer` slot) and `LabelPicker` (the same behind a trigger). The one control behind all four picking surfaces — see `docs/dev/styling.md` § Anchored popovers, including why `placement` is not a style choice |
+| `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an inline `LabelPicker`, one `assign` per tick |
+| `src/components/gallery/LabelsBulkModal.tsx` | Dumb modal (form state only) with *Add* and *Remove* `LabelCheckList`s |
 | `src/utils/keyboard.ts` | `isTextEntryTarget(e)`, adopted by both of `ImageDetailPage`'s pre-existing keydown effects |
 
 The query key is a bare `["labels"]` with no dataset in it, because the
@@ -380,14 +381,13 @@ vocabulary is app-wide. Writers call `invalidateLabelScope(qc)` from
 that file exists to prevent. It takes **no `datasetId`** and invalidates every key
 at its bare prefix, matching `invalidateProvenanceScope`: the bulk assign it
 mostly serves labels a selection that can straddle datasets, so scoping to one
-pane's id left other datasets' grids and chip badges stale.
+pane's id left other datasets' grids and card dots stale.
 
 Both the gallery and the Export page bounds-check a label filter against the
 vocabulary and drop ids whose label was deleted — the `licenseFilter` precedent.
-Without it the grid silently shows zero images with no chip explaining why (on the
-Export page the chip row is hidden entirely while the vocabulary is empty, so
-nothing on screen would explain it). In the gallery, dropping anything also resets
-paging.
+Without it the grid silently shows zero images with nothing on screen explaining
+why (the picker is hidden entirely while the vocabulary is empty, so there is not
+even a control to open). In the gallery, dropping anything also resets paging.
 
 The check is **derived during render**, gated on `useLabels().isLoaded` — the
 `frameVideoId` guard in `GalleryPage` is the precedent, and `isLoaded` (the

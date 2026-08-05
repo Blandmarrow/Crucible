@@ -7,15 +7,116 @@ import { labelsApi, type Label, type LabelUpdate } from "../../api/labels";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { invalidateLabelScope } from "../../constants/queryKeys";
 import { useLabels } from "../../hooks/useLabels";
+import { usePopover } from "../../hooks/usePopover";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import { apiErrorDetail } from "../../utils/apiError";
 import HotkeyCaptureButton from "./HotkeyCaptureButton";
 
+/** A strict superset of the original nine, so no existing label loses its
+ *  "selected" ring when the palette grows. Two rows of ten. */
 const SWATCHES = [
-  "#ef4444", "#f97316", "#eab308", "#22c55e",
-  "#14b8a6", "#3b82f6", "#8b5cf6", "#ec4899",
-  "#6b7280",
+  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
+  "#22c55e", "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9",
+  "#3b82f6", "#6366f1", "#8b5cf6", "#a855f7", "#d946ef",
+  "#ec4899", "#f43f5e", "#78716c", "#6b7280", "#94a3b8",
 ];
+
+/** Named rather than `SWATCHES[5]`: an index silently means a different colour
+ *  the moment the list grows. */
+const DEFAULT_NEW_COLOR = "#3b82f6";
+
+/** The palette itself, ten to a row. Shared by the create form and the
+ *  per-row popover so the two never drift apart. */
+function SwatchGrid({
+  value, onPick, size,
+}: {
+  value: string;
+  onPick: (color: string) => void;
+  size: number;
+}) {
+  return (
+    <span style={{ display: "grid", gridTemplateColumns: `repeat(10, ${size}px)`, gap: 4 }}>
+      {SWATCHES.map((c) => (
+        <button
+          key={c}
+          type="button"
+          aria-label={`Colour ${c}`}
+          aria-pressed={value.toLowerCase() === c}
+          onClick={() => onPick(c)}
+          style={{
+            width: size, height: size, borderRadius: 4, background: c, cursor: "pointer",
+            border: value.toLowerCase() === c ? "2px solid var(--fg)" : "1px solid var(--line-2)",
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * One label row's colour control: a swatch that opens the palette.
+ *
+ * A button per swatch inline was already crowded at nine and does not fit at
+ * twenty, so the palette moved behind a popover. `align="right"` because the row
+ * ends close to the panel's right edge.
+ */
+function ColorSwatchButton({
+  label, disabled, onPick,
+}: {
+  label: Label;
+  disabled: boolean;
+  onPick: (color: string) => void;
+}) {
+  const { open, setOpen, anchorRef, triggerRef } = usePopover<HTMLSpanElement>();
+  const [custom, setCustom] = useState(label.color);
+
+  return (
+    <span ref={anchorRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        ref={triggerRef}
+        aria-label={`Change ${label.name} colour`}
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 20, height: 20, borderRadius: 4, background: label.color,
+          border: "1px solid var(--line-2)", cursor: disabled ? "default" : "pointer",
+        }}
+      />
+      {open && (
+        <div
+          style={{
+            position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
+            background: "var(--surface-2)", border: "1px solid var(--line-2)",
+            borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+            padding: 8, display: "flex", flexDirection: "column", gap: 8,
+          }}
+        >
+          <SwatchGrid
+            value={label.color}
+            onPick={(c) => { onPick(c); setOpen(false); }}
+            size={16}
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--fg-dim)" }}>
+            {/* Commits on blur, never on change: the OS colour picker fires
+                `onChange` continuously while it is dragged, and each one here
+                would be its own `PATCH /labels/{id}`. */}
+            <input
+              type="color"
+              aria-label={`Custom colour for ${label.name}`}
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              onBlur={() => { if (custom.toLowerCase() !== label.color.toLowerCase()) onPick(custom); }}
+              style={{ width: 28, height: 22, padding: 0, background: "none", border: "1px solid var(--line-2)", borderRadius: 4, cursor: "pointer" }}
+            />
+            Custom
+          </label>
+        </div>
+      )}
+    </span>
+  );
+}
 
 /**
  * Settings → Labels: the whole managed vocabulary.
@@ -35,7 +136,7 @@ export default function LabelsPanel() {
   const setHotkeysEnabled = useUiPrefsStore((s) => s.setLabelHotkeysEnabled);
 
   const [newName, setNewName] = useState("");
-  const [newColor, setNewColor] = useState(SWATCHES[5]);
+  const [newColor, setNewColor] = useState(DEFAULT_NEW_COLOR);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Label | null>(null);
@@ -120,21 +221,17 @@ export default function LabelsPanel() {
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
         />
-        <span style={{ display: "inline-flex", gap: 4 }}>
-          {SWATCHES.map((c) => (
-            <button
-              key={c}
-              type="button"
-              aria-label={`Colour ${c}`}
-              aria-pressed={newColor === c}
-              onClick={() => setNewColor(c)}
-              style={{
-                width: 18, height: 18, borderRadius: 4, background: c, cursor: "pointer",
-                border: newColor === c ? "2px solid var(--fg)" : "1px solid var(--border)",
-              }}
-            />
-          ))}
-        </span>
+        <SwatchGrid value={newColor} onPick={setNewColor} size={18} />
+        {/* Local state with no request behind it, so a live `onChange` is fine
+            here — unlike the per-row picker below, where every intermediate
+            value would be a PATCH. */}
+        <input
+          type="color"
+          aria-label="Custom colour"
+          value={newColor}
+          onChange={(e) => setNewColor(e.target.value)}
+          style={{ width: 28, height: 24, padding: 0, background: "none", border: "1px solid var(--line-2)", borderRadius: 4, cursor: "pointer" }}
+        />
         <button className="btn-primary btn-sm" type="submit" disabled={!newName.trim() || busy}>
           Add label
         </button>
@@ -155,7 +252,7 @@ export default function LabelsPanel() {
               key={label.id}
               style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "6px 8px",
-                border: "1px solid var(--border)", borderRadius: 6,
+                border: "1px solid var(--line)", borderRadius: 6,
               }}
             >
               <span
@@ -196,20 +293,11 @@ export default function LabelsPanel() {
                 {label.usage_count} image{label.usage_count === 1 ? "" : "s"}
               </span>
 
-              <span style={{ display: "inline-flex", gap: 3 }}>
-                {SWATCHES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-label={`Set ${label.name} colour to ${c}`}
-                    onClick={() => updateMutation.mutate({ id: label.id, body: { color: c } })}
-                    style={{
-                      width: 13, height: 13, borderRadius: 3, background: c, cursor: "pointer",
-                      border: label.color === c ? "2px solid var(--fg)" : "1px solid var(--border)",
-                    }}
-                  />
-                ))}
-              </span>
+              <ColorSwatchButton
+                label={label}
+                disabled={busy}
+                onPick={(c) => updateMutation.mutate({ id: label.id, body: { color: c } })}
+              />
 
               <HotkeyCaptureButton
                 value={label.hotkey}

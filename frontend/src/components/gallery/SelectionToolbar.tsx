@@ -483,7 +483,15 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
   return (
     <>
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 card flex items-center gap-3 px-4 py-3 shadow-xl">
+      {/* Sticky inside the gallery's scroll area, not `fixed` to the window —
+          which is what the call site's comment always claimed. `fixed` covered
+          whatever sat in the bottom ~90 px of the pane, and with a short grid
+          that is the pagination row: the bar floated over "Next →" and swallowed
+          the click. Sticky drops into the flow *below* the content when there is
+          little of it and pins to the bottom once there is enough to scroll, so
+          it can never cover either. It also centres on the pane rather than on
+          the window, which is the split-view behaviour anyone would expect. */}
+      <div className="sticky bottom-6 z-40 mx-auto mt-6 w-fit card flex items-center gap-3 px-4 py-3 shadow-xl">
         <span className="text-sm font-medium text-accent">{count} selected</span>
         {datasetGroups.length > 0 && (
           <div className="flex items-center gap-1">

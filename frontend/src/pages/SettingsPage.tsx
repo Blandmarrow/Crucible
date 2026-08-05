@@ -360,7 +360,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ padding: "28px 32px", maxWidth: 640 }}>
+    <div style={{ padding: "28px 32px", maxWidth: 980 }}>
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Settings</h1>
       <p style={{ color: "var(--fg-mute)", fontSize: 13, marginBottom: 20 }}>
         Global configuration for this Crucible instance.

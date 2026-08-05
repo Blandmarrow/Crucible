@@ -138,42 +138,44 @@ export default function BulkEditPage() {
   }
 
   return (
-    <div style={{ padding: "24px 32px", maxWidth: 680, flex: 1, overflowY: "auto" }}>
+    <div style={{ padding: "24px 32px", maxWidth: 900, flex: 1, overflowY: "auto" }}>
+      {/* "Reset to defaults" sits in the header rather than beside the tabs:
+          `.tabs` wraps now, and next to two rows of tabs the button floated
+          against nothing. */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <Pencil size={18} style={{ color: "var(--accent)" }} />
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Bulk Edit</h2>
+        <div style={{ flex: 1 }} />
+        <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
+          Reset to defaults
+        </button>
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <div className="tabs" style={{ flex: 1 }}>
-          <button className={`tab${tab === "captions" ? " active" : ""}`} onClick={() => setTab("captions")}>
-            Edit Captions
-          </button>
-          <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
-            Upscale
-          </button>
-          <button className={`tab${tab === "crop" ? " active" : ""}`} onClick={() => setTab("crop")}>
-            Crop to Subject
-          </button>
-          <button className={`tab${tab === "detections" ? " active" : ""}`} onClick={() => setTab("detections")}>
-            Detections
-          </button>
-          <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
-            Apply LUT
-          </button>
-          <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
-            Rename
-          </button>
-          <button className={`tab${tab === "thumbnails" ? " active" : ""}`} onClick={() => setTab("thumbnails")}>
-            Thumbnails
-          </button>
-          <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
-            Delete
-          </button>
-        </div>
-        <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
-          Reset to defaults
+      <div className="tabs">
+        <button className={`tab${tab === "captions" ? " active" : ""}`} onClick={() => setTab("captions")}>
+          Edit Captions
+        </button>
+        <button className={`tab${tab === "upscale" ? " active" : ""}`} onClick={() => setTab("upscale")}>
+          Upscale
+        </button>
+        <button className={`tab${tab === "crop" ? " active" : ""}`} onClick={() => setTab("crop")}>
+          Crop to Subject
+        </button>
+        <button className={`tab${tab === "detections" ? " active" : ""}`} onClick={() => setTab("detections")}>
+          Detections
+        </button>
+        <button className={`tab${tab === "lut" ? " active" : ""}`} onClick={() => setTab("lut")}>
+          Apply LUT
+        </button>
+        <button className={`tab${tab === "rename" ? " active" : ""}`} onClick={() => setTab("rename")}>
+          Rename
+        </button>
+        <button className={`tab${tab === "thumbnails" ? " active" : ""}`} onClick={() => setTab("thumbnails")}>
+          Thumbnails
+        </button>
+        <button className={`tab${tab === "delete" ? " active" : ""}`} onClick={() => setTab("delete")}>
+          Delete
         </button>
       </div>
 

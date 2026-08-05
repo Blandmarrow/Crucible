@@ -157,10 +157,13 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
  *  across a page boundary: `goTo` crossing a boundary, and the delete that empties
  *  the last page.
  *
- *  That blob persists the subfolder, caption, quality, license and lineage filters
- *  but *not* `search`, `detectionLabel` or `scoreFilters`, so with one of those
- *  three active Back can land on page N of a wider list. Do not special-case it
- *  here — skipping the patch just swaps one wrong page for another.
+ *  It spreads the stored blob and overwrites two fields, so a filter GalleryPage
+ *  persists needs no edit here — it rides through untouched, and the patched page
+ *  number is a page of the same filtered list the arrows were walking. An
+ *  *un*persisted filter is what breaks that: the page would be restored against a
+ *  wider list than it was computed on. So the fix for one is to persist it in
+ *  GalleryPage, never to special-case the patch here — skipping it just swaps one
+ *  wrong page for another.
  *
  *  It writes GalleryPage's key, not `gallery-nav`, so it stays here rather than in
  *  `utils/galleryNav.ts`. */

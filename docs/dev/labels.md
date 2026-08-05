@@ -400,10 +400,24 @@ blob past a ref that had already fired. `handleResetToDefaults` there resets the
 label trio alongside the other fourteen filters, or the debounced persist writes
 it straight back into the blob it just cleared.
 
-`GalleryPage` persistence needs **five** edits, because the filter blob is
+`GalleryPage` persistence needs **six** edits, because the filter blob is
 hand-rolled there rather than using `useDebouncedPersist`: the inline type in
-`loadSavedState`, `liveStateRef` (both lines), the debounced `JSON.stringify`
-blob, the unmount blob, and `handleResetFilters`. See `docs/dev/persistence.md`.
+`loadSavedState`, the `useState` seed that reads it, `liveStateRef` (both lines),
+the debounced write (the `JSON.stringify` literal **and** the dep array — a field
+whose own change moves no other dep is otherwise only written by the unmount
+flush, and a reload drops it), the unmount blob (the destructure **and** its
+literal), and `handleResetFilters`. Neither write site merges with what is
+stored, so a field present in one literal and missing from the other is deleted
+on whichever path runs. See `docs/dev/persistence.md`.
+
+**A debounced field is two of those seeds, not one.** `search` and
+`detectionLabel` each commit out of a `*Input` draft through a 350 ms timer whose
+only bail-out is `input === committed`, so a restore must seed **both halves**
+from the one stored value, and every clear (Reset filters, the input's ×) must
+clear both together. Seeding or clearing one half leaves the pair unequal, which
+is exactly the state that makes the timer fire on mount and throw away the
+restored page — PM-012, in `docs/dev/postmortems.md`. Persist only the committed
+value; a persisted draft leaves the restore no correct choice.
 
 ### Hotkeys
 

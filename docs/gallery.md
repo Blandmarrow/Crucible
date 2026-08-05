@@ -17,7 +17,8 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 
 ## Browsing images
 
-- Gallery view with search (filename or caption text), pagination, and sort
+- Gallery view with search (filename or caption text), pagination, and sort. The search box has a **×** to clear it in one click
+- **Your filters are remembered per dataset** — the search text, the score chips, the detected-object label and every dropdown come back as you left them when you return from an image, switch pages, or reopen Crucible entirely, along with the page you were on. **Reset filters** clears the lot
 - Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label. In a dataset that holds videos, a **Frames from** dropdown narrows the grid to the frames one video produced — wherever you have since moved or renamed them (see [Videos](video.md))
 - Filter by **license** — any single license, any free-text license already recorded in this dataset (listed under **Used in this dataset**), or **Missing license only** to find images with no license at either the image or dataset level → [details](provenance.md)
 - Organize images into subfolders (logical groupings — images stay flat on disk); move or copy images or entire subfolders to a different dataset in one operation

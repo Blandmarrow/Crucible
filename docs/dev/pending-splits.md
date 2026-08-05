@@ -259,7 +259,7 @@ staleness sweep while still recording the seam.
   the review fixes landed: the shared filter validator, the derivative table, the assign
   guard and the render-time bounds check all arrived at once.
 - **Watch for:** § Frontend is cited **by name** from `docs/dev/gallery.md` § Gallery
-  filters ("five edits, see `docs/dev/labels.md` § Frontend") and stays behind — that is
+  filters ("six edits, see `docs/dev/labels.md` § Frontend") and stays behind — that is
   the one pointer that keeps working only if § Frontend does not move in a later pass.
   Everything moving has an inbound pointer of its own: `docs/dev/image-filters.md` (the
   three label rows), `docs/dev/export.md`, `docs/dev/versioning-service.md` (a full
@@ -270,6 +270,35 @@ staleness sweep while still recording the seam.
   convention gives no name for free — label-consumers.md is a proposal, not a constraint.
   Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
   `docs/labels.md` matches the same grep.
+
+## docs/dev/image-detail.md
+
+- **Moves:** the *persistence* half of § Gallery persistence & detail-view navigation —
+  the two-key table, the debounced-input rule and its restore-side corollary, the main
+  save effect and the unmount flush, and the Reset filters paragraph (~1,300 of that
+  section's 3,112 words)
+- **New file:** docs/dev/gallery-state.md
+- **Why here:** the section is 84% of the file and is two subsystems sharing a heading.
+  One is *what GalleryPage remembers* — the `gallery-state-*` blob's fields, the six edits
+  a new one costs, the mount-debounce rule, Reset filters; a reader arrives there while
+  adding a filter and never opens the detail view. The other is *how the arrows walk* —
+  `gallery-nav-*`, `navPageParams`, the boundary prefetch, `injectNavId`, `atEnd`, and the
+  post-delete re-derivation; that reader is in `ImageDetailPage` and does not care what
+  localStorage holds. The file tripped its budget when `search`/`detectionLabel`/
+  `scoreFilters` were persisted, which added the seeding rule and a longer blob row to the
+  first half only. The seam leaves ~1,300 and ~2,390 out of 3,693; the staying half is
+  over the ~2,100 target, and its own second seam is the crop tool + caption panel +
+  generation metadata sections, which are unrelated to navigation entirely.
+- **Watch for:** the persistence half is cited by name from `docs/dev/persistence.md`
+  § Three persistence shapes, `docs/dev/labels.md` § Frontend, `docs/dev/gallery.md`
+  § Gallery filters (three bullets, all pointing at the seeding rule) and
+  `docs/dev/settings.md` § Gallery defaults; PM-012's Fix section names the file too. The
+  nav half is cited from `docs/dev/video-ui.md` and `docs/dev/image-filters.md`. Both
+  halves reference `frontend/e2e/gallery-restore.spec.ts` and `gallery-nav-filters.spec.ts`
+  respectively, which is a clean split of the tests as well. The two keys are described in
+  one table, so it has to be cut in two rather than moved whole — and the *user* doc for
+  either half is `docs/gallery.md`, itself queued below, so the mirror-the-user-doc naming
+  convention gives nothing here.
 
 ## docs/gallery.md
 

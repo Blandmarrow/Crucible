@@ -142,10 +142,62 @@ function scoreChipLabel(f: ScoreFilter): string {
   return short;
 }
 
+/** Validate the score chips restored from `gallery-state-${datasetId}`, which can have
+ *  been written by a build whose `SCORE_FIELDS` has since changed.
+ *
+ *  The failure this guards is a *lying chip*, not the empty grid `licenseFilter`
+ *  describes: `score_filters` is decoded server-side by a loop that `continue`s past an
+ *  unrecognised field and whose `except (JSONDecodeError, ValueError, AttributeError)`
+ *  abandons the rest of the list, so a bad entry leaves a chip on screen filtering
+ *  nothing *and* can silently drop the entries after it while their chips stay lit.
+ *
+ *  Bounds stay **strings** — the shape `ScoreFilter` declares, and the one
+ *  `scoreChipLabel` tests by truthiness, where `""` ("no bound") is not `0`. That is
+ *  also why the raw state array is what gets persisted and never `scoreFiltersParam`:
+ *  the param form has already collapsed that distinction into numbers.
+ *
+ *  Called from the `useState` initializer, deliberately not reconciled during render the
+ *  way `labelFilter` is: that vocabulary is *fetched* and can change mid-session, while
+ *  `SCORE_FIELDS` is compiled in, so "valid at mount" is "valid forever". A render-phase
+ *  version would also have to loop-guard on an exact is-anything-invalid predicate (this
+ *  returns a fresh array every call), and its `setPage(1)` + `dropScrollRestore()`
+ *  companions would re-create the very restore loss persisting these chips removes. */
+function sanitizeScoreFilters(value: unknown): ScoreFilter[] {
+  if (!Array.isArray(value)) return [];
+  // `null` = unusable, `""` = no bound. Numbers are accepted and stringified so a blob
+  // written by hand still restores; `parseFloat` is the same reader `scoreFiltersParam`
+  // uses, so anything kept here is something the request can actually encode.
+  const bound = (v: unknown): string | null => {
+    if (v === "" || v === undefined || v === null) return "";
+    if (typeof v !== "string" && typeof v !== "number") return null;
+    const s = String(v);
+    return Number.isFinite(parseFloat(s)) ? s : null;
+  };
+  const out: ScoreFilter[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { field, min, max } = entry as { field?: unknown; min?: unknown; max?: unknown };
+    if (typeof field !== "string" || !SCORE_FIELDS.some(s => s.value === field)) continue;
+    const lo = bound(min);
+    const hi = bound(max);
+    if (lo === null || hi === null) continue;
+    // `applyScoreFilter` structurally cannot create a bound-less entry (it returns early
+    // on `!draftMin && !draftMax`); one in the blob would render as a bare field name
+    // filtering nothing at all.
+    if (!lo && !hi) continue;
+    out.push({ field, min: lo, max: hi });
+  }
+  return out;
+}
+
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
+    // `scoreFilters` is `unknown` on purpose: declaring it `ScoreFilter[]` would make
+    // every guard in `sanitizeScoreFilters` read as dead code. The two flat strings
+    // follow the `labelFilter` precedent — declared concrete, `typeof`-guarded at the
+    // read site.
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -243,11 +295,23 @@ export default function GalleryPage() {
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [detectionLabelInput, setDetectionLabelInput] = useState("");
-  const [detectionLabel, setDetectionLabel] = useState("");
-  const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>([]);
+  // The two debounced text filters. **Both halves of each pair take the restored
+  // value**: the debounce effects below bail only on `input === committed`, so seeding
+  // the committed half alone leaves them unequal and the mount timer commits `""`
+  // 350 ms after arriving back from the detail view — resetting the page and dropping
+  // the scroll restore, which is PM-012 exactly.
+  //
+  // Only the *committed* values are ever persisted, never the drafts: a persisted draft
+  // would force the restore to choose between applying a filter the user never committed
+  // and seeding the pair unequally. Accepted consequence — keystrokes typed inside the
+  // 350 ms before clicking a tile are still lost.
+  const restoredSearch = typeof saved?.search === "string" ? saved.search : "";
+  const [searchInput, setSearchInput] = useState(restoredSearch);
+  const [search, setSearch] = useState(restoredSearch);
+  const restoredDetectionLabel = typeof saved?.detectionLabel === "string" ? saved.detectionLabel : "";
+  const [detectionLabelInput, setDetectionLabelInput] = useState(restoredDetectionLabel);
+  const [detectionLabel, setDetectionLabel] = useState(restoredDetectionLabel);
+  const [scoreFilters, setScoreFilters] = useState<ScoreFilter[]>(() => sanitizeScoreFilters(saved?.scoreFilters));
   const [showAddScore, setShowAddScore] = useState(false);
   const [draftField, setDraftField] = useState(SCORE_FIELDS[0].value);
   const [draftMin, setDraftMin] = useState("");
@@ -329,8 +393,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -462,17 +526,26 @@ export default function GalleryPage() {
   // Persist gallery state (page/sort/filters) — debounced, survives browser restart.
   // Hand-rolled rather than useDebouncedPersist because `scrollTop` must be sampled
   // at flush time; the window is the same shared constant either way.
+  //
+  // This and the unmount flush below each `JSON.stringify` a *full literal* and never
+  // merge with what is stored, so a field present in one and missing from the other is
+  // silently deleted on whichever path runs. Keep the two literals identical, field for
+  // field. The dep array is not optional either: `applyScoreFilter` calls `resetPage()`,
+  // a no-op on `page` when it is already 1, so adding the first chip moves no *other*
+  // dep — without `scoreFilters` here the write would only ever be scheduled by some
+  // unrelated later change or by the unmount flush, and a reload (this page has no
+  // `pagehide` listener) would drop it.
   useEffect(() => {
     if (!datasetId) return;
     const t = setTimeout(() => {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -480,11 +553,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -1214,11 +1287,24 @@ export default function GalleryPage() {
     setLabelFilter([]);
     setLabelMatch("any");
     setLabelMissing(false);
+    // Both halves of each debounced pair, together. Clearing only the committed value
+    // leaves the input non-empty, so 350 ms later the debounce re-commits the old query
+    // and fires `setPage(1)` — Reset undoing itself, in PM-012's silhouette. And these
+    // three are now persisted, so leaving any of them set would have the debounced write
+    // re-create the blob `removeItem` above just deleted.
+    setSearchInput("");
+    setSearch("");
+    setDetectionLabelInput("");
+    setDetectionLabel("");
+    setScoreFilters([]);
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
     // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
     // removes, but it is the tree's shape, not a filter — collapsing everything is not
-    // what "reset filters" promises. The next persist writes the live set back.
+    // what "reset filters" promises. The next persist writes the live set back. The
+    // score form's draft state (`showAddScore`, `draftField`, `draftMin`, `draftMax`) is
+    // left alone for the mirror-image reason: it is form state, not a filter, and is not
+    // persisted either.
     dropScrollRestore();
     // Immediate, unlike the deep-link paths: this is a direct gesture and wants
     // feedback now, not once the new page renders.
@@ -1542,6 +1628,16 @@ export default function GalleryPage() {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
+          {/* The one-click way out of a filter that now survives a restart. Clears both
+              halves of the pair synchronously — bypassing the debounce, and keeping them
+              equal — exactly like the detection-label input's × below. */}
+          {searchInput && (
+            <button
+              onClick={() => { setSearchInput(""); setSearch(""); resetPage(); }}
+              style={{ position: "absolute", right: 6, background: "none", border: "none", cursor: "pointer", color: "var(--fg-mute)", fontSize: 14, lineHeight: 1, padding: 0 }}
+              title="Clear"
+            >×</button>
+          )}
         </div>
 
         <select className="select" style={{ width: "auto" }} value={sortIdx}

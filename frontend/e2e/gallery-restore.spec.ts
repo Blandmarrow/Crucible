@@ -217,3 +217,189 @@ test('subfolder deep link clears a restored lineage filter', async ({ page, requ
   await expect(page.getByText('No images found. Upload or adjust filters.')).toHaveCount(0)
   await expect(page.getByLabel('Filter by source video')).toHaveValue('')
 })
+
+// The other three gallery filters — the score chips, the search box and the detection
+// label — used to be held in plain component state, so every trip to the detail view
+// dropped them while `page` and `scrollTop`, sampled against the *filtered* list, came
+// back. The three tests below cover the debounced write path, the unmount-flush path,
+// and the restore-side validation, in that order.
+//
+// Constraint on all of them: e2e cannot give an image a non-null score (no HTTP write
+// path, no torch in the e2e image), and NULL fails every comparison — so a score filter
+// matches zero images here. Assert on the chip and the blob, never on grid contents.
+
+test('a score-range chip survives a remount', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 6)
+  const ds = await createDatasetViaApi(request, `score-restore-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Score filter' }).click()
+  await page.getByPlaceholder('min', { exact: true }).fill('5')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByTitle('Remove filter')).toHaveCount(1)
+
+  // Adding a chip moves no *other* persisted field — `applyScoreFilter` calls
+  // `resetPage()`, a no-op on `page` when it is already 1 — so this is the assertion
+  // that the write was scheduled by `scoreFilters` being in the effect's dep array.
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  const stored = await page.evaluate(
+    (k) => JSON.parse(localStorage.getItem(k)!).scoreFilters,
+    `gallery-state-${ds.id}`,
+  )
+  // **Strings**, and an empty `max`. This is what catches anyone persisting
+  // `scoreFiltersParam` instead of the state array: that form is numbers, and it has
+  // already collapsed the ""-vs-0 distinction `scoreChipLabel` reads by truthiness.
+  expect(stored).toEqual([{ field: 'aesthetic_score', min: '5', max: '' }])
+
+  // A reload rather than a tile click: with the filter on there is no tile to click,
+  // which is also why this is the case that covers the debounced write.
+  await page.reload()
+  await expect(page.getByTitle('Remove filter')).toHaveCount(1)
+  await expect(page.getByText('No images found. Upload or adjust filters.')).toBeVisible()
+})
+
+// The reported gesture, the unmount-flush write path, and the PM-012 guard in one
+// journey: a search that survives Back *and* keeps the page it was left on. The page
+// number is the second-order half — it was computed against the filtered list, so
+// restoring it without the filter lands on page N of a wider one.
+test('a search survives Back without resetting the page', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 6)
+  const ds = await createDatasetViaApi(request, `search-restore-${Date.now()}`)
+  // The two decoys are what make the footer discriminate: 6 images / 3 pages
+  // unfiltered against 4 / 2 filtered, so a lost filter cannot read as a pass.
+  for (const n of ['keep-a.png', 'keep-b.png', 'keep-c.png', 'keep-d.png', 'other-e.png', 'other-f.png']) {
+    await uploadViaApi(request, ds.id, n)
+  }
+
+  await page.addInitScript(() => localStorage.setItem('gallery-page-size', '2'))
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 3 · 6 images')).toBeVisible()
+
+  await page.getByPlaceholder('Search filename or caption…').fill('keep')
+  await expect(page.getByText('Page 1 of 2 · 4 images')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Next →' }).click()
+  await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
+
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  const saved = await page.evaluate(
+    (k) => JSON.parse(localStorage.getItem(k)!) as { page: number; search: string },
+    `gallery-state-${ds.id}`,
+  )
+  expect(saved.page).toBe(2)
+  expect(saved.search).toBe('keep')
+
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+  await page.getByRole('button', { name: 'Back' }).click()
+
+  await expect(page.getByPlaceholder('Search filename or caption…')).toHaveValue('keep')
+  await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
+  // The load-bearing assertion. PM-012's failure restores correctly and *then* throws
+  // it away: the mount debounce fires 350 ms later, commits a `search` that disagrees
+  // with the input, and resets the page — which the persist effect then writes back, so
+  // the loss is permanent rather than a flicker. Seeding both halves of the pair is the
+  // whole of the fix.
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  await expect(page.getByPlaceholder('Search filename or caption…')).toHaveValue('keep')
+  await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
+})
+
+// The blob outlives the build that wrote it, and a score entry naming a field this build
+// no longer has is worse than an unknown license id: the backend `continue`s past it and
+// its `except … pass` abandons the rest of the list, so the chip stays on screen applying
+// nothing *and* the entries after it stop being applied while their chips stay lit.
+// `sanitizeScoreFilters`' entire contract is that exactly the one good entry survives.
+test('a malformed stored score filter is dropped', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `score-sanitize-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+
+  await page.addInitScript(
+    (key) => {
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          page: 1, sortIdx: 0, captionedFilter: null, scrollTop: 0,
+          detectionLabel: 'cat',
+          scoreFilters: [
+            { field: 'aesthetic_score', min: '5', max: '' },   // the one keeper
+            { field: 'no_such_score', min: '1', max: '' },     // field this build lacks
+            { field: 'blur_score', min: 'abc', max: '' },      // bound that is not a number
+            { field: 'noise_score', min: '', max: '' },        // no bound at all
+            null,
+            'nonsense',
+          ],
+        }),
+      )
+    },
+    `gallery-state-${ds.id}`,
+  )
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTitle('Remove filter')).toHaveCount(1)
+  // Same seeding rule as `search`, so the detection label rides along here rather than
+  // getting a journey of its own.
+  await expect(page.getByPlaceholder('Objects: cat, dog…')).toHaveValue('cat')
+})
+
+// Persisting the three turned a cosmetic omission in `handleResetFilters` into a visible
+// one: it removes the blob, so a filter it forgets is re-written into a fresh blob by the
+// debounced persist 350 ms later and Reset undoes itself on screen. The delayed half of
+// this test is the one that fails in that case — and clearing only the *committed* half of
+// a debounced pair fails it the same way, since the input's own timer re-commits.
+test('Reset filters clears all three and they stay cleared', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 8)
+  const ds = await createDatasetViaApi(request, `reset-filters-${Date.now()}`)
+  for (const n of ['keep-a.png', 'other-b.png']) await uploadViaApi(request, ds.id, n)
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByPlaceholder('Search filename or caption…').fill('keep')
+  await page.getByPlaceholder('Objects: cat, dog…').fill('cat')
+  await page.getByRole('button', { name: 'Score filter' }).click()
+  await page.getByPlaceholder('min', { exact: true }).fill('5')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByTitle('Remove filter')).toHaveCount(1)
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+
+  await page.getByRole('button', { name: 'Reset filters' }).click()
+  await expect(page.getByPlaceholder('Search filename or caption…')).toHaveValue('')
+  await expect(page.getByPlaceholder('Objects: cat, dog…')).toHaveValue('')
+  await expect(page.getByTitle('Remove filter')).toHaveCount(0)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  await expect(page.getByPlaceholder('Search filename or caption…')).toHaveValue('')
+  await expect(page.getByTitle('Remove filter')).toHaveCount(0)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  expect(
+    await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), `gallery-state-${ds.id}`),
+  ).toMatchObject({ search: '', detectionLabel: '', scoreFilters: [] })
+})
+
+// The × the search box gained alongside the persistence — the one-click way out of a
+// filter that now survives a restart. It clears both halves of the pair synchronously,
+// which is what makes the debounce stay quiet afterwards.
+test('the search box × clears the query and returns to page 1', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 6)
+  const ds = await createDatasetViaApi(request, `search-clear-${Date.now()}`)
+  for (const n of ['keep-a.png', 'keep-b.png', 'keep-c.png', 'keep-d.png', 'other-e.png', 'other-f.png']) {
+    await uploadViaApi(request, ds.id, n)
+  }
+  await page.addInitScript(() => localStorage.setItem('gallery-page-size', '2'))
+  await page.goto(`/datasets/${ds.id}/gallery`)
+
+  await page.getByPlaceholder('Search filename or caption…').fill('keep')
+  await expect(page.getByText('Page 1 of 2 · 4 images')).toBeVisible()
+  await page.getByRole('button', { name: 'Next →' }).click()
+  await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
+
+  // Scoped to the wrapper: the detection-label input's clear button carries the same title.
+  await page.locator('.search-wrap').getByTitle('Clear').click()
+  await expect(page.getByPlaceholder('Search filename or caption…')).toHaveValue('')
+  await expect(page.getByText('Page 1 of 3 · 6 images')).toBeVisible()
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  await expect(page.getByText('Page 1 of 3 · 6 images')).toBeVisible()
+})

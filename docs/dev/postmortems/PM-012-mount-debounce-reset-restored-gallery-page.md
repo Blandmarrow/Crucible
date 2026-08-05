@@ -54,6 +54,16 @@ More generally: **when a mount-firing effect and a restore-from-storage initiali
 the same state, the effect wins and the restore is silently discarded.** Any page with a
 `loadPersisted`/`gallery-state`-style initializer should be read with that in mind.
 
+**Restore-side corollary: the guard is an *equality* check, so anything that starts a
+debounced pair unequal re-arms the bug.** Persisting a committed value later — `search` and
+`detectionLabel` now ride in `gallery-state-*` — must seed the `*Input` draft from the same
+stored value, or the pair arrives unequal, the timer fires on mount exactly as it did here,
+and the restored page is destroyed again by a change that looks like a pure feature
+addition. The same holds for every writer of one half: **Reset filters** and the inputs' ×
+buttons clear both halves synchronously. And persist only the committed value — a persisted
+draft leaves the restore choosing between applying a filter the user never committed and
+seeding the pair unequally.
+
 ### Why it wasn't caught the first time
 
 No test covered the restore at all, and the manual check that would have caught it is
@@ -68,8 +78,11 @@ Equality guard at the top of both debounce effects in `frontend/src/pages/Galler
 with the committed value added to each dependency array. Regression test:
 `frontend/e2e/gallery-restore.spec.ts` (seeds four images, sets `gallery-page-size` to 2,
 pages forward, opens a tile, clicks Back, and asserts `Page 2` both immediately and one
-second later). Documented in `docs/dev/image-detail.md` (§ Gallery persistence &
-detail-view navigation).
+second later). A second guard in the same file covers the corollary —
+`a search survives Back without resetting the page` types a query, pages forward inside the
+filtered list, round-trips through the detail view and asserts the footer twice, so a
+`search` seeded into only one half of its pair fails on the delayed assertion. Documented in
+`docs/dev/image-detail.md` (§ Gallery persistence & detail-view navigation).
 
 ### Status & date
 

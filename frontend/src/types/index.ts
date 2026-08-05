@@ -163,6 +163,10 @@ export interface ImageListItem {
    *  cleared when the source video is deleted. The list payload carries the id
    *  alone; timestamps and shot index live on `ImageDetail`. */
   source_video_id: string | null;
+  /** Label ids attached to this image — resolved to names and colours through
+   *  `useLabels`, since the vocabulary is global and fetched once. Drives the
+   *  coloured dots on `ImageCard`. `ImageDetail` inherits this. */
+  label_ids: string[];
 }
 
 export interface GenerationMetadata {

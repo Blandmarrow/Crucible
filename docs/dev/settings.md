@@ -47,6 +47,16 @@ Seven immediate-save preferences (lazy-loads `["captioning-models"]` query only 
 - Save backup toggle (`CAPTION_DEFAULT_SAVE_BACKUP_KEY`, default `false`).
 - **Reset remembered Captioning configuration** ghost button at the bottom of this section: clears the global workflow blob **and every per-dataset `captioning-filters-*` blob**, the latter found by scanning `localStorage` for the prefix rather than by enumerating dataset ids — so the one button forgets the Captioning page's remembered setup everywhere, not only globally. `toast.success` only, no confirm dialog.
 
+## Labels tab
+
+The global label vocabulary — create, rename, recolour, rebind, reorder and delete —
+plus the `labelHotkeysEnabled` toggle. Extracted into
+`components/settings/LabelsPanel.tsx` rather than inlined, following the `SecretField`
+precedent; the tab body is a thin `{activeTab === "labels" && <div className="panel"><LabelsPanel /></div>}`.
+Nothing here is a `ThresholdSettings` field — the vocabulary is its own table behind
+`/labels`, and every edit saves immediately rather than through the page-level Save
+button. See `docs/dev/labels.md`.
+
 ## UI Behavior tab
 
 Immediate-save preferences:

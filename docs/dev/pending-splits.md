@@ -46,6 +46,32 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
+## CLAUDE.md
+
+- **Moves:** the § Key invariants bullets that are *about one subsystem each* — the two
+  video bullets (the poster/`video_count` one and the Windows open-file one), the
+  `record_in_place`/`scores_stale` bullet, and the stem-keyed-derived-artifact bullet
+- **New file:** none — they move **into the topic files that already own them**
+  (`docs/dev/video.md`, `docs/dev/video-endpoints.md`, `docs/dev/scores-stale.md`,
+  `docs/dev/image-files.md`), each leaving a one-line pointer behind in CLAUDE.md
+- **Why here:** § Architecture is 2,905 words and § Key invariants is nearly all of it,
+  which is a symptom rather than the problem: the section's stated test is "would I want
+  this loaded even for a task in an unrelated subsystem?", and four of those bullets fail
+  it outright. Each has grown a full sub-bullet tree of its own that only a reader already
+  inside that subsystem can use, and each has a topic file that is the natural home. That
+  is a *misfiling* fix, not a size fix, and it is why the seam is not "split CLAUDE.md in
+  half" — a second always-loaded file would defeat the point of the split. The three
+  bullets that must stay are the ones every module genuinely touches: the path-traversal
+  guard, the client-supplied-regex rule, and the fallible-work-before-commit ordering.
+- **Watch for:** every moved bullet needs its one-line pointer to name the destination
+  file, or the fact becomes unfindable — the invariants list is the only index of these
+  rules that a fresh conversation sees. The `record_in_place` bullet is cited by
+  `docs/dev/postmortems.md` (PM-010) and by the AST guard's docstring in
+  `backend/tests/test_scores_stale.py`; the stem-collision bullet is cited from
+  `docs/dev/video-reextract.md` § The extension change. The Documentation Map is the other
+  1,808 words and is **not** a split candidate: it is the routing table that makes the
+  on-demand split work at all, and it grows by one row per topic file by design.
+
 ## docs/dev/backend-infrastructure.md
 
 - **Moves:** § Database (1,142 words — the largest section by a factor of two), plus its

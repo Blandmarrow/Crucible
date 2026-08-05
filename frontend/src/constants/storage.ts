@@ -25,6 +25,7 @@ export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" |
 export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
+export const LABEL_HOTKEYS_KEY           = "label-hotkeys-enabled";   // "true" | "false" (ON by default — read with !== "false")
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -108,4 +109,8 @@ export function getGalleryLicenseBadge(): boolean {
  *  is gated on this flag so the request is not even made when it is off. */
 export function getGalleryStyleMeter(): boolean {
   return localStorage.getItem(GALLERY_STYLE_METER_KEY) !== "false";
+}
+
+export function getLabelHotkeysEnabled(): boolean {
+  return localStorage.getItem(LABEL_HOTKEYS_KEY) !== "false";
 }

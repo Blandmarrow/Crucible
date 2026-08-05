@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -53,6 +53,7 @@ from backend.services.dataset_service import refresh_stats
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
+from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
 from backend.services.image_service import (
     crop_image_to_dest,
     crop_to_aspect,
@@ -186,6 +187,8 @@ def _apply_image_filters(q, f: ImageFilterParams):
         raise HTTPException(400, f"Invalid score_field: {f.score_field}")
     if f.quality_flag and f.quality_flag not in ALLOWED_FLAG_KEYS:
         raise HTTPException(400, f"Invalid quality_flag: {f.quality_flag}")
+    if f.label_match is not None and f.label_match not in ("any", "all"):
+        raise HTTPException(400, f"Invalid label_match: {f.label_match} (expected 'any' or 'all')")
 
     q = q.where(Image.dataset_id == f.dataset_id)
 
@@ -304,6 +307,33 @@ def _apply_image_filters(q, f: ImageFilterParams):
             q = q.where(count_expr >= f.detection_count_min)
         if f.detection_count_max is not None:
             q = q.where(count_expr <= f.detection_count_max)
+
+    # Labels — the second facet alongside the subfolder tree. Correlated EXISTS
+    # only (built by `label_service.label_filter_clause`), never a join: `/count`
+    # runs this same builder over `select(func.count(Image.id))`, so a join to
+    # `image_labels` would count a two-label image twice and duplicate its row in
+    # `/images/`. The license block below stays the only one that mutates the
+    # FROM clause, and stays last.
+    if f.label_filter or f.label_missing is not None:
+        label_ids = parse_id_list_param(f.label_filter, "label_filter") or []
+        if any(not lid for lid in label_ids):
+            # Same reasoning as the license block's blank check: a blank id is
+            # meaningless, and dropping it silently narrows a mixed list while
+            # voiding an all-blank one. Both are silent lies. "No labels at all"
+            # is expressed by `label_missing=true`.
+            raise HTTPException(
+                400,
+                "label_filter contains an empty entry; use label_missing=true "
+                "to select images with no labels",
+            )
+        if label_ids and f.label_missing is True:
+            # Unsatisfiable, and a query that always returns zero rows is
+            # indistinguishable from a broken filter.
+            raise HTTPException(
+                400, "label_missing=true cannot be combined with a non-empty label_filter"
+            )
+        for clause in label_filter_clause(label_ids, f.label_match or "any", f.label_missing):
+            q = q.where(clause)
 
     if f.score_filters:
         try:
@@ -429,10 +459,15 @@ async def list_images(
         ds_license = (await db.execute(
             select(Dataset.license).where(Dataset.id == f.dataset_id)
         )).scalar_one_or_none() or ""
+    # Label ids for the whole page in one query, bucketed into a dict — the same
+    # shape as the effective-license stamp above. `ImageListParams.limit` is
+    # capped at 500, so this `IN` never needs chunking.
+    labels_by_id = await labels_by_image(db, [img.id for img in images])
     out = []
     for img in images:
         item = ImageListItem.model_validate(img)
         item.license = img.license or ds_license
+        item.label_ids = labels_by_id.get(img.id, [])
         out.append(item)
     return out
 
@@ -659,6 +694,7 @@ async def get_image(image_id: str, db: AsyncSession = Depends(get_db)):
     detections = det_result.scalars().all()
     img_out = ImageOut.model_validate(img)
     img_out.detections = [DetectionOut.model_validate(d) for d in detections]
+    img_out.label_ids = (await labels_by_image(db, [image_id])).get(image_id, [])
     ds = await db.get(Dataset, img.dataset_id)
     img_out.provenance = resolve_provenance(img, ds)
     return img_out
@@ -2212,8 +2248,9 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         assigned_order = (next_sort_order + idx) if next_sort_order is not None else None
         plan.append((old_path, new_path, old_thumb, new_thumb, row, assigned_order))
 
+    id_map: dict[str, str] = {}
     for old_path, new_path, old_thumb, new_thumb, row, assigned_order in plan:
-        db.add(Image(
+        new_img = Image(
             id=str(uuid4()),
             dataset_id=body.target_dataset_id,
             subfolder=target,
@@ -2252,7 +2289,16 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             source_timestamp_ms=row.source_timestamp_ms,
             source_shot_index=row.source_shot_index,
             **materialized[row.id],
-        ))
+        )
+        db.add(new_img)
+        id_map[row.id] = new_img.id
+
+    # Labels travel on a cross-dataset copy — the vocabulary is global, so the
+    # destination needs no name remapping. (Detections deliberately do not; see
+    # `label_service.copy_labels`.) Staged with the other DB work, before the
+    # file copies, preserving this function's stage-DB → copy-files → commit
+    # ordering: an incomplete copy must leave nothing behind.
+    await copy_labels(db, id_map)
 
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:
         copy_with_sidecar(old_path, new_path)

@@ -18,6 +18,7 @@ import MoveToDatasetModal from "../components/common/MoveToDatasetModal";
 import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
+import { labelsApi } from "../api/labels";
 import { showImportSummaryToast } from "../utils/importToast";
 import { writeNavContext } from "../utils/galleryNav";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
@@ -36,6 +37,7 @@ import { settingsApi } from "../api/settings";
 import { getGalleryPageSize, getGalleryDefaultSort, getGalleryDefaultCaptionFilter, getGalleryDefaultQualityFilter, SUBFOLDER_RENAME_KEY, PERSIST_DEBOUNCE_MS } from "../constants/storage";
 import { LICENSE_OPTIONS, OTHER_PREFIX, isKnownLicenseValue } from "../constants/licenses";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
+import { useLabels } from "../hooks/useLabels";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
@@ -143,7 +145,7 @@ function scoreChipLabel(f: ScoreFilter): string {
 function loadSavedState(datasetId: string) {
   try {
     const raw = localStorage.getItem(`gallery-state-${datasetId}`);
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
   } catch {}
   return null;
 }
@@ -167,6 +169,7 @@ export default function GalleryPage() {
   // the new page has actually rendered; setting scrollTop here would be a DOM write
   // during render, and would fire before the rows exist.
   const pendingScrollTop = useRef(false);
+  const resetPageRef = useRef<() => void>(() => {});
   const dropScrollRestore = () => {
     hasRestoredScroll.current = true;
     pendingScrollTop.current = true;
@@ -198,6 +201,43 @@ export default function GalleryPage() {
       ? [...customLicenses, licenseFilter]
       : customLicenses;
   }, [customLicenses, licenseFilter]);
+  // Labels — the second organisational facet. Ids, not names, because the blob
+  // outlives a rename; the bounds check below drops ids whose label was deleted.
+  const [labelFilter, setLabelFilter] = useState<string[]>(() =>
+    Array.isArray(saved?.labelFilter) ? saved!.labelFilter.filter((x) => typeof x === "string") : [],
+  );
+  const [labelMatch, setLabelMatch] = useState<"any" | "all">(
+    saved?.labelMatch === "all" ? "all" : "any",
+  );
+  const [labelMissing, setLabelMissing] = useState<boolean>(saved?.labelMissing === true);
+
+  // The global label vocabulary. Fetched once app-wide, so this is a cache hit
+  // for every pane after the first.
+  const { labels: allLabels, byId: labelsById } = useLabels();
+  const { data: labelCounts } = useQuery({
+    queryKey: ["label-counts", datasetId],
+    queryFn: () => labelsApi.counts(datasetId!),
+    enabled: !!datasetId && allLabels.length > 0,
+    staleTime: 30_000,
+  });
+
+  // Restore-time bounds check, the `licenseFilter` precedent above: a persisted
+  // id whose label has since been deleted must be dropped once the vocabulary
+  // loads, or the grid silently shows zero images with no chip explaining why.
+  // Runs only after the vocabulary has actually arrived — an empty `allLabels`
+  // during the first fetch would otherwise clear every restored filter.
+  const labelBoundsChecked = useRef(false);
+  useEffect(() => {
+    if (labelBoundsChecked.current || allLabels.length === 0) return;
+    labelBoundsChecked.current = true;
+    setLabelFilter((prev) => {
+      const kept = prev.filter((id) => labelsById.has(id));
+      if (kept.length === prev.length) return prev;
+      resetPageRef.current();
+      return kept;
+    });
+  }, [allLabels, labelsById]);
+
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
   );
@@ -287,8 +327,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -426,11 +466,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -438,11 +478,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
         );
       } catch {}
     };
@@ -590,11 +630,14 @@ export default function GalleryPage() {
       licenseFilter && licenseFilter !== MISSING_LICENSE
         ? JSON.stringify([licenseFilter])
         : undefined,
-  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]);
+    label_missing: labelMissing ? true : undefined,
+    label_filter: labelFilter.length ? JSON.stringify(labelFilter) : undefined,
+    label_match: labelFilter.length > 1 ? labelMatch : undefined,
+  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]);
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]
   );
 
   const { data: images = [], isLoading, isPlaceholderData, refetch } = useQuery({
@@ -620,7 +663,7 @@ export default function GalleryPage() {
   // full list key. Paging and sort are absent on purpose — neither changes how
   // many images match.
   const { data: totalCount, isPlaceholderData: countIsStale } = useQuery({
-    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, frameVideoId],
+    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
     queryFn: () => imagesApi.count(filterParams).then((r) => r.count),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,
@@ -1158,6 +1201,10 @@ export default function GalleryPage() {
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
 
   const resetPage = () => { setPage(1); dropScrollRestore(); };
+  // The label bounds-check effect near the top of the component needs to reset
+  // paging when it drops a stale id, and `resetPage` is declared here. A ref
+  // bridges the two without reordering several hundred lines.
+  resetPageRef.current = resetPage;
 
   const handleResetFilters = () => {
     if (datasetId) localStorage.removeItem(`gallery-state-${datasetId}`);
@@ -1166,6 +1213,9 @@ export default function GalleryPage() {
     setCaptionedFilter(getGalleryDefaultCaptionFilter());
     setQualityFilter(getGalleryDefaultQualityFilter() as QualityFilter);
     setLicenseFilter("");
+    setLabelFilter([]);
+    setLabelMatch("any");
+    setLabelMissing(false);
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
     // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
@@ -1584,6 +1634,88 @@ export default function GalleryPage() {
             >×</button>
           )}
         </div>
+
+        {/* Label chips — the second organisational facet. Hidden entirely when
+            the vocabulary is empty, so the filter bar gains nothing until
+            someone has actually defined a label in Settings. */}
+        {allLabels.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Label filters">
+            {allLabels.map((label) => {
+              const on = labelFilter.includes(label.id);
+              const count = labelCounts?.[label.id] ?? 0;
+              return (
+                <button
+                  key={label.id}
+                  aria-pressed={on}
+                  title={`${count} image${count === 1 ? "" : "s"} in this dataset`}
+                  onClick={() => {
+                    // Selecting a label and "unlabelled" at once is
+                    // unsatisfiable — the backend 400s on it — so one clears
+                    // the other.
+                    setLabelMissing(false);
+                    setLabelFilter((prev) =>
+                      prev.includes(label.id) ? prev.filter((id) => id !== label.id) : [...prev, label.id],
+                    );
+                    resetPage();
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12,
+                    cursor: "pointer", whiteSpace: "nowrap",
+                    background: on ? `${label.color}33` : "var(--surface-2)",
+                    border: `1px solid ${on ? label.color : "var(--line)"}`,
+                    color: "var(--fg)",
+                  }}
+                >
+                  <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: label.color }} />
+                  {label.name}
+                  <span style={{ color: "var(--fg-mute)", fontSize: 11 }}>{count}</span>
+                </button>
+              );
+            })}
+
+            {/* Any/All only appears once it can mean something. */}
+            {labelFilter.length > 1 && (
+              <span style={{ display: "inline-flex", gap: 2 }} role="group" aria-label="Label match mode">
+                {(["any", "all"] as const).map((m) => (
+                  <button
+                    key={m}
+                    aria-pressed={labelMatch === m}
+                    onClick={() => { setLabelMatch(m); resetPage(); }}
+                    style={{
+                      padding: "2px 7px", fontSize: 11.5, borderRadius: "var(--r)", cursor: "pointer",
+                      background: labelMatch === m ? "var(--accent)" : "var(--surface-2)",
+                      color: labelMatch === m ? "#fff" : "var(--fg-mute)",
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    {m === "any" ? "Any" : "All"}
+                  </button>
+                ))}
+              </span>
+            )}
+
+            <button
+              aria-pressed={labelMissing}
+              title="Only images carrying no label at all"
+              onClick={() => {
+                setLabelMissing((prev) => {
+                  if (!prev) setLabelFilter([]);
+                  return !prev;
+                });
+                resetPage();
+              }}
+              style={{
+                padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12, cursor: "pointer",
+                background: labelMissing ? "var(--accent)" : "var(--surface-2)",
+                color: labelMissing ? "#fff" : "var(--fg-mute)",
+                border: "1px solid var(--line)", whiteSpace: "nowrap",
+              }}
+            >
+              Unlabelled
+            </button>
+          </div>
+        )}
 
         {/* Multi-score filters */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>

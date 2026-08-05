@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw, Tags } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -12,6 +12,7 @@ import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
 import { imagesApi, type ProvenanceEdit } from "../../api/images";
+import { labelsApi } from "../../api/labels";
 import { datasetsApi } from "../../api/datasets";
 import { captioningApi, type DelimiterMode } from "../../api/captioning";
 import { tagConsolidationApi } from "../../api/tagConsolidation";
@@ -20,9 +21,11 @@ import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
+import LabelsBulkModal from "./LabelsBulkModal";
 import SetProvenanceModal from "./SetProvenanceModal";
-import { invalidateProvenanceScope } from "../../constants/queryKeys";
+import { invalidateLabelScope, invalidateProvenanceScope } from "../../constants/queryKeys";
 import { useCustomLicenses } from "../../hooks/useCustomLicenses";
+import { useLabels } from "../../hooks/useLabels";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
 import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
@@ -55,6 +58,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   // Offered by the Set source/license modal so an in-use free-text license is a
   // pick rather than a retype.
   const customLicenses = useCustomLicenses(datasetId);
+  const { labels } = useLabels();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
   const [showScore, setShowScore] = useState(false);
@@ -85,6 +89,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [moveSubfolderTarget, setMoveSubfolderTarget] = useState("");
   const [showMoveDataset, setShowMoveDataset] = useState(false);
   const [showProvenance, setShowProvenance] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [showCopyDataset, setShowCopyDataset] = useState(false);
   const [showDetect, setShowDetect] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
@@ -274,6 +279,23 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       toast.success(`Updated ${data.updated} image${data.updated !== 1 ? "s" : ""}`);
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Setting source/license failed")),
+  });
+
+  const labelsMutation = useMutation({
+    mutationFn: (edit: { add: string[]; remove: string[] }) =>
+      labelsApi.assign({ image_ids: ids, add: edit.add, remove: edit.remove }),
+    onSuccess: (data) => {
+      // The whole label scope: `usage_count` on every vocabulary row moved, and
+      // the selection can span datasets.
+      invalidateLabelScope(qc, datasetId);
+      setShowLabels(false);
+      clear();
+      toast.success(
+        `Labels updated on ${data.images} image${data.images !== 1 ? "s" : ""}` +
+        ` (+${data.added} / −${data.removed})`,
+      );
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Updating labels failed")),
   });
 
   const moveDatasetMutation = useMutation({
@@ -523,6 +545,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowLabels(true)}
+          title="Add or remove labels across the selection"
+        >
+          <Tags size={14} /> Labels
         </button>
         <button
           className="btn-ghost btn-sm flex items-center gap-1.5"
@@ -1146,6 +1175,18 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           danger
           onConfirm={() => deleteMutation.mutate()}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Bulk labels modal */}
+      {showLabels && (
+        <LabelsBulkModal
+          count={count}
+          labels={labels}
+          isPending={labelsMutation.isPending}
+          onConfirm={(edit) => labelsMutation.mutate(edit)}
+          onClose={() => setShowLabels(false)}
+          sourceInfo={datasetBreakdown}
         />
       )}
 

@@ -272,6 +272,27 @@ def parse_license_filter_param(value: str) -> list[str] | None:
     return normalize_license_filter(parsed)
 
 
+def parse_id_list_param(value: str | None, param_name: str) -> list[str] | None:
+    """Parse a JSON-array-of-ids query param into a list. None means "no filter".
+
+    The same wire encoding as ``license_filter`` (a JSON array in a string, so the
+    three image endpoints and the export preview all agree), but deliberately
+    *not* ``parse_license_filter_param`` — that one also runs license
+    normalization, which has no meaning for an opaque uuid. Entries are returned
+    verbatim, blanks included: a blank id is meaningless and the caller rejects it
+    with a 400 rather than silently narrowing the list.
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(400, f"{param_name} must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(400, f"{param_name} must be a JSON array of strings")
+    return parsed or None
+
+
 def slugify_filename(name: str) -> str:
     """Convert an arbitrary name into a safe filename stem (lowercase, underscores, max 200 chars)."""
     s = name.lower().strip()

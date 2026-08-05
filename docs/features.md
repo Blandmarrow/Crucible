@@ -12,6 +12,7 @@ The order images travel through the app:
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
 | 1 | Hold videos as sources and extract frames from them, shot by shot | [Videos & Frame Extraction](video.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
+| 2 | Mark images with a shared vocabulary of labels — a second axis alongside subfolders | [Labels](labels.md) |
 | 3 | Score for aesthetics, technical quality, watermarks, NSFW, and style | [Quality Scoring](scoring.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
@@ -37,7 +38,7 @@ The order images travel through the app:
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
 | File Browser | [workspace.md](workspace.md#file-browser) |
 | Logs | [workspace.md](workspace.md#logs) |
-| Settings | [settings.md](settings.md) |
+| Settings | [settings.md](settings.md) · [labels.md](labels.md) |
 
 ## Everything else
 

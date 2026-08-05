@@ -3,12 +3,14 @@ import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
+import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { imagesApi } from "../api/images";
+import { labelsApi } from "../api/labels";
 import { videosApi } from "../api/videos";
 import { captionsApi } from "../api/captions";
 import { formatDuration } from "../utils/duration";
@@ -23,6 +25,7 @@ import { useSelectionStore } from "../store/selectionStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
+import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -38,10 +41,12 @@ import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
-import type { Detection } from "../types";
+import type { Detection, ImageDetail } from "../types";
 import { injectNavId, navPageParams, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
+import { isTextEntryTarget } from "../utils/keyboard";
+import { useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
-import { invalidateDatasetContentScope } from "../constants/queryKeys";
+import { invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
 interface Wd14ModelInfo { id: string; name: string; }
@@ -388,10 +393,7 @@ export default function ImageDetailPage() {
     const handleKey = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
       if (showDeleteConfirm || formModalOpen) return;
-      const target = e.target as HTMLElement;
-      const inTextField =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
-        target.tagName === "SELECT" || target.isContentEditable;
+      const inTextField = isTextEntryTarget(e);
       // Escape exits annotation modes — but not while typing in a text field.
       // The draw-box label input has its own Escape handler (clears the pending
       // box only), and the caption editor's Escape must be left to the browser.
@@ -423,8 +425,7 @@ export default function ImageDetailPage() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Delete") return;
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (isTextEntryTarget(e)) return;
       if (anyModalOpen) return;
       e.preventDefault();
       setShowDeleteConfirm(true);
@@ -443,6 +444,64 @@ export default function ImageDetailPage() {
     // only to add the 404 short-circuit, not to retry more.
     retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
+
+  // ---- Label hotkeys -------------------------------------------------------
+  // A single [a-z0-9] key toggles that label on the open image.
+  //
+  // Conflict prevention is **structural, not a blocklist**: the vocabulary's
+  // hotkey charset cannot express Escape, Space, ArrowLeft/Right or Delete — the
+  // five keys the two effects above bind — so there is no reserved-key set to
+  // keep in step, and none can go stale when a sixth binding is added. Adding
+  // `RESERVED = new Set([...])` here is the version that rots.
+  const { byHotkey } = useLabels();
+  const labelHotkeysEnabled = useUiPrefsStore((s) => s.labelHotkeysEnabled);
+
+  const labelToggle = useMutation({
+    mutationFn: (body: { add?: string[]; remove?: string[] }) =>
+      labelsApi.assign({ image_ids: [imageId!], ...body }),
+    onSuccess: () => invalidateLabelScope(qc, datasetId),
+    onError: (err) => toast.error(apiErrorDetail(err, "Could not update labels")),
+  });
+
+  const currentLabelIds = image?.label_ids;
+  useEffect(() => {
+    if (!labelHotkeysEnabled || !imageId) return;
+    const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
+    function onKeyDown(e: KeyboardEvent) {
+      if (paneCtx && paneCtx.paneId !== activePaneId) return;
+      if (anyModalOpen) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      // The one guard the two effects above do not need and this one does: a
+      // held key would otherwise fire dozens of assigns.
+      if (e.repeat) return;
+      // Load-bearing: the caption editor is a <textarea> on this page, so
+      // without this, typing "a" into a caption would label the image.
+      if (isTextEntryTarget(e)) return;
+      const label = byHotkey.get(e.key.toLowerCase());
+      if (!label) return;
+      e.preventDefault();
+      // Toggle, so a mistyped key is undone with the same key.
+      const attached = (currentLabelIds ?? []).includes(label.id);
+      labelToggle.mutate(attached ? { remove: [label.id] } : { add: [label.id] });
+      // Optimistic, so the chip flips before the refetch lands.
+      qc.setQueryData(["image", imageId], (prev: ImageDetail | undefined) =>
+        prev
+          ? {
+              ...prev,
+              label_ids: attached
+                ? (prev.label_ids ?? []).filter((id) => id !== label.id)
+                : [...(prev.label_ids ?? []), label.id],
+            }
+          : prev,
+      );
+      toast(`${attached ? "−" : "+"} ${label.name}`);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    labelHotkeysEnabled, imageId, byHotkey, currentLabelIds, labelToggle, qc,
+    showDetectModal, showDeleteConfirm, formModalOpen, paneCtx, activePaneId,
+  ]);
 
   // Unconditional here, unlike the gallery card: the detail page is where a user
   // goes *to* read this score, so the block renders regardless of the gallery
@@ -1786,6 +1845,19 @@ export default function ImageDetailPage() {
             onCropFromDetections={onCropFromDetections}
             refineTargetId={refineTarget?.id ?? null}
             busy={manualRunning || refineRunning}
+          />
+
+          {/* Labels — remounted on navigation like ProvenancePanel below, so the
+              "add" popover never carries a pending choice across an arrow-key
+              navigation. The key is **prefixed**: `ProvenancePanel` is a sibling
+              in this same children array and already uses a bare `image.id`, and
+              two siblings sharing one key is a reconciliation error that renders
+              the panel twice rather than warning about it. */}
+          <LabelsPanel
+            key={`labels-${image.id}`}
+            imageId={image.id}
+            datasetId={datasetId ?? ""}
+            labelIds={image.label_ids ?? []}
           />
 
           {/* AI generation metadata */}

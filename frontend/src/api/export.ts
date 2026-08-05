@@ -24,6 +24,15 @@ interface ExportFilters {
   exclude_unlicensed?: boolean;
   /** Drop CC BY-ND and friends — an export ships resized/cropped copies. */
   exclude_no_derivatives?: boolean;
+  /** Label ids the export is about. Like `subfolders`, this **narrows** the
+   *  export rather than joining the exclusion tally: it says which images the
+   *  export covers, not which of a fixed population to drop. So `image_count`
+   *  shrinks and no "excluded by label" counter exists. Named `label_filter`,
+   *  not `labels` — `label` below is the job's display name. */
+  label_filter?: string[] | null;
+  label_match?: "any" | "all";
+  /** true = only images carrying no label at all. */
+  label_missing?: boolean;
   label?: string;
 }
 
@@ -107,6 +116,9 @@ export const exportApi = {
       commercial_only?: boolean;
       exclude_unlicensed?: boolean;
       exclude_no_derivatives?: boolean;
+      label_filter?: string[] | null;
+      label_match?: "any" | "all";
+      label_missing?: boolean;
     },
   ) =>
     client
@@ -127,6 +139,10 @@ export const exportApi = {
           ...(filters?.commercial_only && { commercial_only: true }),
           ...(filters?.exclude_unlicensed && { exclude_unlicensed: true }),
           ...(filters?.exclude_no_derivatives && { exclude_no_derivatives: true }),
+          // JSON array, the same encoding as license_filter above.
+          ...(filters?.label_filter?.length && { label_filter: JSON.stringify(filters.label_filter) }),
+          ...(filters?.label_filter && filters.label_filter.length > 1 && filters?.label_match === "all" && { label_match: "all" }),
+          ...(filters?.label_missing && { label_missing: true }),
         },
       })
       .then((r) => r.data),

@@ -83,3 +83,27 @@ export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string
   // matches nothing, the same no-op as the loop above.
   qc.resetQueries({ queryKey: ["gallery-nav", datasetId] });
 }
+
+/**
+ * Every query whose data depends on which labels are attached to which images.
+ *
+ * There are four writers — the Settings vocabulary panel, the detail-page panel,
+ * the detail-view hotkey and the gallery's bulk toolbar — which is exactly the
+ * drift this file exists to prevent. A label write moves the vocabulary itself
+ * (`["labels"]`, including every `usage_count`), the grid rows that carry the
+ * dots (`["images", datasetId]`), the open detail pane (`["image"]`), the chip
+ * badges (`["label-counts", datasetId]`) and the Export preview, whose count
+ * narrows with the label filter.
+ *
+ * `datasetId` may be undefined: `["images", undefined]` matches nothing, the
+ * same no-op the other scope helpers rely on. A vocabulary edit made from
+ * Settings has no dataset in scope, and passing none is correct there — the
+ * `["labels"]` and `["image"]` invalidations still land.
+ */
+export function invalidateLabelScope(qc: QueryClient, datasetId?: string) {
+  qc.invalidateQueries({ queryKey: ["labels"] });
+  qc.invalidateQueries({ queryKey: ["image"] });
+  qc.invalidateQueries({ queryKey: ["export-preview"] });
+  qc.invalidateQueries({ queryKey: ["images", datasetId] });
+  qc.invalidateQueries({ queryKey: ["label-counts", datasetId] });
+}

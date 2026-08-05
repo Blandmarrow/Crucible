@@ -36,8 +36,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
 from backend.models.image import Image
+from backend.models.label import Label
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
+from backend.services.label_service import labels_by_image, live_label_ids, set_labels
 from backend.services.threshold_service import get_thresholds
 from backend.utils import chunked, contained_path, within_datasets_dir
 
@@ -378,6 +380,10 @@ async def create_snapshot(
     )
     images = result.scalars().all()
 
+    # Labels for the whole dataset in one query. A per-image lookup inside the
+    # state loop below would be N+1 over a 20k-image dataset.
+    labels_by_id = await labels_by_image(db, [img.id for img in images])
+
     version = DatasetVersion(
         dataset_id=dataset_id,
         branch_id=branch_id,
@@ -445,6 +451,9 @@ async def create_snapshot(
             source_video_id=img.source_video_id,
             source_timestamp_ms=img.source_timestamp_ms,
             source_shot_index=img.source_shot_index,
+            # Never `or None` — the column is NOT NULL, and an unlabelled image
+            # snapshots as `[]`, which is what it means.
+            label_ids=labels_by_id.get(img.id, []),
             is_present=True,
         ))
 
@@ -522,6 +531,13 @@ _DIFF_COLS = (
     VersionImageState.source_meta,
     VersionImageState.sort_order,
     VersionImageState.processing_history,
+    # Mutable state (attach/detach), so diffed as well as mirrored — the
+    # immutable-lineage carve-out immediately below is not licence to skip it.
+    # Because the *comparison* runs on ids, a label rename produces no diff at
+    # all, which is the correct answer: the concept did not change. The ids are
+    # resolved to names once, after the modified list is built, so `DiffModal`
+    # shows names rather than uuids.
+    VersionImageState.label_ids,
     # Deliberately absent: source_video_id / source_timestamp_ms /
     # source_shot_index. Frame lineage is immutable for the life of an image —
     # extraction writes it once and nothing else ever changes it — so it can
@@ -546,7 +562,7 @@ _DIFF_COMPARE_FIELDS = (
     "style_similarity_score", "scores_stale",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
-    "source_meta", "sort_order",
+    "source_meta", "sort_order", "label_ids",
 )
 
 
@@ -624,6 +640,26 @@ async def diff_versions(
             })
         else:
             unchanged_count += 1
+
+    # Resolve label ids to names once for the whole diff, so `DiffModal` shows
+    # "fx, reject" rather than two uuids. Joined server-side to a comma-separated
+    # string because the modal renders `Object.entries(changes)` generically and a
+    # raw array stringifies badly; an id with no row renders "(deleted)".
+    referenced: set[str] = set()
+    for entry in modified:
+        for side in ("from", "to"):
+            referenced.update(entry["changes"].get("label_ids", {}).get(side) or [])
+    if referenced:
+        names = dict((await db.execute(
+            select(Label.id, Label.name).where(Label.id.in_(sorted(referenced)))
+        )).all())
+        for entry in modified:
+            change = entry["changes"].get("label_ids")
+            if not change:
+                continue
+            for side in ("from", "to"):
+                ids = change.get(side) or []
+                change[side] = ", ".join(names.get(i, "(deleted)") for i in ids)
 
     return {
         "added": added,
@@ -970,6 +1006,46 @@ async def restore_snapshot(
             img.height = state.height
         if state.file_size_bytes:
             img.file_size_bytes = state.file_size_bytes
+
+    # Labels, at the end of Pass 2c and before the commit below — the DB→filesystem
+    # boundary; everything past it is irreversible I/O.
+    #
+    # Keyed on `p.img.id`, **not** `p.state.image_id`: Pass 0b can fork a fresh
+    # uuid or adopt a different row entirely, and writing the snapshot's id would
+    # label an image in another dataset, or nothing at all. Plans with no `img`
+    # (`skip_recreate`) are skipped.
+    #
+    # There is no FK behind `state.label_ids`, so ids are resolved against the
+    # live vocabulary; a label deleted since the snapshot is dropped with one
+    # aggregate warning rather than resurrected.
+    #
+    # A restore targeting a *different* dataset needs no id remapping at all —
+    # the direct payoff of the vocabulary being global rather than per-dataset.
+    wanted_labels: dict[str, list[str]] = {}
+    snapshot_label_ids: set[str] = set()
+    for p in plans:
+        if p.img is None:
+            continue
+        ids = list(p.state.label_ids or [])
+        snapshot_label_ids.update(ids)
+        wanted_labels[p.img.id] = ids
+    if wanted_labels:
+        live_labels = await live_label_ids(db, snapshot_label_ids)
+        dropped = snapshot_label_ids - live_labels
+        if dropped:
+            logger.warning(
+                "restore: %d snapshotted assignment(s) name %d label(s) deleted "
+                "since the snapshot; dropping them",
+                sum(1 for ids in wanted_labels.values() for i in ids if i in dropped),
+                len(dropped),
+            )
+        # Authoritative replace, not merge: a restore means "the dataset looked
+        # like this", so a label added after the snapshot disappears exactly as a
+        # caption edit does. Only ids in `wanted_labels` are touched, so
+        # `handle_extra_images="keep"` images keep theirs.
+        await set_labels(db, {
+            iid: [i for i in ids if i in live_labels] for iid, ids in wanted_labels.items()
+        })
 
     await db.commit()
 

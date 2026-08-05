@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -126,6 +126,27 @@ class VersionImageState(Base):
     source_video_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     source_timestamp_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_shot_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Label mirror. Labels hang off `image_labels`, not off a column on `Image`,
+    # but the rule is the same one: a restore rebuilds the dataset's state, so an
+    # unmirrored attachment is silently dropped by it.
+    #
+    # **Ids, not names.** A *rename* means "same concept, new spelling" — with
+    # ids a restore reattaches the concept under its current name for free, where
+    # names would name a label that no longer exists. A *delete* is a deliberate
+    # removal of a concept, and with ids a restore honestly drops the assignment
+    # rather than resurrecting it. Storing both is worse than either: a rename
+    # would flip the blob for every image at once and produce a full-dataset
+    # "modified" diff for a vocabulary edit that changed no image.
+    #
+    # NOT NULL with a `'[]'` server_default rather than nullable, so pre- and
+    # post-migration rows do not differ on a NULL/`[]` split. Stored **sorted**,
+    # because the diff compares with `!=` and an unsorted list would report a
+    # reorder as a change. No FK, matching `image_id`/`source_video_id` above:
+    # a snapshot must survive the deletion of what it names.
+    label_ids: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default=text("'[]'")
+    )
 
     is_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

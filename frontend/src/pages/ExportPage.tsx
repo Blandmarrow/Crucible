@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useLabels } from "../hooks/useLabels";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
@@ -79,6 +80,9 @@ interface ExportFilters {
   commercialOnly: boolean;
   excludeUnlicensed: boolean;
   excludeNoDerivatives: boolean;
+  labelFilter: string[];
+  labelMatch: "any" | "all";
+  labelMissing: boolean;
 }
 
 const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
@@ -96,6 +100,9 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   commercialOnly: false,
   excludeUnlicensed: false,
   excludeNoDerivatives: false,
+  labelFilter: [],
+  labelMatch: "any",
+  labelMissing: false,
 };
 
 export default function ExportPage() {
@@ -125,6 +132,11 @@ export default function ExportPage() {
   const [aestheticMin, setAestheticMin] = useState(filters.aestheticMin);
   const [filterCaptioned, setFilterCaptioned] = useState(filters.filterCaptioned);
   const [excludeFlags, setExcludeFlags] = useState<Set<string>>(new Set(filters.excludeFlags));
+  // Labels. Ids, not names, so a rename in Settings does not silently void a
+  // saved export preset; the bounds check below drops ids whose label is gone.
+  const [labelFilter, setLabelFilter] = useState<Set<string>>(new Set(filters.labelFilter));
+  const [labelMatch, setLabelMatch] = useState<"any" | "all">(filters.labelMatch === "all" ? "all" : "any");
+  const [labelMissing, setLabelMissing] = useState(filters.labelMissing);
   // Bounds-checked the way GalleryPage checks its own restored filter: this comes
   // back from localStorage, possibly written by a build whose vocabulary has since
   // changed, and an unknown id silently filters the export to zero images with no
@@ -169,6 +181,24 @@ export default function ExportPage() {
     enabled: !!datasetId,
   });
 
+  // The global label vocabulary, for the chip group below. `exportLabels` is the
+  // same list `useLabels` hands the gallery — one cache entry app-wide.
+  const { labels: exportLabels, byId: labelsById } = useLabels();
+
+  // Restore-time bounds check, mirroring `licenseFilter` above and GalleryPage's:
+  // a persisted preset can name a label deleted since it was saved, and an
+  // unknown id would silently narrow the export to zero images with no chip
+  // showing why. Gated on the vocabulary having actually arrived.
+  const labelBoundsChecked = useRef(false);
+  useEffect(() => {
+    if (labelBoundsChecked.current || exportLabels.length === 0) return;
+    labelBoundsChecked.current = true;
+    setLabelFilter((prev) => {
+      const kept = new Set([...prev].filter((id) => labelsById.has(id)));
+      return kept.size === prev.size ? prev : kept;
+    });
+  }, [exportLabels, labelsById]);
+
   const { data: detectionLabels = [] } = useQuery({
     queryKey: ["detection-labels", datasetId],
     queryFn: () => detectionApi.labels(datasetId!),
@@ -190,6 +220,9 @@ export default function ExportPage() {
     commercial_only: false,
     exclude_unlicensed: false,
     exclude_no_derivatives: false,
+    label_filter: null as string[] | null,
+    label_match: "any" as "any" | "all",
+    label_missing: false,
   });
 
   useEffect(() => {
@@ -208,13 +241,16 @@ export default function ExportPage() {
         commercial_only: commercialOnly,
         exclude_unlicensed: excludeUnlicensed,
         exclude_no_derivatives: excludeNoDerivatives,
+        label_filter: labelFilter.size > 0 ? [...labelFilter] : null,
+        label_match: labelMatch,
+        label_missing: labelMissing,
       });
     }, 350);
     // Cancel, not flush: this timer only drives the preview query, which should
     // not fire for a state the user has already navigated away from. Persistence
     // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives, labelFilter, labelMatch, labelMissing]);
 
   // Persist "filters" config — per-dataset, debounced.
   useDebouncedPersist(
@@ -231,6 +267,9 @@ export default function ExportPage() {
       commercialOnly,
       excludeUnlicensed,
       excludeNoDerivatives,
+      labelFilter: [...labelFilter],
+      labelMatch,
+      labelMissing,
     },
   );
 
@@ -263,6 +302,9 @@ export default function ExportPage() {
     setCommercialOnly(next.commercialOnly);
     setExcludeUnlicensed(next.excludeUnlicensed);
     setExcludeNoDerivatives(next.excludeNoDerivatives);
+    setLabelFilter(new Set(next.labelFilter));
+    setLabelMatch(next.labelMatch === "all" ? "all" : "any");
+    setLabelMissing(next.labelMissing);
   }, [datasetId]);
 
   const { data: preview } = useQuery({
@@ -290,6 +332,9 @@ export default function ExportPage() {
     commercial_only: commercialOnly,
     exclude_unlicensed: excludeUnlicensed,
     exclude_no_derivatives: excludeNoDerivatives,
+    label_filter: labelFilter.size > 0 ? [...labelFilter] : null,
+    label_match: labelMatch,
+    label_missing: labelMissing,
   });
 
   const exportMutation = useMutation({
@@ -483,6 +528,66 @@ export default function ExportPage() {
                   <input type="checkbox" className="checkbox" checked={filterCaptioned} onChange={(e) => setFilterCaptioned(e.target.checked)} />
                   <span style={{ fontSize: 12.5 }}>Has caption</span>
                 </label>
+
+                {/* Labels — the second organisational facet. Unlike everything
+                    else in this panel, a label filter **narrows** the export the
+                    way "Limit to subfolders" does rather than joining the
+                    exclusion tally: it says which images the export is about.
+                    Hidden entirely until a vocabulary exists. */}
+                {exportLabels.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12.5, marginBottom: 5 }}>
+                      Labels{labelFilter.size === 0 && !labelMissing ? " — none selected, all images" : ""}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }} role="group" aria-label="Label filters">
+                      {exportLabels.map((l) => (
+                        <button
+                          key={l.id}
+                          className={`btn sm${labelFilter.has(l.id) ? " primary" : ""}`}
+                          aria-pressed={labelFilter.has(l.id)}
+                          onClick={() => {
+                            setLabelMissing(false);
+                            setLabelFilter((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(l.id)) next.delete(l.id); else next.add(l.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          <span aria-hidden style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: l.color, marginRight: 5 }} />
+                          {l.name}
+                        </button>
+                      ))}
+                      {labelFilter.size > 1 && (
+                        <span style={{ display: "inline-flex", gap: 3 }} role="group" aria-label="Label match mode">
+                          {(["any", "all"] as const).map((m) => (
+                            <button
+                              key={m}
+                              className={`btn sm${labelMatch === m ? " primary" : ""}`}
+                              aria-pressed={labelMatch === m}
+                              onClick={() => setLabelMatch(m)}
+                            >
+                              {m === "any" ? "Any" : "All"}
+                            </button>
+                          ))}
+                        </span>
+                      )}
+                      <button
+                        className={`btn sm${labelMissing ? " primary" : ""}`}
+                        aria-pressed={labelMissing}
+                        title="Only images carrying no label at all"
+                        onClick={() => {
+                          setLabelMissing((prev) => {
+                            if (!prev) setLabelFilter(new Set());
+                            return !prev;
+                          });
+                        }}
+                      >
+                        Unlabelled only
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* License filters — operate on the effective license
                     (image value coalesced over the dataset default). */}

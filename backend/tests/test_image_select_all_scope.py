@@ -15,7 +15,7 @@ in a user's selection.
 """
 import json
 
-from backend.models import Image
+from backend.models import Image, ImageLabel, Label
 from backend.routers import images as images_router
 from backend.tests.conftest import API, api_env, run
 
@@ -32,8 +32,13 @@ def _mk(dataset_id: str, i: int, **kw) -> Image:
     )
 
 
-async def _seed(env, dataset_id: str) -> None:
-    """24 images spanning every filter the tests below exercise."""
+async def _seed(env, dataset_id: str) -> list[str]:
+    """24 images spanning every filter the tests below exercise.
+
+    Returns the two seeded label ids, because the label filter shapes name ids
+    rather than the literal strings every other filter uses — which is why
+    `filter_shapes()` is a function of them rather than a module constant.
+    """
     rows = []
     for i in range(24):
         rows.append(_mk(
@@ -48,9 +53,25 @@ async def _seed(env, dataset_id: str) -> None:
             license="CC-BY-4.0" if i % 3 == 1 else None,
             source_timestamp_ms=i * 100 if i % 5 else None,
         ))
+    # Names are dataset-scoped strings only so a scenario can seed two datasets:
+    # the vocabulary itself is global, and `labels.name` is unique app-wide.
+    labels = [
+        Label(name=f"fx-{dataset_id[:8]}", color="#ef4444"),
+        Label(name=f"reject-{dataset_id[:8]}", color="#6b7280"),
+    ]
     async with env.Session() as db:
         db.add_all(rows)
+        db.add_all(labels)
+        await db.flush()
+        # Every 3rd image is "fx"; every 6th carries both — enough for `all` to
+        # differ from `any`, and enough images to stay unlabelled for
+        # `label_missing`.
+        db.add_all(
+            [ImageLabel(image_id=r.id, label_id=labels[0].id) for r in rows[::3]]
+            + [ImageLabel(image_id=r.id, label_id=labels[1].id) for r in rows[::6]]
+        )
         await db.commit()
+        return [labels[0].id, labels[1].id]
 
 
 async def _page_all(env, params: dict) -> list[str]:
@@ -69,28 +90,36 @@ async def _page_all(env, params: dict) -> list[str]:
 
 # The filter shapes the count is checked against. Each is a dict merged over
 # `dataset_id`; the names are only there to label a failure.
-FILTER_SHAPES = {
-    "unfiltered": {},
-    "captioned": {"captioned": "true"},
-    "uncaptioned": {"captioned": "false"},
-    "subfolder": {"subfolder": "sub"},
-    "subfolder_leaf": {"subfolder": "sub/deep"},
-    "search": {"search": "cat"},
-    "license_missing": {"license_missing": "true"},
-    "license_filter": {"license_filter": json.dumps(["CC-BY-4.0"])},
-    "score_filters": {"score_filters": json.dumps([{"field": "aesthetic_score", "min": 5}])},
-    "combined": {"captioned": "true", "subfolder": "sub/deep", "search": "cat"},
-    "matches_nothing": {"search": "no-such-image"},
-}
+#
+# A function rather than a constant because the label shapes name seeded ids,
+# which do not exist until the scenario has run `_seed`.
+def filter_shapes(label_ids: list[str]) -> dict[str, dict]:
+    return {
+        "unfiltered": {},
+        "captioned": {"captioned": "true"},
+        "uncaptioned": {"captioned": "false"},
+        "subfolder": {"subfolder": "sub"},
+        "subfolder_leaf": {"subfolder": "sub/deep"},
+        "search": {"search": "cat"},
+        "license_missing": {"license_missing": "true"},
+        "license_filter": {"license_filter": json.dumps(["CC-BY-4.0"])},
+        "score_filters": {"score_filters": json.dumps([{"field": "aesthetic_score", "min": 5}])},
+        "label_any": {"label_filter": json.dumps(label_ids)},
+        "label_all": {"label_filter": json.dumps(label_ids), "label_match": "all"},
+        "label_missing": {"label_missing": "true"},
+        "combined": {"captioned": "true", "subfolder": "sub/deep", "search": "cat"},
+        "matches_nothing": {"search": "no-such-image"},
+    }
 
 
 def test_count_matches_the_grid_paged_to_exhaustion(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
-            await _seed(env, ds["id"])
+            label_ids = await _seed(env, ds["id"])
+            shapes = filter_shapes(label_ids)
 
-            for name, extra in FILTER_SHAPES.items():
+            for name, extra in shapes.items():
                 params = {"dataset_id": ds["id"], **extra}
                 expected = await _page_all(env, params)
                 r = await env.client.get(f"{API}/images/count", params=params)
@@ -100,7 +129,7 @@ def test_count_matches_the_grid_paged_to_exhaustion(tmp_path):
             # The shapes have to actually discriminate, or every assertion above
             # is trivially true against the same 24 rows.
             counts = {}
-            for name, extra in FILTER_SHAPES.items():
+            for name, extra in shapes.items():
                 r = await env.client.get(f"{API}/images/count", params={"dataset_id": ds["id"], **extra})
                 counts[name] = r.json()["count"]
             assert counts["unfiltered"] == 24
@@ -198,6 +227,12 @@ def test_bad_input_is_rejected_identically_by_all_three(tmp_path):
                 # A blank entry in the license list is a 400 rather than a silent
                 # narrowing — `license_missing` is how "no license" is expressed.
                 {"license_filter": json.dumps(["CC-BY-4.0", ""])},
+                # The four label shapes, for the same reason: rejected by the
+                # shared filter builder, so all three endpoints answer 400.
+                {"label_filter": json.dumps(["some-id", ""])},
+                {"label_match": "either"},
+                {"label_filter": "not-json"},
+                {"label_missing": "true", "label_filter": json.dumps(["some-id"])},
             ]
             for path in ("/images/", "/images/count", "/images/ids"):
                 for extra in bad:

@@ -14,9 +14,16 @@ import { labelsApi, type Label } from "../api/labels";
  *
  * `byHotkey` is keyed on the lowercase single character the backend stores, so
  * the detail-view handler can look up `e.key.toLowerCase()` directly.
+ *
+ * `isLoaded` is what separates "still fetching" from "the vocabulary is genuinely
+ * empty", which `labels` alone collapses into `[]`. Every consumer that drops
+ * unknown ids from a restored filter has to know the difference: reconciling
+ * against a not-yet-arrived vocabulary clears every filter, and refusing to
+ * reconcile until one label exists leaves a stale id filtering the grid to zero
+ * after the last label is deleted.
  */
 export function useLabels() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isSuccess: isLoaded } = useQuery({
     queryKey: ["labels"],
     queryFn: labelsApi.list,
     staleTime: 5 * 60_000,
@@ -36,5 +43,5 @@ export function useLabels() {
     return map;
   }, [labels]);
 
-  return { labels, byId, byHotkey, isLoading };
+  return { labels, byId, byHotkey, isLoading, isLoaded };
 }

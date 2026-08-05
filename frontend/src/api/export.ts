@@ -36,6 +36,29 @@ interface ExportFilters {
   label?: string;
 }
 
+/** The filter params `GET /export/preview/{id}` understands. Named rather than
+ *  inlined so `ExportPage` can hold exactly this shape in state — the preview and
+ *  the export POST bodies must be built from one encoding of the label trio, not
+ *  two (see `labelParams` there). */
+export interface ExportPreviewFilters {
+  aesthetic_min?: number | null;
+  captioned_only?: boolean;
+  exclude_flags?: string;
+  style_sim_min?: number | null;
+  subfolders?: string[] | null;
+  export_masks?: boolean;
+  mask_labels?: string[] | null;
+  mask_exclude_labels?: string[] | null;
+  mask_missing?: "white" | "skip";
+  license_filter?: string[] | null;
+  commercial_only?: boolean;
+  exclude_unlicensed?: boolean;
+  exclude_no_derivatives?: boolean;
+  label_filter?: string[] | null;
+  label_match?: "any" | "all";
+  label_missing?: boolean;
+}
+
 export interface ExportPreview {
   image_count: number;
   will_export: number;
@@ -100,27 +123,7 @@ export const exportApi = {
   } & ExportFilters) =>
     client.post<{ job_id: string }>("/export/plain", params).then((r) => r.data),
 
-  preview: (
-    dataset_id: string,
-    filters?: {
-      aesthetic_min?: number | null;
-      captioned_only?: boolean;
-      exclude_flags?: string;
-      style_sim_min?: number | null;
-      subfolders?: string[] | null;
-      export_masks?: boolean;
-      mask_labels?: string[] | null;
-      mask_exclude_labels?: string[] | null;
-      mask_missing?: "white" | "skip";
-      license_filter?: string[] | null;
-      commercial_only?: boolean;
-      exclude_unlicensed?: boolean;
-      exclude_no_derivatives?: boolean;
-      label_filter?: string[] | null;
-      label_match?: "any" | "all";
-      label_missing?: boolean;
-    },
-  ) =>
+  preview: (dataset_id: string, filters?: ExportPreviewFilters) =>
     client
       .get<ExportPreview>(`/export/preview/${dataset_id}`, {
         params: {
@@ -139,9 +142,11 @@ export const exportApi = {
           ...(filters?.commercial_only && { commercial_only: true }),
           ...(filters?.exclude_unlicensed && { exclude_unlicensed: true }),
           ...(filters?.exclude_no_derivatives && { exclude_no_derivatives: true }),
-          // JSON array, the same encoding as license_filter above.
+          // JSON array, the same encoding as license_filter above. Which of the
+          // three are present at all is decided upstream by `labelParams`, the one
+          // encoder the POST bodies share — this only turns them into query params.
           ...(filters?.label_filter?.length && { label_filter: JSON.stringify(filters.label_filter) }),
-          ...(filters?.label_filter && filters.label_filter.length > 1 && filters?.label_match === "all" && { label_match: "all" }),
+          ...(filters?.label_match === "all" && { label_match: "all" }),
           ...(filters?.label_missing && { label_missing: true }),
         },
       })

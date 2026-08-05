@@ -10,7 +10,6 @@ import { apiErrorDetail } from "../../utils/apiError";
 
 interface Props {
   imageId: string;
-  datasetId: string;
   /** Label ids currently on this image, from `GET /images/{id}`. */
   labelIds: string[];
 }
@@ -24,7 +23,7 @@ interface Props {
  * There is no free-text input here on purpose — the vocabulary is managed in
  * Settings, so this panel only ever offers labels that already exist.
  */
-export default function LabelsPanel({ imageId, datasetId, labelIds }: Props) {
+export default function LabelsPanel({ imageId, labelIds }: Props) {
   const qc = useQueryClient();
   const { labels, byId } = useLabels();
   const [adding, setAdding] = useState(false);
@@ -32,7 +31,7 @@ export default function LabelsPanel({ imageId, datasetId, labelIds }: Props) {
   const assign = useMutation({
     mutationFn: (body: { add?: string[]; remove?: string[] }) =>
       labelsApi.assign({ image_ids: [imageId], ...body }),
-    onSuccess: () => invalidateLabelScope(qc, datasetId),
+    onSuccess: () => invalidateLabelScope(qc),
     onError: (err) => toast.error(apiErrorDetail(err, "Could not update labels")),
   });
 

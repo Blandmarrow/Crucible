@@ -287,7 +287,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onSuccess: (data) => {
       // The whole label scope: `usage_count` on every vocabulary row moved, and
       // the selection can span datasets.
-      invalidateLabelScope(qc, datasetId);
+      invalidateLabelScope(qc);
       setShowLabels(false);
       clear();
       toast.success(
@@ -458,7 +458,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     },
   });
 
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showReextract || showThumbnails || showMoveSubfolder || showDeleteConfirm;
+  // Every modal this toolbar can open, so the window-level Delete handler below
+  // cannot stack a delete confirm on top of one. `showLabels` was the omission
+  // this list was written for; `showProvenance`, `showMoveDataset` and
+  // `showCopyDataset` were already missing for the same reason — the list is
+  // hand-maintained, so a new modal state belongs here in the same edit.
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showReextract || showThumbnails || showMoveSubfolder || showMoveDataset || showCopyDataset || showProvenance || showLabels || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;

@@ -29,7 +29,14 @@ def label_filter_clause(
     whole rows, so a join to `image_labels` would count a two-label image twice
     and duplicate its row in the grid. Each EXISTS is index-backed on
     `ix_image_labels_image_id`.
+
+    `match` is checked rather than falling through to "any", so a direct service
+    call with a typo raises instead of quietly answering the wrong question. HTTP
+    callers never reach it — `utils.validate_label_filter_params` turns the same
+    mistake into a 400 in the request path.
     """
+    if match not in ("any", "all"):
+        raise ValueError(f"label match must be 'any' or 'all', got {match!r}")
     clauses: list = []
     any_label = exists().where(ImageLabel.image_id == Image.id)
 

@@ -169,7 +169,6 @@ export default function GalleryPage() {
   // the new page has actually rendered; setting scrollTop here would be a DOM write
   // during render, and would fire before the rows exist.
   const pendingScrollTop = useRef(false);
-  const resetPageRef = useRef<() => void>(() => {});
   const dropScrollRestore = () => {
     hasRestoredScroll.current = true;
     pendingScrollTop.current = true;
@@ -213,7 +212,7 @@ export default function GalleryPage() {
 
   // The global label vocabulary. Fetched once app-wide, so this is a cache hit
   // for every pane after the first.
-  const { labels: allLabels, byId: labelsById } = useLabels();
+  const { labels: allLabels, byId: labelsById, isLoaded: labelsLoaded } = useLabels();
   const { data: labelCounts } = useQuery({
     queryKey: ["label-counts", datasetId],
     queryFn: () => labelsApi.counts(datasetId!),
@@ -221,22 +220,25 @@ export default function GalleryPage() {
     staleTime: 30_000,
   });
 
-  // Restore-time bounds check, the `licenseFilter` precedent above: a persisted
-  // id whose label has since been deleted must be dropped once the vocabulary
-  // loads, or the grid silently shows zero images with no chip explaining why.
-  // Runs only after the vocabulary has actually arrived — an empty `allLabels`
-  // during the first fetch would otherwise clear every restored filter.
-  const labelBoundsChecked = useRef(false);
-  useEffect(() => {
-    if (labelBoundsChecked.current || allLabels.length === 0) return;
-    labelBoundsChecked.current = true;
-    setLabelFilter((prev) => {
-      const kept = prev.filter((id) => labelsById.has(id));
-      if (kept.length === prev.length) return prev;
-      resetPageRef.current();
-      return kept;
-    });
-  }, [allLabels, labelsById]);
+  // Bounds check, the `licenseFilter` precedent above: an id whose label has been
+  // deleted must be dropped, or the grid silently shows zero images with no chip
+  // explaining why.
+  //
+  // Derived during render and gated on `labelsLoaded`, exactly like the
+  // `frameVideoId` guard below — *not* latched behind a mount-once ref, which had
+  // three escapes: a vocabulary that is legitimately empty never reconciled at
+  // all (and the chip row that would explain the filter is hidden in that state),
+  // a label deleted later in the session was never reconciled either, and a pane
+  // switching datasets restored a fresh blob past a ref that had already fired.
+  if (labelsLoaded && labelFilter.some((id) => !labelsById.has(id))) {
+    setLabelFilter(labelFilter.filter((id) => labelsById.has(id)));
+    // `resetPage` itself is declared several hundred lines below, and a ref
+    // bridging the two would still hold the *previous* render's closure here —
+    // no-op on the first render, which is exactly when a restored blob is
+    // reconciled. These are its two statements, both already in scope.
+    setPage(1);
+    dropScrollRestore();
+  }
 
   const [qualityFilter, setQualityFilter] = useState<QualityFilter>(
     (saved?.qualityFilter ?? getGalleryDefaultQualityFilter()) as QualityFilter
@@ -1201,10 +1203,6 @@ export default function GalleryPage() {
   const flaggedCount = dataset ? (dataset.image_count - dataset.captioned_count) : 0; // placeholder
 
   const resetPage = () => { setPage(1); dropScrollRestore(); };
-  // The label bounds-check effect near the top of the component needs to reset
-  // paging when it drops a stale id, and `resetPage` is declared here. A ref
-  // bridges the two without reordering several hundred lines.
-  resetPageRef.current = resetPage;
 
   const handleResetFilters = () => {
     if (datasetId) localStorage.removeItem(`gallery-state-${datasetId}`);

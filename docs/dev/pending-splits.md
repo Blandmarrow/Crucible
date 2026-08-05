@@ -239,6 +239,38 @@ staleness sweep while still recording the seam.
   a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
   first and produces a docs/style-similarity.md, the names line up for free.
 
+## docs/dev/labels.md
+
+- **Moves:** § Filters (384 words), § Export (241), § The mirror column (165) and
+  § Versioning and cross-dataset hooks (631, which now also carries the same-dataset
+  derivative table)
+- **New file:** docs/dev/label-consumers.md
+- **Why here:** the file describes a vocabulary and then, separately, every *other*
+  subsystem that reads or carries an assignment. What stays is the thing itself — the two
+  tables, `label_service.py`, the `/labels` router and its five validation rules, and the
+  four frontend surfaces (Settings panel, detail panel, hotkeys, bulk modal); a reader
+  arrives there to change the endpoint or the UI. What moves is where a label *shows up*:
+  the `GET /images/` filter block, the export narrowing and its client encoder, the
+  snapshot mirror and restore's Pass 2c, cross-dataset copy/duplicate/move, and the five
+  same-dataset derivative sites. That reader is working on export or versioning and wants
+  none of the CRUD. The seam leaves ~2,355 and ~1,421 out of 3,776 — the staying half is
+  over the ~2,100 target, and its own second seam is § Frontend (638), which would become
+  docs/dev/labels-ui.md and mirrors nothing in `docs/`. The file tripped its budget when
+  the review fixes landed: the shared filter validator, the derivative table, the assign
+  guard and the render-time bounds check all arrived at once.
+- **Watch for:** § Frontend is cited **by name** from `docs/dev/gallery.md` § Gallery
+  filters ("five edits, see `docs/dev/labels.md` § Frontend") and stays behind — that is
+  the one pointer that keeps working only if § Frontend does not move in a later pass.
+  Everything moving has an inbound pointer of its own: `docs/dev/image-filters.md` (the
+  three label rows), `docs/dev/export.md`, `docs/dev/versioning-service.md` (a full
+  paragraph restating the mirror and Pass 2c), and CLAUDE.md § Key invariants' join-table
+  bullet, which names this file for the mirror rules specifically. `docs/dev/settings.md`,
+  `docs/dev/persistence.md` and `docs/dev/image-detail.md` point at the halves that stay.
+  The user doc is `docs/labels.md` and covers both halves, so the mirror-the-user-doc
+  convention gives no name for free — label-consumers.md is a proposal, not a constraint.
+  Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
+  `docs/labels.md` matches the same grep.
+
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)

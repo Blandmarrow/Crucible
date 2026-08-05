@@ -67,13 +67,23 @@ repeating because each is the kind of thing a later change would undo:
   explicit `select(ImageLabel...)` through `services/label_service.py`.
 
 Case-insensitive name uniqueness is enforced in the router
-(`func.lower(Label.name) == body.name.lower()` → 409); the column's `unique=True`
-is only a backstop, since SQLite's default collation is case-sensitive. `hotkey`
-is normalized with `.lower()` and must match `^[a-z0-9]$`, else 400.
+(`func.lower(Label.name) == body.name.lower()` → 409). The column's `unique=True`
+backstops an **exact-case** duplicate only — SQLite's default collation is
+case-sensitive — so the case-insensitive backstop is a second, *functional* index,
+`Index("uq_labels_name_lower", func.lower(name), unique=True)`. A functional index
+rather than `COLLATE NOCASE` on the column, which would also change every ORDER BY
+and comparison on `name`. `hotkey` is normalized with `.lower()` and must match
+`^[a-z0-9]$`, else 400; `color` must match `^#[0-9a-fA-F]{3,8}$` (`_clean_color`),
+because `String(16)` is not enforced by SQLite and the value is interpolated into
+inline CSS on every chip — an unchecked `url(http://…)` is a remote fetch per card.
 
-Migration: `c2a8f6b3d417_add_labels.py`. Both FKs are declared as **table-level**
-`sa.ForeignKeyConstraint(...)` inside `create_table`; column-level inline FKs
-break SQLAlchemy's SQLite reflection and cause permanent
+Migrations: `c2a8f6b3d417_add_labels.py`, then
+`a4d7e2f9c188_add_case_insensitive_label_name_index.py` for the functional index
+(raw `op.execute`, since `op.create_index` renders through a column list and
+cannot express `lower(name)`; `check_migrations.py` reports no drift, only a
+SQLAlchemy warning that it cannot reflect an expression index). Both FKs are
+declared as **table-level** `sa.ForeignKeyConstraint(...)` inside `create_table`;
+column-level inline FKs break SQLAlchemy's SQLite reflection and cause permanent
 `scripts/check_migrations.py` drift.
 
 ## The mirror column
@@ -108,7 +118,7 @@ drift into meaning different things.
 | `label_filter_clause(label_ids, match, missing)` | `_apply_image_filters`, `_run_export_loop`, `preview_export` |
 | `labels_by_image(db, image_ids)` | `list_images`, `get_image`, `create_snapshot`, `copy_labels` |
 | `live_label_ids(db, candidate_ids)` | `restore_snapshot`, `duplicate_dataset` (snapshot branch) |
-| `copy_labels(db, id_map)` | `batch_copy_dataset`, `duplicate_dataset` (on-disk branch) |
+| `copy_labels(db, id_map)` | `batch_copy_dataset`, `duplicate_dataset` (on-disk branch), and the five same-dataset derivative sites below |
 | `set_labels(db, wanted)` | `restore_snapshot` |
 
 `ROWS_PER_STATEMENT = 8_000` is the chunk size, and it is a **row** count
@@ -128,9 +138,17 @@ label id.
 | `GET` | `/labels/counts?dataset_id=` | `{counts: {label_id: int}}` for the gallery chip badges, scoped through `images.dataset_id` |
 | `POST` | `/labels/assign` | The single attach/detach endpoint — below |
 | `POST` | `/labels/reorder` | `{ordered_ids}` → `sort_order = index`; 400 unless the id set is the whole vocabulary |
-| `POST` | `/labels/` | 201; 409 on duplicate name (case-insensitive) or hotkey; 400 on bad charset or blank name |
+| `POST` | `/labels/` | 201; 409 on duplicate name (case-insensitive) or hotkey; 400 on bad charset, blank name or non-hex colour |
 | `PATCH` | `/labels/{id}` | `model_dump(exclude_unset=True)` |
 | `DELETE` | `/labels/{id}` | 204; `image_labels` rows go via the DB cascade |
+
+`_assert_name_free`/`_assert_hotkey_free` read then write, so two concurrent
+creates can both pass. `create_label` and `update_label` therefore commit through
+`_commit_unique`, which turns the `IntegrityError` a lost race raises into the
+same 409 the pre-check gives — no router in the repo catches `IntegrityError` and
+`main.py` registers no handler, so the loser would otherwise get a 500. An
+app-level handler would change behaviour repo-wide and is deliberately not what
+this does.
 
 The PATCH deviates from `routers/providers.py`, which uses `exclude_none=True`:
 `hotkey` has to be clearable with an explicit `{"hotkey": null}`, which
@@ -165,6 +183,18 @@ an unvalidated bad id would surface as an `IntegrityError` → 500. Unknown
 selection is a client-side set that can go stale, and `useSelectionStore` spans
 datasets.
 
+`add` and `remove` are then **de-duped**, and that is execution-critical rather
+than cosmetic: the chunk size below is `ROWS_PER_STATEMENT // len(add)`, so a body
+repeating one id 20,000 times floors it to one image and builds a single INSERT
+carrying 60,000 binds — past the 32,766 a stock Windows `sqlite3.dll` enforces.
+After the unknown-id 400 both lists are bounded by the vocabulary.
+
+The resolved live image ids then go through `images_router.guard_batch_datasets`
+(public for exactly this second caller), so every dataset the selection touches
+must be idle — the guard `batch_resize` and `batch_crop` already have. Restore's
+Pass 2c is an authoritative replace, so an assign landing mid-restore would be
+discarded without a word; this answers the usual 409 instead.
+
 Execution: existence-filter the image ids, `delete(ImageLabel)` for the removes,
 then a SQLite `insert(...).on_conflict_do_nothing(index_elements=["image_id",
 "label_id"])`. Idempotency comes from the unique constraint rather than a
@@ -182,6 +212,9 @@ are filled by the router:
 - `GET /images/` — one query for the whole page, bucketed into a dict, the
   pattern the effective-license stamp already uses. `ImageListParams.limit` is
   capped at 500, so the `IN` needs no chunking.
+- `PATCH /images/{id}/provenance` — the third `ImageOut` producer, filled the same
+  way and for the same reason it re-attaches `detections`: the client seeds its
+  per-image cache from this response, and `label_ids` is required on the TS type.
 
 ## Filters
 
@@ -194,7 +227,8 @@ encoding as `license_filter`, parsed by `utils.parse_id_list_param`.
 `label_match` is a plain `str`, **not** a `Literal`, so a bad value is a **400
 from the shared filter validator** rather than a 422 from per-route query
 parsing — the contract `test_bad_input_is_rejected_identically_by_all_three`
-pins.
+pins. On export it *is* a `Literal` and so gives a 422; that asymmetry is
+deliberate and is the one `_parse_flags` already documents.
 
 The SQL block sits after the detection-count block and before `score_filters`,
 and uses **correlated `EXISTS` only, never a join**: `/count` runs the same
@@ -209,12 +243,26 @@ stays the only one that mutates the FROM clause, and stays last.
   shared builder must not introduce. Each is index-backed on
   `ix_image_labels_image_id`, and nobody selects fifty chips.
 
-Four 400s, alongside the existing `score_field`/`quality_flag` checks: a blank
-entry in `label_filter` (the `license_filter` reasoning — silently dropping a
-blank narrows a mixed list and voids an all-blank one, both silent lies); an
-invalid `label_match`; unparseable JSON; and `label_missing=true` combined with a
-non-empty `label_filter`, which is unsatisfiable and indistinguishable from a
-broken filter.
+The 400s live in **`utils.validate_label_filter_params`**, not inline in
+`_apply_image_filters`, because export calls the same function — see
+`docs/dev/shared-utilities.md`. It raises for: a blank entry in `label_filter`
+(the `license_filter` reasoning — silently dropping a blank narrows a mixed list
+and voids an all-blank one, both silent lies); an invalid `label_match`;
+`label_missing=true` combined with a non-empty `label_filter`, which is
+unsatisfiable and indistinguishable from a broken filter; and **more than
+`MAX_LABEL_FILTER_IDS` (100) ids**, since `match=all` builds one `EXISTS` per id
+and ~1,000 of them overflow SQLite's `SQLITE_MAX_EXPR_DEPTH` into an uncaught 500.
+Unparseable JSON is the fifth, and stays in `parse_id_list_param`.
+
+`_apply_image_filters` calls the validator **unconditionally**, beside the
+`score_field`/`quality_flag` checks rather than inside the label block:
+`?label_match=either` with no filter at all is still bad input, and all three
+endpoints must refuse it identically.
+
+`label_filter_clause` additionally raises `ValueError` on a `match` that is
+neither `"any"` nor `"all"`, instead of falling through to "any" — a direct
+service call with a typo cannot then quietly answer the wrong question. HTTP
+callers never reach it, having been 400'd upstream.
 
 ## Export
 
@@ -225,6 +273,21 @@ it defines which images the export is about, not an exclusion over a fixed
 population. So `image_count` shrinks and no new counter is needed. The three
 request bodies in `routers/export.py` and the preview `GET` carry them too; the
 preview parses via `parse_id_list_param`.
+
+**Export validates exactly what the gallery validates.** All four POST/GET
+handlers call `utils.validate_label_filter_params` — the three POSTs in the
+*request* path beside their `_normalize_mask_labels` normalizers, so a bad shape
+is a 400 to the client rather than an already-enqueued job failing later.
+
+The client half matters as much: `ExportPage` encodes the trio through a single
+`labelParams()` helper used by **both** the export POST bodies and the preview
+query, and it **omits every falsy value**. `label_missing: false` is not "no
+filter" — in the documented three-endpoint contract it means *"only images that
+carry a label"* — so sending the plain boolean default silently dropped every
+unlabelled image from every export while the preview, which stripped falsy values,
+promised the full count. The server behaviour is correct and deliberately
+unchanged; two encodings of one thing was the bug. `frontend/e2e/export-plain.spec.ts`
+guards it by asserting on the files on disk, not on the preview.
 
 `_write_image` and the caption sidecar writer stay untouched — see the invariant
 at the top of this file.
@@ -280,12 +343,30 @@ references in `dataset_service.py`). Not a bug — "this image is a reject" is a
 fact about the image — but surprising enough that someone will otherwise "fix"
 it.
 
+**Same-dataset derivatives carry labels too**, for the same reason and by the
+same rule as `copy_provenance`: a crop is the same picture at a different
+framing, so a fact about the picture is still true of it. Five sites build a new
+`Image` beside its parent and each calls `copy_labels`:
+
+| Site | Shape |
+|---|---|
+| `routers/lut.py`, `routers/upscaling.py`, `routers/detection.py` (crop-to-detection) | Accumulate `derivative_ids[parent] = new_img.id` through the loop, drain with one `copy_labels` **after** the loop — so a cancelled run still labels what it did copy — before the trailing commit |
+| `routers/images.py::crop`, sync copy-mode tail | The `id=str(uuid4())` is assigned explicitly (the `batch_copy_dataset` precedent) so the join rows can name the crop, and `copy_labels` rides the same transaction |
+| `routers/images.py::crop`'s nested `_run_crop_upscale` | Runs in its own session with the parent ORM object gone, so `job_cfg` carries `parent_id`; `copy_labels` re-reads the parent's labels itself, and a `flush()` comes first because `Image.id` is a Python-side default |
+
+A *score* must not travel the same way — those pixels are not the scored pixels —
+and `test_video_lineage_mirrors._score_carriers` names these same five sites as
+its deliberate exclusion. The label guard is the inverse and is executable:
+`test_labels_survive_rebuild_paths.py::test_every_same_dataset_derivative_carries_labels`
+walks each function's AST for the `copy_labels` **call** (not a kwarg — four of
+the five pass the map positionally).
+
 ## Frontend
 
 | File | Contents |
 |---|---|
 | `src/api/labels.ts` | `labelsApi = { list, counts, create, update, remove, reorder, assign }` |
-| `src/hooks/useLabels.ts` | `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey` |
+| `src/hooks/useLabels.ts` | `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below |
 | `src/components/settings/LabelsPanel.tsx` | The Settings tab body — swatches, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
 | `src/components/settings/HotkeyCaptureButton.tsx` | Captures the next keypress while focused |
 | `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an add row |
@@ -293,15 +374,31 @@ it.
 | `src/utils/keyboard.ts` | `isTextEntryTarget(e)`, adopted by both of `ImageDetailPage`'s pre-existing keydown effects |
 
 The query key is a bare `["labels"]` with no dataset in it, because the
-vocabulary is app-wide. Writers call `invalidateLabelScope(qc, datasetId?)` from
+vocabulary is app-wide. Writers call `invalidateLabelScope(qc)` from
 `constants/queryKeys.ts` rather than listing keys inline — there are four writers
 (Settings, the detail panel, the hotkey, the toolbar), which is exactly the drift
-that file exists to prevent.
+that file exists to prevent. It takes **no `datasetId`** and invalidates every key
+at its bare prefix, matching `invalidateProvenanceScope`: the bulk assign it
+mostly serves labels a selection that can straddle datasets, so scoping to one
+pane's id left other datasets' grids and chip badges stale.
 
-Both the gallery and the Export page bounds-check a **restored** label filter
-once the vocabulary loads and drop ids whose label was deleted — the
-`licenseFilter` precedent. Without it the grid silently shows zero images with no
-chip explaining why. In the gallery, dropping anything also calls `resetPage()`.
+Both the gallery and the Export page bounds-check a label filter against the
+vocabulary and drop ids whose label was deleted — the `licenseFilter` precedent.
+Without it the grid silently shows zero images with no chip explaining why (on the
+Export page the chip row is hidden entirely while the vocabulary is empty, so
+nothing on screen would explain it). In the gallery, dropping anything also resets
+paging.
+
+The check is **derived during render**, gated on `useLabels().isLoaded` — the
+`frameVideoId` guard in `GalleryPage` is the precedent, and `isLoaded` (the
+query's `isSuccess`) is what separates "still fetching" from "the vocabulary is
+genuinely empty", which `labels` alone collapses into `[]`. It is deliberately not
+a mount-once `useRef` latch, which had three escapes: an empty vocabulary never
+reconciled at all, a label deleted later in the session never reconciled either,
+and the Export page's dataset-switch effect re-seeded the filter from a different
+blob past a ref that had already fired. `handleResetToDefaults` there resets the
+label trio alongside the other fourteen filters, or the debounced persist writes
+it straight back into the blob it just cleared.
 
 `GalleryPage` persistence needs **five** edits, because the filter blob is
 hand-rolled there rather than using `useDebouncedPersist`: the inline type in
@@ -345,10 +442,10 @@ reconciliation error that renders the panel twice rather than warning about it.
 
 | File | Covers |
 |---|---|
-| `test_labels_crud_http.py` | sort_order, case-insensitive 409, hotkey 409/400, rename detaches nothing, `{"hotkey": null}` clears, partial reorder 400, dataset-scoped counts |
-| `test_label_assign_http.py` | double-assign idempotency, add+remove in one call, the five 400s, chunk-boundary crossing |
+| `test_labels_crud_http.py` | sort_order, case-insensitive 409, hotkey 409/400, non-hex colour 400 on create *and* PATCH, rename detaches nothing, `{"hotkey": null}` clears, partial reorder 400, dataset-scoped counts |
+| `test_label_assign_http.py` | double-assign idempotency, add+remove in one call, the five 400s, chunk-boundary crossing, a repeated-id `add` that would otherwise blow the bind ceiling, the busy-dataset 409 |
 | `test_label_cascade_fk.py` | the four deletion paths, under `foreign_keys=True` |
-| `test_label_filters_http.py` | any/all/missing, the row-multiplication regression, three-endpoint agreement, the four 400 shapes, dataset scoping |
-| `test_labels_survive_rebuild_paths.py` | the structural rebuild-path guard, plus snapshot/restore/copy/move/duplicate round-trips |
-| `test_export_label_filter.py` | narrowing, preview-equals-export, and the caption invariant |
+| `test_label_filters_http.py` | any/all/missing, the row-multiplication regression, three-endpoint agreement, the 400 shapes and the `MAX_LABEL_FILTER_IDS` cap, dataset scoping |
+| `test_labels_survive_rebuild_paths.py` | the rebuild-path guard over the four paths it names (and both of `duplicate_dataset`'s branches, checked separately), the derivative-site guard, plus snapshot/restore/copy/move/duplicate round-trips |
+| `test_export_label_filter.py` | narrowing, preview-equals-export, the caption invariant, and the export **request** layer: the trio reaching the loop over the wire and the 400s/422 the endpoints answer |
 | `frontend/e2e/labels.spec.ts` | the end-to-end journey, and the caption-textarea guard |

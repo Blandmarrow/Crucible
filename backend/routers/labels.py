@@ -16,6 +16,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +36,9 @@ from backend.services.label_service import ROWS_PER_STATEMENT
 router = APIRouter(prefix="/labels", tags=["labels"])
 
 _HOTKEY_RE = re.compile(r"^[a-z0-9]$")
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 _NAME_MAX = 64
+_DEFAULT_COLOR = "#6b7280"
 
 
 def _clean_hotkey(value: str | None) -> str | None:
@@ -53,6 +56,20 @@ def _clean_hotkey(value: str | None) -> str | None:
         return None
     if not _HOTKEY_RE.match(v):
         raise HTTPException(400, "hotkey must be a single character in [a-z0-9]")
+    return v
+
+
+def _clean_color(value: str | None) -> str:
+    """Normalize a swatch to a `#rgb`/`#rrggbb`/`#rrggbbaa` hex string. 400 otherwise.
+
+    Validated rather than trusted because the value is interpolated straight into
+    inline CSS on every chip and card: `Label.color` is a `String(16)` SQLite does
+    not enforce, and an unchecked `url(http://…)` would become one remote fetch
+    per rendered card.
+    """
+    v = (value or "").strip() or _DEFAULT_COLOR
+    if not _COLOR_RE.match(v):
+        raise HTTPException(400, "color must be a hex value like #6b7280")
     return v
 
 
@@ -82,6 +99,28 @@ async def _assert_hotkey_free(db: AsyncSession, hotkey: str, exclude_id: str | N
     owner = (await db.execute(q)).scalar_one_or_none()
     if owner is not None:
         raise HTTPException(409, f"Hotkey '{hotkey}' is already used by '{owner}'")
+
+
+async def _commit_unique(db: AsyncSession, name: str, hotkey: str | None) -> None:
+    """Commit, turning a lost uniqueness race into the same 409 the pre-check gives.
+
+    `_assert_name_free`/`_assert_hotkey_free` read then write, so two concurrent
+    creates can both pass the check and one then hits the unique index. No router
+    in the repo catches `IntegrityError` and `main.py` registers no handler for it,
+    so without this the loser gets a 500 for something the caller can act on. An
+    app-wide handler is the tempting alternative and changes behaviour everywhere;
+    this stays local to the two writers that have a pre-check to be raced.
+    """
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # Which constraint fired is not worth a second round-trip: the caller is
+        # re-submitting a form that names both.
+        detail = f"A label named '{name}' already exists"
+        if hotkey:
+            detail += f", or hotkey '{hotkey}' is already taken"
+        raise HTTPException(409, detail)
 
 
 async def _usage_counts(db: AsyncSession) -> dict[str, int]:
@@ -149,7 +188,16 @@ async def assign_labels(body: LabelAssignRequest, db: AsyncSession = Depends(get
     if overlap:
         raise HTTPException(400, f"Label ids appear in both add and remove: {sorted(overlap)}")
 
-    wanted_labels = list(dict.fromkeys([*body.add, *body.remove]))
+    # De-duped here, not only for validation: the execution block below divides
+    # ROWS_PER_STATEMENT by `len(add)` to chunk on the *row* count, so a body
+    # repeating one id 20,000 times floors the chunk to a single image and builds
+    # one INSERT carrying 60,000 bind parameters — past the 32,766 a stock Windows
+    # sqlite3.dll enforces. After the unknown-id 400 below, both lists are bounded
+    # by the size of the vocabulary.
+    add = list(dict.fromkeys(body.add))
+    remove = list(dict.fromkeys(body.remove))
+
+    wanted_labels = list(dict.fromkeys([*add, *remove]))
     if wanted_labels:
         # FK enforcement is ON in the app (backend/database.py), so an unvalidated
         # bad label id would surface as an IntegrityError -> 500 rather than a 400.
@@ -171,30 +219,36 @@ async def assign_labels(body: LabelAssignRequest, db: AsyncSession = Depends(get
             select(Image.id).where(Image.id.in_(chunk))
         )).scalars().all())
 
+    # Every dataset the live selection touches must be idle, the way the two
+    # `/images/batch/*` overwrites guard themselves: a restore's Pass 2c is an
+    # authoritative replace, so an assign landing mid-restore is discarded without
+    # a word. A 409 says so instead.
+    await images_router.guard_batch_datasets(db, live_images)
+
     removed = 0
     added = 0
     if live_images:
         # Chunk on the **row** count (images x labels), not the image count:
         # 3 binds per row against SQLite's 32,766 ceiling.
-        if body.remove:
-            per_stmt = max(1, ROWS_PER_STATEMENT // max(1, len(body.remove)))
+        if remove:
+            per_stmt = max(1, ROWS_PER_STATEMENT // max(1, len(remove)))
             for start in range(0, len(live_images), per_stmt):
                 chunk = live_images[start:start + per_stmt]
                 result = await db.execute(
                     delete(ImageLabel).where(
                         ImageLabel.image_id.in_(chunk),
-                        ImageLabel.label_id.in_(body.remove),
+                        ImageLabel.label_id.in_(remove),
                     )
                 )
                 removed += result.rowcount or 0
-        if body.add:
-            per_stmt = max(1, ROWS_PER_STATEMENT // len(body.add))
+        if add:
+            per_stmt = max(1, ROWS_PER_STATEMENT // len(add))
             for start in range(0, len(live_images), per_stmt):
                 chunk = live_images[start:start + per_stmt]
                 values = [
                     {"image_id": iid, "label_id": lid}
                     for iid in chunk
-                    for lid in body.add
+                    for lid in add
                 ]
                 stmt = sqlite_insert(ImageLabel).values(values).on_conflict_do_nothing(
                     index_elements=["image_id", "label_id"]
@@ -224,18 +278,19 @@ async def reorder_labels(body: LabelReorderRequest, db: AsyncSession = Depends(g
 async def create_label(body: LabelCreate, db: AsyncSession = Depends(get_db)):
     name = _clean_name(body.name)
     hotkey = _clean_hotkey(body.hotkey)
+    color = _clean_color(body.color)
     await _assert_name_free(db, name)
     if hotkey:
         await _assert_hotkey_free(db, hotkey)
     next_order = ((await db.execute(select(func.max(Label.sort_order)))).scalar_one_or_none() or 0)
     row = Label(
         name=name,
-        color=(body.color or "#6b7280").strip() or "#6b7280",
+        color=color,
         hotkey=hotkey,
         sort_order=next_order + 1,
     )
     db.add(row)
-    await db.commit()
+    await _commit_unique(db, name, hotkey)
     await db.refresh(row)
     return _out(row, {})
 
@@ -259,13 +314,13 @@ async def update_label(label_id: str, body: LabelUpdate, db: AsyncSession = Depe
         await _assert_name_free(db, name, exclude_id=label_id)
         row.name = name
     if "color" in fields and fields["color"]:
-        row.color = fields["color"].strip()
+        row.color = _clean_color(fields["color"])
     if "hotkey" in fields:
         hotkey = _clean_hotkey(fields["hotkey"])
         if hotkey:
             await _assert_hotkey_free(db, hotkey, exclude_id=label_id)
         row.hotkey = hotkey
-    await db.commit()
+    await _commit_unique(db, row.name, row.hotkey)
     await db.refresh(row)
     counts = await _usage_counts(db)
     return _out(row, counts)

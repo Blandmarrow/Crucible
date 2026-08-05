@@ -42,9 +42,9 @@ keyboard shortcuts on and off. It is on by default.
 
 ## Applying labels
 
-**One image at a time** — the image detail page has a **Labels** block between
-the detections panel and the source/license panel. Current labels show as
-removable chips; the **+** button lists the rest.
+**One image at a time** — the image detail page has a **Labels** block directly
+below the detections panel, above the generation-metadata and source/license
+panels. Current labels show as removable chips; the **+** button lists the rest.
 
 **With the keyboard** — on the image detail page, pressing a label's bound key
 toggles it on the open image. Toggle, not add: press the same key again to take
@@ -98,6 +98,10 @@ anywhere in them, in `captions.jsonl`, or in `CREDITS.md`.
   nothing to remap. (Detections deliberately do not travel this way; a label is a
   judgement about the image, so it does.)
 - **Moving** — moving images between datasets keeps their labels, unchanged
+- **Edited copies** — a crop, an upscale, a LUT grade or a crop-to-detection that
+  writes a *new* image (rather than replacing the original) gives the copy the
+  same labels, alongside the same source and licence. It is the same picture at a
+  different size or framing, so a judgement about it still holds
 - **Versioning** — a snapshot records which labels each image carried, and a
   restore puts exactly that state back: a label added after the snapshot is
   removed again, the same way a caption edit is undone. A label deleted from the

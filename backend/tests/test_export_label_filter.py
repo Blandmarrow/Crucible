@@ -11,12 +11,18 @@ Two things are pinned here:
   byte-identical to its `caption_text`, and no label name appears in any sidecar,
   in `captions.jsonl`, or in `CREDITS.md`. `_write_image` and the caption sidecar
   writer are untouched by this feature and must stay that way.
+
+The three POST endpoints get their own block at the bottom, because everything
+above calls `export_service` directly and so cannot see the layer where the
+request body is decoded — which is exactly where the label trio was mis-encoded
+by the client and where the shared validator now runs.
 """
 from pathlib import Path
 
 from backend.models import Image, ImageLabel, Label
 from backend.services import export_service
-from backend.tests.conftest import api_env, run
+from backend.tests.conftest import API, api_env, run, wait_for_job
+from backend.utils import MAX_LABEL_FILTER_IDS
 
 
 async def _seed(env, dataset_id: str):
@@ -167,5 +173,137 @@ def test_no_label_name_reaches_any_written_artifact(tmp_path):
                 )
                 jsonl = (plain / "captions.jsonl").read_text(encoding="utf-8")
                 assert jsonl and "fx" not in jsonl and "reject" not in jsonl
+
+    run(scenario())
+
+
+# ── the request layer ────────────────────────────────────────────────────────
+# Everything above drives `export_service` directly, so none of it can see the
+# body-decoding layer. That layer is where the bug was: the Export page sent
+# `label_missing: false` as a plain boolean, `bool | None = None` received
+# `False`, and `False` means *"only images that carry a label"* — so every export
+# silently dropped every unlabelled image while the preview (which stripped falsy
+# values) promised the full count.
+
+
+def test_an_export_body_with_no_label_params_exports_everything(tmp_path):
+    """The regression, at the layer it happened. Omitting the trio must export all
+    six images — including the one carrying no label at all."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await _seed(env, ds["id"])
+            out = tmp_path / "out"
+
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(out),
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["exported"] == 6
+            assert len(list((out / "images").iterdir())) == 6
+
+            # The other half of the contract, and the reason the fix was
+            # client-side only: an *explicit* `false` is not "no filter", it is
+            # "only images that carry a label" — five of the six. Normalizing it
+            # to None here would make `label_missing` inexpressible in the
+            # negative and break the three-endpoint agreement the image filters
+            # document. Pinned so that stays a decision, not a slip.
+            labelled = tmp_path / "labelled"
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(labelled),
+                "label_missing": False,
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["exported"] == 5
+
+    run(scenario())
+
+
+def test_label_params_in_the_body_reach_the_export_loop(tmp_path):
+    """…and the trio still works when it *is* sent, over the wire rather than as
+    a service kwarg."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            seed = await _seed(env, ds["id"])
+
+            narrowed = tmp_path / "narrowed"
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(narrowed),
+                "label_filter": [seed["fx"], seed["reject"]], "label_match": "all",
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["exported"] == 1
+
+            unlabelled = tmp_path / "unlabelled"
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(unlabelled),
+                "label_missing": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["exported"] == 1
+            assert [p.name for p in (unlabelled / "images").iterdir()] == ["i5.png"]
+
+    run(scenario())
+
+
+def test_the_export_endpoints_reject_what_the_gallery_rejects(tmp_path):
+    """One validator, both surfaces. Each of these 400s in the **request** path,
+    so the client is told rather than an already-enqueued job failing — and none
+    of them leaves a `BackgroundJob` row behind."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            seed = await _seed(env, ds["id"])
+            bad = [
+                {"label_filter": [seed["fx"], ""]},
+                {"label_missing": True, "label_filter": [seed["fx"]]},
+                {"label_filter": [f"id-{i}" for i in range(MAX_LABEL_FILTER_IDS + 1)]},
+            ]
+            for path in ("plain", "kohya", "aitoolkit"):
+                for extra in bad:
+                    r = await env.client.post(f"{API}/export/{path}", json={
+                        "dataset_id": ds["id"], "output_dir": str(tmp_path / "never"),
+                        **extra,
+                    })
+                    assert r.status_code == 400, f"{path} {extra}: {r.status_code} {r.text}"
+
+            # `label_match` is the fourth shape, and on export it is a `Literal`,
+            # so FastAPI answers 422 before the validator ever runs. The
+            # asymmetry with the image endpoints' 400 is deliberate — the same one
+            # `_parse_flags` documents — and is pinned here so a later "fix" that
+            # unifies them is a decision rather than a slip.
+            r = await env.client.post(f"{API}/export/plain", json={
+                "dataset_id": ds["id"], "output_dir": str(tmp_path / "never"),
+                "label_match": "either",
+            })
+            assert r.status_code == 422, r.text
+
+            jobs = (await env.client.get(f"{API}/jobs/")).json()
+            assert [j for j in jobs if j["job_type"] == "export"] == []
+
+    run(scenario())
+
+
+def test_the_preview_endpoint_validates_too(tmp_path):
+    """The preview is a GET with the JSON-array encoding, and it shares the
+    validator: a shape the export refuses must not come back as a number."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            seed = await _seed(env, ds["id"])
+            import json as _json
+            bad = [
+                {"label_filter": _json.dumps([seed["fx"], ""])},
+                {"label_missing": "true", "label_filter": _json.dumps([seed["fx"]])},
+                {"label_filter": _json.dumps([f"id-{i}" for i in range(MAX_LABEL_FILTER_IDS + 1)])},
+            ]
+            for extra in bad:
+                r = await env.client.get(f"{API}/export/preview/{ds['id']}", params=extra)
+                assert r.status_code == 400, f"{extra}: {r.status_code} {r.text}"
 
     run(scenario())

@@ -42,8 +42,21 @@ where and built by the same `label_service.label_filter_clause` the gallery uses
 `subfolders`, they define which images the export is *about* rather than an exclusion over
 a fixed population — so `image_count` shrinks and no new exclusion counter exists. The
 Export page's chip group mirrors the gallery's, including the Any/All toggle, the
-"Unlabelled only" option and the vocabulary bounds-check on a restored preset. See
-`docs/dev/labels.md`.
+"Unlabelled only" option and the vocabulary bounds-check on a restored preset.
+
+Validation is **shared with the image endpoints**, not re-implemented: all four
+handlers (the three POSTs and `preview`) call `utils.validate_label_filter_params`,
+and the POSTs call it in the *request* path beside `_normalize_mask_labels`, for
+the same reason `_parse_flags` is called there — a 400 must reach the client
+rather than fail an already-enqueued job. `label_match` stays a `Literal` here, so
+a bad value is a 422 where the image endpoints give a 400; that asymmetry is the
+one the `_parse_flags` paragraph below already describes.
+
+Client side, `ExportPage` builds the trio through one `labelParams()` helper used
+by both the POST bodies and the preview query, **omitting falsy values**:
+`label_missing: false` means "only labelled images", so sending the plain boolean
+default made every export silently drop every unlabelled image while the preview
+promised the full count. See `docs/dev/labels.md`.
 
 `exclude_flags` is parsed by `_parse_flags()` in `routers/export.py`, which validates every name against `ALLOWED_FLAG_KEYS` and raises HTTP 400 on an unknown key (captioning validates the same set via a pydantic `field_validator`, so it answers 422 instead — the check is equivalent, the status differs). **Call `_parse_flags` in the request path, never inside the job coroutine**: the three POST handlers enqueue a job and return `{job_id}` before the coroutine runs, so an exception raised in there fails the job instead of reaching the client. Each handler parses once into a local and closes over it.
 

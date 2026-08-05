@@ -78,6 +78,37 @@ def test_bad_hotkey_and_blank_name_are_400(tmp_path):
     run(scenario())
 
 
+def test_a_non_hex_color_is_400(tmp_path):
+    """`Label.color` is interpolated straight into inline CSS on every chip and
+    card, and `String(16)` is not enforced by SQLite — so `url(http://…)` would be
+    one remote fetch per rendered card, from a value the API accepted."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            for bad in ("url(http://evil.test/x.png)", "red", "#12", "#gggggg", "#1234567890"):
+                r = await _create(env, name=f"n-{bad}", color=bad)
+                assert r.status_code == 400, f"{bad!r}: {r.status_code} {r.text}"
+
+            for good in ("#fff", "#6b7280", "#6b7280ff"):
+                assert (await _create(env, name=f"ok-{good}", color=good)).status_code == 201
+
+            # Omitted or blank falls back to the default rather than 400 — the
+            # Settings form leaves it empty for "whatever you like".
+            r = await _create(env, name="bare")
+            assert r.status_code == 201, r.text
+            assert r.json()["color"] == "#6b7280"
+
+            # …and the PATCH is guarded too, not only the create.
+            label_id = r.json()["id"]
+            assert (await env.client.patch(
+                f"{API}/labels/{label_id}", json={"color": "url(http://evil.test/x.png)"}
+            )).status_code == 400
+            assert (await env.client.patch(
+                f"{API}/labels/{label_id}", json={"color": "#123456"}
+            )).status_code == 200
+
+    run(scenario())
+
+
 def test_rename_detaches_nothing(tmp_path):
     """The behavioural half of ids-not-names: a rename is a spelling change."""
     async def scenario():

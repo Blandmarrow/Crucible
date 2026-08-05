@@ -459,8 +459,14 @@ export default function ImageDetailPage() {
   const labelToggle = useMutation({
     mutationFn: (body: { add?: string[]; remove?: string[] }) =>
       labelsApi.assign({ image_ids: [imageId!], ...body }),
-    onSuccess: () => invalidateLabelScope(qc, datasetId),
-    onError: (err) => toast.error(apiErrorDetail(err, "Could not update labels")),
+    onSuccess: () => invalidateLabelScope(qc),
+    onError: (err) => {
+      toast.error(apiErrorDetail(err, "Could not update labels"));
+      // Roll back the optimistic flip below. Without this a failed assign — a 409
+      // from a busy dataset, say — leaves the chip showing a label the server
+      // never attached, and the long `staleTime` keeps it there.
+      qc.invalidateQueries({ queryKey: ["image", imageId] });
+    },
   });
 
   const currentLabelIds = image?.label_ids;
@@ -1856,7 +1862,6 @@ export default function ImageDetailPage() {
           <LabelsPanel
             key={`labels-${image.id}`}
             imageId={image.id}
-            datasetId={datasetId ?? ""}
             labelIds={image.label_ids ?? []}
           />
 

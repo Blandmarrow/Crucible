@@ -199,3 +199,61 @@ def test_a_600_image_assign_crosses_a_chunk_boundary(tmp_path, monkeypatch):
                 assert (await db.execute(select(Label.id).where(Label.id == reject))).scalar_one()
 
     run(scenario())
+
+
+def test_a_repeated_label_id_does_not_blow_the_bind_ceiling(tmp_path, monkeypatch):
+    """`add` is de-duped before the execution block, not only for validation.
+
+    The chunk size is `ROWS_PER_STATEMENT // len(add)`, so an `add` list repeating
+    one id N times floors it to a single image and builds one INSERT with `N × 3`
+    binds — past the 32,766 a stock Windows `sqlite3.dll` enforces. The constant
+    is shrunk here so the arithmetic is visible without a 20,000-entry body.
+    """
+    async def scenario():
+        from backend.routers import labels as labels_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            ids = await _seed(env, ds["id"], 20)
+            fx = await _label(env, "fx")
+            monkeypatch.setattr(labels_router, "ROWS_PER_STATEMENT", 10)
+
+            r = await env.client.post(
+                f"{API}/labels/assign", json={"image_ids": ids, "add": [fx] * 50}
+            )
+            assert r.status_code == 200, r.text
+            # One row per image, and chunked at 10 images per statement rather
+            # than 1 — the dedupe is what makes both true.
+            assert r.json() == {"images": 20, "added": 20, "removed": 0}
+
+            r = await env.client.post(
+                f"{API}/labels/assign", json={"image_ids": ids, "remove": [fx] * 50}
+            )
+            assert r.json()["removed"] == 20
+
+    run(scenario())
+
+
+def test_assigning_into_a_busy_dataset_is_409(tmp_path):
+    """The guard `batch_resize` and friends already have. Restore's Pass 2c is an
+    authoritative replace, so an assign landing mid-restore is discarded without
+    a word; a 409 says so instead."""
+    async def scenario():
+        from backend.services.dataset_busy import busy
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            ids = await _seed(env, ds["id"], 2)
+            fx = await _label(env, "fx")
+
+            with busy(ds["id"], "restore"):
+                r = await env.client.post(
+                    f"{API}/labels/assign", json={"image_ids": ids, "add": [fx]}
+                )
+                assert r.status_code == 409, f"{r.status_code} {r.text}"
+
+            assert (await env.client.post(
+                f"{API}/labels/assign", json={"image_ids": ids, "add": [fx]}
+            )).status_code == 200
+
+    run(scenario())

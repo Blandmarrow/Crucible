@@ -16,7 +16,7 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
 
   // ── Settings → Labels: create one, with a hotkey.
   await page.goto('/settings')
-  await page.getByRole('button', { name: 'Labels' }).click()
+  await page.getByRole('button', { name: 'Labels', exact: true }).click()
 
   const name = `fx-${Date.now()}`
   await page.getByLabel('New label name').fill(name)
@@ -36,7 +36,7 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
   await page.getByTestId('select-all-btn').click()
   await expect(page.getByText('2 selected')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Labels' }).click()
+  await page.getByRole('button', { name: 'Labels', exact: true }).click()
   const modal = page.getByRole('dialog', { name: 'Edit labels' })
   await expect(modal).toBeVisible()
   await modal.getByRole('group', { name: 'Labels to add' }).getByRole('button', { name }).click()
@@ -46,17 +46,28 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
   // ── The dots appear on the cards.
   await expect(page.getByLabel(`Labels: ${name}`).first()).toBeVisible()
 
-  // ── The chip filter narrows the grid. Only one image is detached first, so
-  // "narrows" means something: 2 → 1.
+  // ── Take it back off b.png, so the filter below has something to narrow.
+  // Without this every assertion in this block is 2, which is what the grid shows
+  // unfiltered — the filter could be doing nothing and the test would pass.
+  // The apply above clears the selection, so this starts from nothing.
+  await page.getByTestId('select-b.png').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Labels', exact: true }).click()
+  await expect(modal).toBeVisible()
+  await modal.getByRole('group', { name: 'Labels to remove' }).getByRole('button', { name }).click()
+  await modal.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByText(/Labels updated on 1 image/)).toBeVisible()
+
+  // ── The chip filter narrows the grid: 2 → 1, and "Unlabelled" is its complement.
   const chips = page.getByRole('group', { name: 'Label filters' })
   await expect(chips.getByRole('button', { name: new RegExp(name) })).toBeVisible()
 
   await page.getByRole('button', { name: 'Unlabelled' }).click()
-  await expect(page.getByTestId('gallery-tile')).toHaveCount(0)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
 
   await page.getByRole('button', { name: 'Unlabelled' }).click()
   await chips.getByRole('button', { name: new RegExp(name) }).click()
-  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
 
   // Reset clears it, and the grid comes back unfiltered.
   await page.getByRole('button', { name: 'Reset filters' }).click()
@@ -65,7 +76,11 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
 
   // ── Detail view: the hotkey toggles the chip off. Toggle semantics are the
   // point — a mistyped key is undone with the same key.
-  await page.getByTestId('gallery-tile').first().click()
+  // The labelled card specifically — only a.png still carries it after the
+  // removal above, and which of the two sorts first is not this test's business.
+  await page.getByTestId('gallery-tile')
+    .filter({ has: page.getByLabel(`Labels: ${name}`) })
+    .click()
   const labelBlock = page.getByRole('group', { name: 'Labels' })
   await expect(labelBlock.getByText(name)).toBeVisible()
 
@@ -87,7 +102,7 @@ test('typing a bound key into the caption box does not label the image', async (
 
   const name = `fx-${Date.now()}`
   await page.goto('/settings')
-  await page.getByRole('button', { name: 'Labels' }).click()
+  await page.getByRole('button', { name: 'Labels', exact: true }).click()
   await page.getByLabel('New label name').fill(name)
   await page.getByRole('button', { name: 'Add label' }).click()
   await page.getByRole('button', { name: 'Set hotkey' }).click()

@@ -28,6 +28,7 @@ from backend.schemas.detection import (
 from backend.services import version_service
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail
+from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
     chunked,
@@ -913,6 +914,12 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             occupied_by_dir: dict[Path, set[str]] = {}
             planned_by_dir: dict[Path, set[str]] = {}
 
+            # Copy-mode derivatives: parent id -> new id, drained once after the
+            # loop. A same-dataset derivative carries its parent's labels for the
+            # same reason it carries `copy_provenance` — "this image is a reject"
+            # is a fact about the picture, not about the file.
+            derivative_ids: dict[str, str] = {}
+
             last_image_id: str | None = None
             cancelled = False
             for i, img in enumerate(images):
@@ -1070,6 +1077,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     )
                     session.add(new_img)
                     await session.flush()
+                    derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
 
                 counts["cropped"] += 1
@@ -1080,6 +1088,9 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     "current_item": img.filename,
                     "image_id": last_image_id,
                 })
+
+            # After the loop, so a cancelled run still labels what it did copy.
+            await copy_labels(session, derivative_ids)
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:

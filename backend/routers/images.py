@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -187,8 +187,12 @@ def _apply_image_filters(q, f: ImageFilterParams):
         raise HTTPException(400, f"Invalid score_field: {f.score_field}")
     if f.quality_flag and f.quality_flag not in ALLOWED_FLAG_KEYS:
         raise HTTPException(400, f"Invalid quality_flag: {f.quality_flag}")
-    if f.label_match is not None and f.label_match not in ("any", "all"):
-        raise HTTPException(400, f"Invalid label_match: {f.label_match} (expected 'any' or 'all')")
+    # Unconditionally, not inside the label block below: `?label_match=either`
+    # with no filter is still bad input, and all three endpoints must reject it
+    # identically. The same validator runs in the export request path.
+    label_ids = validate_label_filter_params(
+        parse_id_list_param(f.label_filter, "label_filter"), f.label_match, f.label_missing
+    )
 
     q = q.where(Image.dataset_id == f.dataset_id)
 
@@ -314,24 +318,7 @@ def _apply_image_filters(q, f: ImageFilterParams):
     # `image_labels` would count a two-label image twice and duplicate its row in
     # `/images/`. The license block below stays the only one that mutates the
     # FROM clause, and stays last.
-    if f.label_filter or f.label_missing is not None:
-        label_ids = parse_id_list_param(f.label_filter, "label_filter") or []
-        if any(not lid for lid in label_ids):
-            # Same reasoning as the license block's blank check: a blank id is
-            # meaningless, and dropping it silently narrows a mixed list while
-            # voiding an all-blank one. Both are silent lies. "No labels at all"
-            # is expressed by `label_missing=true`.
-            raise HTTPException(
-                400,
-                "label_filter contains an empty entry; use label_missing=true "
-                "to select images with no labels",
-            )
-        if label_ids and f.label_missing is True:
-            # Unsatisfiable, and a query that always returns zero rows is
-            # indistinguishable from a broken filter.
-            raise HTTPException(
-                400, "label_missing=true cannot be combined with a non-empty label_filter"
-            )
+    if label_ids or f.label_missing is not None:
         for clause in label_filter_clause(label_ids, f.label_match or "any", f.label_missing):
             q = q.where(clause)
 
@@ -857,6 +844,9 @@ async def update_image_provenance(
         select(Detection).where(Detection.image_id == image_id).order_by(Detection.id)
     )).scalars().all()
     img_out.detections = [DetectionOut.model_validate(d) for d in dets]
+    # And for the same reason: `ImageOut.label_ids` is required on the TS type, so
+    # a client seeding its cache from this response would blank the label chips.
+    img_out.label_ids = (await labels_by_image(db, [image_id])).get(image_id, [])
     return img_out
 
 
@@ -1249,7 +1239,7 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
 _record_in_place = record_in_place
 
 
-async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
+async def guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
     """`ensure_not_busy` every dataset a bare id list touches; return the set.
 
     The two `/batch/*` overwrite endpoints below take `image_ids` with no dataset
@@ -1259,6 +1249,10 @@ async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[s
 
     The returned set also names the job: `BackgroundJob.dataset_id` is a single
     column, so it is only meaningful when the selection resolved to one dataset.
+
+    Public rather than `_`-private because `routers/labels.py` calls it too — an
+    assign against a dataset mid-restore would be silently discarded by restore's
+    Pass 2c, so it earns the same 409 the batch overwrites give.
     """
     dataset_ids: set[str] = set()
     for batch in chunked(image_ids):
@@ -1283,7 +1277,7 @@ async def _guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[s
 
 @router.post("/batch/resize")
 async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_db)):
-    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    dataset_ids = await guard_batch_datasets(db, body.image_ids)
     auto_label = f"Batch resize — {len(body.image_ids)} images"
     job = BackgroundJob(
         job_type="batch_resize",
@@ -1384,7 +1378,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
 
 @router.post("/batch/crop")
 async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db)):
-    dataset_ids = await _guard_batch_datasets(db, body.image_ids)
+    dataset_ids = await guard_batch_datasets(db, body.image_ids)
     auto_label = f"Batch crop — {body.target_ar:g} AR, {len(body.image_ids)} images"
     job = BackgroundJob(
         job_type="batch_crop",
@@ -1772,6 +1766,11 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             # A derivative of a CC-BY-SA image is still CC-BY-SA — carry the
             # parent's raw provenance (same dataset, so inheritance still holds).
             "provenance": copy_provenance(img),
+            # The parent's id, not its labels: the job runs in its own session
+            # where the ORM object is gone, and `copy_labels` re-reads the
+            # assignments itself — so a label attached between enqueue and run
+            # still travels.
+            "parent_id": img.id,
         }
         job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=job_cfg)
         db.add(job)
@@ -1821,6 +1820,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     **cfg["provenance"],
                 )
                 session.add(new_img)
+                # Flush first: `Image.id` is a Python-side column default, so the
+                # label rows have nothing to point at until the insert runs.
+                await session.flush()
+                await copy_labels(session, {cfg["parent_id"]: new_img.id})
                 await session.commit()
                 await session.refresh(new_img)
 
@@ -1844,6 +1847,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     await loop.run_in_executor(None, generate_thumbnail, str(dest_path), thumb_path)
 
     new_img = Image(
+        # Assigned here rather than left to the column default (the
+        # `batch_copy_dataset` precedent below), so the label rows can name the
+        # crop before it is flushed.
+        id=str(uuid4()),
         dataset_id=img.dataset_id,
         filename=new_filename,
         original_filename=img.original_filename,
@@ -1854,6 +1861,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
         **info,
     )
     db.add(new_img)
+    # A same-dataset derivative carries its parent's labels, exactly as it carries
+    # `copy_provenance` above — and in the same transaction as the row they belong
+    # to, so a crop never exists momentarily unlabelled.
+    await copy_labels(db, {img.id: new_img.id})
     await db.commit()
     await db.refresh(new_img)
     return {"id": new_img.id, "filename": new_img.filename, "width": new_img.width, "height": new_img.height}

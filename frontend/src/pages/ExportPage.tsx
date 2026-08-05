@@ -4,6 +4,7 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { exportApi } from "../api/export";
+import type { ExportPreviewFilters } from "../api/export";
 import { datasetsApi } from "../api/datasets";
 import { detectionApi } from "../api/detection";
 import { jobsApi } from "../api/jobs";
@@ -105,6 +106,27 @@ const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   labelMissing: false,
 };
 
+/** The **one** encoder for the label trio, shared by the three export POST bodies
+ *  and the preview query.
+ *
+ *  Every value here is omitted when falsy, and that is the whole point:
+ *  `label_missing: false` is not "no filter" but a meaningful *"only labelled
+ *  images"* in the three-endpoint filter contract (`docs/dev/image-filters.md`),
+ *  so sending a plain boolean default silently dropped every unlabelled image
+ *  from every export while the preview — which stripped falsy — promised the full
+ *  count. Two encodings of one thing is what caused that; there is now one. */
+function labelParams(
+  filter: Set<string>,
+  match: "any" | "all",
+  missing: boolean,
+): Pick<ExportPreviewFilters, "label_filter" | "label_match" | "label_missing"> {
+  return {
+    ...(filter.size > 0 && { label_filter: [...filter] }),
+    ...(filter.size > 1 && match === "all" && { label_match: "all" as const }),
+    ...(missing && { label_missing: true }),
+  };
+}
+
 export default function ExportPage() {
   const datasetId = usePaneDatasetId();
 
@@ -183,21 +205,21 @@ export default function ExportPage() {
 
   // The global label vocabulary, for the chip group below. `exportLabels` is the
   // same list `useLabels` hands the gallery — one cache entry app-wide.
-  const { labels: exportLabels, byId: labelsById } = useLabels();
+  const { labels: exportLabels, byId: labelsById, isLoaded: labelsLoaded } = useLabels();
 
-  // Restore-time bounds check, mirroring `licenseFilter` above and GalleryPage's:
-  // a persisted preset can name a label deleted since it was saved, and an
-  // unknown id would silently narrow the export to zero images with no chip
-  // showing why. Gated on the vocabulary having actually arrived.
-  const labelBoundsChecked = useRef(false);
-  useEffect(() => {
-    if (labelBoundsChecked.current || exportLabels.length === 0) return;
-    labelBoundsChecked.current = true;
-    setLabelFilter((prev) => {
-      const kept = new Set([...prev].filter((id) => labelsById.has(id)));
-      return kept.size === prev.size ? prev : kept;
-    });
-  }, [exportLabels, labelsById]);
+  // Bounds check, mirroring `licenseFilter` above and GalleryPage's: a persisted
+  // preset can name a label deleted since it was saved, and an unknown id would
+  // silently narrow the export to zero images with no chip showing why — the chip
+  // row itself is hidden while the vocabulary is empty, so nothing on screen
+  // would explain it.
+  //
+  // Derived during render and gated on `labelsLoaded`, not latched behind a
+  // mount-once ref: the ref never fired for an empty vocabulary, never fired
+  // again when a label was deleted later in the session, and did not cover the
+  // dataset-switch restore below, which re-seeds this state from a different blob.
+  if (labelsLoaded && [...labelFilter].some((id) => !labelsById.has(id))) {
+    setLabelFilter(new Set([...labelFilter].filter((id) => labelsById.has(id))));
+  }
 
   const { data: detectionLabels = [] } = useQuery({
     queryKey: ["detection-labels", datasetId],
@@ -206,23 +228,20 @@ export default function ExportPage() {
   });
 
   // Debounced filter params for preview query
-  const [debouncedFilters, setDebouncedFilters] = useState({
-    aesthetic_min: null as number | null,
+  const [debouncedFilters, setDebouncedFilters] = useState<ExportPreviewFilters>({
+    aesthetic_min: null,
     captioned_only: filterCaptioned,
     exclude_flags: "has_watermark",
-    style_sim_min: null as number | null,
-    subfolders: null as string[] | null,
+    style_sim_min: null,
+    subfolders: null,
     export_masks: false,
-    mask_labels: null as string[] | null,
-    mask_exclude_labels: null as string[] | null,
-    mask_missing: "white" as MaskMissing,
-    license_filter: null as string[] | null,
+    mask_labels: null,
+    mask_exclude_labels: null,
+    mask_missing: "white",
+    license_filter: null,
     commercial_only: false,
     exclude_unlicensed: false,
     exclude_no_derivatives: false,
-    label_filter: null as string[] | null,
-    label_match: "any" as "any" | "all",
-    label_missing: false,
   });
 
   useEffect(() => {
@@ -241,9 +260,7 @@ export default function ExportPage() {
         commercial_only: commercialOnly,
         exclude_unlicensed: excludeUnlicensed,
         exclude_no_derivatives: excludeNoDerivatives,
-        label_filter: labelFilter.size > 0 ? [...labelFilter] : null,
-        label_match: labelMatch,
-        label_missing: labelMissing,
+        ...labelParams(labelFilter, labelMatch, labelMissing),
       });
     }, 350);
     // Cancel, not flush: this timer only drives the preview query, which should
@@ -332,9 +349,7 @@ export default function ExportPage() {
     commercial_only: commercialOnly,
     exclude_unlicensed: excludeUnlicensed,
     exclude_no_derivatives: excludeNoDerivatives,
-    label_filter: labelFilter.size > 0 ? [...labelFilter] : null,
-    label_match: labelMatch,
-    label_missing: labelMissing,
+    ...labelParams(labelFilter, labelMatch, labelMissing),
   });
 
   const exportMutation = useMutation({
@@ -422,6 +437,11 @@ export default function ExportPage() {
     setSelectedSubfolders(new Set(EXPORT_FILTERS_DEFAULTS.selectedSubfolders));
     setMaskLabels(new Set(EXPORT_FILTERS_DEFAULTS.maskLabels));
     setMaskExcludeLabels(new Set(EXPORT_FILTERS_DEFAULTS.maskExcludeLabels));
+    // The label trio too, or the debounced persist writes the surviving state
+    // straight back into the blob `clearPersisted` just removed.
+    setLabelFilter(new Set(EXPORT_FILTERS_DEFAULTS.labelFilter));
+    setLabelMatch(EXPORT_FILTERS_DEFAULTS.labelMatch);
+    setLabelMissing(EXPORT_FILTERS_DEFAULTS.labelMissing);
 
     toast.success("Configuration reset to defaults");
   }

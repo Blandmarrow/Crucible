@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -24,15 +24,23 @@ class Label(Base):
     # and creating another would silently reuse its id and a restore would
     # reattach the wrong concept.
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    # Case-insensitive uniqueness is enforced in the router (SQLite's default
-    # collation is case-sensitive); this constraint is the backstop.
+    # `unique=True` alone is an *exact-case* backstop — SQLite's default collation
+    # is case-sensitive, so "Reject" and "reject" would both persist. The
+    # case-insensitive backstop is the functional index in `__table_args__`; the
+    # router's pre-check is what turns either into a 409 instead of a 500.
     name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     color: Mapped[str] = mapped_column(String(16), nullable=False, server_default="#6b7280")
     hotkey: Mapped[str | None] = mapped_column(String(1), nullable=True, unique=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    __table_args__ = (Index("ix_labels_sort_order", "sort_order"),)
+    __table_args__ = (
+        Index("ix_labels_sort_order", "sort_order"),
+        # The case-insensitive uniqueness the router pre-checks, made real. A
+        # functional index rather than a collation on the column: `COLLATE NOCASE`
+        # would also change every ORDER BY and comparison on `name`.
+        Index("uq_labels_name_lower", func.lower(name), unique=True),
+    )
 
 
 class ImageLabel(Base):

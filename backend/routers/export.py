@@ -15,6 +15,7 @@ from backend.utils import (
     parse_license_filter_param,
     require_free_space,
     sanitize_abs_path,
+    validate_label_filter_params,
 )
 from backend.services.export_service import (
     export_aitoolkit,
@@ -217,6 +218,10 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export kohya — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -258,7 +263,7 @@ async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=body.label_filter,
+                label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
                 job_id=job_id,
@@ -282,6 +287,10 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -322,7 +331,7 @@ async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSessi
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=body.label_filter,
+                label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
                 job_id=job_id,
@@ -346,6 +355,10 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
     mask_labels = _normalize_mask_labels(body.mask_labels)
     mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
     license_filter = normalize_license_filter(body.license_filter)
+    # The same validator the three image endpoints run, in the **request** path:
+    # a filter shape the gallery 400s must not be smuggled in here and fail an
+    # already-enqueued job instead.
+    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
     auto_label = f"Export plain — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
@@ -384,7 +397,7 @@ async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Dep
                 commercial_only=body.commercial_only,
                 exclude_unlicensed=body.exclude_unlicensed,
                 exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=body.label_filter,
+                label_filter=label_filter,
                 label_match=body.label_match,
                 label_missing=body.label_missing,
                 job_id=job_id,
@@ -440,7 +453,9 @@ async def preview(
         commercial_only=commercial_only,
         exclude_unlicensed=exclude_unlicensed,
         exclude_no_derivatives=exclude_no_derivatives,
-        label_filter=parse_id_list_param(label_filter, "label_filter"),
+        label_filter=validate_label_filter_params(
+            parse_id_list_param(label_filter, "label_filter"), label_match, label_missing
+        ),
         label_match=label_match,
         label_missing=label_missing,
     )

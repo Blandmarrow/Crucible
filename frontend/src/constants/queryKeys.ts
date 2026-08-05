@@ -95,15 +95,17 @@ export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string
  * badges (`["label-counts", datasetId]`) and the Export preview, whose count
  * narrows with the label filter.
  *
- * `datasetId` may be undefined: `["images", undefined]` matches nothing, the
- * same no-op the other scope helpers rely on. A vocabulary edit made from
- * Settings has no dataset in scope, and passing none is correct there — the
- * `["labels"]` and `["image"]` invalidations still land.
+ * Every key is invalidated at its **bare prefix**, with no dataset segment —
+ * matching `invalidateProvenanceScope` above and for the same reason. The
+ * vocabulary is app-wide, `useSelectionStore` spans datasets, and the bulk assign
+ * this helper mostly serves explicitly labels a selection that can straddle
+ * several: scoping to one pane's `datasetId` left the other datasets' grids and
+ * chip badges showing counts for assignments that had already happened.
  */
-export function invalidateLabelScope(qc: QueryClient, datasetId?: string) {
+export function invalidateLabelScope(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["labels"] });
   qc.invalidateQueries({ queryKey: ["image"] });
   qc.invalidateQueries({ queryKey: ["export-preview"] });
-  qc.invalidateQueries({ queryKey: ["images", datasetId] });
-  qc.invalidateQueries({ queryKey: ["label-counts", datasetId] });
+  qc.invalidateQueries({ queryKey: ["images"] });
+  qc.invalidateQueries({ queryKey: ["label-counts"] });
 }

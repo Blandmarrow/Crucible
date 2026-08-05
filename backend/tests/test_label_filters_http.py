@@ -12,6 +12,7 @@ import json
 
 from backend.models import Image, ImageLabel, Label
 from backend.tests.conftest import API, api_env, run
+from backend.utils import MAX_LABEL_FILTER_IDS
 
 
 async def _seed(env, dataset_id: str):
@@ -147,6 +148,34 @@ def test_the_four_400_shapes(tmp_path):
                 for extra in bad:
                     r = await env.client.get(f"{API}{path}", params={"dataset_id": ds["id"], **extra})
                     assert r.status_code == 400, f"{path} {extra}: {r.status_code} {r.text}"
+
+    run(scenario())
+
+
+def test_too_many_label_ids_is_400_not_a_500(tmp_path):
+    """`label_match=all` builds one correlated EXISTS **per id**, so the id count
+    is an expression-tree depth. SQLite's SQLITE_MAX_EXPR_DEPTH defaults to 1,000,
+    and past it the parser raises where nothing catches it — a 500 for a filter
+    the client can be told about. The cap is a guard, not a budget: nobody selects
+    a hundred chips."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            seed = await _seed(env, ds["id"])
+
+            at_cap = json.dumps([seed["fx"]] + [f"id-{i}" for i in range(MAX_LABEL_FILTER_IDS - 1)])
+            over = json.dumps([f"id-{i}" for i in range(MAX_LABEL_FILTER_IDS + 1)])
+            for path in ("/images/", "/images/count", "/images/ids"):
+                ok = await env.client.get(
+                    f"{API}{path}",
+                    params={"dataset_id": ds["id"], "label_filter": at_cap, "label_match": "all"},
+                )
+                assert ok.status_code == 200, f"{path}: {ok.status_code} {ok.text}"
+                r = await env.client.get(
+                    f"{API}{path}",
+                    params={"dataset_id": ds["id"], "label_filter": over, "label_match": "all"},
+                )
+                assert r.status_code == 400, f"{path}: {r.status_code} {r.text}"
 
     run(scenario())
 

@@ -165,13 +165,17 @@ function scoreChipLabel(f: ScoreFilter): string {
 function sanitizeScoreFilters(value: unknown): ScoreFilter[] {
   if (!Array.isArray(value)) return [];
   // `null` = unusable, `""` = no bound. Numbers are accepted and stringified so a blob
-  // written by hand still restores; `parseFloat` is the same reader `scoreFiltersParam`
-  // uses, so anything kept here is something the request can actually encode.
+  // written by hand still restores. Tested with `Number`, not `parseFloat`, which stops
+  // at the first non-digit and so accepted `"5abc"` — the chip then read `≥ 5abc` while
+  // the request `scoreFiltersParam` built sent `5`. `Number("")` is `0`, hence the
+  // whitespace-only reject before it; the trimmed string is what gets kept, so the chip
+  // and the request agree on the value.
   const bound = (v: unknown): string | null => {
     if (v === "" || v === undefined || v === null) return "";
     if (typeof v !== "string" && typeof v !== "number") return null;
-    const s = String(v);
-    return Number.isFinite(parseFloat(s)) ? s : null;
+    const s = String(v).trim();
+    if (!s) return null;
+    return Number.isFinite(Number(s)) ? s : null;
   };
   const out: ScoreFilter[] = [];
   for (const entry of value) {
@@ -278,10 +282,11 @@ export default function GalleryPage() {
   //
   // Derived during render and gated on `labelsLoaded`, exactly like the
   // `frameVideoId` guard below — *not* latched behind a mount-once ref, which had
-  // three escapes: a vocabulary that is legitimately empty never reconciled at
-  // all (and the chip row that would explain the filter is hidden in that state),
-  // a label deleted later in the session was never reconciled either, and a pane
-  // switching datasets restored a fresh blob past a ref that had already fired.
+  // two escapes: a vocabulary that is legitimately empty never reconciled at all
+  // (and the chip row that would explain the filter is hidden in that state), and
+  // a label deleted later in the session was never reconciled either. A pane
+  // switching datasets is not one of them — `PageRenderer` keys this page on the
+  // pane's dataset, so a new dataset arrives as a fresh mount with fresh refs.
   if (labelsLoaded && labelFilter.some((id) => !labelsById.has(id))) {
     setLabelFilter(labelFilter.filter((id) => labelsById.has(id)));
     // `resetPage` itself is declared several hundred lines below, and a ref
@@ -1624,7 +1629,9 @@ export default function GalleryPage() {
           <input
             className="input"
             placeholder="Search filename or caption…"
-            style={{ width: 280 }}
+            // `.search-wrap .input` pads only the left, for the magnifier; the × sits at
+            // `right: 6` and a long query runs under it without this.
+            style={{ width: 280, paddingRight: 24 }}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -1715,7 +1722,7 @@ export default function GalleryPage() {
           <input
             className="input"
             placeholder="Objects: cat, dog…"
-            style={{ paddingLeft: 26, width: 160 }}
+            style={{ paddingLeft: 26, paddingRight: 24, width: 160 }}
             value={detectionLabelInput}
             onChange={(e) => setDetectionLabelInput(e.target.value)}
             title="Filter by detected object label"

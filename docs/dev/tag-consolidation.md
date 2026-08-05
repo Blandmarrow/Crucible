@@ -66,7 +66,11 @@ registered in `main.py`). Both endpoints follow the `BackgroundJob` →
 `frontend/src/pages/TagConsolidatePage.tsx` at `/datasets/:datasetId/consolidate`
 (sidebar "Consolidate Tags"; wired into `App.tsx`, the pane system `PageRenderer`/
 `PaneHeader`, and `PageType` in `PaneContext`). API client `api/tagConsolidation.ts`.
-A single page-level **subfolder** select scopes both sections.
+A single page-level **subfolder** select scopes both sections. `PageRenderer` renders it
+with `key={view.datasetId}`: the analyzed merge mapping is plain component state seeded at
+mount, so without the key switching a pane's dataset left dataset A's proposal on screen
+with Apply targeting B (`docs/dev/panes-routing.md` § A pane's dataset is part of a page's
+identity).
 
 - **Quick cleanup** — deterministic subsumption. A `["subsume-preview", datasetId,
   subfolder]` query (`subsume(..., dry_run:true)`) shows "N of M captions affected"; the

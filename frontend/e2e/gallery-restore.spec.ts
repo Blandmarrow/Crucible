@@ -379,6 +379,74 @@ test('Reset filters clears all three and they stay cleared', async ({ page, requ
   ).toMatchObject({ search: '', detectionLabel: '', scoreFilters: [] })
 })
 
+// Switching a pane's dataset is the one gesture that changes `datasetId` under a *live*
+// GalleryPage. The blob is read only in `useState` initializers, so without the
+// `key={view.datasetId}` in `PageRenderer` the previous dataset's filters stayed on
+// screen and the persist effect — whose dep array does include `datasetId` — wrote them
+// straight into the new dataset's key, destroying what it remembered. Both halves are
+// asserted: B's blob survives, and it is what the pane shows.
+test('switching a pane to another dataset re-seeds its filters instead of leaking them', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 8)
+  const a = await createDatasetViaApi(request, `pane-swap-a-${Date.now()}`)
+  const b = await createDatasetViaApi(request, `pane-swap-b-${Date.now()}`)
+  await uploadViaApi(request, a.id, 'keep-a.png')
+  await uploadViaApi(request, b.id, 'other-b.png')
+
+  // B arrives with a filter of its own, so a pass needs the restore to happen — not
+  // merely the leak to be absent.
+  await page.addInitScript(
+    (key) => {
+      localStorage.setItem(
+        key,
+        JSON.stringify({ page: 1, sortIdx: 0, captionedFilter: null, scrollTop: 0, search: 'other' }),
+      )
+    },
+    `gallery-state-${b.id}`,
+  )
+
+  await page.goto(`/datasets/${a.id}/gallery`)
+  await page.getByPlaceholder('Search filename or caption…').fill('keep')
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+  // A second filter of a different shape — B's blob names no `scoreFilters`, so this is
+  // the half that checks a filter the new dataset does *not* carry actually clears.
+  await page.getByRole('button', { name: 'Score filter' }).click()
+  await page.getByPlaceholder('min', { exact: true }).fill('5')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByTitle('Remove filter')).toHaveCount(1)
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+
+  await page.getByRole('button', { name: 'Enter split view' }).click()
+  await page.getByRole('button', { name: 'Split horizontal (side by side)' }).click()
+  const panes = page.getByTestId('pane-leaf')
+  await expect(panes).toHaveCount(2)
+  const left = panes.nth(0)
+
+  // Index 1 is the pane header's dataset select (index 0 is its page select); `.last()`
+  // would pick up one of the gallery toolbar's own selects instead.
+  await left.locator('select').nth(1).selectOption(b.id)
+
+  await expect(left.getByPlaceholder('Search filename or caption…')).toHaveValue('other')
+  await expect(left.getByTitle('Remove filter')).toHaveCount(0)
+
+  // The destructive write landed one debounce window after the switch, so the blobs are
+  // only trustworthy after waiting it out.
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  const blobs = await page.evaluate(
+    ([ka, kb]) => [
+      JSON.parse(localStorage.getItem(ka)!).search,
+      JSON.parse(localStorage.getItem(kb)!).search,
+    ],
+    [`gallery-state-${a.id}`, `gallery-state-${b.id}`] as const,
+  )
+  expect(blobs).toEqual(['keep', 'other'])
+
+  // …and A survives the round trip, which is what "not clobbered" has to mean on screen
+  // rather than only in storage.
+  await left.locator('select').nth(1).selectOption(a.id)
+  await expect(left.getByPlaceholder('Search filename or caption…')).toHaveValue('keep')
+  await expect(left.getByTitle('Remove filter')).toHaveCount(1)
+})
+
 // The × the search box gained alongside the persistence — the one-click way out of a
 // filter that now survives a restart. It clears both halves of the pair synchronously,
 // which is what makes the debounce stay quiet afterwards.

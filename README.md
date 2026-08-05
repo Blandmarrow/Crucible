@@ -52,7 +52,7 @@ Every step from raw images to a training-ready export, in order:
 
 ### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md)
-- **Filter & curate** via search, quality flags, score ranges, and detected object labels → [details](docs/gallery.md)
+- **Filter & curate** via search, quality flags, score ranges, and detected object labels — every filter is remembered per dataset, so leaving the gallery and coming back (or restarting) lands you back on the view you were working in → [details](docs/gallery.md)
 - **Label images** with a small shared vocabulary — a second axis of organisation alongside subfolders, so "usable for FX work" can cut across every subject folder. Apply one at a time, with a single keypress while arrowing through a folder, or in bulk across a whole filtered selection; then filter the gallery, or an export, on it. Labels never touch captions and never appear in an exported `.txt` → [details](docs/labels.md)
 
 ### Object detection

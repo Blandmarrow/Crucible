@@ -32,7 +32,7 @@ import type { SubfolderInfo } from "../../types";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
-import { detectionModelFamily } from "../../constants/detectionModels";
+import { DETECTION_MODELS, detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
@@ -95,6 +95,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectMinProb, setDetectMinProb] = useState(0.5);
   const [detectSyncWatermark, setDetectSyncWatermark] = useState(false);
   const [detectJobLabel, setDetectJobLabel] = useState("");
   const [detectJobIds, setDetectJobIds] = useState<string[]>([]);
@@ -439,6 +440,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
         use_caption_as_prompt: detectUseCaptions,
         overwrite: detectOverwrite,
+        min_prob: detectMinProb,
         sync_watermark_flag: detectSyncEligible && detectSyncWatermark,
         label: detectJobLabel.trim() || undefined,
       }),
@@ -973,20 +975,38 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   // Only reset task/prompt/use-captions when the model family changes;
                   // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
                   if (familyChanged) {
-                    setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
+                    // NudeNet is the one model with a fixed task the backend
+                    // enforces (`task='nudenet'`), so the family switch picks it.
+                    const family = detectionModelFamily(m);
+                    setDetectTask(family === "nudenet" ? "nudenet" : family === "sam" ? "text_prompt" : "<OD>");
                     setDetectPrompt("");
                     setDetectUseCaptions(false);
                   }
                 }}
               >
-                <option value="florence2_large">Florence-2 Large</option>
-                <option value="florence2_promptgen">Florence-2 PromptGen</option>
-                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
-                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
+                {DETECTION_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
             </div>
 
-            {detectModel !== "sam2" && detectModel !== "sam3" && (
+            {detectModel === "nudenet" && (
+              <div>
+                <label className="label">Min confidence: {detectMinProb.toFixed(2)}</label>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  value={detectMinProb}
+                  onChange={(e) => setDetectMinProb(Number(e.target.value))}
+                  className="w-full"
+                />
+                <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
+              </div>
+            )}
+
+            {detectionModelFamily(detectModel) === "florence" && (
               <div>
                 <label className="label">Task</label>
                 <select

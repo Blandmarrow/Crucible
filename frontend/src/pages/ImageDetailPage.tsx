@@ -33,7 +33,7 @@ import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
-import { detectionModelFamily } from "../constants/detectionModels";
+import { DETECTION_MODELS, detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
@@ -2204,11 +2204,9 @@ export default function ImageDetailPage() {
                   setDetectTask("text_prompt");
                 }
               }}>
-                <option value="florence2_large">Florence-2 Large</option>
-                <option value="florence2_promptgen">Florence-2 PromptGen</option>
-                <option value="nudenet">NudeNet (body-part detection)</option>
-                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
-                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
+                {DETECTION_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
             </div>
 

@@ -6,7 +6,7 @@ import { apiErrorDetail } from "../../utils/apiError";
 import { detectionApi } from "../../api/detection";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { useJobStore } from "../../store/jobStore";
-import { detectionModelFamily } from "../../constants/detectionModels";
+import { DETECTION_MODELS, detectionModelFamily } from "../../constants/detectionModels";
 
 interface Props {
   datasetId: string;
@@ -129,11 +129,9 @@ export default function DetectionRunForm({ datasetId, imageIds, subfolder, quali
             }
           }}
         >
-          <option value="florence2_large">Florence-2 Large</option>
-          <option value="florence2_promptgen">Florence-2 PromptGen</option>
-          <option value="nudenet">NudeNet (NSFW regions)</option>
-          <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
-          <option value="sam3">SAM 3 (text-prompt segmentation)</option>
+          {DETECTION_MODELS.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
         </select>
       </div>
 

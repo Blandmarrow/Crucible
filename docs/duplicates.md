@@ -34,6 +34,8 @@ Bulk actions always ask for confirmation. The dialog states how many images will
 
 The duplicate mark is a statement about a *pair*, not about one image, so it is kept honest whichever way you thin a group out. Delete copies from the gallery, the lightbox, a bulk delete or the file browser and the last image standing loses its duplicate badge automatically — it is not a duplicate of anything any more. Two or more copies still surviving keep their badges, even when the image the scan had marked *kept* was the one you deleted; they are still duplicates of each other, and the panel keeps offering them as a group.
 
+The mark belongs to the pair, so it only travels when the pair does: copying or moving images into another dataset carries their duplicate marks only when the image they were matched against comes along too, and otherwise drops the mark — an image on its own in a new dataset is not a duplicate of anything there. Duplicating a whole dataset keeps its groups, pointing at the copy's own images.
+
 If a dataset still shows a duplicate count you cannot account for — from an older version of Crucible, or from a scan you have since tightened the threshold on — **re-run scoring with Technical ticked**. The grouping pass is authoritative: it re-marks the images that are duplicates now and clears the mark from every image that is not, so a re-scan is the repair for anything stale. Only the duplicate mark is touched; blurry, watermark and the other flags are left alone.
 
 ## Duplicates that came from the same video

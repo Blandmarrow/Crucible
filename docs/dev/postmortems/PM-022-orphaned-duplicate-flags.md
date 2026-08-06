@@ -76,6 +76,16 @@ The path-containment and versioning-hook sweeps (PM-014, V-83) had already enume
 every delete site in the codebase, twice. Both enumerations were about what a delete must
 do to *files*; neither asked what a delete owes the rows that survive it.
 
+The first fix repeated a narrower version of the same mistake, and a review caught it: it
+enumerated **delete** sites, because a delete is what the incident report described. But a
+row can end up flagged against a root it cannot see without anything being deleted at all
+— copy it, move it or duplicate its dataset, and the mark arrives in a dataset the root is
+not in. That end state is the reported symptom exactly, and it is *worse*, because the
+prune cannot repair it: the root is alive, so nothing is orphaned by the prune's own test.
+The generalizable rule below was already written and already covers it — "which paths can
+falsify it without touching this row?" has a second answer, "the paths that move this row
+somewhere the other one isn't" — so the miss was in applying the rule, not in stating it.
+
 The symptom was also mistaken for a display bug first: the Stats "N flagged" badge sums
 seven overlapping flag counts and legitimately exceeds the image count, which made
 `688 vs 586` look like the badge's arithmetic rather than the data underneath it.
@@ -92,6 +102,21 @@ now delegates. Tests: `backend/tests/test_duplicate_flags_authoritative.py` (ser
 level, no cv2/torch/job queue) and new cases in `test_duplicate_groups_http.py` covering
 each delete path — including the case the prune must **not** touch.
 
+**Second pass — the boundary rule.** A duplicate mark is only ever a live relationship
+*inside one dataset*, so it may not cross a boundary it cannot point across.
+`carry_duplicate_flags(flags, id_map)` joins the same service and gives `duplicate_of` the
+remap-or-strip `Image.source_video_id` already had: remapped onto the destination's own
+copy of the root when that root crossed too, both keys dropped when it did not.
+`_clear_duplicate_flags` is expressed as `carry_duplicate_flags(flags, {})` so there is one
+rule and not two. Four boundary sites call it — `batch_copy_dataset`, `batch_move_dataset`
+(an *identity* map, since a move keeps the ids) and `duplicate_dataset`'s two branches —
+and two readers were scoped to agree with it: the prune's aliveness check and
+`get_duplicates`' root lookup both now require the root to be in the dataset being read, so
+pre-existing drift renders as a group with no `kept` row and is repaired by the first
+delete in that dataset, rather than pulling a foreign image into a payload *Keep best* can
+act on. `backend/tests/test_duplicate_flags_cross_dataset.py` pins the four writers and
+both readers.
+
 Out of scope, asked and declined: the Stats "N flagged" badge, which still sums
 overlapping counts and will still exceed the image count. This fix moves the *Duplicate*
 card, not the badge total.
@@ -99,6 +124,7 @@ card, not the badge total.
 ### Status & date
 
 MITIGATED — the invariant has one owner and the scan is the repair path, but nothing
-structurally prevents a *new* delete endpoint from skipping the prune; the enumerated list
-in CLAUDE.md and in the service docstring is a reviewer's checklist, not a guard.
-Last reviewed for staleness: 2026-08-05.
+structurally prevents a *new* delete endpoint from skipping the prune, or a new
+cross-dataset path from skipping the carry; the enumerated lists in CLAUDE.md and in the
+service docstring are a reviewer's checklist, not a guard.
+Last reviewed for staleness: 2026-08-06.

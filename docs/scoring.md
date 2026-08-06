@@ -66,7 +66,7 @@ similarity compares them against each other.
 
 Duplicate detection has no checkbox of its own: the perceptual hash (pHash) is computed
 once when an image is imported, and the **Technical** scorer does the grouping pass that
-compares those hashes and sets `is_duplicate`. Ticking Technical is what runs it. Reviewing
+compares those hashes and sets `is_duplicate` — and clears it from every image that is no longer a duplicate, so re-running Technical is the repair for a stale mark. Ticking Technical is what runs it. Reviewing
 and clearing the groups it finds is its own page — see [Duplicate Resolution](duplicates.md).
 
 ## Choosing the aesthetic model

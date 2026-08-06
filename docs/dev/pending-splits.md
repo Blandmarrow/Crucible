@@ -50,15 +50,19 @@ staleness sweep while still recording the seam.
 
 - **Moves:** the § Key invariants bullets that are *about one subsystem each* — the two
   video bullets (the poster/`video_count` one and the Windows open-file one), the
-  `record_in_place`/`scores_stale` bullet, and the stem-keyed-derived-artifact bullet
+  `record_in_place`/`scores_stale` bullet, the stem-keyed-derived-artifact bullet, and the
+  `is_duplicate` bullet
 - **New file:** none — they move **into the topic files that already own them**
   (`docs/dev/video.md`, `docs/dev/video-endpoints.md`, `docs/dev/scores-stale.md`,
-  `docs/dev/image-files.md`), each leaving a one-line pointer behind in CLAUDE.md
+  `docs/dev/image-files.md`, `docs/dev/image-similarity.md`), each leaving a one-line
+  pointer behind in CLAUDE.md
 - **Why here:** § Architecture is 2,905 words and § Key invariants is nearly all of it,
   which is a symptom rather than the problem: the section's stated test is "would I want
-  this loaded even for a task in an unrelated subsystem?", and four of those bullets fail
+  this loaded even for a task in an unrelated subsystem?", and five of those bullets fail
   it outright. Each has grown a full sub-bullet tree of its own that only a reader already
-  inside that subsystem can use, and each has a topic file that is the natural home. That
+  inside that subsystem can use, and each has a topic file that is the natural home —
+  `image-similarity.md` already carries the `is_duplicate` bullet's whole section (§ The
+  flag is a relationship), so that one is a pointer swap rather than a move. That
   is a *misfiling* fix, not a size fix, and it is why the seam is not "split CLAUDE.md in
   half" — a second always-loaded file would defeat the point of the split. The three
   bullets that must stay are the ones every module genuinely touches: the path-traversal
@@ -68,7 +72,10 @@ staleness sweep while still recording the seam.
   rules that a fresh conversation sees. The `record_in_place` bullet is cited by
   `docs/dev/postmortems.md` (PM-010) and by the AST guard's docstring in
   `backend/tests/test_scores_stale.py`; the stem-collision bullet is cited from
-  `docs/dev/video-reextract.md` § The extension change. The Documentation Map is the other
+  `docs/dev/video-reextract.md` § The extension change. The `is_duplicate` bullet has one
+  clause its section does not own — `duplicate_of`'s remap-or-strip sits in the
+  *cross-dataset* sub-bullet beside `source_video_id`, which is where it belongs because it
+  is the same rule; that clause stays behind when the rest moves. The Documentation Map is the other
   1,808 words and is **not** a split candidate: it is the routing table that makes the
   on-demand split work at all, and it grows by one row per topic file by design.
 
@@ -220,9 +227,12 @@ staleness sweep while still recording the seam.
   *similarity*: duplicates are pHash Hamming distance, a grouping pass inside the technical
   scorer, and a destructive resolution UI; style is CLIP/DINOv2 cosines, a synchronous
   CPU-only endpoint, a run descriptor table, a percentile contract and three rendered
-  meters. A reader arrives for exactly one. Splitting there leaves ~2,300 and ~2,440 — both
+  meters. A reader arrives for exactly one. Splitting there leaves ~3,630 and ~2,440 — both
   over the ~2,100 target, which is the honest cost of a file that is two full subsystems
-  rather than one that grew a tail. If the style half needs a second seam it is between the
+  rather than one that grew a tail. (The duplicates half is the one that has since grown:
+  the file went 4,916 → 6,064 words, all of it on that side, so the seam is more overdue
+  than the ~2,300 first recorded here suggested — and the half left behind is the bigger
+  one now.) If the style half needs a second seam it is between the
   *scoring* (modes, gate findings, all-layers vectorization) and the *reading* (descriptor,
   endpoint, percentile, surfaces) — the § Making the score readable heading is already that
   line.

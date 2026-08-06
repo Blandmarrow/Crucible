@@ -29,8 +29,6 @@ import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import type { ModelInfo, OllamaModel } from "../types";
-import { type ProviderOut } from "../api/providers";
 import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
@@ -49,7 +47,6 @@ import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
-interface Wd14ModelInfo { id: string; name: string; }
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -557,10 +554,10 @@ export default function ImageDetailPage() {
     staleTime: Infinity,
   });
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
-  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
+  const providers = modelsData?.openai_compat_models ?? [];
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
 
@@ -1952,6 +1949,7 @@ export default function ImageDetailPage() {
                   {localModels.map(m => (
                     <div
                       key={m.id}
+                      title={m.description}
                       className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                         aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                       }`}
@@ -1984,6 +1982,7 @@ export default function ImageDetailPage() {
                       {wd14Models.map(m => (
                         <div
                           key={m.id}
+                          title={m.description}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                             aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                           }`}

@@ -28,8 +28,7 @@ import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import { useLabels } from "../../hooks/useLabels";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
-import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
-import { type ProviderOut } from "../../api/providers";
+import type { SubfolderInfo } from "../../types";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
@@ -39,7 +38,6 @@ import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
-interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -218,10 +216,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     </div>
   ) : null;
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
-  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
+  const providers = modelsData?.openai_compat_models ?? [];
   const type = modelType(captionModel);
   const availableStyles = type ? (STYLE_LABELS[type] ?? []) : [];
 
@@ -609,7 +607,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   }`}
                   onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                 >
-                  <div className="flex-1">{m.name}</div>
+                  <div className="flex-1 min-w-0">
+                    <div>{m.name}</div>
+                    <div className="text-xs text-gray-500">{m.description}</div>
+                  </div>
                   <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
                   {m.loaded && <span className="badge-green">Loaded</span>}
                 </div>
@@ -642,7 +643,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                       }`}
                       onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                     >
-                      <div className="flex-1">{m.name}</div>
+                      <div className="flex-1 min-w-0">
+                        <div>{m.name}</div>
+                        <div className="text-xs text-gray-500">{m.description}</div>
+                      </div>
                       {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
                     </div>
                   ))}

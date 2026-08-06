@@ -5,7 +5,7 @@ import { apiErrorDetail } from "../utils/apiError";
 import { settingsApi, type Thresholds, type SecretKey, type SecretsUpdate } from "../api/settings";
 import { comfyApi } from "../api/comfy";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
-import { captioningApi } from "../api/captioning";
+import { captioningApi, type CaptioningModels } from "../api/captioning";
 import {
   CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY,
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
@@ -28,16 +28,15 @@ import SecretField from "../components/settings/SecretField";
 
 type ModelOption = { id: string; label: string; group: string };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildModelOptions(modelsData: any, providers: ProviderOut[]): ModelOption[] {
+function buildModelOptions(modelsData: CaptioningModels | undefined, providers: ProviderOut[]): ModelOption[] {
   const opts: ModelOption[] = [];
-  for (const m of (modelsData?.local_models ?? []) as { id: string; name: string }[]) {
+  for (const m of modelsData?.local_models ?? []) {
     opts.push({ id: m.id, label: m.name, group: "Local models" });
   }
-  for (const m of (modelsData?.wd14_models ?? []) as { id: string; name: string }[]) {
+  for (const m of modelsData?.wd14_models ?? []) {
     opts.push({ id: m.id, label: m.name, group: "Tagger" });
   }
-  for (const m of (modelsData?.ollama_models ?? []) as { id: string; name: string; size_mb?: number }[]) {
+  for (const m of modelsData?.ollama_models ?? []) {
     opts.push({ id: m.id, label: m.name, group: "Ollama" });
   }
   for (const p of providers) {
@@ -308,6 +307,23 @@ export default function SettingsPage() {
     staleTime: 30_000,
   });
   const modelOpts = buildModelOptions(captioningModels, providers);
+
+  // Drop a saved default the endpoint no longer offers. It went stale the day
+  // `GET /captioning/models` stopped returning the registry's scorers, detectors
+  // and embedders — a user whose default was `dino` keeps a localStorage value
+  // with no matching <option>, so the <select> renders blank while still
+  // claiming a default is set. The loading-state fallback further down does not
+  // cover it: that only fires before the query resolves.
+  //
+  // Derived during render rather than pushed back into state by the effect: the
+  // <select> reads the resolved value, so the effect has only the localStorage
+  // key left to clear and never calls setState.
+  const staleDefaultModel =
+    !!captioningModels && !!captionDefaultModel && !modelOpts.some((o) => o.id === captionDefaultModel);
+  const resolvedDefaultModel = staleDefaultModel ? "" : captionDefaultModel;
+  useEffect(() => {
+    if (staleDefaultModel) localStorage.removeItem(CAPTION_DEFAULT_MODEL_KEY);
+  }, [staleDefaultModel]);
 
   const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
   const [showProviderForm, setShowProviderForm] = useState(false);
@@ -709,7 +725,7 @@ export default function SettingsPage() {
                 </p>
                 <select
                   className="select"
-                  value={captionDefaultModel}
+                  value={resolvedDefaultModel}
                   onChange={(e) => {
                     setCaptionDefaultModel(e.target.value);
                     localStorage.setItem(CAPTION_DEFAULT_MODEL_KEY, e.target.value);

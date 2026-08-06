@@ -1,4 +1,15 @@
 import client from "./client";
+import type { ModelInfo, OllamaModel, Wd14ModelInfo } from "../types";
+import type { ProviderOut } from "./providers";
+
+/** `GET /captioning/models`. `local_models` is filtered to captioners backend-side —
+ * the registry's scorers, detectors and embedders never appear here. */
+export interface CaptioningModels {
+  local_models: ModelInfo[];
+  ollama_models: OllamaModel[];
+  wd14_models: Wd14ModelInfo[];
+  openai_compat_models: ProviderOut[];
+}
 
 export type DelimiterMode = "overwrite" | "append" | "prepend";
 
@@ -67,7 +78,7 @@ export interface CaptionPipelineParams {
 
 export const captioningApi = {
   models: () =>
-    client.get<{ local_models: unknown[]; ollama_models: unknown[]; wd14_models: unknown[]; openai_compat_models: unknown[] }>("/captioning/models").then((r) => r.data),
+    client.get<CaptioningModels>("/captioning/models").then((r) => r.data),
   run: (params: CaptionRunParams) =>
     client.post<{ job_id: string; total: number }>("/captioning/run", params).then((r) => r.data),
   pipeline: (params: CaptionPipelineParams) =>

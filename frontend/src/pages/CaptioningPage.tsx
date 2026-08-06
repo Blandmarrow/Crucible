@@ -16,7 +16,7 @@ import { usePresetsStore } from "../store/promptPresetsStore";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import type { ModelInfo, OllamaModel } from "../types";
+import type { ModelInfo, OllamaModel, Wd14ModelInfo } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
 import { FLAG_OPTIONS } from "../constants/flags";
 import {
@@ -34,8 +34,6 @@ import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persis
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Scope = "uncaptioned" | "selected" | "all";
-
-interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 interface StepConfig {
   id: string;
@@ -157,7 +155,7 @@ function StepModelPicker({
           <div className="ind" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="mr-name">{m.name}</div>
-            <div className="mr-desc">{m.id.startsWith("florence2") ? "Microsoft · best for descriptive prose" : "Google · requires HF token"}</div>
+            <div className="mr-desc">{m.description}</div>
           </div>
           <span className="mr-vram">{m.vram_mb ? `${(m.vram_mb / 1024).toFixed(1)} GB` : "—"}</span>
         </div>
@@ -173,7 +171,7 @@ function StepModelPicker({
           <div className="ind" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="mr-name">{m.name}</div>
-            <div className="mr-desc">SmilingWolf · outputs booru-style tags · threshold-based</div>
+            <div className="mr-desc">{m.description}</div>
           </div>
           <span className="mr-vram">{(m.ram_mb / 1024).toFixed(1)} GB</span>
         </div>
@@ -414,9 +412,9 @@ export default function CaptioningPage() {
     enabled: !!datasetId,
   });
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
 
   // Apply stored default model once after models/providers load, if no model is selected yet —
   // or if the remembered model is no longer valid (uninstalled model / removed provider).

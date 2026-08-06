@@ -476,11 +476,30 @@ export interface VideoFramesSummary {
   groups: VideoFramesGroup[];
 }
 
+/** An entry of the backend model registry (`model_manager.list_models()`).
+ *
+ * `description` is authored beside the loader and rendered verbatim by the
+ * pickers — never restate a model's blurb in frontend copy, which is how
+ * JoyCaption came to be described as Google's and gated. `kind` is the model's
+ * primary role; `GET /captioning/models` already filters to `"caption"`, so a
+ * consumer of that endpoint sees nothing else. */
 export interface ModelInfo {
   id: string;
   name: string;
   vram_mb: number;
   loaded: boolean;
+  kind: "caption" | "score" | "detect" | "embed";
+  description: string;
+}
+
+/** A WD14 tagger variant (`wd14_tagger.list_wd14_models()`). Arrives in its own
+ * array, so — unlike ModelInfo — it carries no `kind`: every entry is a
+ * captioner by construction. */
+export interface Wd14ModelInfo {
+  id: string;
+  name: string;
+  ram_mb: number;
+  description: string;
 }
 
 export interface OllamaModel {

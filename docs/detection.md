@@ -22,6 +22,8 @@ Available from the **Detect** button in SelectionToolbar, and from the Object De
 
 ONNX-based body-part detector producing labelled bounding boxes (exposed skin regions, clothing, etc). CPU-only, no GPU required. A **Min confidence** slider controls the detection threshold (default 0.5).
 
+Offered by all three Detect surfaces — the gallery selection toolbar, the Image Detail page, and the Bulk Edit Detections tab. It needs no prompt and has no task to choose: picking it swaps the Task dropdown for the Min confidence slider.
+
 ## Grounded SAM 2.1 (segmentation masks)
 
 Two-stage pipeline: **Grounding DINO** localises objects from a text description → **SAM2** produces a precise pixel-level segmentation mask for each detected region.

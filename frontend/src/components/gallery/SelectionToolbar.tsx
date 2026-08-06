@@ -31,6 +31,7 @@ import ResolutionPicker from "../caption/ResolutionPicker";
 import type { SubfolderInfo } from "../../types";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
+import { captionBackend, captionModelIds } from "../../constants/captionModels";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
 import { DETECTION_MODELS, detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
@@ -223,6 +224,16 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const providers = modelsData?.openai_compat_models ?? [];
   const type = modelType(captionModel);
   const availableStyles = type ? (STYLE_LABELS[type] ?? []) : [];
+
+  // The preset loader below sets the model, so a preset saved against a model the
+  // backend no longer accepts puts a 422 id into this modal. `captionBackend` — not
+  // `type`, which is null for the runnable `wd14:`/`openai_compat:` — is the predicate
+  // for that; membership in `offeredIds` is informational only, since an absent model
+  // may just mean Ollama is down. See `constants/captionModels.ts`.
+  const captionBlocked = !!captionModel && captionBackend(captionModel) === null;
+  const captionOfferedIds = captionModelIds(modelsData, providers);
+  const captionUnlisted = !!modelsData && !!captionModel && !captionBlocked
+    && !captionOfferedIds.includes(captionModel);
 
   const mergeTagsMutation = useMutation({
     mutationFn: () => tagConsolidationApi.subsume(datasetId, { image_ids: ids, dry_run: false }),
@@ -797,12 +808,25 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               </>
             )}
 
+            {captionBlocked && (
+              <p className="text-xs text-red-400">
+                “{captionModel}” is not a captioning model — captioning cannot run while it is selected.
+                A saved preset can carry one in; pick a model above.
+              </p>
+            )}
+            {captionUnlisted && (
+              <p className="text-xs text-yellow-400">
+                “{captionModel}” is not in the current model list — the service may be offline, or the
+                model may have been removed.
+              </p>
+            )}
+
             <div className="flex gap-2 justify-end">
               <button className="btn-ghost" onClick={() => setShowCaption(false)}>Cancel</button>
               <button
                 className="btn-primary flex items-center gap-2"
                 onClick={() => captionMutation.mutate()}
-                disabled={!captionModel || captionMutation.isPending}
+                disabled={!captionModel || captionBlocked || captionMutation.isPending}
               >
                 <Sparkles size={14} /> Start Captioning
               </button>

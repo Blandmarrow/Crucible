@@ -20,6 +20,16 @@ Two mechanisms close that, and this file guards both:
   filter alone does not fix the no-op: a stale localStorage default, a saved
   workflow blob or a direct API call all still reach the endpoint.
 
+The validator has a frontend consequence, so this file also guards the hand-mirror
+it forced: `captionBackend` in `frontend/src/constants/captionModels.ts`. Rejecting
+a stale id at the door turned "nothing happens" into a hard 422 for the whole
+request — in a pipeline, step 1 stops running because step 3 is stale — so the UI
+has to refuse the Run itself, naming the offending step. It cannot reuse
+`modelType` for that (null for the perfectly runnable `wd14:` and
+`openai_compat:`), so the prefix chain is written twice and the parity test below
+is what keeps the copies honest. Same reasoning, and same shape, as
+`test_provenance.py::test_frontend_license_vocabulary_matches_backend`.
+
 `description` is here for the same reason `kind` is. The reported symptom was
 JoyCaption described as "Google · requires HF token" — neither true — because a
 two-way ternary in the frontend gave every non-Florence model PaliGemma-2's
@@ -31,6 +41,9 @@ module scope (torch is per-function there on purpose) and `wd14_tagger` needs
 only numpy and PIL. No `needs_torch` marker — if one becomes necessary here,
 something has moved a torch import to module scope.
 """
+
+import re
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -172,6 +185,87 @@ def test_run_rejects_a_non_captioner_and_creates_no_job(tmp_path):
             assert jobs == []
 
     run(scenario())
+
+
+# ── The frontend hand-mirror ──────────────────────────────────────────────────
+
+_TS_PATH = Path(__file__).parents[2] / "frontend" / "src" / "constants" / "captionModels.ts"
+
+# The branches `_caption_backend` is written as, in order. The chain is ordered, so
+# comparing the sequence rather than the set is the point: `florence2` before
+# `paligemma2` is arbitrary, but a prefix moved ahead of one it shadows is not.
+_EXPECTED_BRANCHES = [
+    ("startsWith", "florence2", "florence2"),
+    ("===", "paligemma2", "paligemma2"),
+    ("startsWith", "joycaption_", "joycaption_"),
+    ("startsWith", "ollama:", "ollama:"),
+    ("startsWith", "openai_compat:", "openai_compat:"),
+    ("startsWith", "wd14:", "wd14:"),
+]
+
+# Ids no registry enumerates — the four runtime-constructed forms, plus the three
+# ways an id reaches the validator having never been a captioner at all.
+_CONTROLS = {
+    "ollama:llava": "ollama:",
+    "ollama:qwen2.5vl:7b": "ollama:",
+    "openai_compat:p": "openai_compat:",
+    "openai_compat:p:gpt-4o": "openai_compat:",
+    "wd14:x": "wd14:",
+    "dino": None,
+    "sam3": None,
+    "": None,
+}
+
+
+def _ts_branches() -> list[tuple[str, str, str]]:
+    """`captionBackend`'s if-chain, parsed out of the TypeScript."""
+    src = _TS_PATH.read_text(encoding="utf-8")
+    body = src.split("export function captionBackend", 1)[1].split("\n}", 1)[0]
+    branches: list[tuple[str, str, str]] = []
+    for line in body.splitlines():
+        m = re.search(r'if \(model\.startsWith\("([^"]*)"\)\) return "([^"]*)";', line)
+        if m:
+            branches.append(("startsWith", m.group(1), m.group(2)))
+            continue
+        m = re.search(r'if \(model === "([^"]*)"\) return "([^"]*)";', line)
+        if m:
+            branches.append(("===", m.group(1), m.group(2)))
+    return branches
+
+
+def _ts_verdict(model: str, branches: list[tuple[str, str, str]]) -> str | None:
+    """Evaluate the parsed chain the way the browser would."""
+    for op, literal, ret in branches:
+        if op == "startsWith" and model.startswith(literal):
+            return ret
+        if op == "===" and model == literal:
+            return ret
+    return None
+
+
+def test_frontend_caption_backend_mirrors_the_prefix_chain():
+    assert _ts_branches() == _EXPECTED_BRANCHES, (
+        "captionModels.ts drifted from _caption_backend — reconcile both, then this list"
+    )
+
+
+def test_frontend_caption_backend_agrees_on_every_id():
+    """Parse the mirror and run it against the real thing over everything a picker
+    can produce. This is what makes the two copies safe: a prefix added to one and
+    not the other means the UI either blocks a runnable model or lets a 422 through."""
+    branches = _ts_branches()
+    corpus: dict[str, str | None] = dict(_CONTROLS)
+    for model_id in CAPTIONERS:
+        corpus[model_id] = _caption_backend(model_id)
+        assert corpus[model_id] is not None, model_id
+    for model_id in NOT_CAPTIONERS:
+        corpus[model_id] = None
+    for v in wd14_tagger.list_wd14_models():
+        corpus[v["id"]] = "wd14:"
+
+    for model_id, expected in corpus.items():
+        assert _caption_backend(model_id) == expected, f"backend: {model_id}"
+        assert _ts_verdict(model_id, branches) == expected, f"frontend: {model_id}"
 
 
 def test_pipeline_rejects_a_non_captioner_step(tmp_path):

@@ -25,6 +25,13 @@ detectors and embedding models (see [Quality Scoring](scoring.md) and
 the Captioning page, the gallery's Caption action, the image-detail sidebar and
 Settings → Captioning → Default model.
 
+If a remembered configuration still names something Crucible cannot caption with
+— a detector left in a saved pipeline step, say — the Run button is disabled and
+the step that holds it says so, instead of the run failing part-way through and
+leaving you to guess which step was at fault. A model that is merely *missing*
+from the list is different and does not block anything: Ollama may simply not be
+running, so you get a note rather than a refusal.
+
 Captions can also be **imported** rather than generated: from `.txt` sidecars during a folder import, via the per-dataset "Import captions" folder dialog, or by dragging a `.txt` file onto an image — see [Datasets & Gallery](gallery.md).
 
 ### JoyCaption styles

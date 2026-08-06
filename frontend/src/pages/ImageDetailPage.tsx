@@ -31,6 +31,7 @@ import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
+import { captionBackend, captionModelIds } from "../constants/captionModels";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { DETECTION_MODELS, detectionModelFamily } from "../constants/detectionModels";
@@ -560,6 +561,15 @@ export default function ImageDetailPage() {
   const providers = modelsData?.openai_compat_models ?? [];
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
+
+  // The preset loader below sets the model, so a preset saved against a model the
+  // backend no longer accepts puts a 422 id into this panel. `captionBackend` — not
+  // `aiModelType`, which is null for the runnable `wd14:`/`openai_compat:` — is the
+  // predicate for that; membership in the offered list is informational only, since an
+  // absent model may just mean Ollama is down. See `constants/captionModels.ts`.
+  const aiModelBlocked = !!aiModel && captionBackend(aiModel) === null;
+  const aiModelUnlisted = !!modelsData && !!aiModel && !aiModelBlocked
+    && !captionModelIds(modelsData, providers).includes(aiModel);
 
   const activeJobs = useJobStore((s) => s.activeJobs);
 
@@ -2154,10 +2164,23 @@ export default function ImageDetailPage() {
                   </div>
                 )}
 
+                {aiModelBlocked && (
+                  <p className="text-xs text-red-400">
+                    “{aiModel}” is not a captioning model — captioning cannot run while it is
+                    selected. A saved preset can carry one in; pick a model above.
+                  </p>
+                )}
+                {aiModelUnlisted && (
+                  <p className="text-xs text-yellow-400">
+                    “{aiModel}” is not in the current model list — the service may be offline, or
+                    the model may have been removed.
+                  </p>
+                )}
+
                 <button
                   className="btn-primary w-full flex items-center justify-center gap-2"
                   onClick={() => aiMutation.mutate()}
-                  disabled={!aiModel || aiMutation.isPending || aiRunning}
+                  disabled={!aiModel || aiModelBlocked || aiMutation.isPending || aiRunning}
                 >
                   <Sparkles size={14} />
                   {aiRunning ? "Generating…" : "Generate Caption"}

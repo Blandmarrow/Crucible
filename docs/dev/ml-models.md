@@ -21,6 +21,8 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 
 `HF_TOKEN` is written into `os.environ` by `backend/services/secrets_service.py::sync_env`, its only writer, so every loader that passes no `token=` picks it up: early in `main.py` from the `.env`/OS-env chain, again in the lifespan from the DB, and on every `PATCH /settings/secrets`. A token saved in Settings → API Keys therefore applies to the next download with no restart — `huggingface_hub` re-reads the variable on every call. See `docs/dev/settings.md` § API Keys tab for the precedence rules.
 
+Every registry entry also carries a `kind` (`"caption"` / `"score"` / `"detect"` / `"embed"`) and a `description`, both authored beside the loader that knows the repo id and the VRAM figure — `kind` is the model's *primary* role, singular, and `description` is the copy the pickers render verbatim. `GET /captioning/models` filters on `kind == "caption"`, so a new entry declaring the wrong one silently changes what the captioning picker offers; see `docs/dev/captioning.md` for that filter and the `_caption_backend` validator behind it.
+
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|

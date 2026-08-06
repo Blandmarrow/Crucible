@@ -24,6 +24,10 @@ Browser-local preferences, each taking effect immediately (applied once when the
 - Strip refusals (default on)
 - Rename on caption (default off)
 - Save backup (default off)
+
+If the default model is not among the ones currently on offer — Ollama not running, an LLM
+provider still loading — the field shows blank, but your saved choice is kept and reappears
+as soon as that service is back.
 - **Reset remembered Captioning configuration** — forgets the Captioning page's remembered setup so the defaults above apply again on the next visit. It clears the global setup *and* the remembered filters for **every** dataset, not just the one you last used
 
 ## UI Behavior

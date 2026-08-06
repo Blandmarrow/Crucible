@@ -10,6 +10,7 @@ for any drift, including orphans already sitting in a user's database.
 Service-level on purpose: `_flag_duplicates` needs cv2 and the job queue to reach
 this logic, and none of that is required to pin what the reconciliation does.
 """
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from backend.models.image import Image
@@ -146,9 +147,14 @@ def test_another_dataset_is_left_alone(tmp_path):
 
 
 def test_the_prune_ignores_a_group_whose_root_survived(tmp_path):
-    """`prune_orphaned_duplicate_flags` only ever looks at groups whose root is
-    among the just-deleted ids. A delete elsewhere in the dataset must not
-    disturb a live group, however small."""
+    """The prune re-checks the invariant across the **datasets** touched, not
+    against the ids just deleted — so an unrelated delete re-examines every
+    flagged row in that dataset. A group whose root is still there must come
+    through that pass untouched, however small it is.
+
+    The argument is a *dataset* id, and passing an image id instead makes the
+    call vacuous: it matches no dataset, so every assertion below holds for the
+    wrong reason."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
@@ -156,7 +162,10 @@ def test_the_prune_ignores_a_group_whose_root_survived(tmp_path):
             await _set_flags(env, {a: {"is_duplicate": True, "duplicate_of": root}})
 
             async with env.Session() as db:
-                cleared = await prune_orphaned_duplicate_flags(db, [unrelated])
+                # A real delete-driven prune: something else in the dataset goes,
+                # which is what a caller passes this dataset id for.
+                await db.execute(sa_delete(Image).where(Image.id == unrelated))
+                cleared = await prune_orphaned_duplicate_flags(db, [ds["id"]])
                 await db.commit()
 
             assert cleared == 0

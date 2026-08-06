@@ -91,7 +91,13 @@ async def prune_orphaned_duplicate_flags(
 
     No `commit()`. The caller owns the transaction, so this runs alongside the
     row DELETEs and before the commit that makes them durable: one commit, atomic
-    with the delete, and ahead of every filesystem mutation (PM-013).
+    with the delete, and ahead of every filesystem mutation (PM-013). Five of the
+    six sites do exactly that. `quality.resolve_duplicates` is the exception and
+    cannot be made to: its `keep_ids` clears are part of the state this counts
+    survivors against, and they come after the delete's own commit — so there it
+    runs in a **second** transaction, after the unlinks. The cost is stated
+    rather than fixed: a failed second commit leaves drift, and a Technical
+    re-scan (`apply_duplicate_groups`) repairs it.
 
     Returns the number of rows cleared.
     """

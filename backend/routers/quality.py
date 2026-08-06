@@ -999,7 +999,15 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     # caller listed, so deleting a group's root while keeping a survivor the
     # caller did not name would leave that survivor flagged against a row that no
     # longer exists (PM-022). After the loop, so its pending clears are part of
-    # the state the prune counts survivors against. `dataset_ids` is empty for a
-    # keep-only call, which makes this a no-op rather than a needless scan.
+    # the state the prune counts survivors against — which is also why this is
+    # the one prune site that does **not** run in the same transaction as its
+    # delete: the `keep_ids` clears above land after the delete's own commit, so
+    # a failure here leaves drift a Technical re-scan repairs.
+    # `dataset_ids` is empty for a keep-only call, which makes this a no-op
+    # rather than a needless scan — so a caller that passes `keep_ids` alone and
+    # thereby strands the last survivor of an already-dead root leaves it
+    # flagged until the next delete in that dataset or a re-scan. Not reachable
+    # from the UI: `QualityPage`'s only `resolveDuplicates` call always pairs a
+    # group's keep with its own deletes.
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()

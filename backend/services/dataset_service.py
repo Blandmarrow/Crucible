@@ -16,6 +16,7 @@ from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenanc
 from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from backend.models import Dataset, Image, ImageLabel, StyleSimilarityRun, Video
 from backend.services.caption_service import _write_txt_sidecar
+from backend.services.duplicate_service import carry_duplicate_flags
 from backend.services.label_service import copy_labels, live_label_ids
 from backend.services.image_service import (
     extract_generation_metadata,
@@ -1795,8 +1796,14 @@ async def duplicate_dataset(
     videos_added = 0
     videos_failed = 0
     images_added = 0
-    # source image id -> clone image id, for the label copy after Step 2A's loop.
+    # source image id -> clone image id, for the label copy after Step 2A's loop
+    # and for the duplicate-mark remap both branches run there. The snapshot
+    # branch fills it from `VersionImageState.image_id`, which is nullable — a
+    # NULL simply misses, and that state's copy arrives unflagged.
     image_id_map: dict[str, str] = {}
+    # source image id -> the pending clone row, so that remap can reach the rows
+    # once the map is complete.
+    new_by_source: dict[str, Image] = {}
 
     # --- Step 1: create fresh destination dataset ---
     new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
@@ -1980,7 +1987,10 @@ async def duplicate_dataset(
                     caption_style=row.caption_style,
                     captioned_by=row.captioned_by,
                     captioned_at=row.captioned_at,
-                    quality_flags=row.quality_flags,
+                    # Copied, never shared — two rows holding one dict object is
+                    # the trap the CLAUDE.md JSON invariant is about. The
+                    # duplicate keys inside it are rewritten after the loop.
+                    quality_flags=dict(row.quality_flags or {}),
                     nsfw_score=row.nsfw_score,
                     aesthetic_score=row.aesthetic_score,
                     aesthetic_model=row.aesthetic_model,
@@ -2015,6 +2025,7 @@ async def duplicate_dataset(
                 )
                 db.add(new_img)
                 image_id_map[row.id] = new_img.id
+                new_by_source[row.id] = new_img
                 images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset: failed to copy %s: %s", old_path, exc)
@@ -2098,7 +2109,9 @@ async def duplicate_dataset(
                     file_path=str(new_path),
                     thumbnail_path=str(new_thumb),
                     caption_text=state.caption_text,
-                    quality_flags=state.quality_flags or {},
+                    # Copied, not shared with the snapshot row's own dict; the
+                    # duplicate keys are rewritten after the loop.
+                    quality_flags=dict(state.quality_flags or {}),
                     width=state.width,
                     height=state.height,
                     file_size_bytes=state.file_size_bytes,
@@ -2136,6 +2149,15 @@ async def duplicate_dataset(
                     ImageLabel(image_id=new_img.id, label_id=lid)
                     for lid in sorted(set(state.label_ids or []) & snapshot_labels)
                 ])
+                # The snapshot's `quality_flags` carry `duplicate_of` as a *live*
+                # image id, so the same remap the on-disk branch does applies
+                # here — keyed off `image_id`, the mirror's link back to the row
+                # the state came from. It is nullable and carries no FK, so a
+                # state whose image is long gone contributes nothing to the map
+                # and any mark naming it is stripped.
+                if state.image_id:
+                    image_id_map[state.image_id] = new_img.id
+                    new_by_source[state.image_id] = new_img
                 images_added += 1
             except Exception as exc:
                 log.warning("duplicate_dataset (snapshot): failed to copy %s: %s", state.filename, exc)
@@ -2157,6 +2179,16 @@ async def duplicate_dataset(
 
         if skipped:
             log.warning("duplicate_dataset: skipped %d/%d images (missing files)", skipped, total)
+
+    # `duplicate_of` names another row, so it is remapped exactly as
+    # `source_video_id` is: the clone's groups point at the clone's own rows, and
+    # a member whose root did not make it arrives unflagged rather than marked
+    # against an image this dataset does not hold. A second pass, shared by both
+    # branches, because the map is only complete once its loop is — at row *i* it
+    # holds rows 0..i-1, so an in-constructor remap would miss every forward
+    # reference. A cancelled duplicate lands here too, and is self-consistent.
+    for _src_id, _new_img in new_by_source.items():
+        _new_img.quality_flags = carry_duplicate_flags(_new_img.quality_flags, image_id_map)
 
     # --- Step 3: commit and refresh stats ---
     await db.commit()

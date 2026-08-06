@@ -53,7 +53,7 @@ from backend.services.dataset_service import refresh_stats
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
-from backend.services.duplicate_service import prune_orphaned_duplicate_flags
+from backend.services.duplicate_service import carry_duplicate_flags, prune_orphaned_duplicate_flags
 from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
 from backend.services.image_service import (
     crop_image_to_dest,
@@ -2020,7 +2020,10 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
 
     _move_cols = (Image.id, Image.filename, Image.file_path, Image.dataset_id, Image.thumbnail_path,
                   Image.sort_order, Image.created_at,
-                  Image.source_name, Image.source_url, Image.license, Image.attribution)
+                  Image.source_name, Image.source_url, Image.license, Image.attribution,
+                  # Small, and the duplicate keys inside it have to be re-decided
+                  # at the boundary — see the carry below.
+                  Image.quality_flags)
     # Deliberately no `Image.source_meta`: a move does not change it, and the
     # materialize step below strips it back out — selecting it would load a
     # scraper's full raw payload per row only to discard it.
@@ -2106,6 +2109,14 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         for img_id, values in materialize_by_source(rows, source_datasets).items()
     }
 
+    # A duplicate mark is a relationship inside one dataset, so it crosses only
+    # when the row it names crosses too — the same rule `source_video_id` follows
+    # below. A move is an UPDATE in place, so the ids do not change and the map
+    # is the identity over the moved set: a whole group travelling keeps its
+    # marks intact, and a member leaving its root behind arrives unflagged.
+    moved_ids = {row.id: row.id for row in rows}
+    flags_by_id = {row.id: row.quality_flags for row in rows}
+
     # (old_path, new_path, old_thumb, new_thumb, img_id, new_fn, assigned_sort_order)
     plan: list[tuple[Path, Path, Path, Path, str, str, int | None]] = []
     for idx, row in enumerate(rows):
@@ -2142,6 +2153,7 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
                 # timestamp and shot index stay — they are facts about the frame,
                 # not about which dataset holds it.
                 source_video_id=None,
+                quality_flags=carry_duplicate_flags(flags_by_id[img_id], moved_ids),
                 **materialized[img_id],
             )
         )
@@ -2268,6 +2280,7 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         plan.append((old_path, new_path, old_thumb, new_thumb, row, assigned_order))
 
     id_map: dict[str, str] = {}
+    new_by_source: dict[str, Image] = {}
     for old_path, new_path, old_thumb, new_thumb, row, assigned_order in plan:
         new_img = Image(
             id=str(uuid4()),
@@ -2287,7 +2300,10 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             caption_style=row.caption_style,
             captioned_by=row.captioned_by,
             captioned_at=row.captioned_at,
-            quality_flags=row.quality_flags,
+            # Copied, never shared: two rows holding one dict object is the trap
+            # the CLAUDE.md JSON invariant is about. The duplicate keys inside it
+            # are rewritten by the pass below.
+            quality_flags=dict(row.quality_flags or {}),
             nsfw_score=row.nsfw_score,
             aesthetic_score=row.aesthetic_score,
             aesthetic_model=row.aesthetic_model,
@@ -2311,6 +2327,18 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
         )
         db.add(new_img)
         id_map[row.id] = new_img.id
+        new_by_source[row.id] = new_img
+
+    # `duplicate_of` names another row, so it is derived-from-elsewhere in the
+    # same sense as `source_video_id` above and gets the same remap-or-drop: the
+    # copy of a member whose root came too points at the *copy* of that root, and
+    # one whose root stayed behind arrives unflagged. A verbatim copy would be a
+    # duplicate mark the destination cannot resolve and no delete there can ever
+    # prune (PM-022). A second pass, not part of the constructor: at row *i* the
+    # id map holds only rows 0..i-1, so an in-loop remap would miss every forward
+    # reference. Staged with the other DB work, before the file copies.
+    for src_id, new_img in new_by_source.items():
+        new_img.quality_flags = carry_duplicate_flags(new_img.quality_flags, id_map)
 
     # Labels travel on a cross-dataset copy — the vocabulary is global, so the
     # destination needs no name remapping. (Detections deliberately do not; see

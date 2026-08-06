@@ -899,11 +899,20 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
     # A root that is itself flagged belongs to some other group and is already
     # rendered there; only unflagged roots are missing from the payload.
+    #
+    # Scoped to this dataset, like the prune's aliveness check: a group only ever
+    # exists inside one dataset, so a `duplicate_of` naming a row elsewhere is
+    # drift, and resolving it would pull a *foreign* image into the payload as
+    # the group's kept root — where *Keep best* could delete it. Out of scope it
+    # simply has no row to prepend, which is the case the loop below already
+    # documents for a root deleted since the scan.
     group_keys = {img.quality_flags.get("duplicate_of", img.id) for img in duplicates}
     roots: dict[str, Image] = {}
     root_ids = [k for k in group_keys if k not in flagged_ids]
     for chunk in chunked(root_ids):
-        res = await db.execute(select(Image).where(Image.id.in_(chunk)))
+        res = await db.execute(
+            select(Image).where(Image.id.in_(chunk), Image.dataset_id == dataset_id)
+        )
         roots.update({img.id: img for img in res.scalars().all()})
 
     # Video filenames for the lineage annotation, resolved before any row is

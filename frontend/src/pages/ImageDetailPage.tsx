@@ -41,7 +41,7 @@ import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection, ImageDetail } from "../types";
-import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
+import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, serverPageContext, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
@@ -167,8 +167,9 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
  *    so the stored page is still correct.
  *  - `crop_upscale` / `batch_upscale` / `batch_lut` / `crop_to_detection` and the
  *    batch crop/resize jobs *do* add rows — but this page owns those paths through
- *    `injectNavId`, which deliberately grows the list to `limit + 1` and walks the
- *    user onto the new id. A refresh would silently undo that.
+ *    `injectNavId`, which splices the new id in beside its parent and walks the user
+ *    onto it. A refresh would silently undo that, which is why `injectNavId` marks
+ *    the context `injected` and the refresher bails on it (see `refreshNavContext`).
  *  - `caption` / `quality_score` change no row's existence, and under a
  *    `captioned: false` (or score) filter a refresh would evict the user's own open
  *    image from its own result set on every tick.
@@ -181,6 +182,12 @@ const NAV_REFRESH_JOB_TYPES = new Set([
   "restore_snapshot",
   "checkout_branch",
 ]);
+
+/** How many times `refreshNavContext` will re-run for events that arrived while it
+ *  was in flight. A cap rather than a `while`, so a pathological emit rate cannot
+ *  hold one invocation open indefinitely; the loop already exits early on the first
+ *  pass that nothing landed during, which is the normal case. */
+const MAX_NAV_REFRESH_PASSES = 4;
 
 /** Patch the page GalleryPage will restore to, so "Back" returns to the page the
  *  arrows actually ended on. Called from both places that move the nav context
@@ -320,7 +327,7 @@ export default function ImageDetailPage() {
   // second cache-buster: the refresher writes sessionStorage, which React cannot
   // see, so without this the arrows and the counter keep the mounted snapshot.
   const [navRefreshSeq, setNavRefreshSeq] = useState(0);
-  // Re-entrancy guard plus one trailing re-run — a job emitting faster than the
+  // Re-entrancy guard plus bounded trailing re-runs — a job emitting faster than the
   // round trip must not stack refreshes, but must not lose the last one either.
   const navRefreshInFlight = useRef(false);
   const navRefreshPending = useRef(false);
@@ -394,9 +401,9 @@ export default function ImageDetailPage() {
     if (navCtx && datasetId) {
       let newCtx: GalleryNavContext | null = null;
       if (atEnd && id === nextId && nextPageData?.length) {
-        newCtx = { ...navCtx, ids: nextPageData.map((i) => i.id), page: navCtx.page + 1 };
+        newCtx = serverPageContext(navCtx, nextPageData.map((i) => i.id), navCtx.page + 1);
       } else if (atStart && id === prevId && prevPageData?.length) {
-        newCtx = { ...navCtx, ids: prevPageData.map((i) => i.id), page: navCtx.page - 1 };
+        newCtx = serverPageContext(navCtx, prevPageData.map((i) => i.id), navCtx.page - 1);
       }
       if (newCtx) {
         writeNavContext(datasetId, newCtx);
@@ -445,11 +452,17 @@ export default function ImageDetailPage() {
       // A deep link carrying another view's context — the same guard the delete
       // path applies before it re-derives.
       if (ctx.ids.indexOf(imageId) < 0) return;
-      // `injectNavId` is holding the list: after a crop / upscale / LUT it is
-      // deliberately `limit + 1` long with the user standing on the injected id.
-      // Refreshing would drop that id, take the relocate branch below and move the
-      // context — and Back's target — while the user looks at a fresh crop.
-      if (ctx.ids.length > ctx.limit) return;
+      // `injectNavId` is holding the list: after a crop / upscale / LUT it carries a
+      // slot the server would not put there, with the user standing on it. Refreshing
+      // would drop that id, take the relocate branch below and move the context — and
+      // Back's target — while the user looks at a fresh crop.
+      //
+      // The marker is a fact the injector wrote, not an inference from the length:
+      // `ids.length > ctx.limit` only detects an injection on a *full* page, and on
+      // the last (partial) page the derivative grows the list to `<= limit`, where
+      // the length test says nothing and this bail never fired. Every write of a
+      // verbatim server page goes through `serverPageContext`, which clears it.
+      if (ctx.injected) return;
 
       let nextIds: string[] | null = null;
       let nextPage = ctx.page;
@@ -484,6 +497,20 @@ export default function ImageDetailPage() {
       // Not found anywhere: keep the old snapshot rather than blanking navigation.
       if (!nextIds) return;
 
+      // The shared total, and it has to be invalidated *above* the no-op bail below.
+      // TopBar's prefix invalidation already covers the live image jobs; this is what
+      // covers the ones it does not (`rescan`, the two versioning jobs) — and a tick
+      // that changes no id on this page is exactly the case where the total moved and
+      // nothing else will notice it. Under a name-ascending sort with the user on
+      // page 1, every row a rescan adopts sorts to the end, so the bail fires on every
+      // tick and the `· N` would stay stale for the whole run and after it.
+      //
+      // Accepted cost: one `/images/count` per watched tick rather than one per
+      // changed page. `rescan` emits every 10 files and `restore_snapshot` every 5
+      // plans, so the ceiling is one extra COUNT alongside the 1–2 list requests this
+      // refresher already issues per tick.
+      qc.invalidateQueries({ queryKey: imagesCountKey(datasetId, { ...ctx.filters, dataset_id: datasetId }) });
+
       const sameIds = nextIds.length === ctx.ids.length && nextIds.every((id, i) => id === ctx.ids[i]);
       // What keeps a quiet dataset from churning: most ticks change nothing on the
       // page the user is standing on, and every write below costs a reset + refetch.
@@ -501,7 +528,7 @@ export default function ImageDetailPage() {
         !current.ids.every((id, i) => id === ctx.ids[i])
       ) return;
 
-      writeNavContext(datasetId, { ...ctx, ids: nextIds, page: nextPage });
+      writeNavContext(datasetId, serverPageContext(ctx, nextIds, nextPage));
       if (nextPage !== ctx.page) {
         // Back must land on the page the arrows actually ended on. Accepted cost:
         // `syncGalleryStatePage` also writes `scrollTop: 0`, so a *background*
@@ -514,22 +541,20 @@ export default function ImageDetailPage() {
       // an invalidated entry would still be *served* while it refetched and → could
       // step onto a stale id (`constants/queryKeys.ts`).
       qc.resetQueries({ queryKey: ["gallery-nav", datasetId] });
-      // The shared total. TopBar's prefix invalidation already covers the live
-      // image jobs; this is what covers the ones it does not (`rescan`, the two
-      // versioning jobs).
-      qc.invalidateQueries({ queryKey: imagesCountKey(datasetId, { ...ctx.filters, dataset_id: datasetId }) });
       setNavRefreshSeq((s) => s + 1);
     };
 
     try {
-      navRefreshPending.current = false;
-      await runOnce();
-      // Exactly one trailing re-run, and it cannot loop: `navRefreshPending` is set
-      // only by a real job event arriving mid-flight, and the seq bump recomputes
-      // only `navCtx` — which is absent from the watcher's deps below.
-      if (navRefreshPending.current) {
+      // Trailing re-runs, bounded by construction. Each pass past the first only
+      // happens because a real job event arrived mid-flight, and the seq bump
+      // recomputes only `navCtx` — which is absent from the watcher's deps below —
+      // so this cannot feed itself. A single trailing re-run is not enough: an event
+      // landing during *that* pass would be swallowed by the `finally` below and the
+      // last rows of a run would never reach the arrows.
+      for (let pass = 0; pass < MAX_NAV_REFRESH_PASSES; pass++) {
         navRefreshPending.current = false;
         await runOnce();
+        if (!navRefreshPending.current) break;
       }
     } catch {
       // Keep the stale snapshot.
@@ -1028,14 +1053,14 @@ export default function ImageDetailPage() {
       if (navCtx && currentIndex >= 0) {   // -1 = deep link with a foreign context: skip
         try {
           const rows = await imagesApi.list(navPageParams(datasetId, navCtx, navCtx.page));
-          newCtx = { ...navCtx, ids: rows.map((r) => r.id) };
+          newCtx = serverPageContext(navCtx, rows.map((r) => r.id));
           // The row that slid into the deleted slot. `rows.length - 1` rather than
           // `currentIndex - 1`: a concurrent delete can shrink the page by more than one.
           target = rows[currentIndex]?.id ?? rows[rows.length - 1]?.id ?? null;
           if (!target && navCtx.page > 1 && prevPageData?.length) {
             // Deleted the only image of the last page. Stepping back has to move `page`
             // too, or the context describes an empty page and both arrows die.
-            newCtx = { ...navCtx, ids: prevPageData.map((i) => i.id), page: navCtx.page - 1 };
+            newCtx = serverPageContext(navCtx, prevPageData.map((i) => i.id), navCtx.page - 1);
             target = prevPageData[prevPageData.length - 1].id;
           }
         } catch {

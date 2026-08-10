@@ -42,6 +42,13 @@ export interface GalleryNavContext {
   sort: string;
   order: string;
   filters: ImageFilterParams;
+  /** Set when this list is **not** a verbatim server page: `injectNavId` is holding
+   *  a slot for a derivative the server would not put here. Anything that would
+   *  rewrite `ids` from a listing response has to leave the list alone while it is
+   *  set, or the injected slot vanishes under the user. Absent otherwise —
+   *  `writeNavContext`'s `JSON.stringify` drops the key, so clearing it means
+   *  writing `undefined`, which `serverPageContext` does. */
+  injected?: true;
 }
 
 /** What may actually sit in sessionStorage — including v1 blobs written by a
@@ -54,6 +61,7 @@ interface StoredNavContext {
   sort?: unknown;
   order?: unknown;
   filters?: unknown;
+  injected?: unknown;
   /** v1 only. */
   captionedFilter?: boolean | null;
 }
@@ -87,6 +95,10 @@ export function readNavContext(datasetId: string): GalleryNavContext | null {
       sort: typeof stored.sort === "string" ? stored.sort : SORT_OPTIONS[0].sort,
       order: typeof stored.order === "string" ? stored.order : SORT_OPTIONS[0].order,
       filters,
+      // Normalized to the two-valued shape the type promises, so a blob carrying
+      // `false`/`0`/`"no"` (or a legacy one carrying nothing) cannot make the
+      // marker truthy by accident.
+      injected: stored.injected === true ? true : undefined,
     };
   } catch {
     return null;
@@ -135,17 +147,36 @@ export function navIdsParams(datasetId: string, ctx: GalleryNavContext): ImageId
   };
 }
 
+/** A context whose `ids` are a verbatim server page. Clears the injected-derivative
+ *  marker, which a listing response by definition cannot carry — every site that
+ *  replaces the list with one must go through this, or the marker outlives its slot
+ *  and permanently disables the live refresh. */
+export function serverPageContext(
+  ctx: GalleryNavContext,
+  ids: string[],
+  page = ctx.page,
+): GalleryNavContext {
+  return { ...ctx, ids, page, injected: undefined };
+}
+
 /** Rewrite just the id list, leaving the page/filters describing it alone.
  *  Routed through read/write, so a legacy blob is normalized on the way through
- *  rather than staying legacy. */
-function mutateNavIds(datasetId: string, transform: (ids: string[]) => string[]) {
+ *  rather than staying legacy. `extra` is for the fields a *non*-verbatim rewrite
+ *  has to set alongside the ids — today only `injected`. */
+function mutateNavIds(
+  datasetId: string,
+  transform: (ids: string[]) => string[],
+  extra?: Partial<GalleryNavContext>,
+) {
   const ctx = readNavContext(datasetId);
   if (!ctx) return;
-  writeNavContext(datasetId, { ...ctx, ids: transform(ctx.ids) });
+  writeNavContext(datasetId, { ...ctx, ids: transform(ctx.ids), ...extra });
 }
 
 /** A derivative created in place (crop / upscale / LUT) takes the slot right
- *  after its parent, so ← / → walk onto it next. */
+ *  after its parent, so ← / → walk onto it next. Marks the context `injected`:
+ *  the list is no longer a server page, and the live refresher must not overwrite
+ *  it with one until a real page write clears the marker. */
 export function injectNavId(datasetId: string, afterId: string, newId: string) {
   mutateNavIds(datasetId, (ids) => {
     const next = [...ids];
@@ -153,7 +184,7 @@ export function injectNavId(datasetId: string, afterId: string, newId: string) {
     if (idx >= 0) next.splice(idx + 1, 0, newId);
     else next.push(newId);
     return next;
-  });
+  }, { injected: true });
 }
 
 export function removeNavId(datasetId: string, removedId: string) {

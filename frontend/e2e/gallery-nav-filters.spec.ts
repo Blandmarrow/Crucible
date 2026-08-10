@@ -329,6 +329,50 @@ test('a row-adding job refreshes the detail view nav context live', async ({ pag
   await expect(page).toHaveURL(new RegExp(`/image/${after['04_x.png']}$`))
 })
 
+// The total is the *only* live signal when the job's new rows land somewhere other
+// than the page the user is standing on, and it is the case the refresher used to
+// miss: the no-op bail ("nothing on this page changed, don't churn") sat above the
+// count invalidation, so the one tick that had nothing else to report also reported
+// nothing. `rescan` is in neither of TopBar's two job-type sets, so its prefix pass
+// does not cover the gap either — the `· N` stayed frozen for the whole run and
+// after it.
+//
+// Page size 2 over 01…03, name-ascending, standing on page 1. The rescan adopts 04
+// and 05, which sort to the end: page 1 is still [01, 02], so `sameIds` is true and
+// `nextPage === ctx.page`, and the bail fires on every tick of the job.
+test('the live total climbs even when the open page does not change', async ({ page, request }) => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  const { ds, ids } = await seedNumbered(request, 'nav-live-total', 3)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 2 · 3 images')).toBeVisible()
+
+  // First slot of a full page 1, with the total already carried alongside because
+  // it exceeds the page.
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['01_x.png']}$`))
+  await expect(page.getByText('1 / 2')).toBeVisible()
+  await expect(page.getByText('· 3')).toBeVisible()
+
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '04_x.png'), pngBuffer())
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '05_x.png'), pngBuffer())
+  const started = await request.post(`/api/v1/datasets/${ds.id}/rescan`, {
+    data: { import_captions: false },
+  })
+  expect(started.status(), await started.text()).toBe(200)
+
+  // The assertion the ordering fix buys: today the total stays at `· 3` forever.
+  await expect(page.getByText('· 5')).toBeVisible({ timeout: 20_000 })
+
+  // …and it climbed without the context moving, which is what makes this the bail
+  // path rather than a re-run of the case above.
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['01_x.png']}$`))
+  await expect(page.getByText('1 / 2')).toBeVisible()
+})
+
 // The relocate branch, which the case above cannot reach: on **Newest first** the
 // new rows prepend, so the open image slides off its page entirely. The refresher
 // probes page N+1 before falling back to the whole id list, moves the context there

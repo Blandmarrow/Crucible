@@ -41,7 +41,7 @@ poster-stem rules), `docs/dev/image-files.md` (naming, collisions and caption si
 § NumberField for the full contract;
 `frontend/src/utils/galleryNav.ts` (the gallery → detail-view nav context: `readNavContext`/
 `writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a
-listing request over a stored context) → `docs/dev/image-detail.md`.
+listing request over a stored context) → `docs/dev/gallery-nav.md`.
 
 **`frontend/src/constants/aestheticModels.ts`** — `AESTHETIC_MODELS` (the picker's option list) and `aestheticModelLabel(marker)`, the one place the `Image.aesthetic_model` markers are named on screen. Four surfaces read it — the Score images picker, the duplicates *Keep best* refusal, the Export mixed-model advisory and the Stats coverage breakdown — and the copies that would drift are the ones inside warnings nobody reads until images have already been deleted. The marker set is **open** (a future learned head writes `head:{uuid}`), so `aestheticModelLabel` returns an unrecognised marker verbatim rather than swallowing it. See `docs/dev/scoring.md`.
 

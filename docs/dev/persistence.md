@@ -61,7 +61,8 @@ because a hand-off needs two ends:
   entries long. `GalleryPage` owns both, but `ImageDetailPage` is the other end: it rewrites
   the `page`/`scrollTop` of the first and reads and rewrites the second. A registry row would
   be honest here; they are listed as exceptions rather than promoted because the shapes are
-  documented where they are used, in `docs/dev/image-detail.md`. `gallery-state-*` is still
+  documented where they are used, in `docs/dev/gallery-state.md` and
+  `docs/dev/gallery-nav.md`. `gallery-state-*` is still
   page-private; `gallery-nav-*` no longer is — its shape, its read/write pair and the
   `injectNavId`/`removeNavId` mutators live in `frontend/src/utils/galleryNav.ts`, because
   three independent inline casts of it let the writer drop filters the reader needed.
@@ -96,7 +97,7 @@ The workflow and filters blobs are all loaded via `loadPersisted` (and reset via
 
 Don't "unify" them without reading this. The hook covers every *debounced blob* write (the ten workflow/filters sites). The exceptions:
 - **Synchronous, undebounced**: `TagConsolidatePage` (`{threshold}`) and `GeneratePromptsModal` (`{instructions, providerId, …}`) call `savePersisted` directly in an effect body. With no debounce there is no window in which an unmount can drop a write, so the hook would *add* a `PERSIST_DEBOUNCE_MS` delay rather than fix anything — strictly worse for `GeneratePromptsModal`, which is closed by unmounting. Both carry a comment saying so.
-- **Custom, with its own unmount flush**: `GalleryPage` writes `gallery-state-${datasetId}` via raw `localStorage` on its own `PERSIST_DEBOUNCE_MS` timer plus a separate unmount-only effect that re-reads `scrollTop` from a DOM ref (see `docs/dev/image-detail.md`). It cannot use the hook because the hook's `value` is computed during render, whereas `scrollTop` must be sampled at flush time. This effect is the prior art `useDebouncedPersist` generalized from — it identified the <350ms navigation gap long before the other ten sites were fixed. The price of staying off the hook is that a new field in that blob is **six** hand edits rather than one (enumerated in `docs/dev/labels.md` § Frontend), and that **neither write site merges with the stored value** — each `JSON.stringify`s a full literal, so a field present in one and missing from the other is silently deleted on whichever path happens to run.
+- **Custom, with its own unmount flush**: `GalleryPage` writes `gallery-state-${datasetId}` via raw `localStorage` on its own `PERSIST_DEBOUNCE_MS` timer plus a separate unmount-only effect that re-reads `scrollTop` from a DOM ref (see `docs/dev/gallery-state.md`). It cannot use the hook because the hook's `value` is computed during render, whereas `scrollTop` must be sampled at flush time. This effect is the prior art `useDebouncedPersist` generalized from — it identified the <350ms navigation gap long before the other ten sites were fixed. The price of staying off the hook is that a new field in that blob is **six** hand edits rather than one (enumerated in `docs/dev/labels.md` § Frontend), and that **neither write site merges with the stored value** — each `JSON.stringify`s a full literal, so a field present in one and missing from the other is silently deleted on whichever path happens to run.
 
 ### Persistent page state pattern
 

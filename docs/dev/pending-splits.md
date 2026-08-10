@@ -281,35 +281,6 @@ staleness sweep while still recording the seam.
   Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
   `docs/labels.md` matches the same grep.
 
-## docs/dev/image-detail.md
-
-- **Moves:** the *persistence* half of § Gallery persistence & detail-view navigation —
-  the two-key table, the debounced-input rule and its restore-side corollary, the main
-  save effect and the unmount flush, and the Reset filters paragraph (~1,300 of that
-  section's 3,112 words)
-- **New file:** docs/dev/gallery-state.md
-- **Why here:** the section is 84% of the file and is two subsystems sharing a heading.
-  One is *what GalleryPage remembers* — the `gallery-state-*` blob's fields, the six edits
-  a new one costs, the mount-debounce rule, Reset filters; a reader arrives there while
-  adding a filter and never opens the detail view. The other is *how the arrows walk* —
-  `gallery-nav-*`, `navPageParams`, the boundary prefetch, `injectNavId`, `atEnd`, and the
-  post-delete re-derivation; that reader is in `ImageDetailPage` and does not care what
-  localStorage holds. The file tripped its budget when `search`/`detectionLabel`/
-  `scoreFilters` were persisted, which added the seeding rule and a longer blob row to the
-  first half only. The seam leaves ~1,300 and ~2,390 out of 3,693; the staying half is
-  over the ~2,100 target, and its own second seam is the crop tool + caption panel +
-  generation metadata sections, which are unrelated to navigation entirely.
-- **Watch for:** the persistence half is cited by name from `docs/dev/persistence.md`
-  § Three persistence shapes, `docs/dev/labels.md` § Frontend, `docs/dev/gallery.md`
-  § Gallery filters (three bullets, all pointing at the seeding rule) and
-  `docs/dev/settings.md` § Gallery defaults; PM-012's Fix section names the file too. The
-  nav half is cited from `docs/dev/video-ui.md` and `docs/dev/image-filters.md`. Both
-  halves reference `frontend/e2e/gallery-restore.spec.ts` and `gallery-nav-filters.spec.ts`
-  respectively, which is a clean split of the tests as well. The two keys are described in
-  one table, so it has to be cut in two rather than moved whole — and the *user* doc for
-  either half is `docs/gallery.md`, itself queued below, so the mirror-the-user-doc naming
-  convention gives nothing here.
-
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)
@@ -351,6 +322,18 @@ staleness sweep while still recording the seam.
   section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
   docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
+
+`docs/dev/image-detail.md` → `docs/dev/gallery-state.md` **and** `docs/dev/gallery-nav.md` was
+executed on 2026-08-10, at the start of the session that would have appended the live-refresh
+fixes to it. The seam was **re-cut on execution**: the recorded seam moved the persistence half
+out and left the nav half behind, but between recording and execution the file grew 3,781 →
+4,664 words and every one of those ~880 words landed in the *nav* half — so cutting only the
+recorded seam would have left ~3,360 words behind and bought nothing. Both seams the entry
+named were therefore taken at once, the recorded one and the fallback second seam (the crop
+tool + caption panel + generation metadata sections, "unrelated to navigation entirely"), which
+is what put all three files under the 60% target. The lesson for the next entry: a recorded
+seam predicts where the *next* words will land, and when they land on the other side of it the
+seam has to be re-chosen rather than executed as written.
 
 `docs/scoring.md` → `docs/duplicates.md` was executed on 2026-08-02, at the start of the
 session that appended the style-similarity percentile material to § Style similarity — the

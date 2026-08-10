@@ -82,7 +82,7 @@ second later). A second guard in the same file covers the corollary —
 `a search survives Back without resetting the page` types a query, pages forward inside the
 filtered list, round-trips through the detail view and asserts the footer twice, so a
 `search` seeded into only one half of its pair fails on the delayed assertion. Documented in
-`docs/dev/image-detail.md` (§ Gallery persistence & detail-view navigation).
+`docs/dev/gallery-state.md` (§ The debounce rules).
 
 ### Status & date
 

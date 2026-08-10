@@ -16,8 +16,9 @@ import { usePresetsStore } from "../store/promptPresetsStore";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import type { ModelInfo, OllamaModel } from "../types";
+import type { ModelInfo, OllamaModel, Wd14ModelInfo } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
+import { captionBackend, captionModelIds } from "../constants/captionModels";
 import { FLAG_OPTIONS } from "../constants/flags";
 import {
   CAPTION_DEFAULT_MODEL_KEY,
@@ -34,8 +35,6 @@ import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persis
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Scope = "uncaptioned" | "selected" | "all";
-
-interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 interface StepConfig {
   id: string;
@@ -128,6 +127,39 @@ function resolveModelId(base: string, providerModelInput: string): string {
   return base;
 }
 
+/**
+ * The note under a model picker, or nothing. Two predicates, deliberately distinct
+ * (see `constants/captionModels.ts`):
+ *
+ *  - `captionBackend(model) === null` — the backend validator *will* 422 this id,
+ *    so Run is blocked and the note says so.
+ *  - the id is not among the models we were offered — which is just as likely to
+ *    mean Ollama is down or a provider query is still resolving as it is to mean
+ *    the model is gone, so this is informational only and never blocks.
+ */
+function ModelNote({ model, listedId, offeredIds, modelsLoaded }: {
+  model: string;
+  listedId: string;
+  offeredIds: string[];
+  modelsLoaded: boolean;
+}) {
+  if (model && captionBackend(model) === null) {
+    return (
+      <span style={{ color: "var(--bad)", fontSize: 11.5 }}>
+        “{model}” is not a captioning model — captioning cannot run while it is selected.
+      </span>
+    );
+  }
+  if (modelsLoaded && listedId && !offeredIds.includes(listedId)) {
+    return (
+      <span style={{ color: "var(--warn)", fontSize: 11.5 }}>
+        “{listedId}” is not in the current model list — the service may be offline, or the model may have been removed.
+      </span>
+    );
+  }
+  return null;
+}
+
 function StepModelPicker({
   selectedModel, setSelectedModel,
   providerModelInput, setProviderModelInput,
@@ -157,7 +189,7 @@ function StepModelPicker({
           <div className="ind" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="mr-name">{m.name}</div>
-            <div className="mr-desc">{m.id.startsWith("florence2") ? "Microsoft · best for descriptive prose" : "Google · requires HF token"}</div>
+            <div className="mr-desc">{m.description}</div>
           </div>
           <span className="mr-vram">{m.vram_mb ? `${(m.vram_mb / 1024).toFixed(1)} GB` : "—"}</span>
         </div>
@@ -173,7 +205,7 @@ function StepModelPicker({
           <div className="ind" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="mr-name">{m.name}</div>
-            <div className="mr-desc">SmilingWolf · outputs booru-style tags · threshold-based</div>
+            <div className="mr-desc">{m.description}</div>
           </div>
           <span className="mr-vram">{(m.ram_mb / 1024).toFixed(1)} GB</span>
         </div>
@@ -414,19 +446,16 @@ export default function CaptioningPage() {
     enabled: !!datasetId,
   });
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
 
   // Apply stored default model once after models/providers load, if no model is selected yet —
   // or if the remembered model is no longer valid (uninstalled model / removed provider).
   // Also correct the style if it's incompatible with the resolved model.
   useEffect(() => {
     if (!modelsData) return;
-    const allIds = [
-      ...localModels.map((m) => m.id), ...ollamaModels.map((m) => m.id),
-      ...wd14Models.map((m) => m.id), ...providers.map((p) => `openai_compat:${p.id}`),
-    ];
+    const allIds = captionModelIds(modelsData, providers);
     const tryApply = (candidate: string | null | undefined): boolean => {
       if (!candidate || !allIds.includes(candidate)) return false;
       setSelectedModel(candidate);
@@ -541,6 +570,28 @@ export default function CaptioningPage() {
   }
 
   const isPipeline = additionalSteps.length > 0;
+
+  // The models Run would submit, in step order. A pipeline is a single request, so one
+  // step the backend validator refuses 422s the whole thing — step 1 never runs either,
+  // and the error names no step. Refuse it here instead, naming the offender. Note this
+  // subsumes the old `!selectedModel` check (`captionBackend("")` is null) and so also
+  // catches a step left at its empty default.
+  const stepModels = [
+    { stepNumber: 1, model: resolvedModel },
+    ...additionalSteps.map((s, i) => ({
+      stepNumber: i + 2,
+      model: s.model.startsWith("openai_compat:") ? resolveModelId(s.model, s.providerModelInput) : s.model,
+    })),
+  ];
+  const blockingStep = stepModels.find((s) => captionBackend(s.model) === null);
+  const stepPrefix = (n: number) => (isPipeline ? `Step ${n}: ` : "");
+  const runBlockedReason = !blockingStep
+    ? undefined
+    : blockingStep.model
+      ? `${stepPrefix(blockingStep.stepNumber)}“${blockingStep.model}” is not a captioning model.`
+      : `${stepPrefix(blockingStep.stepNumber)}No model selected.`;
+
+  const offeredModelIds = captionModelIds(modelsData, providers);
 
   const runMutation = useMutation({
     mutationFn: () => {
@@ -704,10 +755,7 @@ export default function CaptioningPage() {
     setRenameOnCaption(localStorage.getItem(CAPTION_DEFAULT_RENAME_KEY) === "true");
 
     // Model — re-check the Settings default against currently available models/providers.
-    const allIds = [
-      ...localModels.map((m) => m.id), ...ollamaModels.map((m) => m.id),
-      ...wd14Models.map((m) => m.id), ...providers.map((p) => `openai_compat:${p.id}`),
-    ];
+    const allIds = captionModelIds(modelsData, providers);
     const defaultModel = localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY);
     if (defaultModel && allIds.includes(defaultModel)) {
       setSelectedModel(defaultModel);
@@ -764,7 +812,8 @@ export default function CaptioningPage() {
           <button
             className="btn primary"
             onClick={() => runMutation.mutate()}
-            disabled={!selectedModel || runMutation.isPending}
+            disabled={!!runBlockedReason || runMutation.isPending}
+            title={runBlockedReason}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M4 3l8 5-8 5V3z"/>
@@ -828,6 +877,12 @@ export default function CaptioningPage() {
                     wd14Models={wd14Models}
                     providers={providers}
                     ollamaModels={ollamaModels}
+                  />
+                  <ModelNote
+                    model={resolvedModel}
+                    listedId={selectedModel}
+                    offeredIds={offeredModelIds}
+                    modelsLoaded={!!modelsData}
                   />
                   {localModels.some((m) => m.id === selectedModel && m.loaded) && (
                     <button
@@ -1374,9 +1429,23 @@ function PipelineStepCard({
   const stepModelType = modelType(step.model);
   const stepStyles = isStepWd14 ? [] : (stepModelType ? (STYLE_LABELS[stepModelType] ?? []) : []);
   const stepProvider = isStepOAI ? providers.find((p) => step.model === `openai_compat:${p.id}`) : undefined;
+  const stepResolvedModel = isStepOAI ? resolveModelId(step.model, step.providerModelInput) : step.model;
+
+  // `captionModelIds` takes the endpoint payload; the card is handed its four lists
+  // already unpacked, so rebuild the shape here rather than take a new prop. An empty
+  // `localModels` means that payload has not resolved yet — the static caption registry
+  // is never empty — which is this card's stand-in for the page effect's
+  // `if (!modelsData) return`, keeping the informational note off the first paint.
+  const offeredIds = captionModelIds(
+    { local_models: localModels, ollama_models: ollamaModels, wd14_models: wd14Models, openai_compat_models: [] },
+    providers,
+  );
 
   function handleSavePreset() {
     if (!presetName.trim()) return;
+    // Mirrors `PromptPresetManager`: a preset with no model, loaded into a surface whose
+    // preset loader sets the model, hands that surface an id the backend refuses.
+    if (!step.model) return;
     savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt });
     setPresetName("");
     setSavingPreset(false);
@@ -1407,16 +1476,24 @@ function PipelineStepCard({
             <div className="lbl-col">
               <h4>Model</h4>
             </div>
-            <StepModelPicker
-              selectedModel={step.model}
-              setSelectedModel={(v) => onChange({ model: v, style: "detailed", customPrompt: "" })}
-              providerModelInput={step.providerModelInput}
-              setProviderModelInput={(v) => onChange({ providerModelInput: v })}
-              localModels={localModels}
-              wd14Models={wd14Models}
-              providers={providers}
-              ollamaModels={ollamaModels}
-            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <StepModelPicker
+                selectedModel={step.model}
+                setSelectedModel={(v) => onChange({ model: v, style: "detailed", customPrompt: "" })}
+                providerModelInput={step.providerModelInput}
+                setProviderModelInput={(v) => onChange({ providerModelInput: v })}
+                localModels={localModels}
+                wd14Models={wd14Models}
+                providers={providers}
+                ollamaModels={ollamaModels}
+              />
+              <ModelNote
+                model={stepResolvedModel}
+                listedId={step.model}
+                offeredIds={offeredIds}
+                modelsLoaded={localModels.length > 0}
+              />
+            </div>
           </div>
 
           {isStepWd14 && (

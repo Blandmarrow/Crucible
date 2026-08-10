@@ -6,6 +6,7 @@ import { settingsApi, type Thresholds, type SecretKey, type SecretsUpdate } from
 import { comfyApi } from "../api/comfy";
 import { providersApi, type ProviderOut, type ProviderCreate } from "../api/providers";
 import { captioningApi } from "../api/captioning";
+import { captionModelOptions } from "../constants/captionModels";
 import {
   CONFIRM_DEFAULT_KEY, BRANCH_SNAPSHOT_KEY, GALLERY_PAGE_SIZE_KEY, SUBFOLDER_RENAME_KEY,
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
@@ -25,26 +26,6 @@ import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 import LabelsPanel from "../components/settings/LabelsPanel";
 import SecretField from "../components/settings/SecretField";
-
-type ModelOption = { id: string; label: string; group: string };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildModelOptions(modelsData: any, providers: ProviderOut[]): ModelOption[] {
-  const opts: ModelOption[] = [];
-  for (const m of (modelsData?.local_models ?? []) as { id: string; name: string }[]) {
-    opts.push({ id: m.id, label: m.name, group: "Local models" });
-  }
-  for (const m of (modelsData?.wd14_models ?? []) as { id: string; name: string }[]) {
-    opts.push({ id: m.id, label: m.name, group: "Tagger" });
-  }
-  for (const m of (modelsData?.ollama_models ?? []) as { id: string; name: string; size_mb?: number }[]) {
-    opts.push({ id: m.id, label: m.name, group: "Ollama" });
-  }
-  for (const p of providers) {
-    opts.push({ id: `openai_compat:${p.id}`, label: p.name, group: p.is_remote ? "Cloud providers" : "Local providers" });
-  }
-  return opts;
-}
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -307,7 +288,25 @@ export default function SettingsPage() {
     queryFn: providersApi.list,
     staleTime: 30_000,
   });
-  const modelOpts = buildModelOptions(captioningModels, providers);
+  const modelOpts = captionModelOptions(captioningModels, providers);
+
+  // Blank the <select> when the saved default is not among the offered models —
+  // it went stale the day `GET /captioning/models` stopped returning the registry's
+  // scorers, detectors and embedders, so a user whose default was `dino` keeps a
+  // localStorage value with no matching <option>. The loading-state fallback
+  // further down does not cover it: that only fires before the query resolves.
+  //
+  // Derived during render, and deliberately NOT written back — do not "finish
+  // this" by adding a `localStorage.removeItem`. `modelOpts` is empty for a whole
+  // group whenever that service is merely unavailable: the backend swallows a
+  // down Ollama daemon and returns `[]`, and `providers` is a separate query
+  // defaulting to `[]` that can resolve *after* `captioning-models`. Both make a
+  // perfectly good `ollama:llava` / `openai_compat:{id}` default look stale for a
+  // render, and deleting the key destroys a saved preference permanently and
+  // silently. A blank <select> is recoverable on the next render; the delete is not.
+  const staleDefaultModel =
+    !!captioningModels && !!captionDefaultModel && !modelOpts.some((o) => o.id === captionDefaultModel);
+  const resolvedDefaultModel = staleDefaultModel ? "" : captionDefaultModel;
 
   const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
   const [showProviderForm, setShowProviderForm] = useState(false);
@@ -709,7 +708,7 @@ export default function SettingsPage() {
                 </p>
                 <select
                   className="select"
-                  value={captionDefaultModel}
+                  value={resolvedDefaultModel}
                   onChange={(e) => {
                     setCaptionDefaultModel(e.target.value);
                     localStorage.setItem(CAPTION_DEFAULT_MODEL_KEY, e.target.value);

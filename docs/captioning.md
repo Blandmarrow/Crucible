@@ -5,13 +5,32 @@ Batch-caption any selection of images using one of several backends:
 | Model | VRAM | Notes |
 |---|---|---|
 | **Ollama** | varies | Points to a local Ollama instance on `localhost:11434` |
-| **Florence-2** | ~5.5 GB | Styles: short, detailed, tags |
-| **Florence-2 PromptGen v2** | ~5.5 GB | Styles: short, detailed, promptgen |
-| **PaliGemma-2 3B** | ~6 GB | Requires HuggingFace token; styles: short, detailed, tags, booru |
-| **JoyCaption Alpha Two** | ~17 GB | Llama 3.1 8B + SigLIP; 12 styles (see below); supports custom prompts |
-| **JoyCaption Beta One** | ~17 GB | Llama 3.1 8B + SigLIP2; 12 styles (see below); supports custom prompts |
+| **Florence-2** | ~5.5 GB | `microsoft/Florence-2-large`; styles: short, detailed, tags |
+| **Florence-2 PromptGen v2** | ~5.5 GB | `MiaoshouAI/Florence-2-large-PromptGen-v2.0`, finetuned for Stable Diffusion prompts; styles: short, detailed, promptgen |
+| **PaliGemma-2 3B** | ~6 GB | `google/paligemma2-3b-pt-448` — **the only gated model**: needs a HuggingFace token and the licence accepted on the model page. Styles: short, detailed, tags, booru |
+| **JoyCaption Alpha Two** | ~17 GB | `fancyfeast/llama-joycaption-alpha-two-hf-llava` — Llama 3.1 8B + SigLIP; 12 styles (see below); supports custom prompts |
+| **JoyCaption Beta One** | ~17 GB | `fancyfeast/llama-joycaption-beta-one-hf-llava` — Llama 3.1 8B + SigLIP2; 12 styles (see below); supports custom prompts |
 | **WD14 Tagger** | CPU only | Booru-style tag output (Eva02 Large, ViT Large, or SwinV2); downloads from SmilingWolf on HuggingFace; adjustable confidence threshold |
 | **OpenAI-compatible** | — | Any provider with a `/v1/chat/completions` vision endpoint — Gemini, Groq, OpenAI, LM Studio, llama.cpp, etc.; configured in Settings → LLM Providers |
+
+Every model in the picker carries a one-line description of what it is — who
+publishes it, what it is built on, and how its styles behave. That text comes
+from the backend, beside the code that loads the model, so it cannot drift from
+what actually runs. Only PaliGemma-2 mentions a token, because it is the only
+model that needs one.
+
+The picker lists **captioning models only**. Crucible also loads scorers,
+detectors and embedding models (see [Quality Scoring](scoring.md) and
+[Detection](detection.md)), and those never appear here — the same list feeds
+the Captioning page, the gallery's Caption action, the image-detail sidebar and
+Settings → Captioning → Default model.
+
+If a remembered configuration still names something Crucible cannot caption with
+— a detector left in a saved pipeline step, say — the Run button is disabled and
+the step that holds it says so, instead of the run failing part-way through and
+leaving you to guess which step was at fault. A model that is merely *missing*
+from the list is different and does not block anything: Ollama may simply not be
+running, so you get a note rather than a refusal.
 
 Captions can also be **imported** rather than generated: from `.txt` sidecars during a folder import, via the per-dataset "Import captions" folder dialog, or by dragging a `.txt` file onto an image — see [Datasets & Gallery](gallery.md).
 

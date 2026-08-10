@@ -784,20 +784,59 @@ class ModelManager:
         return ModelEntry(model, None, vram_mb=vram_used)
 
     def list_models(self) -> list[dict]:
+        """The model registry, and the single source of truth for what each model *is*.
+
+        `description` lives here rather than in frontend copy so it sits beside the
+        loader that knows the repo id and the VRAM figure — the pickers render it
+        verbatim. Only PaliGemma-2 mentions gating, deliberately: every other loader
+        merely passes the ambient HF_TOKEN along and needs no token, so writing
+        "ungated" on the rest would be noise.
+
+        `kind` is singular — the model's *primary* role — and its one reader is the
+        `kind == "caption"` filter in `routers/captioning.py::list_models`.
+        `florence2_large` is "caption" even though detection also drives it, because
+        detection's model list is static frontend copy that reads nothing from here.
+        Do not generalise this to a multi-valued capability set: there is no second
+        reader to justify one.
+        """
         loaded = set(self._registry.keys())
         all_models = [
-            {"id": "florence2_large", "name": "Florence-2-large", "vram_mb": 5500},
-            {"id": "florence2_promptgen", "name": "Florence-2 PromptGen v2", "vram_mb": 5500},
-            {"id": "paligemma2", "name": "PaliGemma-2 3B", "vram_mb": 6000},
-            {"id": "joycaption_alpha", "name": "JoyCaption Alpha Two", "vram_mb": 17000},
-            {"id": "joycaption_beta", "name": "JoyCaption Beta One", "vram_mb": 17000},
-            {"id": "aesthetic", "name": "LAION Aesthetic Predictor", "vram_mb": 3500},
-            {"id": "aesthetic_v2_5", "name": "Aesthetic Predictor V2.5 (SigLIP)", "vram_mb": 2000},
-            {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200},
-            {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000},
-            {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800},
-            {"id": "sam3", "name": "SAM 3 (text-prompt segmentation)", "vram_mb": 3500},
-            {"id": "tag_embedder", "name": "MiniLM Tag Embedder", "vram_mb": 500},
+            {"id": "florence2_large", "name": "Florence-2-large", "vram_mb": 5500,
+             "kind": "caption",
+             "description": "Microsoft · short, detailed or tag output chosen by style · no free-text prompt"},
+            {"id": "florence2_promptgen", "name": "Florence-2 PromptGen v2", "vram_mb": 5500,
+             "kind": "caption",
+             "description": "MiaoshouAI · Florence-2 finetuned for Stable Diffusion prompts · adds the promptgen style"},
+            {"id": "paligemma2", "name": "PaliGemma-2 3B", "vram_mb": 6000,
+             "kind": "caption",
+             "description": "Google · gated: needs a HuggingFace token and the licence accepted · 4 styles, no custom prompt"},
+            {"id": "joycaption_alpha", "name": "JoyCaption Alpha Two", "vram_mb": 17000,
+             "kind": "caption",
+             "description": "fancyfeast · Llama 3.1 8B + SigLIP · 12 styles; a custom prompt replaces the style"},
+            {"id": "joycaption_beta", "name": "JoyCaption Beta One", "vram_mb": 17000,
+             "kind": "caption",
+             "description": "fancyfeast · Llama 3.1 8B + SigLIP2 · 12 styles; a custom prompt replaces the style"},
+            {"id": "aesthetic", "name": "LAION Aesthetic Predictor", "vram_mb": 3500,
+             "kind": "score",
+             "description": "LAION sac+logos+ava1 MLP over CLIP ViT-L/14 · also powers watermark scoring and CLIP embeddings"},
+            {"id": "aesthetic_v2_5", "name": "Aesthetic Predictor V2.5 (SigLIP)", "vram_mb": 2000,
+             "kind": "score",
+             "description": "SigLIP-so400m-patch14-384 with a linear head · the second producer of aesthetic_score"},
+            {"id": "dino", "name": "DINOv2-base", "vram_mb": 1200,
+             "kind": "embed",
+             "description": "facebook/dinov2-base · DINOv2 embeddings for the style-similarity workflow"},
+            {"id": "nsfw", "name": "Marqo NSFW Detector", "vram_mb": 1000,
+             "kind": "score",
+             "description": "Marqo/nsfw-image-detection-384 ViT · writes nsfw_score and the is_nsfw flag"},
+            {"id": "sam2", "name": "Grounded SAM 2.1 Large (SAM2 + Grounding DINO)", "vram_mb": 1800,
+             "kind": "detect",
+             "description": "facebook/sam2.1-hiera-large with IDEA-Research/grounding-dino-tiny · segmentation from a text or point prompt"},
+            {"id": "sam3", "name": "SAM 3 (text-prompt segmentation)", "vram_mb": 3500,
+             "kind": "detect",
+             "description": "Open-vocabulary segmentation · loaded from a local models/sam3/*.safetensors checkpoint, never downloaded"},
+            {"id": "tag_embedder", "name": "MiniLM Tag Embedder", "vram_mb": 500,
+             "kind": "embed",
+             "description": "sentence-transformers/all-MiniLM-L6-v2 · text-only; embeds the tag vocabulary for tag consolidation"},
         ]
         return [{**m, "loaded": m["id"] in loaded} for m in all_models]
 

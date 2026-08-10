@@ -29,13 +29,12 @@ import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import type { ModelInfo, OllamaModel } from "../types";
-import { type ProviderOut } from "../api/providers";
 import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
+import { captionBackend, captionModelIds } from "../constants/captionModels";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
-import { detectionModelFamily } from "../constants/detectionModels";
+import { DETECTION_MODELS, detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
@@ -49,7 +48,6 @@ import { useTokenCount } from "../utils/tokenCount";
 import { invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
-interface Wd14ModelInfo { id: string; name: string; }
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -557,12 +555,21 @@ export default function ImageDetailPage() {
     staleTime: Infinity,
   });
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
-  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
+  const providers = modelsData?.openai_compat_models ?? [];
   const aiModelType = modelType(aiModel);
   const aiStyles = aiModelType ? (STYLE_LABELS[aiModelType] ?? []) : [];
+
+  // The preset loader below sets the model, so a preset saved against a model the
+  // backend no longer accepts puts a 422 id into this panel. `captionBackend` — not
+  // `aiModelType`, which is null for the runnable `wd14:`/`openai_compat:` — is the
+  // predicate for that; membership in the offered list is informational only, since an
+  // absent model may just mean Ollama is down. See `constants/captionModels.ts`.
+  const aiModelBlocked = !!aiModel && captionBackend(aiModel) === null;
+  const aiModelUnlisted = !!modelsData && !!aiModel && !aiModelBlocked
+    && !captionModelIds(modelsData, providers).includes(aiModel);
 
   const activeJobs = useJobStore((s) => s.activeJobs);
 
@@ -1952,6 +1959,7 @@ export default function ImageDetailPage() {
                   {localModels.map(m => (
                     <div
                       key={m.id}
+                      title={m.description}
                       className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                         aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                       }`}
@@ -1984,6 +1992,7 @@ export default function ImageDetailPage() {
                       {wd14Models.map(m => (
                         <div
                           key={m.id}
+                          title={m.description}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
                             aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
                           }`}
@@ -2155,10 +2164,23 @@ export default function ImageDetailPage() {
                   </div>
                 )}
 
+                {aiModelBlocked && (
+                  <p className="text-xs text-red-400">
+                    “{aiModel}” is not a captioning model — captioning cannot run while it is
+                    selected. A saved preset can carry one in; pick a model above.
+                  </p>
+                )}
+                {aiModelUnlisted && (
+                  <p className="text-xs text-yellow-400">
+                    “{aiModel}” is not in the current model list — the service may be offline, or
+                    the model may have been removed.
+                  </p>
+                )}
+
                 <button
                   className="btn-primary w-full flex items-center justify-center gap-2"
                   onClick={() => aiMutation.mutate()}
-                  disabled={!aiModel || aiMutation.isPending || aiRunning}
+                  disabled={!aiModel || aiModelBlocked || aiMutation.isPending || aiRunning}
                 >
                   <Sparkles size={14} />
                   {aiRunning ? "Generating…" : "Generate Caption"}
@@ -2205,11 +2227,9 @@ export default function ImageDetailPage() {
                   setDetectTask("text_prompt");
                 }
               }}>
-                <option value="florence2_large">Florence-2 Large</option>
-                <option value="florence2_promptgen">Florence-2 PromptGen</option>
-                <option value="nudenet">NudeNet (body-part detection)</option>
-                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
-                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
+                {DETECTION_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
             </div>
 

@@ -125,7 +125,8 @@ class CaptionJobRequest(BaseModel):
     dataset_id: str
     image_ids: list[str] | None = None
     subfolder: str | None = None
-    model: str  # "florence2_large" | "florence2_promptgen" | "paligemma2" | "joycaption_alpha" | "joycaption_beta" | "ollama:model_name" | "openai_compat:{id}:{model}" | "wd14:{variant}"
+    # Accepted ids are exactly the prefixes `_caption_backend` recognises — see there.
+    model: str
     style: str = "detailed"
     overwrite: bool = False
     custom_prompt: str = ""
@@ -153,6 +154,13 @@ class CaptionJobRequest(BaseModel):
             invalid = [f for f in v if f not in ALLOWED_FLAG_KEYS]
             if invalid:
                 raise ValueError(f"Unknown flag keys: {invalid}")
+        return v
+
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, v: str) -> str:
+        if _caption_backend(v) is None:
+            raise ValueError(f"'{v}' is not a captioning model")
         return v
 
 
@@ -192,11 +200,39 @@ def _model_short_label(model: str) -> str:
     return model
 
 
+def _caption_backend(model: str) -> str | None:
+    """The dispatch chain's single source of truth: which branch runs for this id.
+
+    Returns the branch name, or None if no branch would run. The per-image loops in
+    `/run` and `/pipeline` are if/elif chains on these same prefixes with `caption = ""`
+    as the starting value, so an id matching nothing here falls through every branch,
+    fails the `if caption:` save and finishes the job green having written nothing.
+    The validators below reject that at the door; keep this in step with the chains.
+    """
+    if model.startswith("florence2"):
+        return "florence2"
+    if model == "paligemma2":
+        return "paligemma2"
+    if model.startswith("joycaption_"):
+        return "joycaption_"
+    if model.startswith("ollama:"):
+        return "ollama:"
+    if model.startswith("openai_compat:"):
+        return "openai_compat:"
+    if model.startswith("wd14:"):
+        return "wd14:"
+    return None
+
+
 @router.get("/models")
 async def list_models(db: AsyncSession = Depends(get_db)):
     from backend.ml import wd14_tagger
     from backend.schemas.openai_provider import OpenAIProviderOut
-    static = model_manager.list_models()
+    # Only captioners: the registry also holds scorers, embedders and detectors, and
+    # selecting one here used to produce a green job that wrote nothing. Filtering on
+    # the registry's own `kind` rather than an id allowlist keeps this from becoming a
+    # second list of model ids that drifts from the registry.
+    static = [m for m in model_manager.list_models() if m["kind"] == "caption"]
     ollama_models = await ollama_captioner.list_vision_models()
     wd14_models = wd14_tagger.list_wd14_models()
     result = await db.execute(select(OpenAIProvider).order_by(OpenAIProvider.created_at))
@@ -379,6 +415,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         caption = await asyncio.get_running_loop().run_in_executor(
                             None, wd14_tagger.tag_image_sync, file_path, wd14_variant, body.wd14_threshold
                         )
+                    else:
+                        # Unreachable: the model validator rejects anything _caption_backend
+                        # does not know. Here so a *future* prefix mistake surfaces as a
+                        # per-image failure with a traceback rather than a green empty job.
+                        raise RuntimeError(f"No captioning backend for model '{body.model}'")
                 except Exception:
                     logger.error("Caption failed for %s", file_path, exc_info=True)
                     failed_image_ids.append(img_id)
@@ -526,6 +567,14 @@ class PipelineStep(BaseModel):
     target_height: int | None = None
     delimiter_mode: Literal["overwrite", "append", "prepend"] = "overwrite"
     delimiter: str = ", "
+
+    # On the step rather than on CaptionPipelineRequest, so every step is covered for free.
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, v: str) -> str:
+        if _caption_backend(v) is None:
+            raise ValueError(f"'{v}' is not a captioning model")
+        return v
 
 
 class CaptionPipelineRequest(BaseModel):
@@ -728,6 +777,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             caption = await asyncio.get_running_loop().run_in_executor(
                                 None, wd14_tagger.tag_image_sync, file_path, wd14_variant, step.wd14_threshold
                             )
+                        else:
+                            # Unreachable — see the matching branch in /run's loop.
+                            raise RuntimeError(f"No captioning backend for model '{step.model}'")
                     except Exception:
                         logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
                         failed_image_ids.add(img_id)

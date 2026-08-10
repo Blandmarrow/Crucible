@@ -28,18 +28,17 @@ import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import { useLabels } from "../../hooks/useLabels";
 import PromptPresetManager from "../caption/PromptPresetManager";
 import ResolutionPicker from "../caption/ResolutionPicker";
-import type { ModelInfo, OllamaModel, SubfolderInfo } from "../../types";
-import { type ProviderOut } from "../../api/providers";
+import type { SubfolderInfo } from "../../types";
 import ModelPicker from "../providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
+import { captionBackend, captionModelIds } from "../../constants/captionModels";
 import { SUBFOLDER_RENAME_KEY } from "../../constants/storage";
-import { detectionModelFamily } from "../../constants/detectionModels";
+import { DETECTION_MODELS, detectionModelFamily } from "../../constants/detectionModels";
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
-interface Wd14ModelInfo { id: string; name: string; ram_mb: number; }
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -97,6 +96,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [detectPrompt, setDetectPrompt] = useState("");
   const [detectUseCaptions, setDetectUseCaptions] = useState(false);
   const [detectOverwrite, setDetectOverwrite] = useState(true);
+  const [detectMinProb, setDetectMinProb] = useState(0.5);
   const [detectSyncWatermark, setDetectSyncWatermark] = useState(false);
   const [detectJobLabel, setDetectJobLabel] = useState("");
   const [detectJobIds, setDetectJobIds] = useState<string[]>([]);
@@ -218,12 +218,22 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     </div>
   ) : null;
 
-  const localModels = (modelsData?.local_models ?? []) as ModelInfo[];
-  const ollamaModels = (modelsData?.ollama_models ?? []) as OllamaModel[];
-  const wd14Models = (modelsData?.wd14_models ?? []) as Wd14ModelInfo[];
-  const providers = (modelsData?.openai_compat_models ?? []) as ProviderOut[];
+  const localModels = modelsData?.local_models ?? [];
+  const ollamaModels = modelsData?.ollama_models ?? [];
+  const wd14Models = modelsData?.wd14_models ?? [];
+  const providers = modelsData?.openai_compat_models ?? [];
   const type = modelType(captionModel);
   const availableStyles = type ? (STYLE_LABELS[type] ?? []) : [];
+
+  // The preset loader below sets the model, so a preset saved against a model the
+  // backend no longer accepts puts a 422 id into this modal. `captionBackend` — not
+  // `type`, which is null for the runnable `wd14:`/`openai_compat:` — is the predicate
+  // for that; membership in `offeredIds` is informational only, since an absent model
+  // may just mean Ollama is down. See `constants/captionModels.ts`.
+  const captionBlocked = !!captionModel && captionBackend(captionModel) === null;
+  const captionOfferedIds = captionModelIds(modelsData, providers);
+  const captionUnlisted = !!modelsData && !!captionModel && !captionBlocked
+    && !captionOfferedIds.includes(captionModel);
 
   const mergeTagsMutation = useMutation({
     mutationFn: () => tagConsolidationApi.subsume(datasetId, { image_ids: ids, dry_run: false }),
@@ -441,6 +451,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
         use_caption_as_prompt: detectUseCaptions,
         overwrite: detectOverwrite,
+        min_prob: detectMinProb,
         sync_watermark_flag: detectSyncEligible && detectSyncWatermark,
         label: detectJobLabel.trim() || undefined,
       }),
@@ -609,7 +620,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   }`}
                   onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                 >
-                  <div className="flex-1">{m.name}</div>
+                  <div className="flex-1 min-w-0">
+                    <div>{m.name}</div>
+                    <div className="text-xs text-gray-500">{m.description}</div>
+                  </div>
                   <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
                   {m.loaded && <span className="badge-green">Loaded</span>}
                 </div>
@@ -642,7 +656,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                       }`}
                       onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                     >
-                      <div className="flex-1">{m.name}</div>
+                      <div className="flex-1 min-w-0">
+                        <div>{m.name}</div>
+                        <div className="text-xs text-gray-500">{m.description}</div>
+                      </div>
                       {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
                     </div>
                   ))}
@@ -791,12 +808,25 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               </>
             )}
 
+            {captionBlocked && (
+              <p className="text-xs text-red-400">
+                “{captionModel}” is not a captioning model — captioning cannot run while it is selected.
+                A saved preset can carry one in; pick a model above.
+              </p>
+            )}
+            {captionUnlisted && (
+              <p className="text-xs text-yellow-400">
+                “{captionModel}” is not in the current model list — the service may be offline, or the
+                model may have been removed.
+              </p>
+            )}
+
             <div className="flex gap-2 justify-end">
               <button className="btn-ghost" onClick={() => setShowCaption(false)}>Cancel</button>
               <button
                 className="btn-primary flex items-center gap-2"
                 onClick={() => captionMutation.mutate()}
-                disabled={!captionModel || captionMutation.isPending}
+                disabled={!captionModel || captionBlocked || captionMutation.isPending}
               >
                 <Sparkles size={14} /> Start Captioning
               </button>
@@ -969,20 +999,38 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   // Only reset task/prompt/use-captions when the model family changes;
                   // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
                   if (familyChanged) {
-                    setDetectTask(m === "sam2" || m === "sam3" ? "text_prompt" : "<OD>");
+                    // NudeNet is the one model with a fixed task the backend
+                    // enforces (`task='nudenet'`), so the family switch picks it.
+                    const family = detectionModelFamily(m);
+                    setDetectTask(family === "nudenet" ? "nudenet" : family === "sam" ? "text_prompt" : "<OD>");
                     setDetectPrompt("");
                     setDetectUseCaptions(false);
                   }
                 }}
               >
-                <option value="florence2_large">Florence-2 Large</option>
-                <option value="florence2_promptgen">Florence-2 PromptGen</option>
-                <option value="sam2">SAM 2.1 + Grounding DINO (segmentation)</option>
-                <option value="sam3">SAM 3 (text-prompt segmentation)</option>
+                {DETECTION_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
             </div>
 
-            {detectModel !== "sam2" && detectModel !== "sam3" && (
+            {detectModel === "nudenet" && (
+              <div>
+                <label className="label">Min confidence: {detectMinProb.toFixed(2)}</label>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  value={detectMinProb}
+                  onChange={(e) => setDetectMinProb(Number(e.target.value))}
+                  className="w-full"
+                />
+                <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
+              </div>
+            )}
+
+            {detectionModelFamily(detectModel) === "florence" && (
               <div>
                 <label className="label">Task</label>
                 <select

@@ -21,6 +21,8 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 
 `HF_TOKEN` is written into `os.environ` by `backend/services/secrets_service.py::sync_env`, its only writer, so every loader that passes no `token=` picks it up: early in `main.py` from the `.env`/OS-env chain, again in the lifespan from the DB, and on every `PATCH /settings/secrets`. A token saved in Settings → API Keys therefore applies to the next download with no restart — `huggingface_hub` re-reads the variable on every call. See `docs/dev/settings.md` § API Keys tab for the precedence rules.
 
+Every registry entry also carries a `kind` (`"caption"` / `"score"` / `"detect"` / `"embed"`) and a `description`, both authored beside the loader that knows the repo id and the VRAM figure — `kind` is the model's *primary* role, singular, and `description` is the copy the pickers render verbatim. `GET /captioning/models` filters on `kind == "caption"`, so a new entry declaring the wrong one silently changes what the captioning picker offers; see `docs/dev/captioning.md` for that filter and the `_caption_backend` validator behind it.
+
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |
 |---|---|
@@ -30,7 +32,7 @@ Model IDs and their captioner/scorer modules:
 | `joycaption_beta` | `ml/joycaption_captioner.py` (`fancyfeast/llama-joycaption-beta-one-hf-llava`; Llama 3.1 8B + SigLIP2; otherwise identical to alpha) |
 | `ollama:*` | `ml/ollama_captioner.py` (HTTP calls to localhost:11434) |
 | `openai_compat:{id}:{model}` | `ml/openai_compat_captioner.py` (OpenAI-compatible vision API; `id` is the `OpenAIProvider` DB row UUID, `model` is the model name string) |
-| `wd14:{variant}` | `ml/wd14_tagger.py` (ONNX inference via `onnxruntime`; downloads from SmilingWolf HuggingFace repos; not tracked by `model_manager` — uses its own module-level cache with `threading.Lock` and double-check locking; variants: `eva02_large` (~2.0 GB RAM), `vit_large` (~1.4 GB RAM), `swinv2` (~0.6 GB RAM); `list_wd14_models()` returns `{id, name, ram_mb}` — `ram_mb` is included in the `/captioning/models` response and displayed in the UI alongside each model) |
+| `wd14:{variant}` | `ml/wd14_tagger.py` (ONNX inference via `onnxruntime`; downloads from SmilingWolf HuggingFace repos; not tracked by `model_manager` — uses its own module-level cache with `threading.Lock` and double-check locking; variants: `eva02_large` (~2.0 GB RAM), `vit_large` (~1.4 GB RAM), `swinv2` (~0.6 GB RAM); `list_wd14_models()` returns `{id, name, ram_mb, description}` — `ram_mb` is included in the `/captioning/models` response and displayed in the UI alongside each model) |
 | `upscale:{abs_path}` | `ml/upscaler.py` (spandrel; keyed by absolute model file path to support multiple loaded upscalers) |
 | `aesthetic` | `ml/aesthetic_scorer.py` (auto-downloads LAION's `sac+logos+ava1-l14-linearMSE` weights from `camenduru/improved-aesthetic-predictor` via `hf_hub_download`, cached at `models_cache_dir / "laion_aesthetic_sac_logos_ava1_l14.pth"`; also used for CLIP zero-shot watermark detection and CLIP embedding extraction) |
 | `aesthetic_v2_5` | `ml/aesthetic_v2_5_scorer.py` (Aesthetic Predictor V2.5: SigLIP-so400m-patch14-384 + linear head via the `aesthetic-predictor-v2-5` package; ~2.0 GB VRAM; a **separate** entry, not a replacement for `aesthetic` — see below) |

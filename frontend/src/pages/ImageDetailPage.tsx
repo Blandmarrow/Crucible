@@ -41,11 +41,13 @@ import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { Detection, ImageDetail } from "../types";
-import { injectNavId, navPageParams, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
+import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
-import { invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
+import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
+import type { ImageFilterParams } from "../api/images";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 
 
@@ -149,6 +151,36 @@ function DinoLayerBreakdown({ scores }: { scores: Record<string, number> }) {
     </div>
   );
 }
+
+/** The jobs that add or remove `Image` rows in a dataset — the only ones whose
+ *  progress can make the detail view's stored nav context describe a page that no
+ *  longer exists on the server. A tick from one of these re-derives the context, so
+ *  ← / → and the counter track the dataset while the job runs.
+ *
+ *  `video_extract` belongs here for its *deletes* as much as its writes (replace
+ *  mode removes the previous frames first), and the two versioning jobs swap the
+ *  row set wholesale.
+ *
+ *  The exclusions are deliberate — do not "complete" this set:
+ *
+ *  - `video_reextract` rewrites frames **in place**: every row keeps its identity,
+ *    so the stored page is still correct.
+ *  - `crop_upscale` / `batch_upscale` / `batch_lut` / `crop_to_detection` and the
+ *    batch crop/resize jobs *do* add rows — but this page owns those paths through
+ *    `injectNavId`, which deliberately grows the list to `limit + 1` and walks the
+ *    user onto the new id. A refresh would silently undo that.
+ *  - `caption` / `quality_score` change no row's existence, and under a
+ *    `captioned: false` (or score) filter a refresh would evict the user's own open
+ *    image from its own result set on every tick.
+ */
+const NAV_REFRESH_JOB_TYPES = new Set([
+  "comfy_generate",
+  "video_extract",
+  "import",
+  "rescan",
+  "restore_snapshot",
+  "checkout_branch",
+]);
 
 /** Patch the page GalleryPage will restore to, so "Back" returns to the page the
  *  arrows actually ended on. Called from both places that move the nav context
@@ -283,11 +315,29 @@ export default function ImageDetailPage() {
     return { words, tokens, tokenColor };
   }, [captionText, tokens]);
 
+  // ---- Live nav refresh ----------------------------------------------------
+  // Bumped by `refreshNavContext` below, and read by the `navCtx` memo as its
+  // second cache-buster: the refresher writes sessionStorage, which React cannot
+  // see, so without this the arrows and the counter keep the mounted snapshot.
+  const [navRefreshSeq, setNavRefreshSeq] = useState(0);
+  // Re-entrancy guard plus one trailing re-run — a job emitting faster than the
+  // round trip must not stack refreshes, but must not lose the last one either.
+  const navRefreshInFlight = useRef(false);
+  const navRefreshPending = useRef(false);
+  // High-water `done` per watched job, and the jobs whose terminal event has been
+  // consumed. `done` is not monotone (`video_extract` pins it at 0 through its
+  // replacing/detecting phases) and `comfy_generate` emits it twice per row — the
+  // strict `>` compare below collapses the pair to the closing emit, which is the
+  // one that lands after the rows are committed.
+  const navJobDoneRef = useRef<Map<string, number>>(new Map());
+  const navJobTerminalRef = useRef<Set<string>>(new Set());
+
   // Navigation context written by GalleryPage — re-read whenever imageId changes (we may have
-  // updated sessionStorage just before navigating, so the fresh read gets the new page's data)
+  // updated sessionStorage just before navigating, so the fresh read gets the new page's data),
+  // and whenever the live refresher has rewritten it (`navRefreshSeq`).
   const navCtx = useMemo(
     () => (datasetId ? readNavContext(datasetId) : null),
-    [datasetId, imageId] // eslint-disable-line react-hooks/exhaustive-deps
+    [datasetId, imageId, navRefreshSeq] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const currentIndex = navCtx ? navCtx.ids.indexOf(imageId ?? "") : -1;
@@ -355,6 +405,193 @@ export default function ImageDetailPage() {
     }
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
   }, [navCtx, datasetId, atEnd, atStart, nextId, prevId, nextPageData, prevPageData, paneGo]);
+
+  // The wake-up signal for the refresher: a *scalar* over the watched jobs only.
+  // `jobStore.updateJob` builds a new Map on every SSE event app-wide, so selecting
+  // `activeJobs` itself would re-run this page's watcher on a captioning job in
+  // another dataset. Zustand compares the selector's result with `Object.is`, so a
+  // string changes only when one of these jobs actually moves. Same idiom as
+  // `StatsPage`'s `hasActiveJob`. No new SSE hook: `TopBar`'s `useAllJobsSSE` is the
+  // single subscriber that fills the store (see `hooks/useVideoExtractJobs.ts`).
+  const navJobSignal = useJobStore((s) => {
+    let sig = "";
+    for (const j of s.activeJobs.values()) {
+      if (j.dataset_id !== datasetId) continue;
+      if (!NAV_REFRESH_JOB_TYPES.has(j.job_type)) continue;
+      sig += `${j.job_id}:${j.status}:${j.done ?? 0}|`;
+    }
+    return sig;
+  });
+
+  /** Re-derive the stored nav context from the server, so the arrows and the
+   *  counter keep describing the server's *current* page N under the stored
+   *  filters while a row-adding job runs.
+   *
+   *  It only ever writes a server page response verbatim, never a splice: `atEnd`
+   *  is a strict `ids.length === limit`, so a list one row long or one row short
+   *  kills → for the rest of the session. On any failure the stale snapshot is
+   *  kept — a wrong-length list is worse than an old one, the same rule the
+   *  delete path's `catch` states. */
+  const refreshNavContext = useCallback(async () => {
+    if (!datasetId || !imageId) return;
+    if (navRefreshInFlight.current) { navRefreshPending.current = true; return; }
+    navRefreshInFlight.current = true;
+
+    const runOnce = async () => {
+      // Read fresh every pass: `goTo`, `injectNavId` and the delete all write this
+      // key, and a closure captured at callback-creation time would be stale.
+      const ctx = readNavContext(datasetId);
+      if (!ctx) return;
+      // A deep link carrying another view's context — the same guard the delete
+      // path applies before it re-derives.
+      if (ctx.ids.indexOf(imageId) < 0) return;
+      // `injectNavId` is holding the list: after a crop / upscale / LUT it is
+      // deliberately `limit + 1` long with the user standing on the injected id.
+      // Refreshing would drop that id, take the relocate branch below and move the
+      // context — and Back's target — while the user looks at a fresh crop.
+      if (ctx.ids.length > ctx.limit) return;
+
+      let nextIds: string[] | null = null;
+      let nextPage = ctx.page;
+
+      const rows = await imagesApi.list(navPageParams(datasetId, ctx, ctx.page));
+      if (rows.some((r) => r.id === imageId)) {
+        nextIds = rows.map((r) => r.id);
+      } else {
+        // The open image slid off its page. Probe the next page first: with a
+        // prepending sort the drift is almost always exactly one page, and this
+        // avoids pulling a 20k-id payload on the common relocate.
+        const probe = await imagesApi.list(navPageParams(datasetId, ctx, ctx.page + 1));
+        if (probe.some((r) => r.id === imageId)) {
+          nextIds = probe.map((r) => r.id);
+          nextPage = ctx.page + 1;
+        } else {
+          const res = await imagesApi.listIds(navIdsParams(datasetId, ctx));
+          const idx = res.ids.indexOf(imageId);
+          if (idx >= 0) {
+            const page = Math.floor(idx / ctx.limit) + 1;
+            // `GET /images/ids` trims at SELECT_ALL_ID_CAP (20,000), so a slice at
+            // the tail of a truncated response comes back *short* — and a short
+            // list makes `atEnd` false forever. Take it only when the whole page
+            // is inside what the server actually sent.
+            if (!res.truncated || page * ctx.limit <= res.ids.length) {
+              nextIds = res.ids.slice((page - 1) * ctx.limit, page * ctx.limit);
+              nextPage = page;
+            }
+          }
+        }
+      }
+      // Not found anywhere: keep the old snapshot rather than blanking navigation.
+      if (!nextIds) return;
+
+      const sameIds = nextIds.length === ctx.ids.length && nextIds.every((id, i) => id === ctx.ids[i]);
+      // What keeps a quiet dataset from churning: most ticks change nothing on the
+      // page the user is standing on, and every write below costs a reset + refetch.
+      if (sameIds && nextPage === ctx.page) return;
+
+      // Compare-and-swap. `deleteMutation.onSuccess` writes this key from inside
+      // its own `await`, and a blind write here could resurrect a page still
+      // listing the row the delete just removed — → would then walk onto a 404.
+      // The same guard covers two panes racing on the one sessionStorage key.
+      const current = readNavContext(datasetId);
+      if (
+        !current ||
+        current.page !== ctx.page ||
+        current.ids.length !== ctx.ids.length ||
+        !current.ids.every((id, i) => id === ctx.ids[i])
+      ) return;
+
+      writeNavContext(datasetId, { ...ctx, ids: nextIds, page: nextPage });
+      if (nextPage !== ctx.page) {
+        // Back must land on the page the arrows actually ended on. Accepted cost:
+        // `syncGalleryStatePage` also writes `scrollTop: 0`, so a *background*
+        // relocate now discards the gallery's saved scroll offset — until now only
+        // an explicit user action did that. Writing `page` without the sync is the
+        // worse trade: Back would land on the wrong page entirely.
+        syncGalleryStatePage(datasetId, nextPage);
+      }
+      // Reset, not invalidate: the boundary prefetches are a navigation target, so
+      // an invalidated entry would still be *served* while it refetched and → could
+      // step onto a stale id (`constants/queryKeys.ts`).
+      qc.resetQueries({ queryKey: ["gallery-nav", datasetId] });
+      // The shared total. TopBar's prefix invalidation already covers the live
+      // image jobs; this is what covers the ones it does not (`rescan`, the two
+      // versioning jobs).
+      qc.invalidateQueries({ queryKey: imagesCountKey(datasetId, { ...ctx.filters, dataset_id: datasetId }) });
+      setNavRefreshSeq((s) => s + 1);
+    };
+
+    try {
+      navRefreshPending.current = false;
+      await runOnce();
+      // Exactly one trailing re-run, and it cannot loop: `navRefreshPending` is set
+      // only by a real job event arriving mid-flight, and the seq bump recomputes
+      // only `navCtx` — which is absent from the watcher's deps below.
+      if (navRefreshPending.current) {
+        navRefreshPending.current = false;
+        await runOnce();
+      }
+    } catch {
+      // Keep the stale snapshot.
+    } finally {
+      navRefreshInFlight.current = false;
+      navRefreshPending.current = false;
+    }
+  }, [datasetId, imageId, qc]);
+
+  // Fire the refresher when a watched job has actually advanced.
+  //
+  // The active-pane bail is required, not belt-and-braces: `splitPane` clones this
+  // view, so both panes start on the same image and share the one sessionStorage
+  // key — once one pane arrows away they would ping-pong `page` on every generated
+  // row. `paneCtx &&` keeps it a no-op outside split-pane mode, the same idiom as
+  // the arrow-key and Delete handlers above. `activePaneId` in the deps means
+  // focusing the other pane immediately refreshes *its* context.
+  //
+  // `navRefreshSeq` and `navCtx` are deliberately NOT in the dep array — that
+  // absence is the proof this cannot loop, and reads as an omission otherwise.
+  useEffect(() => {
+    if (paneCtx && paneCtx.paneId !== activePaneId) return;
+    if (!datasetId || !imageId) return;
+    let advanced = false;
+    // Read non-reactively: `navJobSignal` above is what makes this effect run, and
+    // selecting the Map here would re-run it on every SSE event app-wide.
+    for (const j of useJobStore.getState().activeJobs.values()) {
+      if (j.dataset_id !== datasetId || !NAV_REFRESH_JOB_TYPES.has(j.job_type)) continue;
+      const done = j.done ?? 0;
+      if (done > (navJobDoneRef.current.get(j.job_id) ?? -1)) {
+        navJobDoneRef.current.set(j.job_id, done);
+        advanced = true;
+      }
+      // Never on the cancel button's own optimistic write — TopBar's rule: rows can
+      // still land between the click and the cooperative cancel.
+      if (
+        TERMINAL_JOB_STATUSES.has(j.status) &&
+        !j.optimistic &&
+        !navJobTerminalRef.current.has(j.job_id)
+      ) {
+        navJobTerminalRef.current.add(j.job_id);
+        advanced = true;
+      }
+    }
+    if (advanced) void refreshNavContext();
+  }, [navJobSignal, datasetId, imageId, paneCtx, activePaneId, refreshNavContext]);
+
+  // How many images the current filters match in total — the third number in the
+  // counter, and the one that visibly climbs while a run fills the dataset. It
+  // watches no job: the key nests under `["images", datasetId]`, which TopBar
+  // invalidates per generated row and on every terminal image-modifying job, so
+  // mounting it is enough. Shared verbatim with the gallery's pagination total
+  // (`imagesCountKey`), so the two can never disagree.
+  const navCountFilters = useMemo<ImageFilterParams>(
+    () => ({ ...(navCtx?.filters ?? {}), dataset_id: datasetId! }),
+    [navCtx, datasetId],
+  );
+  const { data: navTotal } = useQuery({
+    queryKey: imagesCountKey(datasetId, navCountFilters),
+    queryFn: () => imagesApi.count(navCountFilters).then((r) => r.count),
+    enabled: !!datasetId && !!navCtx,
+  });
 
   // Mutually-exclusive annotation modes (draw / SAM points / mask refine).
   // Entering one clears the others' points/rect; passing null exits all.
@@ -1139,8 +1376,24 @@ export default function ImageDetailPage() {
               >
                 <ChevronLeft size={16} />
               </button>
-              <span className="text-xs text-gray-500 tabular-nums w-20 text-center">
+              {/* The denominator is this page's length; the muted third number is
+                  how many images the filters match in total, live while a job
+                  fills the dataset. Hidden when it would only repeat the
+                  denominator — on a partial page the two are the same number, and
+                  a duplicate reads as a bug. `min-w` + `nowrap` rather than the
+                  old fixed `w-20`, so the `p.N` badge cannot wrap. */}
+              <span
+                className="text-xs text-gray-500 tabular-nums min-w-[5rem] whitespace-nowrap text-center"
+                title={
+                  navTotal !== undefined && navTotal > navCtx.ids.length
+                    ? `Image ${currentIndex + 1} of ${navCtx.ids.length} on this page · ${navTotal} match the current filters`
+                    : `Image ${currentIndex + 1} of ${navCtx.ids.length}`
+                }
+              >
                 {currentIndex + 1} / {navCtx.ids.length}
+                {navTotal !== undefined && navTotal > navCtx.ids.length && (
+                  <span className="ml-1 text-gray-600">· {navTotal}</span>
+                )}
                 {navCtx.page > 1 && <span className="ml-1 text-gray-600">p.{navCtx.page}</span>}
               </span>
               <button

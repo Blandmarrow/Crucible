@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page, APIRequestContext } from '@playwright/test'
-import { createDatasetViaApi, uploadViaApi } from './helpers'
+import { createDatasetViaApi, pngBuffer, uploadViaApi } from './helpers'
 
 // Stepping through images with ← / → in the detail view must stay inside the
 // filters the gallery was showing. The nav context the gallery writes carries its
@@ -272,4 +272,102 @@ test('deleting the only image of the last page falls back to the previous page',
   // The `gallery-state` patch moved with the context, so Back lands on page 2.
   await page.getByRole('button', { name: 'Back' }).click()
   await expect(page.getByText('Page 2 of 2 · 4 images')).toBeVisible()
+})
+
+// A row-adding job running *while* the detail view is open. The nav context is a
+// sessionStorage snapshot, not a query, so before the live refresher the arrows and
+// the counter froze at whatever the gallery last wrote: new images never became
+// reachable with ← / → and the user had to walk back to the gallery and re-enter.
+//
+// Driven with a real `rescan` — one of NAV_REFRESH_JOB_TYPES — rather than the
+// `comfy_generate` that motivated the feature: CI has no ComfyUI, and what the page
+// actually watches is a job type's SSE progress in the store, which rescan supplies
+// identically. Filename-ascending with the files named in order puts the new rows at
+// the end, where the short last page can grow into a full one; that is what makes
+// both the denominator and → observable.
+//
+// Page size 2 over 01…03: page 1 = 01,02 | page 2 = 03. After the rescan adopts two
+// more it is page 1 = 01,02 | page 2 = 03,04 | page 3 = 05.
+test('a row-adding job refreshes the detail view nav context live', async ({ page, request }) => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  const { ds, ids } = await seedNumbered(request, 'nav-live-refresh', 3)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4, page: 2 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 2 of 2 · 3 images')).toBeVisible()
+
+  // The only image of a short last page: one slot, no page beyond it, and the
+  // total already carried alongside because it exceeds the page.
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['03_x.png']}$`))
+  await expect(page.getByText('1 / 1')).toBeVisible()
+  await expect(page.getByText('· 3')).toBeVisible()
+  await expect(page.getByTitle('Next image (→)')).toBeDisabled()
+
+  // Two images land in the dataset folder behind the app's back, then a rescan
+  // adopts them — the job whose progress the detail view now watches.
+  // `images/`, not the dataset root: image files are stored flat in that one
+  // directory and `subfolder` is a purely logical DB column.
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '04_x.png'), pngBuffer())
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '05_x.png'), pngBuffer())
+  const started = await request.post(`/api/v1/datasets/${ds.id}/rescan`, {
+    data: { import_captions: false },
+  })
+  expect(started.status(), await started.text()).toBe(200)
+
+  // Without the refresher all three stay frozen for the rest of the session.
+  await expect(page.getByText('1 / 2')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('· 5')).toBeVisible()
+  await expect(page.getByTitle('Next image (→)')).toBeEnabled()
+
+  // And the refreshed list is a real server page, not a splice: → steps onto the
+  // row that actually follows.
+  const after = await idsByFilename(request, ds.id)
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${after['04_x.png']}$`))
+})
+
+// The relocate branch, which the case above cannot reach: on **Newest first** the
+// new rows prepend, so the open image slides off its page entirely. The refresher
+// probes page N+1 before falling back to the whole id list, moves the context there
+// — and moves `gallery-state-*` with it, or Back lands on a page the user was never
+// on. `created_at` is Python-side (`default=datetime.utcnow`), so the ordering here
+// is microsecond-precise rather than a second-granularity tie.
+//
+// Page size 2 over 01…04, newest first: page 1 = 04,03 | page 2 = 02,01. After two
+// more are adopted: page 1 = 06,05 | page 2 = 04,03 | page 3 = 02,01.
+test('a prepending sort relocates the open image onto its new page', async ({ page, request }) => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+
+  const { ds, ids } = await seedNumbered(request, 'nav-live-relocate', 4)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 0 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 2 · 4 images')).toBeVisible()
+
+  // The newest image, first slot of page 1: nothing before it, and no `p.` badge.
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['04_x.png']}$`))
+  await expect(page.getByText('1 / 2')).toBeVisible()
+  await expect(page.getByTitle('Previous image (←)')).toBeDisabled()
+
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '05_x.png'), pngBuffer())
+  fs.writeFileSync(path.join(ds.folder_path, 'images', '06_x.png'), pngBuffer())
+  const started = await request.post(`/api/v1/datasets/${ds.id}/rescan`, {
+    data: { import_captions: false },
+  })
+  expect(started.status(), await started.text()).toBe(200)
+
+  // Same slot, new page — and ← now has somewhere to go, which is the whole point:
+  // the two images that pushed this one down are reachable without leaving.
+  await expect(page.getByText('p.2')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('· 6')).toBeVisible()
+  await expect(page.getByTitle('Previous image (←)')).toBeEnabled()
+
+  // The `gallery-state-*` patch travelled with the context.
+  await page.getByRole('button', { name: 'Back' }).click()
+  await expect(page.getByText('Page 2 of 3 · 6 images')).toBeVisible()
 })

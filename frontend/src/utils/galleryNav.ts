@@ -27,7 +27,7 @@
  *    `undefined` ones are gone), so a shallow "did the filters change?" compare
  *    between the two would always say yes.
  */
-import type { ImageFilterParams, ImageListParams } from "../api/images";
+import type { ImageFilterParams, ImageIdsParams, ImageListParams } from "../api/images";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import { getGalleryPageSize } from "../constants/storage";
 
@@ -115,6 +115,21 @@ export function navPageParams(
     dataset_id: datasetId,
     page,
     limit: ctx.limit,
+    sort: ctx.sort,
+    order: ctx.order,
+  };
+}
+
+/** The *whole* matching list of a stored context, in the order the arrows walk it —
+ *  `GET /images/ids` rather than one page. `navPageParams`' sibling, and declared
+ *  here for the same reason: the shape was once written by three independent inline
+ *  casts, and the detail view's relocate fallback (find which page the open image
+ *  slid onto) must not become a fourth. Carries `sort`/`order` but no `page`/`limit`
+ *  — the endpoint returns every id, capped server-side. */
+export function navIdsParams(datasetId: string, ctx: GalleryNavContext): ImageIdsParams {
+  return {
+    ...ctx.filters,
+    dataset_id: datasetId,
     sort: ctx.sort,
     order: ctx.order,
   };

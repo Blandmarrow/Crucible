@@ -42,7 +42,7 @@ import { usePopover } from "../hooks/usePopover";
 import LabelPicker from "../components/common/LabelPicker";
 import { MISSING_LICENSE, SORT_OPTIONS, canDropFolderOn, isSubfolderDragId, isSubfolderDropId, subfolderDragId, subfolderDropId, subfolderFromDragId, subfolderFromDropId, SIDEBAR_DROP_ID } from "../constants/galleryOptions";
 import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTypes";
-import { invalidateDatasetContentScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
 
@@ -756,16 +756,13 @@ export default function GalleryPage() {
     placeholderData: keepPreviousData,
   });
 
-  // How many images the filters match in total. The key nests under the
-  // `["images", datasetId]` prefix every gallery mutation already invalidates
-  // (TanStack matches by prefix), so a delete refreshes this the same way it
-  // refreshes the grid — a sibling key like `["images-count", …]` would go stale
-  // behind the user's back. No collision with the list key: its third element is
-  // the page *number*, and `setQueryData` optimistic updates still address the
-  // full list key. Paging and sort are absent on purpose — neither changes how
-  // many images match.
+  // How many images the filters match in total. `imagesCountKey` owns the shape —
+  // see the comment there for why it nests under the `["images", datasetId]`
+  // prefix and why the filters go in as one object. The detail view's live total
+  // reads the same entry, so the two numbers cannot disagree. Paging and sort are
+  // absent on purpose — neither changes how many images match.
   const { data: totalCount, isPlaceholderData: countIsStale } = useQuery({
-    queryKey: ["images", datasetId, "count", captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
+    queryKey: imagesCountKey(datasetId, filterParams),
     queryFn: () => imagesApi.count(filterParams).then((r) => r.count),
     enabled: !!datasetId,
     placeholderData: keepPreviousData,

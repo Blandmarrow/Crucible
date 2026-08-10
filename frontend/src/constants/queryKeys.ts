@@ -1,4 +1,29 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { ImageFilterParams } from "../api/images";
+
+/**
+ * "How many images match these filters" — one cache entry, shared by the gallery's
+ * pagination total and the detail view's live total.
+ *
+ * Two properties make the sharing work, and both are load-bearing:
+ *
+ * - It stays **nested under the `["images", datasetId]` prefix** every image writer
+ *   already invalidates (TanStack matches by prefix), including TopBar's per-row
+ *   live invalidation while a `comfy_generate` run fills the dataset. That is what
+ *   makes the detail view's total climb without watching a single job. A sibling
+ *   key like `["images-count", …]` would go stale behind the user's back.
+ * - The filters go in as **one plain object**, not a hand-spread list of values.
+ *   `hashKey` sorts a plain object's keys and drops `undefined` props, so the
+ *   gallery's live `ImageFilterParams` memo and the JSON-round-tripped copy in
+ *   `utils/galleryNav.ts` (where the `undefined` keys are simply gone) hash
+ *   identically — the same property the boundary prefetches already rely on.
+ *
+ * No collision with the list key: that one's third element is the page *number*,
+ * and the only `setQueryData` on it addresses the full list key.
+ */
+export function imagesCountKey(datasetId: string | undefined, filters: ImageFilterParams) {
+  return ["images", datasetId, "count", filters];
+}
 
 /**
  * Every query whose data depends on effective source/license provenance.

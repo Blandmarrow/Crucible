@@ -138,9 +138,9 @@ class GeneratePromptsRequest(BaseModel):
     provider_id: str
     model_name: str = ""  # empty → provider default_model
     # Standing rules for HOW prompts are written (style/format) — system message.
-    system_instructions: str = Field(default="", max_length=4000)
+    system_instructions: str = Field(default="", max_length=20000)
     # The per-call ask: WHAT to generate now.
-    instruction: str = Field(min_length=1, max_length=4000)
+    instruction: str = Field(min_length=1, max_length=20000)
     batch_size: int = Field(default=5, ge=1, le=10)
     # Prompts that already exist (queue rows + prior batches) — the LLM is told
     # to diverge from them; this is the diversity mechanism.
@@ -161,8 +161,8 @@ class GeneratePromptsJobRequest(BaseModel):
 
     provider_id: str
     model_name: str = ""  # empty → provider default_model
-    system_instructions: str = Field(default="", max_length=4000)
-    instruction: str = Field(min_length=1, max_length=4000)
+    system_instructions: str = Field(default="", max_length=20000)
+    instruction: str = Field(min_length=1, max_length=20000)
     batch_size: int = Field(default=5, ge=1, le=10)
     temperature: float = Field(default=0.9, ge=0.0, le=2.0)
     # Absolute ("until the plan holds N prompts"), not "N more" — so resuming

@@ -205,3 +205,25 @@ utilities → `docs/dev/shared-utilities.md`.
   PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
   `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
   The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
+
+## docs/dev/comfyui.md
+
+- **Moves:** § Frontend (1,334 words) → docs/dev/comfy-page.md, **and** § The
+  `comfy_generate` job (1,470) → docs/dev/comfy-run.md. Take both at once.
+- **New files:** comfy-page.md and comfy-run.md, each with its own Map row. The user doc
+  `docs/comfyui.md` covers all three halves, so the mirror-the-user-doc rule gives no names
+  for free; these two are proposals.
+- **Why here:** recorded at 4,440 words by the M6 port of per-row folders, on
+  `feat/m6-comfy-automation`. The file is one subsystem described three ways: the tables and
+  endpoints, the run body, and the page. Taking only § Frontend leaves ~3,100, still over the
+  ~2,100 target, so the run body goes too. That half is also the one M6's mock server (stage 2)
+  and stepping run build on, so it will grow next. Both seams leave ~1,640 behind.
+- **Watch for:** the M6 plan in docs/dev/comfy-automation-plan/README.md charters a *different*
+  new file, comfy-structured.md, for blueprints and expansion. That is new content, not a slice
+  of this file, so don't conflate the seams. Two pointers name **§ Gotchas** (the mock-server
+  shape and the `server_default` rule), which stays behind. `docs/dev/frontend-jobs.md` cites
+  the per-row `refresh_stats`, which moves to comfy-run.md, and so does § Removing our prompt,
+  which PM-030 points at. Inbound inline-code paths come from `comfy-prompts.md`,
+  `comfyui-sync.md`, `frontend-jobs.md`, `provenance.md`, `settings.md`, PM-030, the M6 and M7
+  plan folders and CLAUDE.md. Grep `comfyui.md` before and after: `docs/comfyui.md` and
+  `docs/dev/comfyui-sync.md` match the same grep.

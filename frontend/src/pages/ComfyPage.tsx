@@ -15,6 +15,7 @@ import type { GeneratePromptsJobBody } from "../components/comfy/GeneratePrompts
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
+import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
 import { apiErrorDetail } from "../utils/apiError";
 
 /** Hooks can't run in loops — render one of these per active run to keep a
@@ -55,6 +56,7 @@ export default function ComfyPage() {
   const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
+  const [showSetFolder, setShowSetFolder] = useState(false);
   const txtFilesRef = useRef<HTMLInputElement>(null);
 
   /** Each .txt file is one prompt (newlines inside a file collapse to spaces);
@@ -444,6 +446,11 @@ export default function ComfyPage() {
               title={hasPromptPin ? "Save the selected rows' prompts to the prompt library" : "Mark a pinned parameter as the prompt first"}>
               Save to library ({selected.size})
             </button>
+            <button className="btn ghost sm" onClick={() => setShowSetFolder(true)}
+              disabled={selected.size === 0 || isRunning}
+              title="Set the destination folder on the selected rows">
+              Set folder ({selected.size})
+            </button>
             {failedCount > 0 && (
               <button className="btn ghost sm" onClick={() => retryFailedMutation.mutate()}>
                 Reset failed ({failedCount})
@@ -542,6 +549,15 @@ export default function ComfyPage() {
           planId={plan.id}
           rowIds={[...selected]}
           onClose={() => setShowSaveToLibrary(false)}
+        />
+      )}
+
+      {showSetFolder && plan && (
+        <SetRowFolderModal
+          planId={plan.id}
+          datasetId={plan.dataset_id}
+          rowIds={[...selected]}
+          onClose={() => setShowSetFolder(false)}
         />
       )}
 

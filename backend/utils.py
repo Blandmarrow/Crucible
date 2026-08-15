@@ -180,15 +180,44 @@ def contained_path(
     return safe
 
 
+def _subfolder_parts(s: str) -> list[str]:
+    """The segments of a subfolder path: backslashes folded, blanks and `.` dropped.
+
+    Shared by `normalize_subfolder` and `join_subfolder` so the two disagree only
+    about what `..` means, never about anything else.
+    """
+    return [p for p in s.replace("\\", "/").split("/") if p and p != "."]
+
+
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments.
 
     Rejects '..' with HTTP 400. Import this; never copy the logic inline and never
-    re-import it from a router.
+    re-import it from a router. This is the **write-time** guard — use it wherever a
+    subfolder arrives from a client; see `join_subfolder` for the job-side counterpart.
     """
-    parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]
+    parts = _subfolder_parts(s)
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
+    return "/".join(parts)
+
+
+def join_subfolder(*fragments: str) -> str:
+    """Join subfolder fragments into one normalized path. **Never raises.**
+
+    The job-side counterpart to `normalize_subfolder`: it drops `..` segments
+    rather than rejecting them. Gallery subfolders are virtual labels — nothing
+    nests on disk — so a stray `..` is a wrong folder *name*, not a path escape,
+    and failing a long-running job's item over one is worse than filing the image
+    a level up. Raising here would also be unactionable: the message would surface
+    on a background row and re-fail identically on every re-run.
+
+    Needed because rows can hold a subfolder written before the write-time guard
+    existed, or by future code that renders paths rather than accepting them.
+    """
+    parts: list[str] = []
+    for fragment in fragments:
+        parts.extend(p for p in _subfolder_parts(fragment or "") if p != "..")
     return "/".join(parts)
 
 

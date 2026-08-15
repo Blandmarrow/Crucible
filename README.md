@@ -44,7 +44,7 @@ Every step from raw images to a training-ready export, in order:
 - **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video.md)
 
 ### Image generation
-- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
+- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), give each row its own destination folder so one run builds a whole folder structure, and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
 - **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfyui.md)
 
 ### Captioning

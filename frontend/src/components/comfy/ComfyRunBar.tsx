@@ -33,8 +33,11 @@ export default function ComfyRunBar({
       <div className="panel-h" style={{ flexWrap: "wrap", gap: 8 }}>
         <h3>Run</h3>
         <div style={{ flex: 1 }} />
-        <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 6 }}>
-          Subfolder
+        <label
+          style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 6 }}
+          title="Per-row folders nest under this"
+        >
+          Base folder
           <select
             className="select" style={{ height: 30, fontSize: 12 }}
             value={subfolder} onChange={(e) => onSubfolderChange(e.target.value)} disabled={isRunning}

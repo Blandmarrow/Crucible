@@ -62,10 +62,12 @@ test('pasted prompts become queue rows', async ({ page, request }) => {
     .fill('a cat on a windowsill\na dog on a beach')
   await page.getByRole('button', { name: 'Add 2 rows' }).click()
 
-  // The modal closes and both prompts land in editable row cells (the rows table
-  // owns every textarea on the page once the paste modal is gone).
+  // The modal closes and both prompts land in editable row cells. Scoped to the
+  // rows table on purpose: the prompt cells must be the *only* textareas in it, so
+  // this fails if the single-line Folder cell is ever built as a textarea.
   await expect(page.getByRole('heading', { name: 'Paste prompts' })).toHaveCount(0)
-  const promptCells = page.locator('textarea')
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  const promptCells = rowsTable.locator('textarea')
   await expect(promptCells).toHaveCount(2)
   await expect(promptCells.nth(0)).toHaveValue('a cat on a windowsill')
   await expect(promptCells.nth(1)).toHaveValue('a dog on a beach')
@@ -79,4 +81,43 @@ test('pasted prompts become queue rows', async ({ page, request }) => {
     'a cat on a windowsill',
     'a dog on a beach',
   ])
+})
+
+test('rows carry a per-row folder, typed in a cell or set in bulk', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-folder-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'folder plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Paste prompts…' }).click()
+  await page
+    .getByPlaceholder('a cat sitting on a windowsill', { exact: false })
+    .fill('a knight in a fen\na knight on a ridge')
+  await page.getByRole('button', { name: 'Add 2 rows' }).click()
+  await expect(page.getByRole('heading', { name: 'Paste prompts' })).toHaveCount(0)
+
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  const folderCells = rowsTable.locator('input[placeholder="(root)"]')
+  await expect(folderCells).toHaveCount(2)
+
+  // Typing in one cell commits on blur, and only touches that row.
+  await folderCells.nth(0).fill('salt-fen')
+  await folderCells.nth(0).blur()
+  await expect(folderCells.nth(0)).toHaveValue('salt-fen')
+
+  const rowsUrl = `/api/v1/comfy/plans/${plan.id}/rows`
+  await expect
+    .poll(async () => (await (await request.get(rowsUrl)).json()).map((r: { subfolder: string }) => r.subfolder))
+    .toEqual(['salt-fen', ''])
+
+  // Bulk-set both rows over the top of it.
+  await rowsTable.locator('input.checkbox').first().check()
+  await page.getByRole('button', { name: 'Set folder (2)' }).click()
+  await expect(page.getByRole('heading', { name: 'Set folder' })).toBeVisible()
+  await page.getByPlaceholder('e.g. salt-fen/iron-knight').fill('ridge/knight')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('heading', { name: 'Set folder' })).toHaveCount(0)
+
+  await expect
+    .poll(async () => (await (await request.get(rowsUrl)).json()).map((r: { subfolder: string }) => r.subfolder))
+    .toEqual(['ridge/knight', 'ridge/knight'])
 })

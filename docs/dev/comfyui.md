@@ -35,6 +35,24 @@ value), `status` (`pending|running|completed|failed`), `error_msg`, `sort_order`
 plus `image_ids` (JSON list — multi-SaveImage workflows produce several images per row).
 Plan names are unique per dataset (`uq_comfy_plan_dataset_name`).
 
+Two more row columns (migration `e5c1a9d3f7b2`) give each row its own destination:
+
+- `subfolder` — `String(512)` NOT NULL `server_default=""`, matching `Image.subfolder`'s width.
+  The run nests it under the run's base folder, so a plan can file twenty prompts into twenty
+  folders instead of one pile. Gallery subfolders are virtual (`Image.subfolder` +
+  `Dataset.declared_subfolders`, nothing nests on disk — see `docs/dev/gallery.md`), so this is
+  a label, not a path. **The Python-side `default=""` is load-bearing**: `create_row` and
+  `bulk_add_rows` construct `ComfyRow(...)` directly, so a `server_default` alone would leave
+  `row.subfolder` as `None` until the object is refreshed. `status` already carries both.
+- `leaf_id` — `String(36)` NULL, plain index `ix_comfy_rows_leaf_id`. Column-only today: nothing
+  writes it, and `_row_out` serializes it read-only. It names the blueprint leaf that minted the
+  row once structured generation exists. **Deliberately no foreign key**: a row whose leaf a
+  blueprint edit deleted should keep naming it as provenance, and an inline column-level
+  reference reads back off SQLite with no `ondelete`, which `scripts/check_migrations.py` then
+  reports as permanent drift (`a7c3e5b1d9f2`'s docstring covers that at length).
+  `VersionImageState.label_ids` and `quality_flags["duplicate_of"]` are FK-less for related
+  reasons. `ComfyRow` is not `Image` — none of the `VersionImageState` mirror rules apply.
+
 The ComfyUI server URL is the global `ThresholdSettings.comfyui_url` (Settings → ComfyUI tab,
 with a Test-connection button → `GET /comfy/ping`, which hits `{url}/system_stats`). The same
 tab also holds `ThresholdSettings.comfy_workflow_dir` — the default folder scanned for
@@ -73,6 +91,19 @@ completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
 kept). `workflow_json` is returned only by `GET /comfy/plans/{id}` — never in the plan list
 or row responses.
 
+**The folder is exempt from that reset**, and its bulk write is its own endpoint.
+`RowUpdate.subfolder` (≤512, `normalize_subfolder`d) is handled in `update_row` *after* the
+`values` branch, so a combined `{values, subfolder}` PATCH still resets — but a folder-only
+edit does not, because it changes where the next image is filed rather than what image would
+be produced, and a reset would make the next run regenerate a correct image.
+`POST /comfy/plans/{id}/rows/set-subfolder` (`{subfolder, row_ids?}` → `{updated}`) writes one
+folder across a selection: `row_ids: null` means every row, `[]` means none (`bulk_edit_rows`'
+convention), no-op rows are skipped, and completed rows keep their status. It is **not** a
+branch inside `rows/set-value` — that endpoint is hard-gated on the plan's pinned aliases, and
+a folder is not a pinned parameter. It also deliberately declares nothing on the dataset: an
+edit is plan intent, and declaring per commit would fill `Dataset.declared_subfolders` with
+typos. `leaf_id` is not settable through either endpoint.
+
 Prompt tooling — `POST /comfy/generate-prompts` (one LLM batch call),
 `POST /comfy/plans/{id}/generate-prompts` (the durable `comfy_prompts` job), the output
 parser and `GeneratePromptsModal`: `docs/dev/comfy-prompts.md`.
@@ -110,10 +141,23 @@ second pending/running run for the same plan — matched on `job_type` **and**
 `docs/dev/comfy-prompts.md`). Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
+**The run's whole folder tree is declared once, before the row loop.**
+`run_targets = {join_subfolder(subfolder, r.subfolder or "") for r in run_rows}` (with `""`
+discarded) goes to `dataset_service.declare_subfolders`, which fills in every ancestor. Doing
+it in the loop is the trap: `declare_subfolders` **commits**, which inside the loop would make
+a half-written row durable and break the per-row atomicity the failure handler's rollback
+depends on. Before the loop the session holds only reads, so the commit is a no-op on an empty
+unit of work, and `expire_on_commit=False` leaves `ds`/`run_rows` usable. It is also the better
+behaviour — the tree appears in the gallery sidebar as the run starts rather than filling in
+row by row; a cancelled run leaves declared-but-empty folders, which `list_subfolders` already
+supports and the user can delete. Discarding `""` matters because `declare_subfolder("")` would
+append a nameless entry that `list_subfolders` then merges into every listing forever.
+`join_subfolder` rather than `normalize_subfolder` — see § Gotchas.
+
 Per row, sequentially (one at a time — ComfyUI's own queue is never stacked): mark `running` →
 `patch_workflow` → submit → poll history every 1 s (30-min deadline, `PER_ROW_TIMEOUT_S`) →
 download each output image → write into `{dataset}/images/` named
-`{plan_slug}_001.ext` via `unique_filename_with_thumb` → `_register_file_sync` in an executor
+`{row_folder_leaf}_001.ext` via `unique_filename_with_thumb` → `_register_file_sync` in an executor
 (it returns a `RegisteredFile` NamedTuple `(info, gen_meta, provenance)`, read by **attribute, never
 unpacked** — that was PM-005; the ComfyUI path ignores `.provenance` and stamps its own)
 (metadata + thumbnail; the PNG's embedded `prompt`/`workflow` chunks give `generation_metadata`
@@ -122,6 +166,21 @@ assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`)
 `completed`, commit per row, then `refresh_stats` for that row (whenever it put image rows in
 play — including a failed row whose images were rolled back, where the recount corrects the column).
 `result_data` (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
+
+Two per-row locals decide where the image lands and what it is called, computed at the top of
+the loop body and **never hoisted** — the broad handler's `populate_existing` re-select
+repopulates `row.subfolder` after a rollback, so a value read once before the loop goes stale.
+`row_subfolder = join_subfolder(subfolder, row.subfolder or "")` is the `Image.subfolder`
+stamped on every output. `row_stem` is `slugify_filename` of the row's **own** folder leaf
+(`row.subfolder.rsplit("/", 1)[-1]`), falling back to the plan slug when the row has no folder:
+the leaf, not the combined path, because naming files after the combined path would silently
+rename every future file for a user who only ever sets a run-level base folder. The `own_leaf`
+guard is an explicit emptiness check, not `slugify_filename(x) or fallback` — that helper ends
+in `or "image"` and can never return something falsy. **The filename and thumb-stem occupancy
+sets stay one set per run**: they guard `uq_dataset_filename` and the flat `thumbnails/`
+directory, both per-dataset and blind to the virtual subfolder, so rows in `a/close` and
+`b/close` correctly yield `close.png` and `close_001.png`. Splitting them per folder is the
+obvious wrong move. Covered by `backend/tests/test_comfy_subfolder.py`.
 
 **Stats are refreshed per row, not once at the end.** `Dataset.image_count` is a stored column
 that `GET /datasets/{id}` returns verbatim, so the sidebar and gallery counters can only move
@@ -175,9 +234,13 @@ the one job type whose live branch also invalidates `["dataset", id]`, because i
 whose worker refreshes the stored counters per row (see `docs/dev/frontend-jobs.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
 
-`frontend/e2e/comfy.spec.ts` covers the two journeys that need no ComfyUI server: the empty
-state → create a plan (which selects it and jumps to *Workflow & Pins*), and *Paste prompts…*
-→ rows. It deliberately never starts a run — CI has no ComfyUI and no torch; the run body is
+`frontend/e2e/comfy.spec.ts` covers the three journeys that need no ComfyUI server: the empty
+state → create a plan (which selects it and jumps to *Workflow & Pins*), *Paste prompts…*
+→ rows, and per-row folders (typed into a cell, then bulk-set over the top, cross-checked
+through `GET …/rows`). Its textarea-count assertion is scoped to
+`data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
+the table, so it fails if the single-line Folder cell is ever rebuilt as one. It deliberately
+never starts a run — CI has no ComfyUI and no torch; the run body is
 covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
@@ -220,7 +283,24 @@ covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
   inline heights, wiping manual drags — the virtualizer's `measureElement` ResizeObserver absorbs
   the variable row heights). Status badge with the error as tooltip,
   View button → image detail via `usePaneNavigate`. Cell edits PATCH on blur.
-- **`ComfyRunBar`** — subfolder select (`["subfolders", datasetId]`), "Prompt as caption"
+- **The Folder column** (`FolderCell`, in the same file) sits between the checkbox and the
+  pinned columns — leftmost because it is
+  row identity rather than a parameter, so it stays put as pins come and go (and it is where a
+  future group-by-leaf lands). Its `FolderCell` is modelled on `EditableCell` (commit on blur,
+  Enter blurs, `placeholder="(root)"`) but is an `<input>`, never a `<textarea>` — see the e2e
+  note above. It does **not** route through `commitCell`, which builds a `values` dict: the
+  shared `updateMutation` takes a generic patch object, so `commitCell` passes `{ values }` and
+  the folder cell passes `{ subfolder }`. A folder must never enter `values`. The
+  `columns.length === 0` early return still hides the whole table for a plan with no per-row
+  pins, folder column included — accepted, since such a plan cannot run anyway.
+- **`SetRowFolderModal`** (Rows toolbar *Set folder (n)*, needs a selection, disabled while
+  that plan is running) — a text input with a `<datalist>` of the dataset's existing folders
+  (query key `["subfolders", datasetId]`, usually already cached by `ComfyRunBar`); a datalist
+  rather than the run bar's closed select, because creating folders that do not exist yet is
+  the point. Calls `setRowsSubfolder`, invalidates `["comfy","rows",planId]`, toasts the count.
+- **`ComfyRunBar`** — base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
+  since per-row folders nest under it, and folders a run declares appear in the next run's
+  options automatically), "Prompt as caption"
   toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
   status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
   which runs explicit `row_ids` regardless of status). The page tracks runs in an
@@ -256,14 +336,23 @@ covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
   **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
   *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfy-prompts.md`),
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
-  scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*, *Reset failed
-  (n)*, *Delete selected (n)* (`ConfirmDialog`).
+  scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*,
+  *Set folder (n)*, *Reset failed (n)*, *Delete selected (n)* (`ConfirmDialog`).
 
 ### Gotchas
 
 - `server_default` strings on these columns are plain (`"pending"`, `""`) — SQLAlchemy quotes
   them itself. Do **not** copy the `"'off'"` style from `threshold_settings.versioning_mode`;
   that embeds literal quotes into the DDL default.
+- **`declare_subfolder(s)` commits — never call it inside a row loop**, and never pass it `""`.
+  Rationale in § The `comfy_generate` job.
+- **`join_subfolder` is the non-raising, job-side counterpart to `normalize_subfolder`.** Both
+  live in `backend/utils.py` and share `_subfolder_parts`, so they disagree about exactly one
+  thing: `normalize_subfolder` rejects `..` with a 400 (the write-time guard, used by
+  `update_row`, `set_rows_subfolder` and `POST /comfy/run`'s base folder), while
+  `join_subfolder` drops it. Inside a job the raise would be wrong twice over — a gallery
+  subfolder is a virtual label, so a stray `..` is a wrong folder name rather than a path
+  escape, and the row would fail with an unactionable message that re-fails on every re-run.
 - JSON-column reassignment invariant applies to `row.values`, `row.image_ids`,
   `plan.pinned_params`, and `plan.output_node_ids` (see CLAUDE.md Key invariants).
 - `/interrupt` only affects the currently executing prompt — sufficient here because rows are

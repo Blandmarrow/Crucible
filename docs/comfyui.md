@@ -67,9 +67,12 @@ From the **Rows** toolbar:
   - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
   - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
+- **Set folder** — give every selected row the same destination folder (see below).
 - **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
 
-Cells edit in place. Editing a row that already ran resets it to pending, so it will be picked up by the next run. To set one column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
+Each row has its own **Folder**, the leftmost column, which decides where that row's images are filed — so one run can produce a whole folder structure instead of a single pile. Type a path like `salt-fen/iron-knight` into the cell, or tick several rows and use **Set folder** to give them all the same one. Blank means the run's base folder. Nested paths are written with `/`, folders that do not exist yet are created as the run starts, and the images are named after the folder rather than the plan.
+
+Cells edit in place. Editing a row's parameters after it has run resets it to pending, so it will be picked up by the next run — **changing a folder does not**, since it only affects where the *next* image goes, and a finished row keeps its image. To set one parameter column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
 
 ## Prompt library
 
@@ -82,11 +85,13 @@ A single library shared across every dataset and plan, so a set of prompts writt
 
 ## Running
 
-The **Run** bar takes a target **Subfolder** for the generated images and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
+The **Run** bar takes a **Base folder** for the generated images — each row's own Folder nests underneath it — and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
 
 - **Run pending** — every row still waiting to run. The normal case. Failed rows are *not* included until you **Reset failed**.
 - **Run selected** — only the rows you ticked, whatever their status.
 - **Run all** — every row regardless of status; re-runs completed prompts and generates fresh images.
+
+The whole folder tree appears in the gallery's sidebar as the run starts, before the first image lands, so you can watch it fill in. Cancelling part-way leaves the folders it had not reached empty; delete them from the gallery if you do not want them.
 
 Rows run one at a time, submitted to ComfyUI as ordinary prompts, with live progress on the page and in the top bar. The gallery fills in as images import — you do not have to wait for the run to finish. Each plan runs one job at a time, but different plans can run concurrently.
 

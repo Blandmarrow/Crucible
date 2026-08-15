@@ -41,6 +41,7 @@ from backend.services.threshold_service import get_thresholds
 from backend.utils import (
     REGEX_TIMEOUT_SECONDS,
     compile_user_regex,
+    join_subfolder,
     normalize_subfolder,
     regex_error,
     regex_sub_deadline,
@@ -100,6 +101,9 @@ class RowCreate(BaseModel):
 class RowUpdate(BaseModel):
     values: dict | None = None
     sort_order: int | None = None
+    # Per-row destination folder, nested under the run's base folder. `leaf_id` is
+    # deliberately not settable — it is written by structured generation, not by hand.
+    subfolder: str | None = Field(default=None, max_length=512)
 
 
 class BulkLinesRequest(BaseModel):
@@ -118,6 +122,12 @@ class SetValueRequest(BaseModel):
     alias: str
     # None / "" clears the override on every row (back to the template value).
     value: str | int | float | bool | None = None
+
+
+class SetSubfolderRequest(BaseModel):
+    # "" files the selected rows straight into the run's base folder.
+    subfolder: str = Field(default="", max_length=512)
+    row_ids: list[str] | None = None  # None = every row of the plan; [] = none
 
 
 class LibraryAddRequest(BaseModel):
@@ -212,6 +222,8 @@ def _row_out(row: ComfyRow) -> dict:
         "id": row.id,
         "plan_id": row.plan_id,
         "sort_order": row.sort_order,
+        "subfolder": row.subfolder or "",
+        "leaf_id": row.leaf_id,
         "values": row.values or {},
         "status": row.status,
         "error_msg": row.error_msg,
@@ -794,6 +806,12 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
             row.status = "pending"
             row.error_msg = None
             row.prompt_id = None
+    if body.subfolder is not None:
+        # Deliberately NOT a reset, unlike a `values` edit: a folder change does not
+        # change the image that would be produced, only where the next one is filed.
+        # Resetting would make the next run regenerate an image that is already correct.
+        # Placed after the `values` branch so a combined PATCH still resets.
+        row.subfolder = normalize_subfolder(body.subfolder)
     if body.sort_order is not None:
         row.sort_order = body.sort_order
     await db.commit()
@@ -859,6 +877,37 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
             r.status = "pending"
             r.error_msg = None
             r.prompt_id = None
+        updated += 1
+    await db.commit()
+    return {"updated": updated}
+
+
+@router.post("/plans/{plan_id}/rows/set-subfolder")
+async def set_rows_subfolder(
+    plan_id: str, body: SetSubfolderRequest, db: AsyncSession = Depends(get_db)
+):
+    """Set the destination folder on a selection of rows (or every row).
+
+    Deliberately its own endpoint rather than a branch inside `set_value_all_rows`:
+    that one is hard-gated on the plan's pinned aliases and resets any row it
+    changes, and a folder is neither a pinned parameter nor a reason to regenerate.
+
+    Completed rows keep their images and their status — see the carve-out in
+    `update_row`. Nothing is declared on the dataset here: an edit is plan intent,
+    and declaring on every commit would fill `Dataset.declared_subfolders` with
+    typos. Declaration happens once, at run start.
+    """
+    await _get_plan(db, plan_id)
+    subfolder = normalize_subfolder(body.subfolder)
+    stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
+    if body.row_ids is not None:
+        stmt = stmt.where(ComfyRow.id.in_(body.row_ids))
+    rows = (await db.execute(stmt)).scalars().all()
+    updated = 0
+    for r in rows:
+        if (r.subfolder or "") == subfolder:
+            continue
+        r.subfolder = subfolder
         updated += 1
     await db.commit()
     return {"updated": updated}
@@ -1292,6 +1341,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
         from backend.services.dataset_service import (
             RegisteredFile,
             _register_file_sync,
+            declare_subfolders,
             refresh_stats,
         )
         from backend.workers.progress import broadcaster
@@ -1323,6 +1373,20 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             occupied_thumb_stems: set[str] = {p.stem for p in thumbs_dir.glob("*.webp")}
             planned_thumb_stems: set[str] = set()
             stem_slug = slugify_filename(plan_row.name) or "comfy"
+
+            # Declared once, before the loop, for two reasons. `declare_subfolders`
+            # **commits**, and inside the row loop that would durably commit a
+            # half-written row and break the per-row atomicity the `except` handler's
+            # rollback depends on — here the session holds only reads, so the commit is
+            # a no-op on an empty unit of work (and `expire_on_commit=False` leaves
+            # `ds`/`run_rows` usable). It is also the better behaviour: the whole folder
+            # tree appears in the sidebar as the run starts rather than filling in row
+            # by row. A cancelled run leaves declared-but-empty folders, which
+            # `list_subfolders` already supports and the user can delete.
+            run_targets = {join_subfolder(subfolder, r.subfolder or "") for r in run_rows}
+            run_targets.discard("")  # a "" path would declare a nameless folder, forever
+            if run_targets:
+                await declare_subfolders(session, ds.id, sorted(run_targets))
 
             output_provenance = _comfy_output_provenance(
                 plan_row.output_is_synthetic, plan_row.name
@@ -1368,6 +1432,17 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 row_files: list[Path] = []
                 row_image_ids: list[str] = []
                 row_id = row.id
+                # Per-iteration locals, never hoisted: the broad handler's
+                # `populate_existing` re-select repopulates `row.subfolder` after a
+                # rollback, so a value read once before the loop would go stale.
+                row_subfolder = join_subfolder(subfolder, row.subfolder or "")
+                # The row's **own** leaf, not the combined path: naming files after the
+                # combined path would silently rename every future file for a user who
+                # only ever sets a run-level base folder. Guarded explicitly rather than
+                # `slugify_filename(x) or stem_slug` — `slugify_filename` ends in
+                # `or "image"` and can never return something falsy.
+                own_leaf = (row.subfolder or "").rsplit("/", 1)[-1]
+                row_stem = slugify_filename(own_leaf) if own_leaf else stem_slug
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     # Built from `wf` — the graph actually submitted, with this row's
@@ -1417,8 +1492,13 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             ref["filename"], ref.get("subfolder", ""), ref.get("type", "output")
                         )
                         suffix = Path(ref["filename"]).suffix.lower() or ".png"
+                        # One occupancy set per run, never one per folder: these guard
+                        # `uq_dataset_filename` and the flat `thumbnails/` directory,
+                        # both per-dataset and blind to the virtual subfolder. Two rows
+                        # in `a/close` and `b/close` correctly yield `close.png` and
+                        # `close_001.png`.
                         new_name = unique_filename_with_thumb(
-                            images_dir, stem_slug, suffix, db_filenames,
+                            images_dir, row_stem, suffix, db_filenames,
                             occupied_thumb_stems, planned_thumb_stems,
                         )
                         dest = images_dir / new_name
@@ -1435,7 +1515,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             dataset_id=ds.id,
                             filename=new_name,
                             original_filename=ref["filename"],
-                            subfolder=subfolder,
+                            subfolder=row_subfolder,
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,

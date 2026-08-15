@@ -55,6 +55,10 @@ export interface ComfyRow {
   id: string;
   plan_id: string;
   sort_order: number;
+  /** Destination folder for this row's outputs, nested under the run's base folder. */
+  subfolder: string;
+  /** The blueprint leaf that minted this row. Read-only until structured generation lands. */
+  leaf_id: string | null;
   values: Record<string, unknown>;
   status: "pending" | "running" | "completed" | "failed";
   error_msg: string | null;
@@ -124,7 +128,7 @@ export const comfyApi = {
     client.post<ComfyRow>(`/comfy/plans/${planId}/rows`, { values }).then((r) => r.data),
   bulkAddRows: (planId: string, lines: string[]) =>
     client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines }).then((r) => r.data),
-  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number }) =>
+  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number; subfolder?: string }) =>
     client.patch<ComfyRow>(`/comfy/rows/${rowId}`, data).then((r) => r.data),
   deleteRows: (planId: string, rowIds: string[]) =>
     client.post<{ deleted: number }>(`/comfy/plans/${planId}/rows/delete`, { row_ids: rowIds }).then((r) => r.data),
@@ -132,6 +136,11 @@ export const comfyApi = {
     client.post<{ reset: number }>(`/comfy/plans/${planId}/rows/reset`, { row_ids: rowIds }).then((r) => r.data),
   setValueAllRows: (planId: string, alias: string, value: string | number | boolean | null) =>
     client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-value`, { alias, value }).then((r) => r.data),
+  /** Set the destination folder on a selection of rows (omit `rowIds` for every row).
+   *  Its own endpoint, not a `set-value` branch: a folder is not a pinned parameter,
+   *  and unlike a value edit it never resets a completed row. */
+  setRowsSubfolder: (planId: string, subfolder: string, rowIds?: string[]) =>
+    client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-subfolder`, { subfolder, row_ids: rowIds }).then((r) => r.data),
 
   /** One batch, synchronously. `signal` lets the caller abandon a call that can run
    *  for the provider's full timeout (120 s) — without it the UI has to sit on it. */

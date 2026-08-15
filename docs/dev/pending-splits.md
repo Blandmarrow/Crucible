@@ -323,6 +323,34 @@ staleness sweep while still recording the seam.
   docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
 
+## docs/dev/comfyui.md
+
+- **Moves:** § Frontend (1,334 words)
+- **New file:** docs/dev/comfy-page.md
+- **Why here:** the file is one subsystem described twice over — the server half (the two
+  tables, the router's endpoints, `comfy_service.py`, the `comfy_generate` run body) and the
+  page half (`ComfyPage` plus the eleven components under `frontend/src/components/comfy/`).
+  § Frontend is already the largest section and the one that grows on every UI addition; a
+  reader arrives there to change a modal or a column and wants none of the run body. The seam
+  leaves ~2,600 and ~1,334 out of 3,939, so the staying half is over the ~2,100 target and its
+  own next seam is § The `comfy_generate` job (1,048) → docs/dev/comfy-run.md, which would
+  leave ~1,550 — the run body is what the arc's §4 orchestrator and §7 mock server both build
+  on, so expect that half to grow next and consider taking both seams at once. The file tripped
+  the budget when per-row subfolders landed: the two new row columns, the declare-before-the-loop
+  rule, the per-row stem/target locals, the new endpoint and the Folder column all at once.
+- **Watch for:** the roadmap `docs/dev/roadmap/comfy-automation.md` § Documentation this arc
+  owes charters a *different* file, comfy-structured.md, for blueprints/axes/expansion and LLM
+  reliability — that is new content, not a slice of this file, so do not conflate the two seams
+  or name the split half after it. Inbound pointers are inline-code paths from
+  `docs/dev/comfy-prompts.md`, `docs/dev/comfyui-sync.md`, `docs/dev/provenance.md`,
+  `docs/dev/settings.md`, `docs/dev/frontend-jobs.md` (which cites the per-row `refresh_stats`,
+  in the half that stays) and four places in the roadmap — two of those name **§ Gotchas**
+  specifically (the mock-server shape and the `server_default` rule), which stays behind.
+  The user doc is `docs/comfyui.md` and covers both halves, so the mirror-the-user-doc
+  convention gives no name for free; comfy-page.md is a proposal, not a constraint. Grep
+  `comfyui.md` before and after, and note that `docs/comfyui.md` and `docs/dev/comfyui-sync.md`
+  both match the same grep.
+
 `docs/dev/image-detail.md` → `docs/dev/gallery-state.md` **and** `docs/dev/gallery-nav.md` was
 executed on 2026-08-10, at the start of the session that would have appended the live-refresh
 fixes to it. The seam was **re-cut on execution**: the recorded seam moved the persistence half

@@ -74,6 +74,16 @@ class ComfyRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     plan_id: Mapped[str] = mapped_column(String(36), ForeignKey("comfy_plans.id", ondelete="CASCADE"), nullable=False, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Virtual gallery folder this row's outputs are filed under, nested beneath the
+    # run's base folder. Same width as `Image.subfolder`. "" = the run's base folder.
+    subfolder: Mapped[str] = mapped_column(String(512), nullable=False, server_default="", default="")
+    # The blueprint leaf that minted this row. Deliberately **no foreign key**: a row
+    # whose leaf a blueprint edit deleted should keep naming it as provenance, and an
+    # inline column-level reference reads back from SQLite without its `ondelete`, which
+    # `scripts/check_migrations.py` then reports as permanent drift (see the docstring
+    # of `a7c3e5b1d9f2_add_image_frame_lineage.py`). Column-only for now — nothing
+    # writes it and no `comfy_leaves` table exists yet.
+    leaf_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     # {alias: json-native value}; absent alias = use template value
     values: Mapped[dict] = mapped_column(JSON, default=dict)
     # pending | running | completed | failed

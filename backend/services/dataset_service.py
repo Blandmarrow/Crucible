@@ -3,6 +3,7 @@ import logging
 import re
 import shutil
 import statistics
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -519,18 +520,36 @@ async def list_subfolders(db: AsyncSession, dataset_id: str) -> list[dict]:
 
 
 async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> None:
+    await declare_subfolders(db, dataset_id, [path])
+
+
+async def declare_subfolders(db: AsyncSession, dataset_id: str, paths: Iterable[str]) -> None:
+    """Declare `paths` and every ancestor of each on the dataset, in one commit.
+
+    **This commits.** Never call it from inside a per-item loop that relies on a
+    rollback for atomicity — a commit mid-item makes half-written state durable.
+    Collect the distinct targets and declare them once, up front.
+
+    An empty path is skipped rather than declared: `""` would append a nameless
+    entry that `list_subfolders` then merges into every listing forever.
+    """
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         return
     current: list[str] = list(ds.declared_subfolders or [])
-    parts = path.split("/")
     changed = False
-    for i in range(1, len(parts) + 1):
-        ancestor = "/".join(parts[:i])
-        if ancestor not in current:
-            current.append(ancestor)
-            changed = True
+    for path in paths:
+        if not path:
+            continue
+        parts = path.split("/")
+        for i in range(1, len(parts) + 1):
+            ancestor = "/".join(parts[:i])
+            if ancestor and ancestor not in current:
+                current.append(ancestor)
+                changed = True
     if changed:
+        # Reassigned, not mutated in place: SQLAlchemy compares JSON columns by
+        # equality, so an in-place append to the loaded list looks unchanged.
         ds.declared_subfolders = current
         await db.commit()
 

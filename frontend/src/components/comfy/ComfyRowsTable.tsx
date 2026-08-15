@@ -118,6 +118,39 @@ function EditableCell({ row, alias, numeric, disabled, placeholder, onCommit }: 
   );
 }
 
+/** The row's destination folder, nested under the run bar's base folder.
+ *
+ *  Deliberately an `<input>`, never a `<textarea>`: a folder is one line, and
+ *  `frontend/e2e/comfy.spec.ts` counts the textareas in the rows table to prove
+ *  the prompt cells are the only multi-line ones. Modelled on `EditableCell`
+ *  (commit on blur, Enter blurs) but writes `subfolder` rather than a `values`
+ *  entry — a folder must never enter `values`, which is the pinned-parameter map. */
+function FolderCell({ row, disabled, onCommit }: {
+  row: ComfyRow;
+  disabled: boolean;
+  onCommit: (raw: string) => void;
+}) {
+  const value = row.subfolder ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      className="input"
+      style={{ width: "100%", fontSize: 12, height: 26, padding: "0 6px" }}
+      type="text"
+      value={draft ?? value}
+      placeholder="(root)"
+      title="Folder for this row's images, nested under the run's base folder. Blank = the base folder itself."
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== null && draft !== value) onCommit(draft);
+        setDraft(null);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
 export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggleAll, runningJob }: Props) {
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
@@ -138,9 +171,11 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     overscan: 10,
   });
 
+  // A generic patch, not a `values` dict: the folder cell and the parameter cells
+  // write different fields of the same row.
   const updateMutation = useMutation({
-    mutationFn: ({ rowId, values }: { rowId: string; values: Record<string, unknown> }) =>
-      comfyApi.updateRow(rowId, { values }),
+    mutationFn: ({ rowId, patch }: { rowId: string; patch: Parameters<typeof comfyApi.updateRow>[1] }) =>
+      comfyApi.updateRow(rowId, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] }),
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, "Failed to save row"));
@@ -154,7 +189,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     } else {
       values[alias] = coerceCellValue(raw, !!numericAlias.get(alias));
     }
-    updateMutation.mutate({ rowId: row.id, values });
+    updateMutation.mutate({ rowId: row.id, patch: { values } });
   }
 
   // Expand every prompt cell to its full text (toggle in the prompt column header).
@@ -192,9 +227,13 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
   }
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  // Grid: checkbox | per-row columns (prompt wider) | status | image
+  // Grid: checkbox | folder | per-row columns (prompt wider) | status | image.
+  // The folder sits leftmost because it is row identity rather than a parameter: it
+  // stays put as pins are added and removed. Built once and consumed by the header
+  // and every body row, so header/body cells must go in matching positions.
   const gridTemplate = [
     "28px",
+    "minmax(120px, 1fr)",
     ...columns.map((p) => (p.is_prompt ? "minmax(240px, 3fr)" : "minmax(110px, 1fr)")),
     "96px",
     "60px",
@@ -210,7 +249,10 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
   }
 
   return (
-    <div style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", overflow: "hidden" }}>
+    <div
+      data-testid="comfy-rows-table"
+      style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", overflow: "hidden" }}
+    >
       {/* Header */}
       <div style={{
         display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "start",
@@ -221,6 +263,12 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
           type="checkbox" className="checkbox" checked={allSelected}
           onChange={(e) => onToggleAll(rows.map((r) => r.id), e.target.checked)}
         />
+        <span
+          style={{ textTransform: "uppercase", letterSpacing: ".06em" }}
+          title="Per-row folder — nests under the base folder set on the Run bar"
+        >
+          Folder
+        </span>
         {columns.map((p) => (
           <span key={p.alias} style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
@@ -289,6 +337,11 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                   <input
                     type="checkbox" className="checkbox" checked={selected.has(row.id)}
                     onChange={() => onToggle(row.id)}
+                  />
+                  <FolderCell
+                    row={row}
+                    disabled={rowBusy}
+                    onCommit={(raw) => updateMutation.mutate({ rowId: row.id, patch: { subfolder: raw } })}
                   />
                   {columns.map((p) => (
                     p.is_prompt ? (

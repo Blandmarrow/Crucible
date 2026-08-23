@@ -56,6 +56,10 @@ _PAD_DIVISOR = 8
 _CROP_MARGIN_FRAC = 0.5   # expand the mask bbox by 50% of its size on each axis
 _CROP_MARGIN_MIN = 64     # ...but never by less than this many pixels
 _CROP_MAX_SIDE = 1536     # downscale the crop for inference above this
+# The one retry after a GPU OOM at `_CROP_MAX_SIDE`. A quarter of the area, which
+# is the size LaMa's own training regime is closest to anyway — the fill loses
+# detail, and that beats failing the image.
+_OOM_RETRY_SIDE = 768
 
 
 def _sha256(path: Path) -> str:
@@ -294,35 +298,70 @@ def inpaint_image_sync(
     crop_mask = mask.crop(box)
     cw, ch = crop_rgb.size
 
-    # Downscale the crop for inference when it is very large, then scale the
-    # painted result back. LaMa was trained at 512²; a 3000px crop costs VRAM
-    # without improving the fill.
-    scale = min(1.0, _CROP_MAX_SIDE / max(cw, ch))
-    if scale < 1.0:
-        iw = max(_PAD_DIVISOR, (int(cw * scale) // _PAD_DIVISOR) * _PAD_DIVISOR)
-        ih = max(_PAD_DIVISOR, (int(ch * scale) // _PAD_DIVISOR) * _PAD_DIVISOR)
-        infer_rgb = crop_rgb.resize((iw, ih), PilImage.Resampling.LANCZOS)
-        infer_mask = crop_mask.resize((iw, ih), PilImage.Resampling.NEAREST)
-    else:
-        infer_rgb, infer_mask = crop_rgb, crop_mask
+    def _run_at(side: int):
+        """Downscale the crop to fit `side`, run LaMa, return the HWC float array.
 
-    rgb_arr = np.asarray(infer_rgb, dtype=np.float32) / 255.0          # HWC [0,1]
-    mask_arr = (np.asarray(infer_mask, dtype=np.float32) > 127.0).astype(np.float32)  # HW {0,1}
+        A local rather than three inline statements because the OOM retry has to
+        redo the *whole* block: the resized copies and the tensors are both what
+        the allocation failed on, so retrying only the model call would ask for
+        the same VRAM again. LaMa was trained at 512²; a 3000 px crop costs VRAM
+        without improving the fill, which is why downscaling is the lever here.
+        """
+        scale = min(1.0, side / max(cw, ch))
+        if scale < 1.0:
+            iw = max(_PAD_DIVISOR, (int(cw * scale) // _PAD_DIVISOR) * _PAD_DIVISOR)
+            ih = max(_PAD_DIVISOR, (int(ch * scale) // _PAD_DIVISOR) * _PAD_DIVISOR)
+            infer_rgb = crop_rgb.resize((iw, ih), PilImage.Resampling.LANCZOS)
+            infer_mask = crop_mask.resize((iw, ih), PilImage.Resampling.NEAREST)
+        else:
+            infer_rgb, infer_mask = crop_rgb, crop_mask
 
-    # Close every PIL image the moment its pixels are in a tensor, before the
-    # (slow) inference runs — the "Close PIL Images after preprocessing"
-    # invariant. `crop_rgb` and `crop_mask` are still needed for the composite,
-    # so only the inference-sized copies go here when they are distinct.
-    if infer_rgb is not crop_rgb:
-        infer_rgb.close()
-        infer_mask.close()
+        rgb_arr = np.asarray(infer_rgb, dtype=np.float32) / 255.0          # HWC [0,1]
+        mask_arr = (np.asarray(infer_mask, dtype=np.float32) > 127.0).astype(np.float32)  # HW {0,1}
+
+        # Close every PIL image the moment its pixels are in a tensor, before the
+        # (slow) inference runs — the "Close PIL Images after preprocessing"
+        # invariant. `crop_rgb` and `crop_mask` are still needed for the composite
+        # (and by a retry), so only the inference-sized copies go here when they
+        # are distinct.
+        if infer_rgb is not crop_rgb:
+            infer_rgb.close()
+            infer_mask.close()
+
+        with torch.no_grad():
+            rgb_t = torch.from_numpy(rgb_arr).permute(2, 0, 1).unsqueeze(0).to(device)
+            mask_t = torch.from_numpy(mask_arr).unsqueeze(0).unsqueeze(0).to(device)
+            out_t = model(rgb_t, mask_t)
+            return out_t[0].permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+
     img.close()
 
-    with torch.no_grad():
-        rgb_t = torch.from_numpy(rgb_arr).permute(2, 0, 1).unsqueeze(0).to(device)
-        mask_t = torch.from_numpy(mask_arr).unsqueeze(0).unsqueeze(0).to(device)
-        out_t = model(rgb_t, mask_t)
-        out_arr = out_t[0].permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+    # One retry at a smaller inference size after a GPU OOM. The catch pattern is
+    # `device.is_oom_error`'s, as `florence_captioner.infer_sync` uses it: MPS
+    # raises a plain RuntimeError, so anything that is not an OOM re-raises
+    # untouched. `empty_cache()` first — the retry needs the failed attempt's
+    # fragments released or it fails identically.
+    try:
+        out_arr = _run_at(_CROP_MAX_SIDE)
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as _e:
+        if not _device.is_oom_error(_e):
+            raise
+        _device.empty_cache()
+        logger.warning(
+            "LaMa OOM on a %dx%d crop at %d px — retrying at %d px",
+            cw, ch, _CROP_MAX_SIDE, _OOM_RETRY_SIDE,
+        )
+        try:
+            out_arr = _run_at(_OOM_RETRY_SIDE)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as _e2:
+            if not _device.is_oom_error(_e2):
+                raise
+            _device.empty_cache()
+            raise RuntimeError(
+                f"GPU out of memory during LaMa inpainting at both {_CROP_MAX_SIDE} "
+                f"and {_OOM_RETRY_SIDE} px, on a {cw}x{ch} crop. Narrow the "
+                "detection this mask was built from, or free VRAM and retry."
+            ) from _e2
 
     painted = PilImage.fromarray((out_arr * 255).round().astype(np.uint8), mode="RGB")
     if painted.size != (cw, ch):

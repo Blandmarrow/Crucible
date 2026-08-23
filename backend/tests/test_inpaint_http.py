@@ -159,10 +159,15 @@ def test_replace_writes_the_row_the_file_and_the_thumbnail_consistently(tmp_path
     run(scenario())
 
 
-def test_replace_clears_the_flag_and_deletes_what_it_painted_over(tmp_path, monkeypatch):
-    """The consumed detections are gone and `has_watermark` is False — the region
-    they name no longer contains anything. A detection with a *different* label
-    survives when the run filtered on one."""
+def test_a_surviving_detection_holds_the_flag_while_the_painted_rows_go(tmp_path, monkeypatch):
+    """The consumed detections are deleted, but `has_watermark` is **not** cleared
+    while another detection survives.
+
+    Crucible has no vocabulary of "watermark labels" — `_apply_watermark_flag`
+    sets the flag from `bool(detections)` whatever the phrase was — so a run
+    scoped to one label cannot tell whether what it left behind is a watermark.
+    Clearing anyway would let the image escape both the *Flagged: watermark*
+    filter and export's `exclude_flags` and ship with the watermark visible."""
     async def scenario():
         async with api_env(tmp_path) as env:
             _install_fake(monkeypatch)
@@ -185,10 +190,57 @@ def test_replace_clears_the_flag_and_deletes_what_it_painted_over(tmp_path, monk
             async with env.Session() as db:
                 row = await db.get(Image, img["id"])
                 remaining = (await db.execute(select(Detection.id))).scalars().all()
-            assert row.quality_flags["has_watermark"] is False
+            assert row.quality_flags["has_watermark"] is True, (
+                "a surviving detection means the run cannot say the watermark is gone"
+            )
             assert row.quality_flags["is_blurry"] is True, "other flags are untouched"
-            assert wm_id not in remaining
+            assert wm_id not in remaining, "what was painted over is still consumed"
             assert face_id in remaining, "a label the run did not paint must survive"
+            assert row.processing_history, "the paint itself happened either way"
+
+    run(scenario())
+
+
+def test_the_flag_clears_once_nothing_detected_is_left(tmp_path, monkeypatch):
+    """Both routes to an empty detection set clear it: an unfiltered run, and a
+    label-filtered run whose filter happened to match everything."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            unfiltered = await upload_image(env, ds["id"], "all.png")
+            filtered = await upload_image(env, ds["id"], "wm.png")
+            # Two labels on the first image, so the unfiltered run is genuinely
+            # consuming more than one row.
+            await _add_detection(env, unfiltered["id"], "watermark")
+            await _add_detection(env, unfiltered["id"], "logo")
+            await _add_detection(env, filtered["id"], "watermark")
+
+            async with env.Session() as db:
+                for i in (unfiltered, filtered):
+                    row = await db.get(Image, i["id"])
+                    row.quality_flags = {"has_watermark": True}
+                await db.commit()
+
+            job = await wait_for_job(
+                env, (await _run_inpaint(env, ds["id"], [unfiltered["id"]]))["job_id"], timeout=60,
+            )
+            assert job["status"] == "completed", job
+            # The filter names the only label this image carries.
+            job2 = await wait_for_job(
+                env,
+                (await _run_inpaint(env, ds["id"], [filtered["id"]], labels=["watermark"]))["job_id"],
+                timeout=60,
+            )
+            assert job2["status"] == "completed", job2
+
+            async with env.Session() as db:
+                a = await db.get(Image, unfiltered["id"])
+                b = await db.get(Image, filtered["id"])
+                left = (await db.execute(select(Detection.id))).scalars().all()
+            assert a.quality_flags["has_watermark"] is False
+            assert b.quality_flags["has_watermark"] is False
+            assert left == []
 
     run(scenario())
 
@@ -290,7 +342,8 @@ def test_a_thumbnail_failure_is_counted_and_does_not_fail_the_item(tmp_path, mon
             )
             assert job["status"] == "completed", job
             assert job["result_data"] == {
-                "inpainted": 1, "skipped_no_detection": 0, "failed": 0, "thumbnails_stale": 1,
+                "inpainted": 1, "skipped_no_detection": 0, "skipped_name_taken": 0,
+                "failed": 0, "thumbnails_stale": 1,
             }
 
             async with env.Session() as db:
@@ -413,5 +466,177 @@ def test_copy_mode_makes_a_nowm_derivative_and_leaves_the_original_alone(tmp_pat
             assert not parent.processing_history
             assert parent.quality_flags["has_watermark"] is True
             assert det_id in still_there, "copy mode consumes nothing"
+
+    run(scenario())
+
+
+def test_copy_mode_commits_the_row_before_cutting_the_thumbnail(tmp_path, monkeypatch):
+    """PM-013 Tier 1 in the copy branch: a thumbnail `OSError` costs a gallery
+    tile, not the row — and not the *next* image's row either.
+
+    Before the fix the branch cut the thumbnail before the insert, so a raise on
+    image 300 of 500 propagated out of `_run`, `job_queue` marked the job failed
+    from a separate session, and this session rolled back **every** uncommitted
+    derivative row while their `_nowm` files stayed on disk."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png")
+            b = await upload_image(env, ds["id"], "b.png")
+            for i in (a, b):
+                await _add_detection(env, i["id"])
+
+            import backend.routers.inpaint as inpaint_router
+
+            real = inpaint_router.generate_thumbnail
+
+            # Keyed on the name, not a call counter: the worker's `IN (...)` query
+            # has no ORDER BY, so which derivative is cut first is not ours to say.
+            def flaky(src, dest):
+                if "a_nowm" in Path(src).name:
+                    raise OSError("no space left on device")
+                return real(src, dest)
+
+            monkeypatch.setattr(inpaint_router, "generate_thumbnail", flaky)
+            job = await wait_for_job(
+                env,
+                (await _run_inpaint(env, ds["id"], [a["id"], b["id"]], replace=False))["job_id"],
+                timeout=60,
+            )
+            assert job["status"] == "completed", job
+            assert job["result_data"]["inpainted"] == 2
+            assert job["result_data"]["thumbnails_stale"] == 1
+            assert job["result_data"]["failed"] == 0
+
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Image).where(Image.dataset_id == ds["id"])
+                )).scalars().all()
+            by_name = {r.filename: r for r in rows}
+            assert "a_nowm.png" in by_name, "the row survives its thumbnail failure"
+            assert "b_nowm.png" in by_name, "and so does the next image's"
+
+            failed_thumb = Path(by_name["a_nowm.png"].thumbnail_path)
+            good_thumb = Path(by_name["b_nowm.png"].thumbnail_path)
+            assert not failed_thumb.exists(), "nothing was cut for the failing one"
+            assert _is_painted(good_thumb), frame_colour(good_thumb)
+            assert _is_painted(Path(by_name["a_nowm.png"].file_path)), "the file is there regardless"
+
+    run(scenario())
+
+
+# ── Guards and refusals ───────────────────────────────────────────────────────
+
+def test_a_squatting_png_is_its_own_skip_count_and_touches_nothing(tmp_path, monkeypatch):
+    """`.bmp` replace with an unregistered `shot.png` already in `images/`: the
+    collision is caught before the write, and counted as `skipped_name_taken`
+    rather than blaming the detection pass for a stray file on disk."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.bmp", bmp_bytes())
+            await _add_detection(env, img["id"])
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+                bmp_path = Path(row.file_path)
+            # Hand-dropped, no DB row guarding it — exactly what the check exists for.
+            squatter = bmp_path.with_suffix(".png")
+            squatter.write_bytes(png_bytes(color=(1, 2, 3)))
+            bmp_before = bmp_path.read_bytes()
+            png_before = squatter.read_bytes()
+
+            job = await wait_for_job(
+                env, (await _run_inpaint(env, ds["id"], [img["id"]]))["job_id"], timeout=60,
+            )
+            assert job["status"] == "completed", job
+            assert job["result_data"]["skipped_name_taken"] == 1
+            assert job["result_data"]["skipped_no_detection"] == 0, (
+                "the detection pass found something; the file on disk is the problem"
+            )
+            assert job["result_data"]["inpainted"] == 0
+
+            assert bmp_path.read_bytes() == bmp_before
+            assert squatter.read_bytes() == png_before
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            assert row.file_path == str(bmp_path)
+            assert not row.processing_history
+
+    run(scenario())
+
+
+def test_an_out_of_tree_file_path_is_refused_not_read(tmp_path, monkeypatch):
+    """A row whose `file_path` escaped `datasets_dir` is counted `failed` and
+    skipped — one bad row never stops its neighbours.
+
+    The gate sits above `protect_file_before_overwrite`, which copies the bytes
+    into `{ds}/.versions/objects/`, so an ungated path is an arbitrary-file
+    *read* primitive even before the overwrite."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            outside = await upload_image(env, ds["id"], "escaped.png")
+            ok = await upload_image(env, ds["id"], "fine.png")
+            for i in (outside, ok):
+                await _add_detection(env, i["id"])
+
+            # `tmp_path/datasets` is what api_env points `settings.datasets_dir` at.
+            elsewhere = tmp_path / "outside" / "secret.png"
+            elsewhere.parent.mkdir(parents=True, exist_ok=True)
+            elsewhere.write_bytes(png_bytes(color=(7, 7, 7)))
+            secret_before = elsewhere.read_bytes()
+
+            async with env.Session() as db:
+                row = await db.get(Image, outside["id"])
+                row.file_path = str(elsewhere)
+                await db.commit()
+
+            job = await wait_for_job(
+                env,
+                (await _run_inpaint(env, ds["id"], [outside["id"], ok["id"]]))["job_id"],
+                timeout=60,
+            )
+            assert job["status"] == "completed", job
+            assert job["result_data"]["failed"] == 1
+            assert job["result_data"]["inpainted"] == 1, "the neighbour still runs"
+
+            assert elsewhere.read_bytes() == secret_before, "the out-of-tree file is untouched"
+            async with env.Session() as db:
+                refused = await db.get(Image, outside["id"])
+                painted = await db.get(Image, ok["id"])
+            assert not refused.processing_history
+            assert refused.file_path == str(elsewhere), "the row is left exactly as found"
+            assert painted.processing_history
+
+    run(scenario())
+
+
+def test_replace_with_a_dest_subfolder_is_a_422(tmp_path, monkeypatch):
+    """The pair has no meaning — replace overwrites in place, so there is no new
+    file for a destination subfolder to place. Refused rather than ignored."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png")
+            await _add_detection(env, img["id"])
+
+            r = await env.client.post(f"{API}/inpaint/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "replace": True, "dest_subfolder": "painted",
+            })
+            assert r.status_code == 422, r.text
+            assert "dest_subfolder" in r.text
+
+            # And the same body in new-file mode is accepted.
+            ok = await env.client.post(f"{API}/inpaint/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "replace": False, "dest_subfolder": "painted",
+            })
+            assert ok.status_code == 200, ok.text
 
     run(scenario())

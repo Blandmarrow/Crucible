@@ -31,9 +31,13 @@ interface Props {
 function resultToast(result: Record<string, unknown>) {
   const done = Number(result.inpainted ?? 0);
   const noDet = Number(result.skipped_no_detection ?? 0);
+  // Separate from `skipped_no_detection` on purpose: this one is a stray file on
+  // disk under the name the PNG fallback wants, nothing to do with detection.
+  const nameTaken = Number(result.skipped_name_taken ?? 0);
   const failed = Number(result.failed ?? 0);
   const parts = [`Removed watermarks from ${done} image${done !== 1 ? "s" : ""}`];
   if (noDet > 0) parts.push(`${noDet} skipped (no detections)`);
+  if (nameTaken > 0) parts.push(`${nameTaken} skipped (name already taken)`);
   if (failed > 0) parts.push(`${failed} failed`);
   // Deliberately silent about `thumbnails_stale`: TopBar owns that warning for
   // every job type, and repeating it here double-toasts.

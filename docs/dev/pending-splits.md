@@ -379,3 +379,26 @@ utilities → `docs/dev/shared-utilities.md`.
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
 
+
+## docs/dev/ml-models.md
+
+- **Moves:** § The LaMa inpainter (~910 words after this session's OOM-ladder paragraph)
+- **New file:** none. It moves into the existing `docs/dev/image-processing-models.md`
+  (~1,810 words today, ~2,720 after), whose own intro already frames it as "the two
+  pipelines that rewrite pixels through a loaded model" — upscaling and LUT grading. LaMa
+  is the third, shipped later and filed here only because its *loader* was the novel part.
+- **Why here:** ml-models.md is over budget (3,615 against 3,500) and the seam is a
+  subsystem line, not a size cut. What is left is the lifecycle every model shares — the
+  manager and eviction, the ID registry, the device abstraction, `open_rgb`, `HF_TOKEN`,
+  the weight-download rules — at ~2,700 words, and the destination sits comfortably under
+  budget. The `and` test passes in both directions: "model lifecycle" and "pixel pipelines"
+  are two things, and today's file is the one holding both.
+- **Watch for:** the CLAUDE.md Documentation Map row for `ml-models.md` names "the LaMa
+  inpainter" in its trigger, and `image-processing-models.md`'s row does not — both cells
+  change, plus both `Words` counts. `docs/dev/bulk-image-jobs.md` § Painting detections out
+  points at "`docs/dev/ml-models.md` § The LaMa inpainter" by name, as do
+  `backend/routers/inpaint.py` and `backend/ml/lama_inpainter.py` in prose comments; grep
+  `LaMa` across `docs/` and `backend/` before finishing. Keep the *loader* rules (the
+  SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
+  import) with the inpainter — they are the reason the section is long, and they are about
+  this model rather than about the manager.

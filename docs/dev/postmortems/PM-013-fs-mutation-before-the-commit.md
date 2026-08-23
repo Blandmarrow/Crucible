@@ -50,6 +50,16 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   (`routers/lut.py`, `routers/upscaling.py`, `routers/detection.py`, `routers/images.py`'s
   new-file crop worker). A mid-loop raise orphans files with zero rows; nothing 404s.
 
+  **Amended 2026-08-23:** `routers/inpaint.py`'s `batch_inpaint` shipped as a *fifth*
+  instance and was fixed to the Tier-1 shape before merge — `new_img` built with its
+  `thumbnail_path`, `session.add` → `commit()`, then the thumbnail cut in a `try/except`
+  that counts `thumbnails_stale`. Its instance had this entry's worse shape too: the raise
+  propagated out of `_run`, so `job_queue` marked the job failed from a separate session
+  while *this* one rolled back every uncommitted derivative row, leaving their `_nowm`
+  files on disk with nothing naming them. `backend/tests/test_inpaint_http.py::test_copy_mode_commits_the_row_before_cutting_the_thumbnail`
+  holds it. **The other four remain open** — this amendment records a new router built to
+  the rule, not a sweep that fixed them.
+
 Also unfixed and pre-existing: `workers/job_queue.py` marks a raising job failed from a
 separate session and never writes the `result_data` the job had accumulated, so a job that
 dies mid-run reports nothing about what it did before it died.

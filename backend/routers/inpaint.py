@@ -5,8 +5,11 @@ grounding detection pass for "watermark" first, then run this over what it found
 Nothing here runs a detector.
 
 Structurally this is `routers/lut.py`'s loop with `routers/detection.py`'s
-crop-to-detection scope resolution — the PM-013 ordering, the per-thumbnail-dir
-collision dicts and the `result_data` placement are all shared with both.
+crop-to-detection scope resolution — the per-thumbnail-dir collision dicts and
+the `result_data` placement are shared with both. Two things deliberately are
+**not**: the copy branch commits its row before cutting the thumbnail (the
+PM-013 Tier-1 shape, where both siblings still carry Tier 3), and every stored
+path goes through `contained_path` before it is read or written.
 """
 
 import asyncio
@@ -19,6 +22,7 @@ from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
+from backend.config import settings
 from backend.database import get_db
 from backend.licenses import copy_provenance
 from backend.ml.lama_inpainter import inpaint_image_sync
@@ -33,6 +37,7 @@ from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
     chunked,
+    contained_path,
     normalize_image_format,
     normalize_subfolder,
     record_in_place,
@@ -69,16 +74,91 @@ async def _fetch_masks_by_image(
     return by_image
 
 
+async def _fetch_detection_ids_by_image(
+    db: AsyncSession, image_ids: list[str]
+) -> dict[str, set[int]]:
+    """Every detection id per image, **unfiltered by label**.
+
+    The companion to `_fetch_masks_by_image`, and deliberately not folded into
+    it: the mask is built from the label-filtered rows, but deciding whether
+    `has_watermark` may be cleared needs to know what the run is *not* painting.
+    One batched query for the whole run, not one per image.
+    """
+    by_image: dict[str, set[int]] = {}
+    for chunk in chunked(image_ids):
+        result = await db.execute(
+            select(Detection.id, Detection.image_id).where(Detection.image_id.in_(chunk))
+        )
+        for row in result.all():
+            by_image.setdefault(row.image_id, set()).add(row.id)
+    return by_image
+
+
 def _dilate(mask, px: int):
     """Grow a rasterized binary mask by `px` pixels, in place of a morphology dep.
 
     `MaxFilter` over an odd window is an exact square dilation, and the mask is
     binary 0/255 so the result stays binary.
+
+    Filtered over the mask's bounding box grown by `px`, not over the whole
+    canvas. `MaxFilter` is a `RankFilter`: it selects over all k² pixels of the
+    window for every output pixel, so the cost scales with
+    `canvas_area × (2·px+1)²` — measured 2.0 s at the default `px=6` on a
+    4000×3000 canvas and 168 s at the schema's max of 64. Dilation cannot reach
+    further than `px` from a white pixel, so cropping to that region, filtering
+    it and pasting it back is **exactly** equivalent: outside the crop every
+    window sees black in both runs, the crop's own border columns are black by
+    construction, and where the crop meets the image border the padding is the
+    one the full-canvas run uses. `backend/tests/test_inpaint_dilate.py` pins the
+    equivalence.
+
+    Mutates and returns `mask` — the caller owns a freshly rasterized image.
     """
     if px <= 0:
         return mask
     from PIL import ImageFilter
-    return mask.filter(ImageFilter.MaxFilter(2 * px + 1))
+    bbox = mask.getbbox()
+    if bbox is None:
+        # An all-black mask dilates to itself; `getbbox()` gives no region to
+        # crop to, and the full-canvas filter would be a very slow no-op.
+        return mask
+    w, h = mask.size
+    box = (
+        max(0, bbox[0] - px), max(0, bbox[1] - px),
+        min(w, bbox[2] + px), min(h, bbox[3] + px),
+    )
+    region = mask.crop(box)
+    grown = region.filter(ImageFilter.MaxFilter(2 * px + 1))
+    mask.paste(grown, (box[0], box[1]))
+    region.close()
+    grown.close()
+    return mask
+
+
+def _build_mask_png(
+    triples: list[tuple[int, str | None, list[float]]],
+    width: int,
+    height: int,
+    dilate_px: int,
+) -> bytes:
+    """Rasterize → dilate → PNG-encode the paint mask. **Executor thread only.**
+
+    All three steps are full-resolution Pillow work with no `await` in them, so
+    running this on the event loop freezes the whole server — every request, the
+    SSE progress stream included — for its duration. `export_service`'s
+    `_write_mask` goes through `run_in_executor` for exactly this reason, and
+    `docs/dev/ml-models.md` states the rule for every inference path.
+
+    `rasterize_detections`, never `compose_loss_mask`: the latter's empty-include
+    case returns full white, which here would repaint the entire image. This one
+    fails safe — empty geometry rasterizes to all black and nothing is painted.
+    """
+    mask_img = rasterize_detections([(m, b) for _id, m, b in triples], width, height)
+    mask_img = _dilate(mask_img, dilate_px)
+    buf = io.BytesIO()
+    mask_img.save(buf, format="PNG")
+    mask_img.close()
+    return buf.getvalue()
 
 
 @router.post("/run")
@@ -149,15 +229,22 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                 result = await session.execute(query)
                 images.extend(result.scalars().all())
             masks_by_image = await _fetch_masks_by_image(session, matched_ids, labels)
+            # Unfiltered, for the `has_watermark` decision below: the flag may only
+            # be cleared once *nothing* detected is left on the image.
+            all_det_ids = await _fetch_detection_ids_by_image(session, matched_ids)
             loop = asyncio.get_running_loop()
 
             # `skipped_no_detection` is seeded with the rows that vanished between
             # enqueue and run: asking for an image that no longer exists is a skip,
-            # not a failure. `thumbnails_stale` is the epilogue's own failure — the
-            # image is committed and serves, only the gallery tile is old.
+            # not a failure. It keeps only its two real causes — a squatting
+            # filename is `skipped_name_taken`, a separate key, because blaming
+            # the detection pass for a stray file on disk sends the user looking
+            # in the wrong place. `thumbnails_stale` is the epilogue's own failure
+            # — the image is committed and serves, only the gallery tile is old.
             counts = {
                 "inpainted": 0,
                 "skipped_no_detection": len(matched_ids) - len(images),
+                "skipped_name_taken": 0,
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
@@ -206,20 +293,28 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     counts["skipped_no_detection"] += 1
                     continue
 
-                # `rasterize_detections`, never `compose_loss_mask`: the latter's
-                # empty-include case returns full white, which here would repaint
-                # the entire image. This one fails safe — empty geometry rasterizes
-                # to all black and nothing is painted.
-                mask_img = rasterize_detections(
-                    [(m, b) for _id, m, b in triples], img.width, img.height
+                # Gate the stored path before anything reads or writes through it:
+                # `protect_file_before_overwrite` below copies the bytes into
+                # `{ds}/.versions/objects/`, so an out-of-tree `file_path` is an
+                # arbitrary-file *read* primitive even before the overwrite, and
+                # the copy branch derives its destination from this path's parent.
+                # The non-raising per-row form — `safe_dataset_path`'s 403 is wrong
+                # inside a job loop, where one bad row must not stop its
+                # neighbours. Everything below uses the *resolved* path it hands
+                # back, never the raw string.
+                src_path = contained_path(
+                    img.file_path, settings.datasets_dir, context="Inpaint", ident=img.id
                 )
-                mask_img = _dilate(mask_img, dilate_px)
-                buf = io.BytesIO()
-                mask_img.save(buf, format="PNG")
-                mask_bytes = buf.getvalue()
-                mask_img.close()
+                if src_path is None:
+                    counts["failed"] += 1
+                    continue
 
-                src_path = Path(img.file_path)
+                # Rasterize → dilate → PNG-encode in an executor: it is
+                # full-resolution Pillow work with no await in it, and on the event
+                # loop it freezes every other request for its duration.
+                mask_bytes = await loop.run_in_executor(
+                    None, _build_mask_png, triples, img.width, img.height, dilate_px
+                )
 
                 # Where `inpaint_image_sync` will actually write. For .gif/.bmp/
                 # .tiff/.avif that is a *different* path — PNG is the fallback
@@ -244,10 +339,10 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                             "current_item": img.filename,
                             "message": f"Skipped: {Path(planned_out).name} already exists on disk",
                         })
-                        counts["skipped_no_detection"] += 1
+                        counts["skipped_name_taken"] += 1
                         continue
                     dest_path_str = str(src_path)
-                    await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
+                    await version_service.protect_file_before_overwrite(img.id, str(src_path), session)
                     # Not optional: the COW hash backfill is only flushed, and
                     # without this commit a crash mid-overwrite leaves the snapshot
                     # claiming the content never changed.
@@ -330,16 +425,28 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # no longer contain anything. Deleting them in the same
                     # transaction as the pixels is what stops the panel from
                     # offering to crop to a watermark that is gone.
+                    painted_ids = {d for d, _m, _b in triples}
                     await session.execute(
-                        delete(Detection).where(Detection.id.in_([d for d, _m, _b in triples]))
+                        delete(Detection).where(Detection.id.in_(painted_ids))
                     )
-                    # Copy-then-reassign: SQLAlchemy compares JSON columns by
-                    # equality, so mutating the loaded dict in place looks
-                    # unchanged and the UPDATE is silently skipped
-                    # (CLAUDE.md § Key invariants).
-                    flags = dict(img.quality_flags or {})
-                    flags["has_watermark"] = False
-                    img.quality_flags = flags
+                    # `has_watermark` is cleared **iff nothing detected remains**.
+                    # Crucible has no vocabulary of "watermark labels" —
+                    # `detection._apply_watermark_flag` sets the flag from
+                    # `bool(detections)` on a watermark-sync grounding run, whatever
+                    # the phrase was — so a run scoped to some other label cannot
+                    # tell whether what survived is a watermark. Clearing anyway
+                    # would let the image escape both the *Flagged: watermark*
+                    # filter and export's `exclude_flags`, and ship with the
+                    # watermark visible. When nothing is cleared the column is not
+                    # written at all, rather than reassigned to an equal dict.
+                    if not (all_det_ids.get(img.id, set()) - painted_ids):
+                        # Copy-then-reassign: SQLAlchemy compares JSON columns by
+                        # equality, so mutating the loaded dict in place looks
+                        # unchanged and the UPDATE is silently skipped
+                        # (CLAUDE.md § Key invariants).
+                        flags = dict(img.quality_flags or {})
+                        flags["has_watermark"] = False
+                        img.quality_flags = flags
 
                     # Writes `processing_history` *and* `scores_stale` — the paint
                     # changed the pixels `watermark_score` was measured on, so the
@@ -363,10 +470,24 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                                 "Inpaint: could not remove superseded %s: %s",
                                 superseded.name, exc,
                             )
-                    if img.thumbnail_path:
+                    # `generate_thumbnail` mkdirs its parent, so an out-of-tree
+                    # `thumbnail_path` is an arbitrary-file *write* primitive —
+                    # the reasoning CLAUDE.md gives for `images.bulk_thumbnails`,
+                    # where the gate likewise guards no unlink. A refusal is a
+                    # stale tile, which is exactly what the count already means.
+                    thumb_target = (
+                        contained_path(
+                            img.thumbnail_path, settings.datasets_dir,
+                            context="Inpaint thumbnail", ident=img.id,
+                        )
+                        if img.thumbnail_path else None
+                    )
+                    if img.thumbnail_path and thumb_target is None:
+                        counts["thumbnails_stale"] += 1
+                    elif thumb_target is not None:
                         try:
                             await loop.run_in_executor(
-                                None, generate_thumbnail, actual_out_path, img.thumbnail_path
+                                None, generate_thumbnail, actual_out_path, str(thumb_target)
                             )
                         except Exception as exc:
                             # A stale thumbnail is cosmetic; the painted image is
@@ -382,9 +503,6 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                 else:
                     actual_dest = Path(actual_out_path)
                     thumb_path = thumbnail_path_for(actual_out_path)
-                    await loop.run_in_executor(
-                        None, generate_thumbnail, actual_out_path, thumb_path
-                    )
                     new_img = Image(
                         dataset_id=img.dataset_id,
                         filename=actual_dest.name,
@@ -400,10 +518,32 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                         # A painted derivative keeps its parent's source and license.
                         **copy_provenance(img),
                     )
+                    # PM-013 Tier 1: the row that describes the file on disk is
+                    # committed *before* anything fallible runs. Cutting the
+                    # thumbnail first — the Tier-3 shape four sibling routers still
+                    # carry — lets an `OSError` on image 300 of 500 propagate out of
+                    # `_run`, where `job_queue` marks the job failed from a separate
+                    # session and this one rolls back **every** uncommitted
+                    # derivative row while their `_nowm` files stay on disk.
                     session.add(new_img)
-                    await session.flush()
+                    await session.commit()
+                    # `expire_on_commit=False` (backend/database.py), so the id is
+                    # readable after the commit without a refresh.
                     derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, actual_out_path, thumb_path
+                        )
+                    except Exception as exc:
+                        # Same epilogue contract as the replace branch: the row is
+                        # committed and the image serves, only the gallery tile is
+                        # missing, and the count is what lets TopBar say so.
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Inpaint: thumbnail for %s could not be generated: %s",
+                            actual_dest.name, exc,
+                        )
 
                 counts["inpainted"] += 1
                 await broadcaster.emit(job_id, {

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class InpaintRunRequest(BaseModel):
@@ -23,3 +23,18 @@ class InpaintRunRequest(BaseModel):
     replace: bool = False
     dest_subfolder: str | None = None        # new-file mode: subfolder for the new image; None = same as source
     label: str | None = None                 # job-label override (NOT a detection label)
+
+    @model_validator(mode="after")
+    def _dest_subfolder_is_new_file_only(self):
+        """Refuse `replace` + `dest_subfolder` — the pair has no meaning.
+
+        Replace mode overwrites the source in place, so there is no new file for a
+        destination subfolder to place; silently ignoring the field would leave a
+        caller believing it had moved something. A 422 rather than a 400 because
+        the request is malformed, not the state. The UI never sends the pair.
+        """
+        if self.replace and self.dest_subfolder is not None:
+            raise ValueError(
+                "dest_subfolder is only meaningful in new-file mode (replace=false)"
+            )
+        return self

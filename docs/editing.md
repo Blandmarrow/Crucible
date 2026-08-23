@@ -63,11 +63,11 @@ Paints a detected region out of the image and fills it in with plausible surroun
 Options and behaviour:
 - **Mask padding px** (default 6) grows the painted area. Semi-transparent watermarks bleed past the edge a segmentation model draws, so if a faint halo survives the first run, raise this and run it again
 - Two output modes: **Replace original** (the default here — the point is usually to fix the image) or **New file**, which writes a `{stem}_nowm` copy and leaves the original untouched
-- On success the consumed detections are **deleted** and the image's watermark flag is cleared — the region they named no longer contains anything. In New file mode nothing is consumed: the original still has the watermark, so it keeps its detections and its flag
+- On success the consumed detections are **deleted** — the region they named no longer contains anything. The image's watermark flag is cleared once nothing detected remains on it; if you painted out only some labels and other detections survive, the flag stays, because nothing here can tell whether what is left is a watermark. In New file mode nothing is consumed: the original still has the watermark, so it keeps its detections and its flag
 - The image is marked **scores stale**, because its watermark and quality scores were measured against pixels that no longer exist. The old numbers stay visible but flagged until you re-run scoring
 - **The first run downloads the model** — about 196 MB, into `models_cache/`. Progress shows in the job pill. On a CPU-only machine expect seconds to a minute or so per image; on a GPU it is fast
 - BMP, GIF, TIFF and AVIF cannot be written back, so the result is saved as **PNG** and the image renamed to match — same as upscaling and LUT grading
-- Like those, the run reports how many images it painted, skipped and failed, and warns separately if some gallery previews could not be rebuilt
+- Like those, the run reports how many images it painted, skipped and failed, and warns separately if some gallery previews could not be rebuilt. Skips are reported by reason: *no detections* is the detection pass finding nothing to paint, while *name already taken* means an untracked file already occupies the `.png` the result would be saved as — that image is left completely alone
 
 Available from: the **Remove Watermark** button in the Image Detail page toolbar (shown once the image has detections) and the **Remove WM** modal in the selection toolbar.
 

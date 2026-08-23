@@ -21,21 +21,22 @@ import { Columns2, RefreshCw } from "lucide-react";
 const RESTART_SLOW_MS = 25_000;
 
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "batch_inpaint", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-// The five jobs that re-cut an image thumbnail as a best-effort post-commit
+// The six jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
-// the six forms that start these jobs (LutForm, UpscaleForm, BulkEditPage,
-// SelectionToolbar, ImageDetailPage's three handlers, ReextractFramesForm)
-// because TopBar is always mounted — and a 400-frame re-extraction is exactly
-// the job you walk away from.
+// the forms that start these jobs (LutForm, UpscaleForm, InpaintForm,
+// BulkEditPage, SelectionToolbar, ImageDetailPage's three handlers,
+// ReextractFramesForm) because TopBar is always mounted — and a 400-frame
+// re-extraction is exactly the job you walk away from.
 const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
-  "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "video_reextract",
+  "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "batch_inpaint",
+  "video_reextract",
 ]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -247,8 +248,13 @@ export default function TopBar() {
         // gallery — deliberately NOT in IMAGE_MODIFYING_JOB_TYPES. Detail pages go
         // stale otherwise (bulk detect run finishing after navigation).
         // crop_to_detection is included too: replace-mode crops now remap (and can
-        // drop) detection geometry, so those rollups must refresh as well.
-        if (progress.job_type === "detection" || progress.job_type === "crop_to_detection") {
+        // drop) detection geometry, so those rollups must refresh as well — and so
+        // is batch_inpaint, which *deletes* the detections it painted over.
+        if (
+          progress.job_type === "detection" ||
+          progress.job_type === "crop_to_detection" ||
+          progress.job_type === "batch_inpaint"
+        ) {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
         }

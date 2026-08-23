@@ -116,7 +116,7 @@ both crop workers, faking only the model call so the correction under test is th
 one, and reading the thumbnail's colour back to prove it was cut from the file that was
 written.
 
-See `docs/dev/ml-models.md` § Upscaling and § LUT grading, `docs/dev/image-detail.md` for the
+See `docs/dev/image-processing-models.md` § Upscaling and § LUT grading, `docs/dev/image-detail.md` for the
 crop 409, and `docs/dev/video-reextract.md` § The extension change.
 
 ### Status & date

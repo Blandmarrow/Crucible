@@ -25,9 +25,11 @@ frontend conventions are in `docs/dev/frontend-core.md`; storage keys are in
 
   Additionally, `TopBar` watches all jobs globally — this catches the case where the user navigates away before the job finishes and the page-local watcher is no longer mounted. It fires on **any terminal status** — `TERMINAL_JOB_STATUSES` from `constants/jobs.ts`, i.e. `completed`, `failed`, `cancelled` — deduped per job id via `processedJobsRef`, not on `completed` alone: these jobs commit per item, so a cancelled run has still changed real images and the counters must catch up. It skips statuses the frontend wrote itself: cancel buttons write `optimistic: true` (see `JobProgress`), and both `useSSE` handlers force `optimistic: false` onto every server event (jobStore merges partials, so the flag would otherwise survive). Otherwise the click would consume the job's one invalidation before the backend finishes cancelling — a row can still land in between — and the real terminal SSE event would dedup into a no-op. Waiting is safe: the backend emits a terminal event even for jobs cancelled while pending. The `comfy_prompts` branch applies the same guard to its toasts.
 
-  For the `IMAGE_MODIFYING_JOB_TYPES` — `batch_upscale`, `batch_lut`, `crop_upscale`, `crop_to_detection`, `quality_score`, `caption`, `caption_pipeline`, `comfy_generate`, `video_extract`, `video_reextract` — it invalidates `["images", dataset_id]`, the singular `["dataset", dataset_id]` (the dataset summary counts the Sidebar and gallery "All" counter read), and all four stats queries (`["dataset-stats"]`, `["tag-stats"]`, `["score-values"]`, `["tag-cooccurrence"]`). `quality_score` **and** `video_reextract` additionally invalidate `["duplicates", dataset_id]` — the first because scoring is what computes duplicate groups, the second because pass 2 re-derives `phash` from the full-resolution frame.
+  For the `IMAGE_MODIFYING_JOB_TYPES` — `batch_upscale`, `batch_lut`, `crop_upscale`, `crop_to_detection`, `batch_inpaint`, `quality_score`, `caption`, `caption_pipeline`, `comfy_generate`, `video_extract`, `video_reextract` — it invalidates `["images", dataset_id]`, the singular `["dataset", dataset_id]` (the dataset summary counts the Sidebar and gallery "All" counter read), and all four stats queries (`["dataset-stats"]`, `["tag-stats"]`, `["score-values"]`, `["tag-cooccurrence"]`). `quality_score` **and** `video_reextract` additionally invalidate `["duplicates", dataset_id]` — the first because scoring is what computes duplicate groups, the second because pass 2 re-derives `phash` from the full-resolution frame.
 
   `video_extract` additionally invalidates three keys the generic set does not cover: `["subfolders", dataset_id]` (all three re-extraction modes can create one), `["videos", dataset_id]` plus `["video", video_id]` (the extract endpoint commits the confirmed crop/deinterlace/trims onto the `Video` row), and `["video-frames", video_id]` (the extraction history). The last two are keyed off the payload's `video_id` — see `docs/dev/video-extract.md`.
+
+  `batch_inpaint` rides the detection branch rather than having its own: the job **deletes** the `Detection` rows it painted over, so `["image"]` and `invalidateDetectionQueries(qc, dataset_id)` must both fire, exactly as they do for `crop_to_detection`'s geometry remap. It is deliberately **not** in `LIVE_IMAGE_JOB_TYPES` — that set binds a job to the monotonic high-water mark on `done` described below, and joining it buys nothing here.
 
   `video_reextract` has its own branch, with a deliberately *smaller* extra set than pass 1's: the singular `["image"]` (an open `ImageDetailPage` would otherwise keep showing the triage dimensions and thumbnail — this key is otherwise invalidated only for detection) and `["video-frames", video_id]` (the re-extract dialog can be closed mid-run, so nothing else would refresh `VideoDetailPage`'s extraction-history panel). Deliberately **not** `["subfolders", dataset_id]` or `["video", video_id]`: pass 2 creates no subfolder and touches no `Video` row, it only rewrites the frames that row lists. See `docs/dev/video-reextract-ui.md` for the dialog side of this and `docs/dev/video-reextract.md` for what the job actually rewrites.
 
@@ -49,11 +51,13 @@ frontend conventions are in `docs/dev/frontend-core.md`; storage keys are in
 ## The stale-thumbnail warning, and the ordering rule behind it
 
 `THUMBNAIL_EPILOGUE_JOB_TYPES` — `batch_lut`, `batch_upscale`, `crop_upscale`,
-`crop_to_detection`, `video_reextract` — are the five jobs that re-cut an image thumbnail as
+`crop_to_detection`, `batch_inpaint`, `video_reextract` — are the six jobs that re-cut an
+image thumbnail as
 a best-effort post-commit epilogue (PM-013). Each reports `result_data["thumbnails_stale"]`,
 and **one branch in `TopBar`** turns that into the only warning the user gets. It lives there,
-not in the six forms that start these jobs (`LutForm`, `UpscaleForm`, `BulkEditPage`,
-`SelectionToolbar`, `ImageDetailPage`'s three handlers, `ReextractFramesForm`), because
+not in the forms that start these jobs (`LutForm`, `UpscaleForm`, `InpaintForm`,
+`BulkEditPage`, `SelectionToolbar`, `ImageDetailPage`'s three handlers,
+`ReextractFramesForm`), because
 `TopBar` is always mounted — a 400-frame re-extraction is exactly the job you walk away
 from — and because it already watches every terminal job deduped by `processedJobsRef`.
 Those forms keep their own outcome toasts and are deliberately silent about the count;

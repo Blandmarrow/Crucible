@@ -30,6 +30,7 @@ from backend.models import Dataset, ImageLabel
 from backend.models.detection import Detection
 from backend.models.versioning import VersionImageState
 from backend.routers import detection as detection_router
+from backend.routers import inpaint as inpaint_router
 from backend.routers import images as images_router
 from backend.routers import lut as lut_router
 from backend.routers import upscaling as upscaling_router
@@ -88,7 +89,7 @@ def test_every_rebuild_path_carries_labels():
 
 # The same-dataset derivative sites, and how many labelled copies each makes.
 # `crop` counts twice: the synchronous crop-only tail and the nested
-# `_run_crop_upscale` job, which lives inside its source. These are the five sites
+# `_run_crop_upscale` job, which lives inside its source. These are the six sites
 # `test_video_lineage_mirrors._score_carriers` excludes from the *score* guard —
 # a derivative's pixels are not the scored pixels — and the exclusion was prose
 # there with no assertion either way about labels. A label is a fact about the
@@ -99,13 +100,14 @@ def _derivative_sites() -> list[tuple[str, object, int]]:
         ("lut.run_lut", lut_router.run_lut, 1),
         ("upscaling.run_upscale", upscaling_router.run_upscale, 1),
         ("detection.crop_to_detection", detection_router.crop_to_detection, 1),
+        ("inpaint.run_inpaint", inpaint_router.run_inpaint, 1),
     ]
 
 
 def test_every_same_dataset_derivative_carries_labels():
-    """A crop/upscale/LUT/detection-crop copy keeps its parent's labels.
+    """A crop/upscale/LUT/detection-crop/inpaint copy keeps its parent's labels.
 
-    Walked for the `copy_labels` **call**, not for a kwarg: four of the five sites
+    Walked for the `copy_labels` **call**, not for a kwarg: five of the six sites
     pass the id map positionally, and `_ctor_kwargs`-style kwarg reading skips a
     `**spread` anyway, so a spread form would be invisible to it.
     """

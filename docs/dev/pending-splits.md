@@ -186,35 +186,6 @@ staleness sweep while still recording the seam.
   CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
   in the job half.
 
-## docs/dev/ml-models.md
-
-- **Moves:** § Upscaling (~700 words) and § LUT Color Grading (~430), i.e. everything below
-  § ML model management
-- **New file:** docs/dev/image-processing-models.md
-- **Why here:** the file is a model *registry and loader* doc with two image-*processing*
-  subsystems appended. § ML model management is about `model_manager.py` — the registry,
-  eviction, VRAM accounting, per-loader quirks, the EXIF-open invariant, the device
-  abstraction — and it is what a reader arrives for when adding or debugging a loader.
-  Upscaling (spandrel) and LUT grading are pipelines that happen to load a model: their
-  governing invariant is `image_service._open_safe`, not `open_rgb`, and their surfaces are
-  `routers/upscaling.py` and `routers/lut.py`. A reader working on eviction never needs
-  either. The seam leaves ~2,600 and ~1,150 out of 3,749 — the staying half is still over
-  the ~2,100 target, and the natural second seam is § ML model management's own tail: the
-  per-loader compatibility notes (Florence-2 PromptGen patches, JoyCaption inference
-  details, `_TAG_STYLES`) are *quirks of individual models*, while the registry table, the
-  VRAM budget and the device abstraction are the *mechanism*.
-- **Watch for:** this file is the single most-cited dev doc — CLAUDE.md § Key invariants
-  points at it for both the EXIF-open and close-PIL-images rules, and
-  `docs/dev/scoring.md`, `docs/dev/detection-inference.md`, `docs/dev/captioning.md`,
-  `docs/dev/tag-consolidation.md` and `docs/dev/environment-setup.md` all reference it. Nearly
-  all of those want the *management* half, so they stay pointed at `ml-models.md` — check
-  each rather than repointing by reflex. The upscaling prose is cited from
-  `docs/dev/bulk-image-jobs.md` (crop-upscale) and `docs/dev/image-files.md`; those are the
-  two that move. Grep `ml-models.md` across `docs/` before and after. The user-facing side of
-  the moving half lives in `docs/editing.md`, not in per-feature pages, so the
-  mirror-the-user-doc naming convention gives no name for free — image-processing-models.md
-  is a proposal, not a constraint.
-
 ## docs/dev/image-similarity.md
 
 - **Moves:** § Style similarity in full — its mode table, § What the modes are actually
@@ -388,3 +359,46 @@ The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.
 `export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
 misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
+
+## README.md
+
+- **Moves:** § Features in full — the eight `###` capability groups under it (~1,150 words),
+  every one of which already ends in a `→ [details](docs/…)` link
+- **New file:** none. The prose does not move to a sibling; it is *deleted* and replaced by
+  a short paragraph pointing at the Docs table already sitting further down the file.
+- **Why here:** README is over budget (2,744 against 2,500) and the overflow is a second
+  index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
+  already point at — the deletion rule's "duplicated in a sibling file, replace it with a
+  cross-reference" case, not a compression. It grows by a bullet every time a feature ships
+  (watermark removal was the latest), so it will trip again on the next one. What must stay
+  is what a README is *for* and no topic doc carries: the one-paragraph pitch, Quick Start,
+  Prerequisites, the Workflow chain, Configuration and the Docs table.
+- **Watch for:** the Workflow chain's numbered steps also carry `→ [details]` links and read
+  as a narrative rather than an index — keep those. Check `docs/features.md` before deleting:
+  it is the index doc for the same material, so anything § Features says that the topic docs
+  do not is a fact to move *there* rather than lose. A handful of Features bullets name
+  things with no topic doc at all (verify each against the Docs table before cutting).
+
+
+## docs/dev/ml-models.md
+
+- **Moves:** § The LaMa inpainter (~910 words after this session's OOM-ladder paragraph)
+- **New file:** none. It moves into the existing `docs/dev/image-processing-models.md`
+  (~1,810 words today, ~2,720 after), whose own intro already frames it as "the two
+  pipelines that rewrite pixels through a loaded model" — upscaling and LUT grading. LaMa
+  is the third, shipped later and filed here only because its *loader* was the novel part.
+- **Why here:** ml-models.md is over budget (3,615 against 3,500) and the seam is a
+  subsystem line, not a size cut. What is left is the lifecycle every model shares — the
+  manager and eviction, the ID registry, the device abstraction, `open_rgb`, `HF_TOKEN`,
+  the weight-download rules — at ~2,700 words, and the destination sits comfortably under
+  budget. The `and` test passes in both directions: "model lifecycle" and "pixel pipelines"
+  are two things, and today's file is the one holding both.
+- **Watch for:** the CLAUDE.md Documentation Map row for `ml-models.md` names "the LaMa
+  inpainter" in its trigger, and `image-processing-models.md`'s row does not — both cells
+  change, plus both `Words` counts. `docs/dev/bulk-image-jobs.md` § Painting detections out
+  points at "`docs/dev/ml-models.md` § The LaMa inpainter" by name, as do
+  `backend/routers/inpaint.py` and `backend/ml/lama_inpainter.py` in prose comments; grep
+  `LaMa` across `docs/` and `backend/` before finishing. Keep the *loader* rules (the
+  SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
+  import) with the inpainter — they are the reason the section is long, and they are about
+  this model rather than about the manager.

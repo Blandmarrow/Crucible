@@ -26,7 +26,7 @@ Every step from raw images to a training-ready export, in order:
 2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
-5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, and reorder manually → [details](docs/editing.md)
+5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, remove watermarks, and reorder manually → [details](docs/editing.md)
 6. **Version** — capture named snapshots and branches, and restore any prior state → [details](docs/versioning.md)
 7. **Export** — output to Kohya, AI Toolkit, or plain folder format — ready to train Stable Diffusion, SDXL, Flux, and more — with per-export filtering, resizing, and `CREDITS.md` / `licenses.csv` attribution manifests → [details](docs/export.md)
 
@@ -59,11 +59,12 @@ Every step from raw images to a training-ready export, in order:
 - **Detect** objects with Florence-2 bounding-box detection, NudeNet body-part detection, Grounded SAM 2.1 (SAM2 + Grounding DINO) segmentation masks with text or point prompts, or SAM 3 open-vocabulary text-prompt segmentation (SAM/Grounded text prompts accept several comma-separated phrases in one run); detection runs in the background so you can queue several runs at once → [details](docs/detection.md)
 - **Manage detections** — rename, delete, merge, hand-draw new boxes (optionally SAM-segmented), and point-refine masks per image; run or bulk-delete detections by label/model/score across the dataset from the Bulk Edit page → [details](docs/detection.md#managing-detections)
 - **Crop to detected subject** — batch-crop images to their detection boxes (union or largest, padding %, aspect-ratio snap) → [details](docs/detection.md#crop-to-detected-subject)
+- **Remove watermarks** — paint detected regions out of the image with LaMa inpainting, instead of cropping them off; run a `watermark` detection pass first, then remove. The first run downloads a ~196 MB model → [details](docs/editing.md#watermark-removal)
 
 ### Editing & processing
 - **Batch edit** captions, crops, and renames across any selection → [details](docs/editing.md)
 - **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/tag-consolidation.md)
-- **Process** images with ML upscaling — including 1× restoration models (denoise, deblur, JPEG-artifact removal) — and LUT color grading → [details](docs/editing.md#image-processing)
+- **Process** images with ML upscaling — including 1× restoration models (denoise, deblur, JPEG-artifact removal) — LUT color grading, and LaMa watermark removal → [details](docs/editing.md#image-processing)
 - **Regenerate thumbnails** across a dataset or a selection, for when an upscale, LUT, crop or frame re-extraction leaves gallery previews out of date → [details](docs/editing.md#batch-operations)
 - **Reorder** images manually with drag-and-drop; lock a custom sequence and renumber files to match — export always follows the custom order → [details](docs/gallery.md#manual-image-ordering)
 

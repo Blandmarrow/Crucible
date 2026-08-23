@@ -38,6 +38,7 @@ const DEFAULTS: Thresholds = {
   sam3_threshold: 0.5,
   versioning_mode: "off",
   auto_rescan_on_open: false,
+  auto_unload_after_scoring: true,
   comfyui_url: "",
   comfy_workflow_dir: "",
 };
@@ -199,6 +200,9 @@ export default function SettingsPage() {
     if (form.auto_rescan_on_open !== thresholds.auto_rescan_on_open) {
       changed.auto_rescan_on_open = form.auto_rescan_on_open;
     }
+    if (form.auto_unload_after_scoring !== thresholds.auto_unload_after_scoring) {
+      changed.auto_unload_after_scoring = form.auto_unload_after_scoring;
+    }
     if (Object.keys(changed).length === 0) {
       toast("No changes to save");
       return;
@@ -214,7 +218,8 @@ export default function SettingsPage() {
     thresholds &&
     (FIELDS.some((f) => form[f.key] !== thresholds[f.key]) ||
       form.versioning_mode !== thresholds.versioning_mode ||
-      form.auto_rescan_on_open !== thresholds.auto_rescan_on_open);
+      form.auto_rescan_on_open !== thresholds.auto_rescan_on_open ||
+      form.auto_unload_after_scoring !== thresholds.auto_unload_after_scoring);
 
   const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "labels" | "ui" | "quality" | "versioning" | "providers" | "comfyui" | "secrets">("gallery");
 
@@ -931,6 +936,32 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 ))}
+
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Model memory</div>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      className="checkbox"
+                      style={{ marginTop: 2 }}
+                      checked={form.auto_unload_after_scoring}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setForm((prev) => ({ ...prev, auto_unload_after_scoring: next }));
+                        mutation.mutate({ auto_unload_after_scoring: next });
+                      }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 13 }}>Unload scoring models when a run finishes</div>
+                      <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "2px 0 0" }}>
+                        Free the VRAM held by the aesthetic, DINOv2 and NSFW models as soon as a
+                        scoring run ends, cancels or fails. Only the models that run loaded are
+                        freed — a captioning or detection model stays put. On by default; turn it
+                        off to re-score repeatedly without paying the reload.
+                      </p>
+                    </div>
+                  </label>
+                </div>
 
                 <p style={{
                   fontSize: 12, color: "var(--fg-dim)",

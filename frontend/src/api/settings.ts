@@ -11,6 +11,7 @@ export interface Thresholds {
   sam3_threshold: number;
   versioning_mode: "off" | "manual" | "auto";
   auto_rescan_on_open: boolean;
+  auto_unload_after_scoring: boolean;
   comfyui_url: string;
   comfy_workflow_dir: string;
 }

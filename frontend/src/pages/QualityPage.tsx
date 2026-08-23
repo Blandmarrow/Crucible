@@ -39,6 +39,13 @@ interface QualityWorkflow {
   dinoLayer: number | "all" | null;
 }
 
+/** The loader's own VRAM figure, rendered the way the captioning model list
+ *  renders it. Local rather than shared: it is one line, and the figure is an
+ *  estimate the button only has to make legible. */
+function formatVram(mb: number): string {
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
 /** Rank a duplicate group best-first for *Keep best*, nulls **last**.
  *
  *  The naive `(b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0)` sorts an
@@ -353,6 +360,9 @@ export default function QualityPage() {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
       qc.invalidateQueries({ queryKey: ["aesthetic-coverage", datasetId] });
+      // The run may have auto-unloaded what it loaded (Settings → Quality), so
+      // the Unload button has to re-read residency rather than assume it.
+      qc.invalidateQueries({ queryKey: ["quality", "models"] });
       setActiveJobId(null);
     }
   }, [jobProgress?.status, datasetId, qc]);
@@ -433,6 +443,30 @@ export default function QualityPage() {
       else toast(data.message ?? "No images matched");
     },
     onError: () => toast.error("Failed to start scoring"),
+  });
+
+  // Which scoring models are resident right now. Global rather than
+  // dataset-scoped — VRAM residency is a property of the process — and short
+  // `staleTime` because a run on the other side of the app changes it.
+  const { data: scoringModels } = useQuery({
+    queryKey: ["quality", "models"],
+    queryFn: qualityApi.listModels,
+    staleTime: 10_000,
+  });
+  const loadedModels = scoringModels?.filter((m) => m.loaded) ?? [];
+  const loadedVramMb = loadedModels.reduce((sum, m) => sum + m.vram_mb, 0);
+
+  const unloadMutation = useMutation({
+    mutationFn: qualityApi.unloadModels,
+    onSuccess: (data) => {
+      toast.success(
+        data.unloaded.length
+          ? `Freed ${formatVram(data.freed_mb)} of VRAM`
+          : "No scoring models were loaded",
+      );
+      qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    },
+    onError: () => toast.error("Failed to unload models"),
   });
 
   // One mutation for both paths: a single-group resolve is a plan of one. It
@@ -697,6 +731,21 @@ export default function QualityPage() {
           <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
             Reset to defaults
           </button>
+          {loadedModels.length > 0 && (
+            <button
+              className="btn ghost sm"
+              // Disabled while a run is in flight: nothing but the single-worker
+              // job queue stands between an unload and a scorer mid-batch
+              // (`ModelEntry.in_use` is never set).
+              disabled={isRunning || unloadMutation.isPending}
+              onClick={() => unloadMutation.mutate()}
+              title={`Free VRAM held by: ${loadedModels.map((m) => m.name).join(", ")}`}
+            >
+              {unloadMutation.isPending
+                ? "Unloading…"
+                : `Unload models · ${formatVram(loadedVramMb)}`}
+            </button>
+          )}
           {subfolders.some((sf) => sf.path) && (
             <select
               className="select"

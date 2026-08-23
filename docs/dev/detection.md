@@ -4,6 +4,8 @@ This file covers the detection subsystem's request path: the `/detection` router
 
 The predictors those routes call — the task matrix per model family, multi-phrase prompts, Florence-2/NudeNet/SAM2/SAM3 inference, and the SAM 3 upstream constraints — are `docs/dev/detection-inference.md`. Detection *models* are registered and VRAM-managed like every other model — see `docs/dev/ml-models.md`. The scoring flags that a detection run can write (`has_watermark`) live in `docs/dev/scoring.md`.
 
+Two jobs *consume* detections rather than producing them, and both live in `docs/dev/bulk-image-jobs.md`: `crop_to_detection` crops an image down to what was found, and `batch_inpaint` paints it out. The second is destructive to this router's own rows — a successful replace-mode paint **deletes** the detections it consumed and clears `has_watermark`, because the region they name no longer contains anything. Copy mode consumes nothing: the parent still has the watermark, so it keeps both.
+
 
 Detection runs as a background job, same pattern as quality scoring. Four model families are supported.
 

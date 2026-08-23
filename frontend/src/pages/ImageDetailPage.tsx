@@ -5,7 +5,7 @@ import { usePaneContext } from "../contexts/PaneContext";
 import { usePaneStore } from "../store/paneStore";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser } from "lucide-react";
 import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
@@ -36,6 +36,7 @@ import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { DETECTION_MODELS, detectionModelFamily } from "../constants/detectionModels";
 import CropToDetectionForm from "../components/crop/CropToDetectionForm";
+import InpaintForm from "../components/inpaint/InpaintForm";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
@@ -265,6 +266,7 @@ export default function ImageDetailPage() {
   const [hiddenLabels, setHiddenLabels] = useState<Set<string>>(new Set());
   const [showDetectModal, setShowDetectModal] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showInpaint, setShowInpaint] = useState(false);
   const [showReextract, setShowReextract] = useState(false);
   const [detectModel, setDetectModel] = useState("florence2_large");
   const [detectTask, setDetectTask] = useState("<OD>");
@@ -645,10 +647,10 @@ export default function ImageDetailPage() {
     setCropInitialArea(null);
   }, [imageId]);
 
-  // The two form dialogs this page opens over the image. Both are scoped to
+  // The form dialogs this page opens over the image. All are scoped to
   // `imageId`, so letting the arrow keys through would re-query the preview for a
   // *different* image while the dialog still names the old one.
-  const formModalOpen = showCropDetect || showReextract;
+  const formModalOpen = showCropDetect || showInpaint || showReextract;
 
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
   // or this pane is not the active pane in split-pane mode.
@@ -1504,6 +1506,15 @@ export default function ImageDetailPage() {
               title="Crop this image to its detected subjects"
             >
               <Focus size={14} /> Crop to Subject
+            </button>
+          )}
+          {(image?.detections?.length ?? 0) > 0 && !cropMode && (
+            <button
+              className="btn-sm btn-ghost flex items-center gap-1.5"
+              onClick={() => setShowInpaint(true)}
+              title="Paint this image's detected regions out (watermark removal)"
+            >
+              <Eraser size={14} /> Remove Watermark
             </button>
           )}
           <button
@@ -2671,6 +2682,34 @@ export default function ImageDetailPage() {
                 setShowCropDetect(false);
               }}
               onCancel={() => setShowCropDetect(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Remove-watermark (inpaint) modal */}
+      {showInpaint && datasetId && imageId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Eraser size={15} /> Remove Watermark
+            </h4>
+            <InpaintForm
+              datasetId={datasetId}
+              imageIds={[imageId]}
+              availableLabels={Object.entries(
+                (image?.detections ?? []).reduce((acc, d) => {
+                  acc[d.label] = (acc[d.label] ?? 0) + 1;
+                  return acc;
+                }, {} as Record<string, number>)
+              )
+                .sort((a, b) => b[1] - a[1])
+                .map(([label, count]) => ({ label, count }))}
+              onSuccess={() => {
+                qc.invalidateQueries({ queryKey: ["image", imageId] });
+                setShowInpaint(false);
+              }}
+              onCancel={() => setShowInpaint(false)}
             />
           </div>
         </div>

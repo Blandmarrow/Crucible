@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw, Tags } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw, Tags, Eraser } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
 import LutForm from "../lut/LutForm";
 import CropToDetectionForm from "../crop/CropToDetectionForm";
+import InpaintForm from "../inpaint/InpaintForm";
 import RegenerateThumbnailsForm from "../image/RegenerateThumbnailsForm";
 import ReextractFramesModal from "../video/ReextractFramesModal";
 import { useSelectionStore } from "../../store/selectionStore";
@@ -104,6 +105,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showUpscale, setShowUpscale] = useState(false);
   const [showLut, setShowLut] = useState(false);
   const [showCropDetect, setShowCropDetect] = useState(false);
+  const [showInpaint, setShowInpaint] = useState(false);
   const [showReextract, setShowReextract] = useState(false);
   const [showThumbnails, setShowThumbnails] = useState(false);
 
@@ -474,7 +476,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   // this list was written for; `showProvenance`, `showMoveDataset` and
   // `showCopyDataset` were already missing for the same reason — the list is
   // hand-maintained, so a new modal state belongs here in the same edit.
-  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showReextract || showThumbnails || showMoveSubfolder || showMoveDataset || showCopyDataset || showProvenance || showLabels || showDeleteConfirm;
+  const anyModalOpen = showCaption || showScore || showDetect || showBulkEdit || showUpscale || showLut || showCropDetect || showInpaint || showReextract || showThumbnails || showMoveSubfolder || showMoveDataset || showCopyDataset || showProvenance || showLabels || showDeleteConfirm;
 
   useEffect(() => {
     if (count === 0) return;
@@ -547,6 +549,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         </button>
         <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
           <Crop size={14} /> Crop
+        </button>
+        <button
+          className="btn-ghost btn-sm flex items-center gap-1.5"
+          onClick={() => setShowInpaint(true)}
+          title="Paint detected regions out of the selected images (watermark removal)"
+        >
+          <Eraser size={14} /> Remove WM
         </button>
         {/* Rendered unconditionally like the other fourteen actions rather than
             gated on lineage: the store holds ids only, and a selection can span
@@ -1175,6 +1184,24 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               imageIds={ids}
               onSuccess={() => setShowCropDetect(false)}
               onCancel={() => setShowCropDetect(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Remove-watermark (inpaint) modal */}
+      {showInpaint && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
+            <h4 className="font-medium flex items-center gap-2 mb-1">
+              <Eraser size={15} /> Remove Watermark — {count} Image{count !== 1 ? "s" : ""}
+            </h4>
+            {datasetBreakdown}
+            <InpaintForm
+              datasetId={datasetId}
+              imageIds={ids}
+              onSuccess={() => setShowInpaint(false)}
+              onCancel={() => setShowInpaint(false)}
             />
           </div>
         </div>

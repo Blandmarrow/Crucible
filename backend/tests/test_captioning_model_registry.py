@@ -1,6 +1,6 @@
 """The captioning picker offers captioners, and only captioners.
 
-`model_manager.list_models()` is one registry of twelve models covering four
+`model_manager.list_models()` is one registry of thirteen models covering five
 roles, and `GET /captioning/models` used to return it raw. So the captioning
 picker offered SAM 3, DINOv2, the Marqo NSFW detector and the MiniLM tag
 embedder as things you could caption with — and picking one was a **silent
@@ -55,7 +55,7 @@ from backend.routers.captioning import _caption_backend
 from backend.tests.conftest import API, api_env, run, upload_image
 
 # The registry, partitioned. Both sets are checked against it in both directions,
-# so a thirteenth model lands in neither and fails here rather than quietly
+# so a fourteenth model lands in neither and fails here rather than quietly
 # appearing in — or vanishing from — the captioning picker.
 CAPTIONERS = {
     "florence2_large",
@@ -67,6 +67,7 @@ CAPTIONERS = {
 
 NOT_CAPTIONERS = {
     "aesthetic",
+    "lama",
     "aesthetic_v2_5",
     "dino",
     "nsfw",
@@ -75,7 +76,10 @@ NOT_CAPTIONERS = {
     "tag_embedder",
 }
 
-_KINDS = {"caption", "score", "detect", "embed"}
+# `edit` is the inpainter's: none of the other four is honest for a model that
+# rewrites pixels. A new *value* is fine — `kind` stays singular and
+# `kind == "caption"` stays its only behavioural reader.
+_KINDS = {"caption", "score", "detect", "embed", "edit"}
 
 
 @pytest.fixture

@@ -735,6 +735,28 @@ class ModelManager:
                 self._registry[model_id] = entry
             return entry
 
+    async def load_lama(
+        self,
+        job_id: str | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        dataset_id: str | None = None,
+    ) -> ModelEntry:
+        model_id = "lama"
+        async with self._get_lock(model_id):
+            if model_id in self._registry:
+                entry = self._registry[model_id]
+                entry.last_used = time.time()
+                return entry
+            _loop = loop or asyncio.get_event_loop()
+            from backend.ml.lama_inpainter import _load_lama_sync
+            self._evict_lru(2000)
+            entry = await _loop.run_in_executor(
+                None, _load_lama_sync, job_id, _loop, dataset_id
+            )
+            with self._sync_lock:
+                self._registry[model_id] = entry
+            return entry
+
     async def unload(self, model_id: str) -> None:
         async with self._get_lock(model_id):
             with self._sync_lock:
@@ -817,7 +839,10 @@ class ModelManager:
         `florence2_large` is "caption" even though detection also drives it, because
         detection's model list is static frontend copy that reads nothing from here.
         Do not generalise this to a multi-valued capability set: there is no second
-        reader to justify one.
+        reader to justify one. A new *value* is a different matter and is fine —
+        `lama` is `"edit"` because none of caption/score/embed/detect is honest for
+        an inpainter, and with `kind == "caption"` the sole reader a new value is
+        inert everywhere else.
 
         `vram_mb` is the literal below — a *forecast* — until the model is resident,
         and the loader's own `ModelEntry.vram_mb` once it is. That second figure is
@@ -863,6 +888,9 @@ class ModelManager:
             {"id": "sam3", "name": "SAM 3 (text-prompt segmentation)", "vram_mb": 3500,
              "kind": "detect",
              "description": "Open-vocabulary segmentation · loaded from a local models/sam3/*.safetensors checkpoint, never downloaded"},
+            {"id": "lama", "name": "LaMa (big-lama)", "vram_mb": 2000,
+             "kind": "edit",
+             "description": "advimman/lama · resolution-robust inpainting · downloads a 196 MB TorchScript archive on first use"},
             {"id": "tag_embedder", "name": "MiniLM Tag Embedder", "vram_mb": 500,
              "kind": "embed",
              "description": "sentence-transformers/all-MiniLM-L6-v2 · text-only; embeds the tag vocabulary for tag consolidation"},

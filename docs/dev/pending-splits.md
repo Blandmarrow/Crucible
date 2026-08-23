@@ -359,3 +359,23 @@ The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.
 `export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
 misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
+
+## README.md
+
+- **Moves:** § Features in full — the eight `###` capability groups under it (~1,150 words),
+  every one of which already ends in a `→ [details](docs/…)` link
+- **New file:** none. The prose does not move to a sibling; it is *deleted* and replaced by
+  a short paragraph pointing at the Docs table already sitting further down the file.
+- **Why here:** README is over budget (2,744 against 2,500) and the overflow is a second
+  index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
+  already point at — the deletion rule's "duplicated in a sibling file, replace it with a
+  cross-reference" case, not a compression. It grows by a bullet every time a feature ships
+  (watermark removal was the latest), so it will trip again on the next one. What must stay
+  is what a README is *for* and no topic doc carries: the one-paragraph pitch, Quick Start,
+  Prerequisites, the Workflow chain, Configuration and the Docs table.
+- **Watch for:** the Workflow chain's numbered steps also carry `→ [details]` links and read
+  as a narrative rather than an index — keep those. Check `docs/features.md` before deleting:
+  it is the index doc for the same material, so anything § Features says that the topic docs
+  do not is a fact to move *there* rather than lose. A handful of Features bullets name
+  things with no topic doc at all (verify each against the Docs table before cutting).
+

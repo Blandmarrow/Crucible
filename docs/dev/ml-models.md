@@ -17,7 +17,16 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 | `await model_manager.unload(model_id)` | Acquires per-model lock, moves weights to CPU, deletes model + processor objects, removes entry, calls `torch.cuda.empty_cache()`. |
 | `await model_manager.evict_all()` | Calls `unload()` for every registered model + final `cuda.empty_cache()`. Returns list of unloaded IDs. Used by `POST /api/v1/models/unload-all`. |
 
-**`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`) — evicts all ML models from VRAM without restarting. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Call after quality scoring so scoring models don't occupy VRAM when no longer needed.
+**`POST /api/v1/models/unload-all`** (router: `backend/routers/models.py`, prefix `/models`) — evicts all ML models from VRAM without restarting. Returns `{ "status": "ok", "unloaded": [model_id, ...] }`. Its docstring says to call it after quality scoring; **nothing does**, frontend or backend, and that is deliberate rather than an omission. Scoring frees its own models now, and it must free *only* its own — see below.
+
+**Scoped unloads, by subsystem.** Two subsystems free VRAM without going through `evict_all`, each covering the models it loaded and nothing else:
+
+| Caller | Scope |
+|---|---|
+| `DELETE /captioning/model/{id}/unload` | The one captioning model the page names. |
+| `POST /quality/models/unload`, and the auto-unload in the `quality_score` job's `finally` | The four ids in `routers/quality.py::SCORING_MODEL_IDS`. Gated by the `auto_unload_after_scoring` setting for the job; the endpoint is unconditional. |
+
+Prefer one of these over `evict_all()` in anything new: a scoring run that swept the registry would evict a Florence-2 or SAM2 someone loaded for other work. `evict_all` remains right for the caption *pipeline*, which is a multi-step job that owns the VRAM for its whole duration. See `docs/dev/scoring.md` § The model lifecycle.
 
 `HF_TOKEN` is written into `os.environ` by `backend/services/secrets_service.py::sync_env`, its only writer, so every loader that passes no `token=` picks it up: early in `main.py` from the `.env`/OS-env chain, again in the lifespan from the DB, and on every `PATCH /settings/secrets`. A token saved in Settings → API Keys therefore applies to the next download with no restart — `huggingface_hub` re-reads the variable on every call. See `docs/dev/settings.md` § API Keys tab for the precedence rules.
 

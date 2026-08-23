@@ -16,7 +16,7 @@ This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettin
 
 ## Model
 
-`backend/models/threshold_settings.py` — `ThresholdSettings` table with a single row (`id=1`). Holds the quality-threshold `Float` columns (with `server_default` matching the constants in `technical_scorer.py`), the `versioning_mode` string, the `auto_rescan_on_open` boolean (`server_default="0"`), and the three secret `String` columns. It is the catch-all single-row table for app-wide server-side settings — add new global toggles here and to `ThresholdsOut`/`ThresholdsUpdate` in `routers/settings.py`. **A new *secret* is the exception**: it goes on this same row but into `SecretsOut`/`SecretsUpdate` and the `/secrets` pair instead, for the reasons under § API Keys tab. Defaults are canonically defined in `backend/services/threshold_service.py::DEFAULTS`.
+`backend/models/threshold_settings.py` — `ThresholdSettings` table with a single row (`id=1`). Holds the quality-threshold `Float` columns (with `server_default` matching the constants in `technical_scorer.py`), the `versioning_mode` string, the `auto_rescan_on_open` boolean (`server_default="0"`), the `auto_unload_after_scoring` boolean (`server_default="1"`), and the three secret `String` columns. It is the catch-all single-row table for app-wide server-side settings — add new global toggles here and to `ThresholdsOut`/`ThresholdsUpdate` in `routers/settings.py`. **A new *secret* is the exception**: it goes on this same row but into `SecretsOut`/`SecretsUpdate` and the `/secrets` pair instead, for the reasons under § API Keys tab. Defaults are canonically defined in `backend/services/threshold_service.py::DEFAULTS`.
 
 ## Frontend
 
@@ -80,6 +80,10 @@ Immediate-save preferences:
 ## Quality Thresholds tab
 
 Eight editable number inputs from the `FIELDS` array: blur, noise, uniformity, duplicate, watermark, NSFW, DINO box confidence (`gdino_threshold`), and SAM 3 confidence (`sam3_threshold`). Requires Save; the flag thresholds apply to the next scoring run, `gdino_threshold` to the next SAM2 detection run, `sam3_threshold` to the next SAM3 run.
+
+Below the numeric fields, one checkbox that saves immediately rather than through the page's Save button, the `auto_rescan_on_open` pattern exactly:
+
+- **Unload scoring models when a run finishes** (`auto_unload_after_scoring`, default **on**). The `quality_score` job frees the models it loaded in its `finally`, so a cancelled or failed run frees them too. Off is for someone with headroom who re-scores repeatedly and does not want to pay the reload; the Score images page then offers an *Unload models* button instead. See `docs/dev/scoring.md` § The model lifecycle.
 
 ## Versioning tab
 

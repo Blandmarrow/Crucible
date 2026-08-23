@@ -945,11 +945,18 @@ export default function SettingsPage() {
                       className="checkbox"
                       style={{ marginTop: 2 }}
                       checked={form.auto_unload_after_scoring}
-                      onChange={(e) => {
-                        const next = e.target.checked;
-                        setForm((prev) => ({ ...prev, auto_unload_after_scoring: next }));
-                        mutation.mutate({ auto_unload_after_scoring: next });
-                      }}
+                      // Save-gated, unlike the Gallery tab's `auto_rescan_on_open`
+                      // toggle it otherwise resembles: this tab *has* a Save button,
+                      // and an inline `mutation.mutate` here invalidates
+                      // ["settings","thresholds"], whose refetch re-runs `setForm`
+                      // and silently discards every unsaved threshold edit beside
+                      // it. Do not "restore consistency" by auto-saving this one.
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          auto_unload_after_scoring: e.target.checked,
+                        }))
+                      }
                     />
                     <div>
                       <div style={{ fontSize: 13 }}>Unload scoring models when a run finishes</div>

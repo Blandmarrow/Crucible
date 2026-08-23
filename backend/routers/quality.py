@@ -418,14 +418,42 @@ async def list_scoring_models():
 
 
 @router.post("/models/unload")
-async def unload_scoring_models():
+async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
     """Free every scoring model currently resident, and nothing else.
 
     The resident set is read *before* the unloads so the response describes what
     was actually freed. `model_manager.unload` is a no-op for an unregistered id
     and takes the per-model lock, so calling it for all four is safe; no id comes
     from the client, so there is nothing to validate.
+
+    **Refused while a scoring run is in flight.** `unload` calls `entry.model.cpu()`,
+    so pulling `dino` or an aesthetic model out from under a scorer running in the
+    executor thread is a device-mismatch `RuntimeError` and a failed job —
+    `ModelEntry.in_use` is never set, so nothing else stands in the way. The page's
+    own `isRunning` is not that guard: it knows only about a job *it* started, and
+    goes stale on a reload or in a second pane.
+
+    `quality_score` is the exact scope, not a blunt any-job check: it is the only
+    job type that loads anything in `SCORING_MODEL_IDS`. Style similarity reads
+    stored embeddings without loading `dino`, and detection loads sam2/sam3, which
+    this endpoint never touches.
+
+    Not `dataset_busy.ensure_not_busy` — that flag is dataset-scoped and the scoring
+    job never takes it, while VRAM residency is a property of the whole process.
     """
+    running = (await db.execute(
+        select(BackgroundJob.id)
+        .where(
+            BackgroundJob.job_type == "quality_score",
+            BackgroundJob.status.in_(("pending", "running")),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    if running:
+        raise HTTPException(
+            409, "A scoring run is in progress. Try again when it finishes."
+        )
+
     resident = [
         m for m in model_manager.list_models()
         if m["id"] in SCORING_MODEL_IDS and m["loaded"]

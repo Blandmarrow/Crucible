@@ -81,7 +81,7 @@ Immediate-save preferences:
 
 Eight editable number inputs from the `FIELDS` array: blur, noise, uniformity, duplicate, watermark, NSFW, DINO box confidence (`gdino_threshold`), and SAM 3 confidence (`sam3_threshold`). Requires Save; the flag thresholds apply to the next scoring run, `gdino_threshold` to the next SAM2 detection run, `sam3_threshold` to the next SAM3 run.
 
-Below the numeric fields, one checkbox that saves immediately rather than through the page's Save button, the `auto_rescan_on_open` pattern exactly:
+Below the numeric fields, one checkbox — Save-gated like the numbers above it, **not** the immediate-save `auto_rescan_on_open` pattern it otherwise resembles. That distinction is load-bearing: an inline `mutation.mutate` invalidates `["settings","thresholds"]`, and the refetch re-runs the `setForm(thresholds)` effect, which discards every unsaved threshold edit sitting beside it. The Gallery tab's toggle gets away with it only because that tab has no Save-button form. `handleSave` and `isChanged` already carry the field, so Save-gating it took no more than dropping the mutate call:
 
 - **Unload scoring models when a run finishes** (`auto_unload_after_scoring`, default **on**). The `quality_score` job frees the models it loaded in its `finally`, so a cancelled or failed run frees them too. Off is for someone with headroom who re-scores repeatedly and does not want to pay the reload; the Score images page then offers an *Unload models* button instead. See `docs/dev/scoring.md` § The model lifecycle.
 

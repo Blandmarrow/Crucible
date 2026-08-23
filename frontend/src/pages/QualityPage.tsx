@@ -356,13 +356,17 @@ export default function QualityPage() {
   }, [datasetId]);
 
   useEffect(() => {
-    if (jobProgress?.status === "completed") {
+    const status = jobProgress?.status;
+    if (status !== "completed" && status !== "failed" && status !== "cancelled") return;
+    // Residency is re-read on *every* terminal status, not just success: the
+    // auto-unload lives in the job's `finally`, so cancelled and failed runs are
+    // precisely the cases it exists for. Only a completed run changed rows, so
+    // the dataset-data invalidations below stay inside that branch.
+    qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    if (status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
       qc.invalidateQueries({ queryKey: ["aesthetic-coverage", datasetId] });
-      // The run may have auto-unloaded what it loaded (Settings → Quality), so
-      // the Unload button has to re-read residency rather than assume it.
-      qc.invalidateQueries({ queryKey: ["quality", "models"] });
       setActiveJobId(null);
     }
   }, [jobProgress?.status, datasetId, qc]);
@@ -466,7 +470,14 @@ export default function QualityPage() {
       );
       qc.invalidateQueries({ queryKey: ["quality", "models"] });
     },
-    onError: () => toast.error("Failed to unload models"),
+    // The server's 409 names the run holding the models — surface it verbatim,
+    // since this button is reachable with a stale `isRunning` (a reload, or a
+    // second pane, whose `activeJobId` never saw the run start). Re-read
+    // residency either way: a refused unload means the list is stale too.
+    onError: (e) => {
+      toast.error(apiErrorDetail(e, "Failed to unload models"));
+      qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    },
   });
 
   // One mutation for both paths: a single-group resolve is a plan of one. It

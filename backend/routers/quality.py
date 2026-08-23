@@ -71,6 +71,14 @@ _UNREFRESHABLE_SCORE_COLUMNS = frozenset({"style_similarity_score"})
 # explicit literal: it names what one block writes, not a property of the schema.
 _JOB_SCORE_COLUMNS = score_columns(Image) - _UNREFRESHABLE_SCORE_COLUMNS
 
+# The model ids POST /quality/score can load. One definition so the job's
+# auto-unload, the unload endpoint and the page's button cannot drift.
+#
+# Deliberately not a `kind`-based filter over `model_manager.list_models()`:
+# `kind == "embed"` also matches `tag_embedder`, which scoring never loads and
+# tag consolidation would then have to reload.
+SCORING_MODEL_IDS = ("aesthetic", "aesthetic_v2_5", "dino", "nsfw")
+
 
 def _decode_dino_layers(blob: bytes) -> np.ndarray:
     """Decode a per-layer DINOv2 blob into an (12, 768) float32 array (rows already L2-normalized)."""
@@ -189,175 +197,273 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
         async with AsyncSessionLocal() as ts_session:
             thresholds = await get_thresholds(ts_session)
 
-        ids = [d[0] for d in image_data]
-        paths = [d[1] for d in image_data]
+        # Collected beside each loader call rather than re-derived from `body`,
+        # the same discipline `aesthetic_marker` below describes: what gets
+        # unloaded is provably what got loaded.
+        loaded_ids: set[str] = set()
 
-        loop = asyncio.get_running_loop()
+        try:
+            ids = [d[0] for d in image_data]
+            paths = [d[1] for d in image_data]
 
-        aesthetic_scores = []
-        # Captured inside the branch, next to the loader call, so the marker
-        # written to the DB and the model actually run are provably the same
-        # decision rather than two reads of `body` that could drift.
-        aesthetic_marker: str | None = None
-        if body.run_aesthetic:
-            aesthetic_marker = body.aesthetic_model
-            if aesthetic_marker == "v2_5":
-                entry = await model_manager.load_aesthetic_v2_5(
-                    job_id=job_id, loop=loop, dataset_id=body.dataset_id
-                )
-                # The plain entry shape carries the processor alongside the model.
-                handle = entry
-            else:
-                entry = await model_manager.load_aesthetic(
-                    job_id=job_id, loop=loop, dataset_id=body.dataset_id
-                )
-                handle = entry.model  # the three-tenant {"clip","mlp","preprocess"} dict
-            aesthetic_scores = await score_images_batch(
-                paths, handle, job_id=job_id, model=aesthetic_marker
-            )
+            loop = asyncio.get_running_loop()
 
-        technical_results = []
-        if body.run_technical:
-            technical_results = await score_images_technical(
-                ids, paths, job_id=job_id,
-                blur_threshold=thresholds.blur_threshold,
-                noise_threshold=thresholds.noise_threshold,
-                uniformity_threshold=thresholds.uniformity_threshold,
-            )
-
-        watermark_results = []
-        if body.run_watermark:
-            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
-            watermark_results = await score_images_watermark(
-                paths, entry.model, job_id=job_id,
-                watermark_threshold=thresholds.watermark_threshold,
-            )
-
-        clip_embeddings: list[bytes | None] = []
-        dino_embeddings: list[bytes | None] = []
-        dino_layer_embeddings: list[bytes | None] = []
-        if body.run_embeddings:
-            entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
-            clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
-        if body.run_dino:
-            from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
-            dino_entry = await model_manager.load_dino(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
-            dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
-            if body.run_dino_layers:
-                dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
-
-        nsfw_results: list[dict] = []
-        if body.run_nsfw:
-            from backend.ml.nsfw_scorer import score_images_nsfw_batch
-            nsfw_entry = await model_manager.load_nsfw(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
-            nsfw_results = await score_images_nsfw_batch(
-                paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
-            )
-
-        # Any of the *_results lists may be shorter than `ids` if the job was cancelled
-        # mid-batch (scorers return partial results). Guard every indexed access with
-        # `i < len(...)` so completed work still persists.
-        async with AsyncSessionLocal() as session:
-            for i, img_id in enumerate(ids):
-                img = await session.get(Image, img_id)
-                if not img:
-                    continue
-                # Which score columns this row actually got refreshed, collected
-                # inside each `i < len(...)` guard so the three partial modes fall
-                # out for free — see the clear predicate at the bottom of the loop.
-                refreshed: set[str] = set()
-                if i < len(aesthetic_scores):
-                    img.aesthetic_score = aesthetic_scores[i]
-                    # Never written without a score, never survives one. A marker
-                    # beside a NULL score claims a model looked and produced
-                    # nothing; a stale marker on an overwritten NULL puts a
-                    # phantom row in the per-model breakdown. Both break the
-                    # migration's invariant (score non-NULL <=> marker non-NULL).
-                    #
-                    # `aesthetic_model` is deliberately NOT added to `refreshed`:
-                    # that set feeds the `scores_stale` clear predicate against
-                    # `_JOB_SCORE_COLUMNS`, which is `*_score`-suffix-derived and
-                    # correctly excludes the marker. Adding it is inert today and
-                    # a live bug the day anyone re-derives that universe.
-                    img.aesthetic_model = (
-                        aesthetic_marker if aesthetic_scores[i] is not None else None
+            aesthetic_scores = []
+            # Captured inside the branch, next to the loader call, so the marker
+            # written to the DB and the model actually run are provably the same
+            # decision rather than two reads of `body` that could drift.
+            aesthetic_marker: str | None = None
+            if body.run_aesthetic:
+                aesthetic_marker = body.aesthetic_model
+                if aesthetic_marker == "v2_5":
+                    entry = await model_manager.load_aesthetic_v2_5(
+                        job_id=job_id, loop=loop, dataset_id=body.dataset_id
                     )
-                    refreshed.add("aesthetic_score")
-                if i < len(technical_results):
-                    t = technical_results[i]
-                    img.blur_score = t.get("blur_score")
-                    img.noise_score = t.get("noise_score")
-                    img.uniformity_score = t.get("uniformity_score")
-                    img.color_score = t.get("color_score")
-                    img.saturation_score = t.get("saturation_score")
-                    img.luminance_score = t.get("luminance_score")
-                    flags = dict(img.quality_flags or {})
-                    flags["is_blurry"] = t.get("is_blurry", False)
-                    flags["is_noisy"] = t.get("is_noisy", False)
-                    flags["is_uniform"] = t.get("is_uniform", False)
-                    img.quality_flags = flags
-                    refreshed |= _TECHNICAL_SCORE_COLUMNS
-                if i < len(watermark_results):
-                    w = watermark_results[i]
-                    img.watermark_score = w.get("watermark_score")
-                    flags = dict(img.quality_flags or {})
-                    flags["has_watermark"] = w.get("has_watermark", False)
-                    img.quality_flags = flags
-                    refreshed.add("watermark_score")
-                if i < len(clip_embeddings):
-                    img.clip_embedding = clip_embeddings[i]
-                if i < len(dino_embeddings):
-                    img.dino_embedding = dino_embeddings[i]
-                if i < len(dino_layer_embeddings):
-                    img.dino_layer_embeddings = dino_layer_embeddings[i]
-                if i < len(nsfw_results):
-                    n = nsfw_results[i]
-                    img.nsfw_score = n.get("nsfw_score")
-                    flags = dict(img.quality_flags or {})
-                    flags["is_nsfw"] = n.get("is_nsfw", False)
-                    img.quality_flags = flags
-                    refreshed.add("nsfw_score")
+                    loaded_ids.add("aesthetic_v2_5")
+                    # The plain entry shape carries the processor alongside the model.
+                    handle = entry
+                else:
+                    entry = await model_manager.load_aesthetic(
+                        job_id=job_id, loop=loop, dataset_id=body.dataset_id
+                    )
+                    loaded_ids.add("aesthetic")
+                    handle = entry.model  # the three-tenant {"clip","mlp","preprocess"} dict
+                aesthetic_scores = await score_images_batch(
+                    paths, handle, job_id=job_id, model=aesthetic_marker
+                )
 
-                # The one place `scores_stale` is cleared. Set-covering over what
-                # was actually *written*, not over `body.run_*`: a cancelled batch
-                # truncates a results list (rows past it never enter `refreshed`),
-                # a per-image subset never visits the row at all, and an unticked
-                # check contributes nothing — all three fall out of this one test.
-                # So a re-score with the same checks that produced the original
-                # numbers clears the bit, and a watermark-only pass never claims
-                # a stale blur score is fresh.
-                #
-                # `quality_flags` needs no separate tracking: each flag is written
-                # in the same guarded block as the score it derives from.
-                # `is_duplicate` derives from `phash`, which every in-place path
-                # re-derives, so duplicate flags were never stale.
-                #
-                # A run that measured *nothing* clears nothing: `refreshed` is
-                # empty for a pass with only `run_embeddings` or only `run_dino`
-                # ticked (neither writes a score column), and `stale_left` would
-                # then be empty for any row whose job-score columns are all NULL —
-                # clearing the bit having taken no measurement at all. `ScoreRequest`
-                # has no `run_duplicates`; duplicate flagging rides on
-                # `run_technical` below, which does write scores.
-                #
-                # The outer test avoids N pointless UPDATEs on a routine re-score.
-                if img.scores_stale and refreshed:
-                    stale_left = {
-                        c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None
-                    } - refreshed
-                    if not stale_left:
-                        img.scores_stale = False
-            await session.commit()
+            technical_results = []
+            if body.run_technical:
+                technical_results = await score_images_technical(
+                    ids, paths, job_id=job_id,
+                    blur_threshold=thresholds.blur_threshold,
+                    noise_threshold=thresholds.noise_threshold,
+                    uniformity_threshold=thresholds.uniformity_threshold,
+                )
 
-        # Persist completed work before honoring the cancellation.
-        job_queue.raise_if_cancelled(job_id)
+            watermark_results = []
+            if body.run_watermark:
+                entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+                loaded_ids.add("aesthetic")
+                watermark_results = await score_images_watermark(
+                    paths, entry.model, job_id=job_id,
+                    watermark_threshold=thresholds.watermark_threshold,
+                )
 
-        # Detect duplicates after scoring
-        if body.run_technical:
-            await _flag_duplicates(job_id, body.dataset_id, int(thresholds.duplicate_threshold))
+            clip_embeddings: list[bytes | None] = []
+            dino_embeddings: list[bytes | None] = []
+            dino_layer_embeddings: list[bytes | None] = []
+            if body.run_embeddings:
+                entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+                loaded_ids.add("aesthetic")
+                clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
+            if body.run_dino:
+                from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
+                dino_entry = await model_manager.load_dino(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+                loaded_ids.add("dino")
+                dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
+                if body.run_dino_layers:
+                    dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
+
+            nsfw_results: list[dict] = []
+            if body.run_nsfw:
+                from backend.ml.nsfw_scorer import score_images_nsfw_batch
+                nsfw_entry = await model_manager.load_nsfw(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+                loaded_ids.add("nsfw")
+                nsfw_results = await score_images_nsfw_batch(
+                    paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
+                )
+
+            # Any of the *_results lists may be shorter than `ids` if the job was cancelled
+            # mid-batch (scorers return partial results). Guard every indexed access with
+            # `i < len(...)` so completed work still persists.
+            async with AsyncSessionLocal() as session:
+                for i, img_id in enumerate(ids):
+                    img = await session.get(Image, img_id)
+                    if not img:
+                        continue
+                    # Which score columns this row actually got refreshed, collected
+                    # inside each `i < len(...)` guard so the three partial modes fall
+                    # out for free — see the clear predicate at the bottom of the loop.
+                    refreshed: set[str] = set()
+                    if i < len(aesthetic_scores):
+                        img.aesthetic_score = aesthetic_scores[i]
+                        # Never written without a score, never survives one. A marker
+                        # beside a NULL score claims a model looked and produced
+                        # nothing; a stale marker on an overwritten NULL puts a
+                        # phantom row in the per-model breakdown. Both break the
+                        # migration's invariant (score non-NULL <=> marker non-NULL).
+                        #
+                        # `aesthetic_model` is deliberately NOT added to `refreshed`:
+                        # that set feeds the `scores_stale` clear predicate against
+                        # `_JOB_SCORE_COLUMNS`, which is `*_score`-suffix-derived and
+                        # correctly excludes the marker. Adding it is inert today and
+                        # a live bug the day anyone re-derives that universe.
+                        img.aesthetic_model = (
+                            aesthetic_marker if aesthetic_scores[i] is not None else None
+                        )
+                        refreshed.add("aesthetic_score")
+                    if i < len(technical_results):
+                        t = technical_results[i]
+                        img.blur_score = t.get("blur_score")
+                        img.noise_score = t.get("noise_score")
+                        img.uniformity_score = t.get("uniformity_score")
+                        img.color_score = t.get("color_score")
+                        img.saturation_score = t.get("saturation_score")
+                        img.luminance_score = t.get("luminance_score")
+                        flags = dict(img.quality_flags or {})
+                        flags["is_blurry"] = t.get("is_blurry", False)
+                        flags["is_noisy"] = t.get("is_noisy", False)
+                        flags["is_uniform"] = t.get("is_uniform", False)
+                        img.quality_flags = flags
+                        refreshed |= _TECHNICAL_SCORE_COLUMNS
+                    if i < len(watermark_results):
+                        w = watermark_results[i]
+                        img.watermark_score = w.get("watermark_score")
+                        flags = dict(img.quality_flags or {})
+                        flags["has_watermark"] = w.get("has_watermark", False)
+                        img.quality_flags = flags
+                        refreshed.add("watermark_score")
+                    if i < len(clip_embeddings):
+                        img.clip_embedding = clip_embeddings[i]
+                    if i < len(dino_embeddings):
+                        img.dino_embedding = dino_embeddings[i]
+                    if i < len(dino_layer_embeddings):
+                        img.dino_layer_embeddings = dino_layer_embeddings[i]
+                    if i < len(nsfw_results):
+                        n = nsfw_results[i]
+                        img.nsfw_score = n.get("nsfw_score")
+                        flags = dict(img.quality_flags or {})
+                        flags["is_nsfw"] = n.get("is_nsfw", False)
+                        img.quality_flags = flags
+                        refreshed.add("nsfw_score")
+
+                    # The one place `scores_stale` is cleared. Set-covering over what
+                    # was actually *written*, not over `body.run_*`: a cancelled batch
+                    # truncates a results list (rows past it never enter `refreshed`),
+                    # a per-image subset never visits the row at all, and an unticked
+                    # check contributes nothing — all three fall out of this one test.
+                    # So a re-score with the same checks that produced the original
+                    # numbers clears the bit, and a watermark-only pass never claims
+                    # a stale blur score is fresh.
+                    #
+                    # `quality_flags` needs no separate tracking: each flag is written
+                    # in the same guarded block as the score it derives from.
+                    # `is_duplicate` derives from `phash`, which every in-place path
+                    # re-derives, so duplicate flags were never stale.
+                    #
+                    # A run that measured *nothing* clears nothing: `refreshed` is
+                    # empty for a pass with only `run_embeddings` or only `run_dino`
+                    # ticked (neither writes a score column), and `stale_left` would
+                    # then be empty for any row whose job-score columns are all NULL —
+                    # clearing the bit having taken no measurement at all. `ScoreRequest`
+                    # has no `run_duplicates`; duplicate flagging rides on
+                    # `run_technical` below, which does write scores.
+                    #
+                    # The outer test avoids N pointless UPDATEs on a routine re-score.
+                    if img.scores_stale and refreshed:
+                        stale_left = {
+                            c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None
+                        } - refreshed
+                        if not stale_left:
+                            img.scores_stale = False
+                await session.commit()
+
+            # Persist completed work before honoring the cancellation.
+            job_queue.raise_if_cancelled(job_id)
+
+            # Detect duplicates after scoring
+            if body.run_technical:
+                await _flag_duplicates(job_id, body.dataset_id, int(thresholds.duplicate_threshold))
+        finally:
+            # A `finally` rather than a tail statement, for three reasons: a run
+            # cancelled through `raise_if_cancelled` should free VRAM too; a scorer
+            # that raises should not strand 3.5 GB; and the DB `commit()` above is
+            # already past, so this is the PM-013 post-commit epilogue — it logs and
+            # can never change the job's outcome. Awaiting here is safe because
+            # cancellation is cooperative (`raise_if_cancelled` raises by hand; the
+            # task is never `.cancel()`ed).
+            #
+            # Scoped to `loaded_ids`, never `evict_all()`: a Florence-2 or SAM2
+            # someone loaded for other work is not this job's to evict.
+            if thresholds.auto_unload_after_scoring and loaded_ids:
+                try:
+                    for mid in sorted(loaded_ids):
+                        await model_manager.unload(mid)
+                except Exception:
+                    logger.exception("Auto-unload after scoring failed for job %s", job_id)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(images)}
+
+
+# ---------------------------------------------------------------------------
+# Scoring model lifecycle
+#
+# Both endpoints live here rather than in `routers/models.py`, following the
+# captioning precedent (`DELETE /captioning/model/{id}/unload`): the unload sits
+# beside the job whose models it frees. `models.py` and its callerless
+# `/models/unload-all` are untouched — that one evicts *everything*, which is
+# exactly what a scoping-aware unload must not do.
+# ---------------------------------------------------------------------------
+
+@router.get("/models")
+async def list_scoring_models():
+    """The four models scoring can load, each with a `loaded` flag and `vram_mb`.
+
+    Backs the page's *Unload models* button, which needs both halves: whether to
+    render at all, and how much it will free.
+    """
+    return [m for m in model_manager.list_models() if m["id"] in SCORING_MODEL_IDS]
+
+
+@router.post("/models/unload")
+async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
+    """Free every scoring model currently resident, and nothing else.
+
+    The resident set is read *before* the unloads so the response describes what
+    was actually freed. `model_manager.unload` is a no-op for an unregistered id
+    and takes the per-model lock, so calling it for all four is safe; no id comes
+    from the client, so there is nothing to validate.
+
+    **Refused while a scoring run is in flight.** `unload` calls `entry.model.cpu()`,
+    so pulling `dino` or an aesthetic model out from under a scorer running in the
+    executor thread is a device-mismatch `RuntimeError` and a failed job —
+    `ModelEntry.in_use` is never set, so nothing else stands in the way. The page's
+    own `isRunning` is not that guard: it knows only about a job *it* started, and
+    goes stale on a reload or in a second pane.
+
+    `quality_score` is the exact scope, not a blunt any-job check: it is the only
+    job type that loads anything in `SCORING_MODEL_IDS`. Style similarity reads
+    stored embeddings without loading `dino`, and detection loads sam2/sam3, which
+    this endpoint never touches.
+
+    Not `dataset_busy.ensure_not_busy` — that flag is dataset-scoped and the scoring
+    job never takes it, while VRAM residency is a property of the whole process.
+    """
+    running = (await db.execute(
+        select(BackgroundJob.id)
+        .where(
+            BackgroundJob.job_type == "quality_score",
+            BackgroundJob.status.in_(("pending", "running")),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    if running:
+        raise HTTPException(
+            409, "A scoring run is in progress. Try again when it finishes."
+        )
+
+    resident = [
+        m for m in model_manager.list_models()
+        if m["id"] in SCORING_MODEL_IDS and m["loaded"]
+    ]
+    for mid in SCORING_MODEL_IDS:
+        await model_manager.unload(mid)
+    return {
+        "unloaded": [m["id"] for m in resident],
+        "freed_mb": sum(int(m["vram_mb"]) for m in resident),
+    }
 
 
 async def _flag_duplicates(job_id: str, dataset_id: str, duplicate_threshold: int) -> None:

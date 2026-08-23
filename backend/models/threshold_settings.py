@@ -18,6 +18,7 @@ class ThresholdSettings(Base):
     sam3_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.5")
     versioning_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default="off")
     auto_rescan_on_open: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    auto_unload_after_scoring: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
 

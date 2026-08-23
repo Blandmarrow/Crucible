@@ -798,8 +798,17 @@ class ModelManager:
         detection's model list is static frontend copy that reads nothing from here.
         Do not generalise this to a multi-valued capability set: there is no second
         reader to justify one.
+
+        `vram_mb` is the literal below — a *forecast* — until the model is resident,
+        and the loader's own `ModelEntry.vram_mb` once it is. That second figure is
+        `max(literal, measured delta)`, so the swap only ever revises a number
+        upward: a picker quoting the cost of a load is never understated, while
+        `POST /quality/models/unload`'s `freed_mb` reports what the process actually
+        held rather than what the table guessed it would.
         """
-        loaded = set(self._registry.keys())
+        with self._sync_lock:
+            entries = dict(self._registry)
+        loaded = set(entries)
         all_models = [
             {"id": "florence2_large", "name": "Florence-2-large", "vram_mb": 5500,
              "kind": "caption",
@@ -838,7 +847,14 @@ class ModelManager:
              "kind": "embed",
              "description": "sentence-transformers/all-MiniLM-L6-v2 · text-only; embeds the tag vocabulary for tag consolidation"},
         ]
-        return [{**m, "loaded": m["id"] in loaded} for m in all_models]
+        return [
+            {
+                **m,
+                "loaded": m["id"] in loaded,
+                **({"vram_mb": entries[m["id"]].vram_mb} if m["id"] in loaded else {}),
+            }
+            for m in all_models
+        ]
 
 
 model_manager = ModelManager()

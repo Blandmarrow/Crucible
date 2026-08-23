@@ -39,6 +39,13 @@ interface QualityWorkflow {
   dinoLayer: number | "all" | null;
 }
 
+/** The loader's own VRAM figure, rendered the way the captioning model list
+ *  renders it. Local rather than shared: it is one line, and the figure is an
+ *  estimate the button only has to make legible. */
+function formatVram(mb: number): string {
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
 /** Rank a duplicate group best-first for *Keep best*, nulls **last**.
  *
  *  The naive `(b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0)` sorts an
@@ -349,7 +356,14 @@ export default function QualityPage() {
   }, [datasetId]);
 
   useEffect(() => {
-    if (jobProgress?.status === "completed") {
+    const status = jobProgress?.status;
+    if (status !== "completed" && status !== "failed" && status !== "cancelled") return;
+    // Residency is re-read on *every* terminal status, not just success: the
+    // auto-unload lives in the job's `finally`, so cancelled and failed runs are
+    // precisely the cases it exists for. Only a completed run changed rows, so
+    // the dataset-data invalidations below stay inside that branch.
+    qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    if (status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["duplicates", datasetId] });
       qc.invalidateQueries({ queryKey: ["aesthetic-coverage", datasetId] });
@@ -433,6 +447,37 @@ export default function QualityPage() {
       else toast(data.message ?? "No images matched");
     },
     onError: () => toast.error("Failed to start scoring"),
+  });
+
+  // Which scoring models are resident right now. Global rather than
+  // dataset-scoped — VRAM residency is a property of the process — and short
+  // `staleTime` because a run on the other side of the app changes it.
+  const { data: scoringModels } = useQuery({
+    queryKey: ["quality", "models"],
+    queryFn: qualityApi.listModels,
+    staleTime: 10_000,
+  });
+  const loadedModels = scoringModels?.filter((m) => m.loaded) ?? [];
+  const loadedVramMb = loadedModels.reduce((sum, m) => sum + m.vram_mb, 0);
+
+  const unloadMutation = useMutation({
+    mutationFn: qualityApi.unloadModels,
+    onSuccess: (data) => {
+      toast.success(
+        data.unloaded.length
+          ? `Freed ${formatVram(data.freed_mb)} of VRAM`
+          : "No scoring models were loaded",
+      );
+      qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    },
+    // The server's 409 names the run holding the models — surface it verbatim,
+    // since this button is reachable with a stale `isRunning` (a reload, or a
+    // second pane, whose `activeJobId` never saw the run start). Re-read
+    // residency either way: a refused unload means the list is stale too.
+    onError: (e) => {
+      toast.error(apiErrorDetail(e, "Failed to unload models"));
+      qc.invalidateQueries({ queryKey: ["quality", "models"] });
+    },
   });
 
   // One mutation for both paths: a single-group resolve is a plan of one. It
@@ -697,6 +742,21 @@ export default function QualityPage() {
           <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">
             Reset to defaults
           </button>
+          {loadedModels.length > 0 && (
+            <button
+              className="btn ghost sm"
+              // Disabled while a run is in flight: nothing but the single-worker
+              // job queue stands between an unload and a scorer mid-batch
+              // (`ModelEntry.in_use` is never set).
+              disabled={isRunning || unloadMutation.isPending}
+              onClick={() => unloadMutation.mutate()}
+              title={`Free VRAM held by: ${loadedModels.map((m) => m.name).join(", ")}`}
+            >
+              {unloadMutation.isPending
+                ? "Unloading…"
+                : `Unload models · ${formatVram(loadedVramMb)}`}
+            </button>
+          )}
           {subfolders.some((sf) => sf.path) && (
             <select
               className="select"

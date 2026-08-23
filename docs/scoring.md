@@ -27,6 +27,12 @@ so those do add to the total.
 
 A **subfolder** dropdown in the page header (shown only when subfolders exist) scopes the run, so you can score one subset at a time without touching the rest of the dataset. An optional **job label** field names the run in the queue and in [Logs](workspace.md#logs).
 
+### VRAM after a run
+
+When a run finishes, the models it loaded are unloaded and their VRAM is returned — including when the run is cancelled or fails partway. Only the scoring models go: a captioning or detection model you loaded for other work stays where it is.
+
+Turn this off in **Settings → Quality Thresholds → Unload scoring models when a run finishes** if you re-score repeatedly and would rather keep the models warm than pay the reload each time. With it off, an **Unload models · N GB** button appears in the Score images panel header whenever a scoring model is resident; it names how much it will free, and disappears once it has. The button is also how you free the models left behind by uploading reference images for style similarity, and how you clean up after a cancelled run. It is disabled while a run is going, and refuses with *A scoring run is in progress* if you reach it anyway — from a second pane, say, or a tab opened after the run started. Pulling a model out from under a running scorer would fail the run.
+
 Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers write vectors that the style-similarity workflow consumes afterwards. Run them first, or nothing will be there to compare against.
 
 ## What each scorer produces

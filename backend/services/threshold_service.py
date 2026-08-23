@@ -15,6 +15,7 @@ DEFAULTS = dict(
     sam3_threshold=0.5,
     versioning_mode="off",
     auto_rescan_on_open=False,
+    auto_unload_after_scoring=True,
     comfyui_url="",
     comfy_workflow_dir="",
     # Secrets: "" means "no DB override, inherit the .env/OS-env value". These belong in

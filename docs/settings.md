@@ -53,6 +53,10 @@ Configurable number inputs (require Save; changes apply to the next scoring or d
 | DINO box confidence | Grounding DINO minimum confidence before passing a box to SAM2 (default 0.35) |
 | SAM 3 confidence | SAM 3 minimum instance confidence for a segmentation mask to be kept (default 0.5) |
 
+One checkbox below them, saved by the same **Save** button as the thresholds above it:
+
+- **Unload scoring models when a run finishes** (default on) — free the VRAM held by the aesthetic, DINOv2 and NSFW models as soon as a scoring run ends, cancels or fails. Only the models that run loaded are freed. Turn it off to re-score repeatedly without paying the reload; the Score images page then offers an *Unload models* button instead. See [Quality Scoring](scoring.md#vram-after-a-run).
+
 ## Versioning
 
 Version control mode (Off / Manual / Auto; see [Dataset Versioning](versioning.md)) plus branch snapshot behavior. Requires Save for the version control mode.

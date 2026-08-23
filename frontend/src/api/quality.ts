@@ -71,6 +71,20 @@ export interface StyleDistribution {
   run: StyleRunDescriptor | null;
 }
 
+/** One entry of `GET /quality/models` — a model `POST /quality/score` can load.
+ *
+ *  The shape `model_manager.list_models()` returns, filtered to the four scoring
+ *  ids server-side. `vram_mb` is the loader's own figure, so the button can name
+ *  what it will free before freeing it. */
+export interface ScoringModel {
+  id: string;
+  name: string;
+  vram_mb: number;
+  kind: string;
+  description: string;
+  loaded: boolean;
+}
+
 export const qualityApi = {
   score: (params: {
     dataset_id: string;
@@ -137,6 +151,18 @@ export const qualityApi = {
     dino_layer?: number;
   }) =>
     client.post<{ updated: number; skipped: number }>("/quality/style-similarity", params).then((r) => r.data),
+
+  /** The four models scoring can load, each with a `loaded` flag. Global, not
+   *  dataset-scoped — VRAM residency is a property of the process. */
+  listModels: () => client.get<ScoringModel[]>("/quality/models").then((r) => r.data),
+
+  /** Free every resident scoring model, and nothing else — a captioning or
+   *  detection model loaded for other work survives. `freed_mb` sums the
+   *  `vram_mb` of what was resident when the call arrived. */
+  unloadModels: () =>
+    client
+      .post<{ unloaded: string[]; freed_mb: number }>("/quality/models/unload")
+      .then((r) => r.data),
 
   /** The dataset's style-score distribution plus its run descriptor. An unknown
    *  dataset returns an empty payload rather than 404 — the caller is a gallery

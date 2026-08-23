@@ -281,6 +281,41 @@ staleness sweep while still recording the seam.
   Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
   `docs/labels.md` matches the same grep.
 
+## docs/scoring.md
+
+- **Moves:** § Style similarity (827 words — the largest section by two-thirds) with both
+  its subsections, ### Style similarity modes and ### Reading the score
+- **New file:** docs/style-similarity.md (mirrors docs/dev/image-similarity.md's own
+  recorded seam, whose new half is proposed under the same name)
+- **Why here:** this is the *second* seam the earlier `docs/scoring.md` →
+  `docs/duplicates.md` split left behind, promoted from the epilogue note below into a
+  real entry now that the file is over budget again at 2,698 words. It is the same seam
+  that note named and it has only got more true since: style similarity is a separate
+  CPU-only workflow with its own concepts — cosines against reference images, an embedding
+  mode choice, and a percentile that exists because the raw number is not comparable
+  across models. A user arrives there having already decided to compare *style*, not to
+  score quality. What stays is one workflow end to end: running a scoring run, what each
+  scorer produces, choosing the aesthetic model, the flags those scores set, and when they
+  go stale. The seam leaves ~1,870 and ~830 out of 2,698 — the staying half is over the
+  ~1,500 target, and its own next seam is § Quality flags + § Stale scores together (482
+  words), which are about *reading* scores where everything above them is about producing
+  them.
+- **Watch for:** the section moving owns two anchors that are linked from four places —
+  `scoring.md#reading-the-score` from `docs/gallery.md` (the card meter) and
+  `docs/settings.md` (the meter toggle), and the § Style similarity heading itself from
+  `docs/editing.md`. Those are user-doc markdown links, so they FAIL the checker rather
+  than warning, unlike the `§`-level dev-doc pointers. Anchors that stay behind:
+  `scoring.md#stale-scores` (from `docs/export.md`), `scoring.md#quality-flags` (from
+  `docs/captioning.md`), `scoring.md#vram-after-a-run` (from `docs/settings.md`), and
+  `scoring.md#choosing-the-aesthetic-model`, which has three inbound links —
+  `docs/export.md`, `docs/duplicates.md` and `docs/statistics.md`. A new file needs its own
+  README Docs-table row and a `docs/features.md` row, not prose; README links
+  `docs/scoring.md` three times and all three describe the whole scoring workflow, so
+  check each for whether style deserves its own mention rather than repointing by reflex.
+  `docs/duplicates.md` opens by pointing at this page for duplicate *detection* and stays
+  put. Do **not** take the branch's own `### VRAM after a run` as the seam: it is six lines
+  and belongs exactly where it is, under § Running a scoring run.
+
 ## docs/gallery.md
 
 - **Moves:** § Datasets (436 words) and § Getting images in (696)

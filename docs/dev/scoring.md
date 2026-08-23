@@ -66,6 +66,29 @@ Two surfaces, two mechanisms, deliberately not shared:
 
 **The re-score offer takes a scoping flag, not an id round-trip.** `ScoreRequest.only_mismatched` adds `Image.aesthetic_score.isnot(None), Image.aesthetic_model.isnot(body.aesthetic_model)` to the selection query, so it composes with `subfolder` like every other scope and the selection stays atomic with the run. It deliberately excludes never-scored rows: plain *Run scoring* already covers those, and two buttons with two literal meanings beat one with a mode.
 
+## The model lifecycle
+
+A scoring run loads up to four models, and it frees them when it ends. `SCORING_MODEL_IDS` in `backend/routers/quality.py` is the one definition of which four — `("aesthetic", "aesthetic_v2_5", "dino", "nsfw")` — and the job's auto-unload, the unload endpoint and the page's button all read it, so none of the three can drift from the others. It is a literal rather than a `kind`-based filter over `model_manager.list_models()` on purpose: `kind == "embed"` also matches `tag_embedder`, which scoring never loads and tag consolidation would then have to reload.
+
+The job's `_run` collects ids into `loaded_ids` **beside each loader call** — the same discipline `aesthetic_marker` follows two lines above the first of them — so what is unloaded is provably what was loaded, rather than a second read of `body.run_*` that could disagree with the branch actually taken. Six loader calls feed four ids; the three `load_aesthetic` sites (aesthetic, watermark, embeddings) all add `"aesthetic"`, which is the same shared CLIP backbone the user doc's cost table describes.
+
+The unload itself sits in a `finally` around the whole body, not in a tail statement, for three reasons: a run cancelled through `raise_if_cancelled` should free VRAM too; a scorer that raises should not strand 3.5 GB; and the DB `commit()` is already past by then, so it is the post-commit epilogue CLAUDE.md's PM-013 rule asks for — it logs its own exception and can never change the job's outcome. Awaiting inside that `finally` is safe because cancellation here is **cooperative**: `raise_if_cancelled` raises `asyncio.CancelledError` by hand and the task is never `.cancel()`ed (`backend/workers/job_queue.py`). It is scoped to `loaded_ids` and never calls `evict_all()` — a Florence-2 or SAM2 loaded for other work is not this job's to evict.
+
+`thresholds.auto_unload_after_scoring` gates it, default on. `POST /quality/embed-references` is deliberately left alone: it is a synchronous request-path load with no job to hang an epilogue on, and the button below covers it.
+
+Two endpoints back the button, both on the quality router rather than in `routers/models.py` — the captioning precedent, where `DELETE /captioning/model/{id}/unload` sits beside the job whose models it frees:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /quality/models` | `list_models()` filtered to `SCORING_MODEL_IDS`, each carrying the registry's `loaded` flag and `vram_mb` — the button needs both halves, whether to render and what it will free. `vram_mb` is the registry's forecast until a model is resident and its measured `ModelEntry.vram_mb` once it is, so `freed_mb` reports what the process held rather than what the table guessed. |
+| `POST /quality/models/unload` | `{"unloaded": [ids that were resident], "freed_mb": int}`, or **409** while a `quality_score` job is pending or running. The resident set is read *before* the unloads, so the response describes what actually went. |
+
+`model_manager.unload` is a no-op for an unregistered id and takes the per-model lock, so asking for all four unconditionally is safe, and no id comes from the client so there is nothing to validate. The 409 guard queries `BackgroundJob` for a pending-or-running **`quality_score`** and nothing else — that is the only job type loading anything in `SCORING_MODEL_IDS`, since style similarity reads stored embeddings without loading `dino` and detection loads sam2/sam3. `dataset_busy.ensure_not_busy` is the wrong tool here and not merely unused: it is dataset-scoped and the scoring job never takes the flag, while VRAM residency is a property of the whole process. `POST /models/unload-all` still exists and still has no callers — it evicts *everything*, which is precisely what a scoped unload must not do.
+
+On the frontend, `QualityPage` holds a `["quality", "models"]` query (global, not dataset-scoped — residency is a property of the process) and renders *Unload models · N GB* beside *Reset to defaults* only when something is resident. It is disabled while a run is in flight, and the endpoint **refuses with a 409** independently of that: `unload` calls `entry.model.cpu()`, and `ModelEntry.in_use` is never set, so nothing but the single-worker job queue stands between an unload and a scorer mid-batch — a device mismatch that fails the run. The client-side `isRunning` cannot be that guard on its own, because it knows only about a job *this page instance* started and goes stale on a reload or in a second pane; `onError` surfaces the server's `detail` through `apiErrorDetail`. The terminal-status effect invalidates the same key on **completed, failed and cancelled** alike — not just success, since the auto-unload lives in a `finally` and those are the two cases it exists for — so after an auto-unload run the button removes itself.
+
+`backend/tests/test_quality_model_unload.py` covers all of it, including the job's `finally` on both the success and the raising path — it stubs `backend/ml/aesthetic_scorer` into `sys.modules` (that module imports torch at *its* top, and `_run` imports it unconditionally) and monkeypatches `model_manager`, so it runs torch-free in CI.
+
 ## Flag thresholds
 
 Flag thresholds:

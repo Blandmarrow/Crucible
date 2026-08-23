@@ -157,7 +157,7 @@ fix). One case each of the second shape in
 upscale and the crop+upscale replace worker.
 
 See `docs/dev/video-reextract.md` § The `video_reextract` job and § The extension change,
-and `docs/dev/ml-models.md` § Upscaling and § LUT grading.
+and `docs/dev/image-processing-models.md` § Upscaling and § LUT grading.
 
 ### Status & date
 

@@ -32,6 +32,7 @@ class ThresholdsOut(BaseModel):
     sam3_threshold: float
     versioning_mode: str = "off"
     auto_rescan_on_open: bool = False
+    auto_unload_after_scoring: bool = True
     comfyui_url: str = ""
     comfy_workflow_dir: str = ""
 
@@ -49,6 +50,7 @@ class ThresholdsUpdate(BaseModel):
     sam3_threshold: float | None = Field(default=None, gt=0, le=1.0)
     versioning_mode: str | None = Field(default=None)
     auto_rescan_on_open: bool | None = Field(default=None)
+    auto_unload_after_scoring: bool | None = Field(default=None)
     comfyui_url: str | None = Field(default=None, max_length=500)
     comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
 

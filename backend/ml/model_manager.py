@@ -9,6 +9,32 @@ from backend.ml import device as _device
 logger = logging.getLogger(__name__)
 
 
+def _release_to_cpu(model: Any) -> None:
+    """Move a registry entry's weights off the accelerator before it is dropped.
+
+    Two loaders store `ModelEntry.model` as a **dict** of tenants — `aesthetic`'s
+    `{"clip", "mlp", "preprocess"}` and `nsfw`'s `{"model", "processor",
+    "nsfw_idx"}` — so a bare `entry.model.cpu()` raises `AttributeError` on the
+    dict, and under the surrounding `except Exception: pass` leaves several GB
+    resident. Freeing then rests entirely on the last reference dying before
+    `_device.empty_cache()` runs, which no unload can guarantee: the scoring job
+    binds a second reference to `aesthetic`'s dict and still holds it while its
+    own `finally` runs the auto-unload, so the weights outlived the cache flush
+    and the process kept ~3.5 GB until exit.
+
+    Walking the dict's values is the fix that does not depend on refcounts. Each
+    tenant is tried independently, because a dict entry mixes weights with things
+    that have no `.cpu()` — `preprocess` is a transform, `nsfw_idx` an int — and
+    one of those must not stop the real weights from moving.
+    """
+    tenants = list(model.values()) if isinstance(model, dict) else [model]
+    for obj in tenants:
+        try:
+            obj.cpu()
+        except Exception:
+            pass
+
+
 class ModelEntry:
     def __init__(self, model: Any, processor: Any, vram_mb: int) -> None:
         self.model = model
@@ -47,10 +73,7 @@ class ModelManager:
             while self._used_vram() + needed_mb > self.max_vram_mb and candidates:
                 mid, entry = candidates.pop(0)
                 logger.info("Evicting model %s from VRAM", mid)
-                try:
-                    entry.model.cpu()
-                except Exception:
-                    pass
+                _release_to_cpu(entry.model)
                 del entry.model
                 del entry.processor
                 del self._registry[mid]
@@ -520,10 +543,10 @@ class ModelManager:
 
         vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
         vram_used = max(2000, (vram_after - vram_before) // (1024 * 1024))
-        # The **plain** entry shape, not `aesthetic`'s dict: `_evict_lru` and
-        # `unload` call `entry.model.cpu()`, which on a dict-shaped entry raises
-        # into a bare `except` and leaks the weights. Nothing else here needs the
-        # backbone, so there is no reason to repeat that.
+        # The **plain** entry shape, not `aesthetic`'s dict. `_evict_lru` and
+        # `unload` now go through `_release_to_cpu`, which walks a dict's tenants
+        # rather than raising on it, so the dict shape no longer leaks — but it
+        # still buys nothing here, since nothing else needs the backbone.
         return ModelEntry(model, processor, vram_mb=vram_used)
 
     async def load_dino(
@@ -718,10 +741,7 @@ class ModelManager:
                 if model_id not in self._registry:
                     return
                 entry = self._registry.pop(model_id)
-            try:
-                entry.model.cpu()
-            except Exception:
-                pass
+            _release_to_cpu(entry.model)
             del entry.model
             del entry.processor
             _device.empty_cache()

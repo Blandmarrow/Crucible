@@ -388,6 +388,18 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             # someone loaded for other work is not this job's to evict.
             if thresholds.auto_unload_after_scoring and loaded_ids:
                 try:
+                    # Drop this frame's own references *first*. `unload` moves the
+                    # weights to CPU and then flushes the allocator, but the flush
+                    # only returns what nothing still holds — and these four names
+                    # are live locals right here in the `finally`, one of them
+                    # (`handle`) a second reference to `aesthetic`'s three-tenant
+                    # dict. Left bound, they kept ~3.5 GB resident past
+                    # `empty_cache()`; the frame then died with no second flush to
+                    # follow, so the process held the VRAM until it exited.
+                    # `_release_to_cpu` alone would fix the residency, but the
+                    # allocator still cannot hand back a live buffer, so both ends
+                    # are needed.
+                    entry = handle = dino_entry = nsfw_entry = None
                     for mid in sorted(loaded_ids):
                         await model_manager.unload(mid)
                 except Exception:

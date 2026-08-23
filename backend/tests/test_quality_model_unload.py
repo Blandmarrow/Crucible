@@ -16,7 +16,8 @@ import types
 
 import pytest
 
-from backend.ml.model_manager import model_manager
+from backend.ml import device as _device
+from backend.ml.model_manager import ModelEntry, model_manager
 from backend.models import Image
 from backend.routers.quality import SCORING_MODEL_IDS
 from backend.services.threshold_service import DEFAULTS
@@ -138,6 +139,71 @@ def test_setting_round_trips(tmp_path):
             assert r.json()["auto_unload_after_scoring"] is True
 
     run(scenario())
+
+
+# --- Getting the weights off the GPU ----------------------------------------
+#
+# The tests above assert that `unload` is *called* with the right ids; these
+# assert that the call frees something. That gap is where the original bug lived:
+# `unload` did a bare `entry.model.cpu()`, which raises `AttributeError` on the
+# two dict-shaped entries (`aesthetic`, `nsfw`) straight into a swallowing
+# `except`, so the weights never left the GPU and every id-level assertion still
+# passed.
+
+
+class _FakeWeights:
+    """Stands in for a torch module: the only thing under test is whether the
+    unload path reaches it."""
+
+    def __init__(self) -> None:
+        self.on_cpu = False
+
+    def cpu(self):
+        self.on_cpu = True
+        return self
+
+
+def _register(monkeypatch, model_id: str, model) -> ModelEntry:
+    """Put an entry in the real registry and guarantee it leaves again.
+
+    `_device.empty_cache` is stubbed for the same reason the rest of this module
+    stubs the scorers: it imports torch, which CI does not have."""
+    monkeypatch.setattr(_device, "empty_cache", lambda: None)
+    entry = ModelEntry(model, None, vram_mb=3500)
+    model_manager._registry[model_id] = entry
+    return entry
+
+
+def test_unload_moves_every_tenant_of_a_dict_entry_off_the_gpu(monkeypatch):
+    """`aesthetic`'s `{"clip", "mlp", "preprocess"}` and `nsfw`'s
+    `{"model", "processor", "nsfw_idx"}` are dicts, not modules.
+
+    `preprocess` sits between the two sets of weights on purpose: it is a
+    transform with no `.cpu()`, so a loop that let one tenant's failure abort it
+    would move `clip` and leave `mlp` resident."""
+    clip, mlp = _FakeWeights(), _FakeWeights()
+    _register(monkeypatch, "aesthetic", {"clip": clip, "preprocess": object(), "mlp": mlp})
+    try:
+        run(model_manager.unload("aesthetic"))
+    finally:
+        model_manager._registry.pop("aesthetic", None)
+
+    assert clip.on_cpu, "CLIP backbone was left on the GPU"
+    assert mlp.on_cpu, "a tenant with no .cpu() stopped the loop"
+    assert "aesthetic" not in model_manager._registry
+
+
+def test_unload_still_moves_a_plain_entry_off_the_gpu(monkeypatch):
+    """The other entry shape — `dino`, the captioners — must not regress."""
+    model = _FakeWeights()
+    _register(monkeypatch, "dino", model)
+    try:
+        run(model_manager.unload("dino"))
+    finally:
+        model_manager._registry.pop("dino", None)
+
+    assert model.on_cpu
+    assert "dino" not in model_manager._registry
 
 
 # --- Auto-unload at the end of a run ----------------------------------------
@@ -269,3 +335,55 @@ def test_a_failing_scorer_still_frees_vram(tmp_path, monkeypatch):
 
     run(scenario())
     assert unloaded == ["aesthetic"]
+
+
+def test_the_job_leaves_no_weights_on_the_gpu(tmp_path, monkeypatch):
+    """The whole feature, end to end, with the **real** `unload`.
+
+    Every other job-level test here stubs `unload` and asserts on the id it was
+    handed, which is why the shipped bug survived them: the ids were right and
+    nothing was freed. This one registers a dict-shaped entry the way
+    `load_aesthetic` does and asserts the tenants came back off the GPU.
+
+    It covers the `_release_to_cpu` half of the fix. The other half — `_run`
+    clearing its own `handle`/`entry` locals before awaiting the unload, so the
+    allocator flush has nothing live to skip — is not observable once the job's
+    frame is gone, and is belt-and-braces anyway: weights already moved to the CPU
+    are off the GPU whoever still holds a reference to them.
+    """
+    _install_scorer_stub(monkeypatch, [6.25])
+    monkeypatch.setattr(_device, "empty_cache", lambda: None)
+
+    clip, mlp = _FakeWeights(), _FakeWeights()
+    tenants = {"clip": clip, "preprocess": object(), "mlp": mlp}
+
+    async def fake_load_aesthetic(job_id=None, loop=None, dataset_id=None):
+        entry = ModelEntry(tenants, None, vram_mb=3500)
+        model_manager._registry["aesthetic"] = entry
+        return entry
+
+    monkeypatch.setattr(model_manager, "load_aesthetic", fake_load_aesthetic)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            dataset_id = await _seed_one_image(env)
+            r = await env.client.post(
+                f"{API}/quality/score",
+                json={
+                    "dataset_id": dataset_id,
+                    "run_aesthetic": True,
+                    "run_technical": False,
+                },
+            )
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+
+    try:
+        run(scenario())
+    finally:
+        model_manager._registry.pop("aesthetic", None)
+
+    assert clip.on_cpu, "the run finished with the CLIP backbone still in VRAM"
+    assert mlp.on_cpu, "the run finished with the aesthetic MLP still in VRAM"
+    assert "aesthetic" not in model_manager._registry

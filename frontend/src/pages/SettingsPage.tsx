@@ -1145,23 +1145,34 @@ export default function SettingsPage() {
                       placeholder="e.g. gpt-4o-mini or llava:latest"
                     />
                   </div>
+                  {/* Typed, not a slider, for the same reason as Max tokens below:
+                      a range input cannot express "no upper bound", and its old
+                      max={2048} was itself the ceiling — a provider happy to take a
+                      4K frame could not be told to. Encoding only downscales, so a
+                      value above the image's long edge just sends it untouched. */}
                   <div className="form-row" style={{ gap: 8 }}>
-                    <label style={{ fontSize: 12.5, minWidth: 120 }}>Max image size</label>
+                    <div style={{ minWidth: 120 }}>
+                      <label style={{ fontSize: 12.5 }}>Max image size</label>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Long edge the image is JPEG-encoded to before being sent. There is no upper limit — set whatever the provider accepts. Minimum 128.</p>
+                    </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        type="range" min={256} max={2048} step={128}
-                        value={providerForm.max_image_px}
-                        onChange={(e) => setProviderForm((f) => ({ ...f, max_image_px: parseInt(e.target.value) }))}
+                      <NumberField
+                        className="input"
+                        min={128}
+                        value={providerForm.max_image_px ?? 1024}
+                        clamp={(n) => Math.min(2 ** 31 - 1, Math.max(128, Math.round(n)))}
+                        onCommit={(n) => setProviderForm((f) => ({ ...f, max_image_px: n }))}
                         style={{ width: 140 }}
                       />
-                      <span className="mono" style={{ fontSize: 12, minWidth: 60 }}>{providerForm.max_image_px}px</span>
+                      <span className="mono" style={{ fontSize: 12, color: "var(--fg-mute)" }}>px</span>
                     </div>
                   </div>
                   {/* Typed, not a slider: a range input cannot express "no upper
                       bound", and its old max={16384} was itself the ceiling
                       reasoning models hit. NumberField holds the raw string as a
                       draft and clamps on blur, so typing a long number is not
-                      rewritten keystroke by keystroke. */}
+                      rewritten keystroke by keystroke — which is why Max image
+                      size above is typed too. */}
                   <div className="form-row" style={{ gap: 8 }}>
                     <div style={{ minWidth: 120 }}>
                       <label style={{ fontSize: 12.5 }}>Max tokens</label>

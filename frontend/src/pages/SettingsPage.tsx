@@ -21,6 +21,7 @@ import GalleryCheckbox from "../components/gallery/GalleryCheckbox";
 import { clearPersisted } from "../utils/persistentState";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
+import NumberField from "../components/common/NumberField";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
@@ -313,7 +314,7 @@ export default function SettingsPage() {
     !!captioningModels && !!captionDefaultModel && !modelOpts.some((o) => o.id === captionDefaultModel);
   const resolvedDefaultModel = staleDefaultModel ? "" : captionDefaultModel;
 
-  const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
+  const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300 });
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [deletingProvider, setDeletingProvider] = useState<ProviderOut | null>(null);
@@ -336,13 +337,13 @@ export default function SettingsPage() {
   });
 
   function openAddProvider() {
-    setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048 });
+    setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300 });
     setEditingProviderId(null);
     setShowProviderForm(true);
   }
 
   function openEditProvider(p: ProviderOut) {
-    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens });
+    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens, timeout_s: p.timeout_s });
     setEditingProviderId(p.id);
     setShowProviderForm(true);
   }
@@ -357,6 +358,7 @@ export default function SettingsPage() {
         default_model: providerForm.default_model,
         max_image_px: providerForm.max_image_px,
         max_tokens: providerForm.max_tokens,
+        timeout_s: providerForm.timeout_s,
       }});
     } else {
       createProviderMutation.mutate(providerForm);
@@ -1155,19 +1157,42 @@ export default function SettingsPage() {
                       <span className="mono" style={{ fontSize: 12, minWidth: 60 }}>{providerForm.max_image_px}px</span>
                     </div>
                   </div>
+                  {/* Typed, not a slider: a range input cannot express "no upper
+                      bound", and its old max={16384} was itself the ceiling
+                      reasoning models hit. NumberField holds the raw string as a
+                      draft and clamps on blur, so typing a long number is not
+                      rewritten keystroke by keystroke. */}
                   <div className="form-row" style={{ gap: 8 }}>
                     <div style={{ minWidth: 120 }}>
                       <label style={{ fontSize: 12.5 }}>Max tokens</label>
-                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Increase for reasoning models (Gemma 4, QwQ, DeepSeek-R1) which use extra tokens for thinking.</p>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Increase for reasoning models (Gemma 4, QwQ, DeepSeek-R1) which use extra tokens for thinking. There is no upper limit — set whatever the model allows.</p>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        type="range" min={256} max={16384} step={256}
+                      <NumberField
+                        className="input"
+                        min={1}
                         value={providerForm.max_tokens ?? 2048}
-                        onChange={(e) => setProviderForm((f) => ({ ...f, max_tokens: parseInt(e.target.value) }))}
+                        clamp={(n) => Math.min(2 ** 31 - 1, Math.max(1, Math.round(n)))}
+                        onCommit={(n) => setProviderForm((f) => ({ ...f, max_tokens: n }))}
                         style={{ width: 140 }}
                       />
-                      <span className="mono" style={{ fontSize: 12, minWidth: 48 }}>{providerForm.max_tokens ?? 2048}</span>
+                    </div>
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <div style={{ minWidth: 120 }}>
+                      <label style={{ fontSize: 12.5 }}>Timeout</label>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Seconds to wait for one response — one attempt, not a retried one. A slow local reasoning model on a large image can exceed the 300 s default. Also bounds <strong>Stop</strong>: a captioning run is only interrupted between images, so stopping waits out the request in flight. 10–3600.</p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <NumberField
+                        className="input"
+                        min={10} max={3600}
+                        value={providerForm.timeout_s ?? 300}
+                        clamp={(n) => Math.min(3600, Math.max(10, Math.round(n)))}
+                        onCommit={(n) => setProviderForm((f) => ({ ...f, timeout_s: n }))}
+                        style={{ width: 140 }}
+                      />
+                      <span className="mono" style={{ fontSize: 12, color: "var(--fg-mute)" }}>s</span>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>

@@ -8,6 +8,7 @@ export interface ProviderOut {
   default_model: string;
   max_image_px: number;
   max_tokens: number;
+  timeout_s: number;
   is_remote: boolean;
   created_at: string;
 }
@@ -19,6 +20,7 @@ export interface ProviderCreate {
   default_model?: string;
   max_image_px?: number;
   max_tokens?: number;
+  timeout_s?: number;
 }
 
 export interface ProviderUpdate {
@@ -28,6 +30,7 @@ export interface ProviderUpdate {
   default_model?: string;
   max_image_px?: number;
   max_tokens?: number;
+  timeout_s?: number;
 }
 
 export const providersApi = {

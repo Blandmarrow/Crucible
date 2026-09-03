@@ -15,8 +15,6 @@ from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_S = 120.0
-
 _SYSTEM = (
     "You generate image-generation prompts (for Stable Diffusion / ComfyUI). "
     "Return EXACTLY {count} prompts as a JSON array of strings — no markdown, no "
@@ -140,6 +138,7 @@ async def generate_prompts(
     existing: list[str] | None = None,
     temperature: float = 0.9,
     max_tokens: int = 2048,
+    timeout_s: float = 300.0,
 ) -> ParsedPrompts:
     """One chat-completion call → one batch of prompts. Raises on provider errors.
 
@@ -167,7 +166,10 @@ async def generate_prompts(
             f"composition:\n{joined}"
         )
 
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=_TIMEOUT_S)
+    # max_retries=0: the SDK default of 2 retries timeouts, making the configured
+    # timeout a silent 3x ceiling. Losing automatic 429/5xx backoff is acceptable —
+    # a failed generation surfaces its error and the user re-runs it.
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout_s, max_retries=0)
     kwargs = dict(
         model=model_name,
         # Thinking models (Qwen3, R1, o-series) spend most of the budget on

@@ -239,13 +239,23 @@ def test_jobs_list_and_missing(tmp_path):
 def test_providers_crud(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
+            # The numeric fields are asserted on the POST response *and* on the
+            # subsequent list: create_provider used to build the row from an
+            # explicit field list that omitted max_tokens, so the value came back
+            # correct on neither and only a follow-up PATCH made it stick.
             r = await env.client.post(f"{API}/providers/", json={
                 "name": "local", "base_url": "http://localhost:1234/v1",
+                "max_tokens": 65536, "timeout_s": 900,
             })
             assert r.status_code == 201, r.text
             pid = r.json()["id"]
+            assert r.json()["max_tokens"] == 65536
+            assert r.json()["timeout_s"] == 900
 
-            assert any(p["id"] == pid for p in (await env.client.get(f"{API}/providers/")).json())
+            listed = [p for p in (await env.client.get(f"{API}/providers/")).json() if p["id"] == pid]
+            assert len(listed) == 1
+            assert listed[0]["max_tokens"] == 65536
+            assert listed[0]["timeout_s"] == 900
 
             r = await env.client.patch(f"{API}/providers/{pid}", json={"default_model": "llava"})
             assert r.status_code == 200, r.text
@@ -253,6 +263,46 @@ def test_providers_crud(tmp_path):
 
             assert (await env.client.delete(f"{API}/providers/{pid}")).status_code == 204
             assert (await env.client.patch(f"{API}/providers/nope", json={"name": "x"})).status_code == 404
+
+    run(scenario())
+
+
+def test_provider_defaults_and_bounds(tmp_path):
+    """max_tokens's ceiling is only the SQLite bind's; timeout_s keeps a 10 s - 1 h bound."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            # Omitting both yields the defaults, not a validation error.
+            r = await env.client.post(f"{API}/providers/", json={
+                "name": "defaults", "base_url": "http://localhost:1234/v1",
+            })
+            assert r.status_code == 201, r.text
+            assert r.json()["max_tokens"] == 2048
+            assert r.json()["timeout_s"] == 300
+
+            # Formerly rejected by le=32768.
+            r = await env.client.post(f"{API}/providers/", json={
+                "name": "huge", "base_url": "http://localhost:1234/v1", "max_tokens": 200000,
+            })
+            assert r.status_code == 201, r.text
+            assert r.json()["max_tokens"] == 200000
+
+            for body, label in [
+                ({"name": "zero", "base_url": "http://x/v1", "max_tokens": 0}, "max_tokens=0"),
+                # Not a model limit: without the le the bind raises OverflowError on
+                # commit and the request 500s instead of 422ing.
+                ({"name": "absurd", "base_url": "http://x/v1", "max_tokens": 10**30}, "max_tokens=10**30"),
+                ({"name": "fast", "base_url": "http://x/v1", "timeout_s": 5}, "timeout_s=5"),
+                ({"name": "slow", "base_url": "http://x/v1", "timeout_s": 7200}, "timeout_s=7200"),
+            ]:
+                r = await env.client.post(f"{API}/providers/", json=body)
+                assert r.status_code == 422, f"{label} should be rejected: {r.text}"
+
+            # The same bounds hold on PATCH.
+            pid = (await env.client.get(f"{API}/providers/")).json()[0]["id"]
+            assert (await env.client.patch(f"{API}/providers/{pid}", json={"timeout_s": 5})).status_code == 422
+            r = await env.client.patch(f"{API}/providers/{pid}", json={"timeout_s": 3600})
+            assert r.status_code == 200, r.text
+            assert r.json()["timeout_s"] == 3600
 
     run(scenario())
 

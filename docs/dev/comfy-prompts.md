@@ -67,7 +67,8 @@ set from the plan's existing prompts *and* everything generated this run (the ol
 deduped only against the textarea); `use_existing_context` now controls only what the LLM is
 *shown*. Same call cap as before (`max(12, ceil(to_generate/batch) × 3)`). Rows commit per
 batch via `_next_sort_order`, then progress is emitted — plus one emit **before** the first LLM
-call, which can take 120 s and is the first event carrying `plan_id` (and `requested`), which
+call, which can take up to the provider's `timeout_s` (default 300 s) and is the first event
+carrying `plan_id` (and `requested`), which
 TopBar's invalidation depends on. `total_items` is set to `created` at the end, since the
 worker re-reads it and emits it as both `done` and `total`; the shortfall lives in
 `result_data` (`{created, requested, filtered, calls, stop_reason, plan_id}`).
@@ -89,9 +90,11 @@ without raising, when `generate_prompts` returns `[]` without raising on unparse
   iteration that reaches the target is a **completed** job, not a cancelled one, and reporting
   it as "stopped — N kept" would understate a run that did everything asked.
 - **A Stop waits out the batch in flight, and that batch is kept.** Cancellation is polled
-  between calls, so Stop can take until the provider returns (`_TIMEOUT_S = 120 s`) and the
-  prompts from that call are then committed. This is a decision, not a limitation: aborting the
-  call is possible (run `generate_prompts` as a task, cancel it on the flag — `AsyncOpenAI` is
+  between calls, so Stop can take until the provider returns (its `timeout_s`, default 300 s)
+  and the prompts from that call are then committed. That parenthesis is exactly true rather
+  than approximately so: the client is built with `max_retries=0`, overriding the SDK's
+  default of 2, which otherwise retries a timeout and makes the real bound 3 × `timeout_s`.
+  This is a decision, not a limitation: aborting the call is possible (run `generate_prompts` as a task, cancel it on the flag — `AsyncOpenAI` is
   httpx-based and drops the connection), and it was considered and **declined** in favour of
   never discarding a generation already paid for in GPU time. Don't re-open it without new
   evidence that the wait actually hurts; the UI covers the gap by saying so ("Stopping…", plus
@@ -127,7 +130,8 @@ queue prompts + textarea lines as diverge-from context); *Generate until N* = th
 - **Closing is never blocked.** ×/Cancel/backdrop all go through `handleClose`, which aborts an
   in-flight sync batch via `AbortController` (threaded into `comfyApi.generatePrompts` as
   `signal`) and closes. Gating close on the sync call — as this once did — locks the modal for
-  up to the provider's 120 s timeout with no escape and no cancel, which is worse than losing a
+  up to the provider's configured timeout (default 300 s) with no escape and no cancel, which is
+  worse than losing a
   batch the user chose to walk away from. An `axios.isCancel` error is a close, not a failure,
   so it is not toasted. *Generate until N* is unaffected: outliving this modal is its point.
 - `jobBusy` (job running or starting) drives the tooltips; `jobBlocks` adds the prompts query's

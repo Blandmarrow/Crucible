@@ -22,6 +22,25 @@ function duration(job: Job): string | null {
   return `${Math.round(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 }
 
+/** A job that lost items but still returned normally is marked `completed` with
+ *  `error_msg` unset, so the row would otherwise read as a clean success. Keyed on
+ *  the generic `failed_count` name that import jobs already write, so they light up
+ *  too. `result_data` is `Record<string, unknown>`, hence the narrowing here. */
+function partialFailure(job: Job): string | null {
+  const data = job.result_data;
+  if (!data) return null;
+  const failed = data.failed_count;
+  if (typeof failed !== "number" || failed <= 0) return null;
+  const summary = data.failure_summary;
+  return typeof summary === "string" && summary ? summary : `${failed} item${failed !== 1 ? "s" : ""} failed`;
+}
+
+function PartialFailureLine({ job }: { job: Job }) {
+  const text = partialFailure(job);
+  if (!text) return null;
+  return <div style={{ marginTop: 5, color: "var(--warn)", fontSize: 12 }}>{text}</div>;
+}
+
 function StatusBadge({ status }: { status: Job["status"] }) {
   const styles: Record<string, { color: string; label: string }> = {
     pending:   { color: "var(--fg-mute)",  label: "pending" },
@@ -169,6 +188,8 @@ function HistoryTab() {
                   {job.error_msg}
                 </div>
               )}
+
+              <PartialFailureLine job={job} />
             </div>
           ))}
         </div>

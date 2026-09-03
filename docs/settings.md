@@ -68,7 +68,8 @@ Add, edit, and delete OpenAI-compatible API provider configurations for use as c
 - Name and Base URL are required; API key is optional (leave blank for local servers)
 - Default model — selected from a hardcoded preset list for well-known cloud APIs (Gemini, Groq, OpenAI, Together.ai), or fetched live from local servers (LM Studio, llama.cpp) via a refresh button, or typed freely
 - Max image resolution (128–4096 px) — images are JPEG-encoded at this size before being sent
-- Max tokens — controls the length of generated captions (64–32768)
+- Max tokens — the response budget for one caption (minimum 1, no upper limit). Reasoning models spend most of it thinking before they write anything, so raise it freely for those
+- Timeout — seconds to wait for one response before giving up (10–3600, default 300). A slow local reasoning model on a large image can need more than the default. It is one attempt, not a retried one, so it is also how long **Stop** can take: a captioning run is only interrupted between images, so pressing Stop waits out the request already in flight. When the timeout is exceeded the images are recorded as failed, the Captioning page's amber badge names the provider and its timeout, and the job's row on the Logs page carries the same sentence as an amber line — which survives a page reload, so you can find out afterwards why a run came back short. The same value bounds the ComfyUI page's prompt generation
 
 ## ComfyUI
 

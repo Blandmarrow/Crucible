@@ -76,6 +76,7 @@ A global **Logs** page (sidebar nav item) with two tabs:
 - Lists up to 200 recent background jobs, newest first
 - Each row shows status badge (`pending` / `running` / `done` / `failed` / `cancelled`), label, dataset ID chip, relative timestamp (absolute on hover), duration, and item progress count
 - Failed jobs display their error message below the row in red
+- A job that finished but lost some of its items shows an amber line below the row saying how many, and why when the cause is known — a captioning run cut short by a provider timeout names the provider and its timeout, so you can act on it from [Settings → LLM Providers](settings.md). This is read from the stored job record, so it is still there after a reload or on a job you were not watching
 - Plain-text filter input to search by label, type, or dataset ID
 - **Refresh** button to re-fetch the list on demand
 - Finished jobs are kept for **30 days**, and the 500 most recent runs are always kept regardless of age. Older rows are cleaned up when the server starts, so job history does not grow without bound. Jobs still queued or running are never removed.

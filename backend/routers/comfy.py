@@ -887,6 +887,7 @@ async def generate_prompts_endpoint(body: GeneratePromptsRequest, db: AsyncSessi
             existing=body.existing,
             temperature=body.temperature,
             max_tokens=provider.max_tokens,
+            timeout_s=provider.timeout_s,
         )
     except Exception as e:
         raise HTTPException(502, f"Prompt generation failed: {e}")
@@ -1031,7 +1032,8 @@ async def generate_prompts_job(
                     "requested": total,
                 })
 
-            # Emitted BEFORE the first call, which can take 120 s: this is the
+            # Emitted BEFORE the first call, which can take the provider's whole
+            # configured timeout (default 300 s): this is the
             # first event carrying plan_id, and TopBar's invalidation needs it.
             await _emit(0, f"Generating prompts (0/{total})")
 
@@ -1052,6 +1054,7 @@ async def generate_prompts_job(
                         existing=context,
                         temperature=temperature,
                         max_tokens=prov.max_tokens,
+                        timeout_s=prov.timeout_s,
                     )
                 except Exception as e:
                     # Rows already committed are real. Discarding them because

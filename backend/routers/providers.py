@@ -21,13 +21,10 @@ async def create_provider(body: OpenAIProviderCreate, db: AsyncSession = Depends
     existing = await db.execute(select(OpenAIProvider).where(OpenAIProvider.name == body.name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail=f"Provider named '{body.name}' already exists")
-    row = OpenAIProvider(
-        name=body.name,
-        base_url=body.base_url,
-        api_key=body.api_key,
-        default_model=body.default_model,
-        max_image_px=body.max_image_px,
-    )
+    # Splatted, not an explicit field list: the old list omitted `max_tokens`, so a
+    # POST carrying one silently stored the default and needed a follow-up PATCH.
+    # OpenAIProviderCreate's fields map 1:1 onto the model's non-generated columns.
+    row = OpenAIProvider(**body.model_dump())
     db.add(row)
     await db.commit()
     await db.refresh(row)

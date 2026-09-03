@@ -20,7 +20,8 @@ class OpenAIProviderCreate(BaseModel):
     api_key: str = Field(default="", max_length=4096)
     default_model: str = Field(default="", max_length=255)
     max_image_px: int = Field(default=1024, ge=128, le=4096)
-    max_tokens: int = Field(default=2048, ge=64, le=32768)
+    max_tokens: int = Field(default=2048, ge=1)
+    timeout_s: int = Field(default=300, ge=10, le=3600)
 
     @field_validator("base_url")
     @classmethod
@@ -34,7 +35,8 @@ class OpenAIProviderUpdate(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     default_model: str | None = Field(default=None, max_length=255)
     max_image_px: int | None = Field(default=None, ge=128, le=4096)
-    max_tokens: int | None = Field(default=None, ge=64, le=32768)
+    max_tokens: int | None = Field(default=None, ge=1)
+    timeout_s: int | None = Field(default=None, ge=10, le=3600)
 
     @field_validator("base_url")
     @classmethod
@@ -50,6 +52,7 @@ class OpenAIProviderOut(BaseModel):
     default_model: str
     max_image_px: int
     max_tokens: int
+    timeout_s: int
     is_remote: bool
     created_at: UtcDatetime
 
@@ -66,6 +69,7 @@ class OpenAIProviderOut(BaseModel):
             default_model=row.default_model,
             max_image_px=row.max_image_px,
             max_tokens=getattr(row, "max_tokens", 2048),
+            timeout_s=getattr(row, "timeout_s", 300),
             is_remote=_is_remote(row.base_url),
             created_at=row.created_at,
         )

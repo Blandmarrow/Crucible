@@ -20,6 +20,15 @@ from backend.workers.job_queue import job_queue
 router = APIRouter(prefix="/captioning", tags=["captioning"])
 logger = logging.getLogger(__name__)
 
+try:
+    from openai import APITimeoutError
+except ImportError:  # pragma: no cover - `openai` is not in requirements-ci.txt
+    # A stand-in so the narrow `except` branches below stay well-formed on an
+    # install without the SDK. Nothing raises it, so they simply never match.
+    class APITimeoutError(Exception):  # type: ignore[no-redef]
+        pass
+
+
 _REFUSAL_RE = re.compile(
     r"(I(?:'m| am) (?:sorry|unable|not able)|I cannot|As an AI|I apologize|"
     r"I can't|I won't be able to|[Ss]he (?:is|appears to be) (?:a |an )?(?:fictional|animated|2D|cartoon)|"
@@ -407,6 +416,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                             custom_prompt=body.custom_prompt,
                             max_px=openai_provider.max_image_px,
                             max_tokens=openai_provider.max_tokens,
+                            timeout_s=openai_provider.timeout_s,
                             target_w=body.target_width,
                             target_h=body.target_height,
                         )
@@ -420,6 +430,18 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         # does not know. Here so a *future* prefix mistake surfaces as a
                         # per-image failure with a traceback rather than a green empty job.
                         raise RuntimeError(f"No captioning backend for model '{body.model}'")
+                except APITimeoutError:
+                    # Ahead of the broad handler because this is the one failure with
+                    # an obvious user-side fix, and a bare traceback for it is what
+                    # made the original report read as "nothing happened". The image
+                    # still fails — only the diagnosis changes.
+                    logger.error(
+                        "Caption timed out for %s: provider '%s' did not respond within its "
+                        "configured %ss timeout. Raise Timeout in Settings \u2192 LLM Providers.",
+                        file_path, getattr(openai_provider, "name", "?"),
+                        getattr(openai_provider, "timeout_s", "?"),
+                    )
+                    failed_image_ids.append(img_id)
                 except Exception:
                     logger.error("Caption failed for %s", file_path, exc_info=True)
                     failed_image_ids.append(img_id)
@@ -769,6 +791,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                                 custom_prompt=resolved_prompt,
                                 max_px=openai_provider.max_image_px,
                                 max_tokens=openai_provider.max_tokens,
+                                timeout_s=openai_provider.timeout_s,
                                 target_w=step.target_width,
                                 target_h=step.target_height,
                             )
@@ -780,6 +803,16 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         else:
                             # Unreachable — see the matching branch in /run's loop.
                             raise RuntimeError(f"No captioning backend for model '{step.model}'")
+                    except APITimeoutError:
+                        # See the matching branch in /run's loop.
+                        logger.error(
+                            "Pipeline step %d timed out for %s: provider '%s' did not respond "
+                            "within its configured %ss timeout. Raise Timeout in "
+                            "Settings \u2192 LLM Providers.",
+                            step_idx + 1, file_path, getattr(openai_provider, "name", "?"),
+                            getattr(openai_provider, "timeout_s", "?"),
+                        )
+                        failed_image_ids.add(img_id)
                     except Exception:
                         logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
                         failed_image_ids.add(img_id)

@@ -41,6 +41,7 @@ def _caption_sync(
     max_tokens: int,
     target_w: int | None,
     target_h: int | None,
+    timeout_s: float,
 ) -> str:
     try:
         from openai import OpenAI
@@ -49,7 +50,7 @@ def _caption_sync(
         return ""
 
     b64 = _encode_image(image_path, max_px, target_w, target_h)
-    client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=120.0)
+    client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=timeout_s)
     resp = client.chat.completions.create(
         model=model_name,
         messages=[
@@ -80,9 +81,11 @@ async def caption_image(
     max_tokens: int = 2048,
     target_w: int | None = None,
     target_h: int | None = None,
+    timeout_s: float = 300.0,
 ) -> str:
     prompt = custom_prompt or STYLE_PROMPTS.get(style, STYLE_PROMPTS["detailed"])
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None, _caption_sync, image_path, base_url, api_key, model_name, prompt, max_px, max_tokens, target_w, target_h
+        None, _caption_sync, image_path, base_url, api_key, model_name, prompt, max_px, max_tokens,
+        target_w, target_h, timeout_s,
     )

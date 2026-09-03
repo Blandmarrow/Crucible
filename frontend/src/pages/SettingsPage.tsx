@@ -1172,7 +1172,7 @@ export default function SettingsPage() {
                         className="input"
                         min={1}
                         value={providerForm.max_tokens ?? 2048}
-                        clamp={(n) => Math.max(1, Math.round(n))}
+                        clamp={(n) => Math.min(2 ** 31 - 1, Math.max(1, Math.round(n)))}
                         onCommit={(n) => setProviderForm((f) => ({ ...f, max_tokens: n }))}
                         style={{ width: 140 }}
                       />
@@ -1181,7 +1181,7 @@ export default function SettingsPage() {
                   <div className="form-row" style={{ gap: 8 }}>
                     <div style={{ minWidth: 120 }}>
                       <label style={{ fontSize: 12.5 }}>Timeout</label>
-                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Seconds to wait for one response. A slow local reasoning model on a large image can exceed the 300 s default. 10–3600.</p>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Seconds to wait for one response — one attempt, not a retried one. A slow local reasoning model on a large image can exceed the 300 s default. Also bounds <strong>Stop</strong>: a captioning run is only interrupted between images, so stopping waits out the request in flight. 10–3600.</p>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <NumberField

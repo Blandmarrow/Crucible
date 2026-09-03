@@ -166,7 +166,10 @@ async def generate_prompts(
             f"composition:\n{joined}"
         )
 
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout_s)
+    # max_retries=0: the SDK default of 2 retries timeouts, making the configured
+    # timeout a silent 3x ceiling. Losing automatic 429/5xx backoff is acceptable —
+    # a failed generation surfaces its error and the user re-runs it.
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout_s, max_retries=0)
     kwargs = dict(
         model=model_name,
         # Thinking models (Qwen3, R1, o-series) spend most of the budget on

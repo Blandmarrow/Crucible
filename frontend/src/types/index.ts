@@ -295,6 +295,14 @@ export interface JobProgress {
   optimistic?: boolean;
   throughput_ips?: number;
   vram_used_mb?: number;
+  /** caption / caption_pipeline: images the run lost, carried on the `caption_summary`
+   *  event only. Same pass-through as `plan_id` — the terminal event does not repeat it,
+   *  and jobStore's spread merge keeps it. */
+  failed_count?: number;
+  /** caption / caption_pipeline: the specific reason those images failed (a provider
+   *  timeout names the provider and its configured timeout), or absent when the run has
+   *  no diagnosis more specific than "the API returned an error". */
+  failure_summary?: string;
 }
 
 export interface BooruTag {

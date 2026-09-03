@@ -20,6 +20,12 @@ from backend.workers.job_queue import job_queue
 router = APIRouter(prefix="/captioning", tags=["captioning"])
 logger = logging.getLogger(__name__)
 
+# Cap on how many per-file error details a caption job's result_data retains
+# (failed_count keeps the full tally). Twin of the constant in
+# backend/services/dataset_service.py — a cap, not shared logic, so it is
+# restated rather than imported across modules.
+_MAX_FAILED_DETAILS = 50
+
 try:
     from openai import APITimeoutError
 except ImportError:  # pragma: no cover - `openai` is not in requirements-ci.txt
@@ -27,6 +33,22 @@ except ImportError:  # pragma: no cover - `openai` is not in requirements-ci.txt
     # install without the SDK. Nothing raises it, so they simply never match.
     class APITimeoutError(Exception):  # type: ignore[no-redef]
         pass
+
+
+def _failure_headline(timed_out: int, provider: object) -> str | None:
+    """One sentence naming *why* images failed, for the badge and the Logs row.
+
+    None when nothing timed out, so the caller's badge keeps its existing generic
+    wording — only a timeout has a diagnosis specific enough to be worth stating.
+    """
+    if not timed_out:
+        return None
+    return (
+        f"{timed_out} image(s) timed out — provider "
+        f"'{getattr(provider, 'name', '?')}' did not respond within its "
+        f"{getattr(provider, 'timeout_s', '?')}s timeout. "
+        "Raise Timeout in Settings \u2192 LLM Providers."
+    )
 
 
 _REFUSAL_RE = re.compile(
@@ -363,6 +385,10 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         total = len(image_data)
         start_time = time.monotonic()
         failed_image_ids: list[str] = []
+        # Per-file diagnoses for the durable job row (capped) and the tally the
+        # headline is built from. See the result_data write at the tail.
+        failed_details: list[dict] = []
+        timed_out = 0
         # Cache VRAM reading every 10 images to avoid per-image GPU calls
         cached_vram_mb = 0
 
@@ -430,7 +456,7 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         # does not know. Here so a *future* prefix mistake surfaces as a
                         # per-image failure with a traceback rather than a green empty job.
                         raise RuntimeError(f"No captioning backend for model '{body.model}'")
-                except APITimeoutError:
+                except APITimeoutError as exc:
                     # Ahead of the broad handler because this is the one failure with
                     # an obvious user-side fix, and a bare traceback for it is what
                     # made the original report read as "nothing happened". The image
@@ -441,10 +467,15 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         file_path, getattr(openai_provider, "name", "?"),
                         getattr(openai_provider, "timeout_s", "?"),
                     )
+                    timed_out += 1
                     failed_image_ids.append(img_id)
-                except Exception:
+                    if len(failed_details) < _MAX_FAILED_DETAILS:
+                        failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                except Exception as exc:
                     logger.error("Caption failed for %s", file_path, exc_info=True)
                     failed_image_ids.append(img_id)
+                    if len(failed_details) < _MAX_FAILED_DETAILS:
+                        failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
 
                 # Save immediately if a caption was produced
                 if caption:
@@ -546,6 +577,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     "vram_used_mb": cached_vram_mb,
                 })
 
+        headline = _failure_headline(timed_out, openai_provider)
+
         # Emit a summary event so the frontend can surface any failures to the user
         if failed_image_ids:
             await broadcaster.emit(job_id, {
@@ -554,10 +587,30 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 "job_type": "caption",
                 "failed_count": len(failed_image_ids),
                 "failed_image_ids": failed_image_ids,
+                "failure_summary": headline,
             })
 
         from backend.services.dataset_service import refresh_stats
         async with AsyncSessionLocal() as session:
+            # Durable copy of the diagnosis: the job row returns normally and so is
+            # marked `completed` with error_msg unset, which is why the Logs page
+            # needs result_data to show anything at all. Written before refresh_stats
+            # and committed explicitly — that function committing internally is an
+            # implementation detail of a different module.
+            # Known gap: a *cancelled* run reaches neither tail (raise_if_cancelled
+            # propagates out), so it writes no result_data and emits no summary —
+            # already true of the SSE event. Surviving cancellation needs a
+            # try/finally around the whole loop, a larger change than this warrants.
+            if failed_image_ids:
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row:
+                    job_row.result_data = {
+                        "failed_count": len(failed_image_ids),
+                        "timed_out": timed_out,
+                        "failure_summary": headline,
+                        "failed": failed_details,
+                    }
+                await session.commit()
             await refresh_stats(session, body.dataset_id)
 
     await job_queue.enqueue(job, _run)
@@ -679,6 +732,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         overall_total = total_images * num_steps
         start_time = time.monotonic()
         failed_image_ids: set[str] = set()
+        # See the matching accumulators in /run's loop. The ids are a set here
+        # because a pipeline can fail the same image on more than one step.
+        failed_details: list[dict] = []
+        timed_out = 0
 
         for step_idx, step in enumerate(body.steps):
             is_ollama = step.model.startswith("ollama:")
@@ -803,7 +860,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         else:
                             # Unreachable — see the matching branch in /run's loop.
                             raise RuntimeError(f"No captioning backend for model '{step.model}'")
-                    except APITimeoutError:
+                    except APITimeoutError as exc:
                         # See the matching branch in /run's loop.
                         logger.error(
                             "Pipeline step %d timed out for %s: provider '%s' did not respond "
@@ -812,10 +869,15 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             step_idx + 1, file_path, getattr(openai_provider, "name", "?"),
                             getattr(openai_provider, "timeout_s", "?"),
                         )
+                        timed_out += 1
                         failed_image_ids.add(img_id)
-                    except Exception:
+                        if len(failed_details) < _MAX_FAILED_DETAILS:
+                            failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                    except Exception as exc:
                         logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
                         failed_image_ids.add(img_id)
+                        if len(failed_details) < _MAX_FAILED_DETAILS:
+                            failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
 
                     if caption:
                         if step.strip_refusals:
@@ -888,6 +950,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             if is_florence or is_paligemma or is_joycaption:
                 await model_manager.evict_all()
 
+        headline = _failure_headline(timed_out, openai_provider)
+
         if failed_image_ids:
             from backend.workers.progress import broadcaster
             await broadcaster.emit(job_id, {
@@ -896,10 +960,22 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 "job_type": "caption_pipeline",
                 "failed_count": len(failed_image_ids),
                 "failed_image_ids": list(failed_image_ids),
+                "failure_summary": headline,
             })
 
         from backend.services.dataset_service import refresh_stats
         async with AsyncSessionLocal() as session:
+            # See the matching write in /run's tail, including the cancelled-run gap.
+            if failed_image_ids:
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row:
+                    job_row.result_data = {
+                        "failed_count": len(failed_image_ids),
+                        "timed_out": timed_out,
+                        "failure_summary": headline,
+                        "failed": failed_details,
+                    }
+                await session.commit()
             await refresh_stats(session, body.dataset_id)
 
     await job_queue.enqueue(job, _run_pipeline_job)

@@ -48,6 +48,24 @@ frontend conventions are in `docs/dev/frontend-core.md`; storage keys are in
   own pill is that a phase counting nothing must report `total: 0` and be rendered without the
   `N / M` span at all.
 
+## The partial-failure line on the Logs page
+
+A per-item job loop that swallows a failure into a local list still *returns*, so
+`job_queue.py` marks the row `completed` with `error_msg` unset — the Logs page renders it
+green and the diagnosis lives only in uvicorn's stdout. The surface for that case is
+`partialFailure(job)` in `LogsPage.tsx`: a `--warn` line under the `error_msg` block for any
+job whose `result_data.failed_count > 0`, showing `result_data.failure_summary` when the
+backend wrote one and `"N items failed"` otherwise. It is keyed on the **generic**
+`failed_count` name that the import summary already uses, so a new job type lights up by
+writing that key and nothing else. `result_data` is the durable half; the matching
+`caption_summary` SSE event carries `failed_count` and `failure_summary` too, which is what
+`CaptioningPage`'s amber badge reads while the run is still on screen — the two exist because
+the SSE event is gone on reload and absent for a job the user never watched. Adding the two
+keys to `JobProgress` was the whole frontend cost: the single merge site is the object spread
+in `jobStore.ts`, so extra event keys already flow through untouched. See
+`docs/dev/captioning.md` for what the caption loops write, and
+`docs/dev/postmortems/PM-023-timeout-and-the-green-job.md`.
+
 ## The stale-thumbnail warning, and the ordering rule behind it
 
 `THUMBNAIL_EPILOGUE_JOB_TYPES` — `batch_lut`, `batch_upscale`, `crop_upscale`,

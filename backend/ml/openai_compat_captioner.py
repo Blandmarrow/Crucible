@@ -50,7 +50,11 @@ def _caption_sync(
         return ""
 
     b64 = _encode_image(image_path, max_px, target_w, target_h)
-    client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=timeout_s)
+    # max_retries=0: the SDK defaults to 2 and retries timeouts, so the configured
+    # timeout would silently be a 3x ceiling. One attempt is what the UI promises.
+    # The cost is losing automatic 429/5xx backoff for cloud providers — acceptable,
+    # since a failed image is recoverable by re-running with the Uncaptioned-only scope.
+    client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=timeout_s, max_retries=0)
     resp = client.chat.completions.create(
         model=model_name,
         messages=[

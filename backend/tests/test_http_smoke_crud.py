@@ -268,7 +268,7 @@ def test_providers_crud(tmp_path):
 
 
 def test_provider_defaults_and_bounds(tmp_path):
-    """max_tokens has no ceiling; timeout_s keeps a 10 s - 1 h bound."""
+    """max_tokens's ceiling is only the SQLite bind's; timeout_s keeps a 10 s - 1 h bound."""
     async def scenario():
         async with api_env(tmp_path) as env:
             # Omitting both yields the defaults, not a validation error.
@@ -288,6 +288,9 @@ def test_provider_defaults_and_bounds(tmp_path):
 
             for body, label in [
                 ({"name": "zero", "base_url": "http://x/v1", "max_tokens": 0}, "max_tokens=0"),
+                # Not a model limit: without the le the bind raises OverflowError on
+                # commit and the request 500s instead of 422ing.
+                ({"name": "absurd", "base_url": "http://x/v1", "max_tokens": 10**30}, "max_tokens=10**30"),
                 ({"name": "fast", "base_url": "http://x/v1", "timeout_s": 5}, "timeout_s=5"),
                 ({"name": "slow", "base_url": "http://x/v1", "timeout_s": 7200}, "timeout_s=7200"),
             ]:

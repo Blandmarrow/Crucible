@@ -54,7 +54,8 @@ async def fetch_provider_models(provider_id: str, db: AsyncSession = Depends(get
     def _list_models(base_url: str, api_key: str) -> list[str]:
         try:
             from openai import OpenAI
-            client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=5.0)
+            # max_retries=0 so this never-raises probe cannot spend 15 s on a 5 s timeout.
+            client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=5.0, max_retries=0)
             result = client.models.list()
             return sorted(m.id for m in result.data)
         except Exception:

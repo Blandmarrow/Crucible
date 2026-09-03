@@ -394,7 +394,16 @@ export default function CaptioningPage() {
     // in the same render as status→"completed", causing jobProgress to be undefined
     // when the completion effect runs — so the gallery invalidation would never fire.
     return !seenTerminalJobIds.current.has(id);
-  }) ?? null;
+  })
+    // Every submitted job is terminal: stay bound to the most recent one so the panel
+    // can render its Done / partial-failure state. Falling to null here unmounted the
+    // whole panel on the render right after completion (the effect above mutates a ref,
+    // so the drop landed on whatever re-render its invalidateQueries triggered) — the
+    // "✓ Captioning complete" line and the amber failed-images badge were never
+    // reachable. A new submission puts a non-terminal id back at the front of `find`,
+    // and `submittedJobIds` resets on remount, so nothing stale is resurrected.
+    ?? submittedJobIds[submittedJobIds.length - 1]
+    ?? null;
 
   // Fall back to any globally-observed caption job when we have no active submitted job.
   // Includes "pending" so the panel survives navigation (submittedJobIds resets on remount,
@@ -778,8 +787,11 @@ export default function CaptioningPage() {
   // Step progress info for pipeline
   const stepIndex = (jobProgress as { step_index?: number } | undefined)?.step_index;
   const stepTotal = (jobProgress as { step_total?: number } | undefined)?.step_total;
-  // Failed image count — populated by caption_summary SSE event merged into job store
-  const failedCount = (jobProgress as { failed_count?: number } | undefined)?.failed_count ?? 0;
+  // Failed image count and the reason — populated by the caption_summary SSE event
+  // merged into the job store. `failureSummary` is set only when the run has a
+  // diagnosis worth stating (today: a provider timeout).
+  const failedCount = jobProgress?.failed_count ?? 0;
+  const failureSummary = jobProgress?.failure_summary;
 
   return (
     <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
@@ -1376,8 +1388,8 @@ export default function CaptioningPage() {
                       ⚠ {failedCount} image{failedCount !== 1 ? "s" : ""} failed
                     </div>
                     <div style={{ color: "var(--fg-mute)", lineHeight: 1.5 }}>
-                      The API returned an error (e.g. rate limiting or temporary outage).
-                      Re-run with "Uncaptioned only" scope to retry skipped images.
+                      {failureSummary ?? "The API returned an error (e.g. rate limiting or temporary outage)."}
+                      {" "}Re-run with "Uncaptioned only" scope to retry skipped images.
                     </div>
                   </div>
                 )}

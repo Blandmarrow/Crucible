@@ -90,9 +90,11 @@ without raising, when `generate_prompts` returns `[]` without raising on unparse
   iteration that reaches the target is a **completed** job, not a cancelled one, and reporting
   it as "stopped — N kept" would understate a run that did everything asked.
 - **A Stop waits out the batch in flight, and that batch is kept.** Cancellation is polled
-  between calls, so Stop can take until the provider returns (its `timeout_s`, default 300 s) and the
-  prompts from that call are then committed. This is a decision, not a limitation: aborting the
-  call is possible (run `generate_prompts` as a task, cancel it on the flag — `AsyncOpenAI` is
+  between calls, so Stop can take until the provider returns (its `timeout_s`, default 300 s)
+  and the prompts from that call are then committed. That parenthesis is exactly true rather
+  than approximately so: the client is built with `max_retries=0`, overriding the SDK's
+  default of 2, which otherwise retries a timeout and makes the real bound 3 × `timeout_s`.
+  This is a decision, not a limitation: aborting the call is possible (run `generate_prompts` as a task, cancel it on the flag — `AsyncOpenAI` is
   httpx-based and drops the connection), and it was considered and **declined** in favour of
   never discarding a generation already paid for in GPU time. Don't re-open it without new
   evidence that the wait actually hurts; the UI covers the gap by saying so ("Stopping…", plus

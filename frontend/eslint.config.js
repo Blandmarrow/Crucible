@@ -5,6 +5,19 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
+// `[SecureContext]` APIs are absent on `http://0.0.0.0:8000` and over LAN, where
+// Crucible is routinely opened — a bare use is a TypeError there, not a graceful
+// degradation. See PM-024. Named individually so a file that needs one exemption
+// does not silently get the other.
+const NO_BARE_CLIPBOARD = {
+  selector: "MemberExpression[object.name='navigator'][property.name='clipboard']",
+  message: 'navigator.clipboard is [SecureContext] and absent on http://0.0.0.0 and LAN origins. Use copyText() from utils/clipboard.ts (PM-024).',
+}
+const NO_BARE_RANDOM_UUID = {
+  selector: "MemberExpression[object.name='crypto'][property.name='randomUUID']",
+  message: 'crypto.randomUUID is [SecureContext] and absent on http://0.0.0.0 and LAN origins. Use nanoid() from store/nanoid.ts (PM-024).',
+}
+
 export default defineConfig([
   globalIgnores(['dist']),
   {
@@ -18,6 +31,16 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      'no-restricted-syntax': ['error', NO_BARE_CLIPBOARD, NO_BARE_RANDOM_UUID],
+    },
+  },
+  // The clipboard helper is the one place allowed to touch the API it wraps —
+  // that one only. Dropping the rule wholesale here would also un-ban
+  // `crypto.randomUUID`, which this file has no business calling either.
+  {
+    files: ['src/utils/clipboard.ts'],
+    rules: { 'no-restricted-syntax': ['error', NO_BARE_RANDOM_UUID] },
   },
   // Playwright specs and config run in Node, not the browser — without node
   // globals here `npm run lint` fails on `process`, `console`, etc.
@@ -26,5 +49,8 @@ export default defineConfig([
     languageOptions: {
       globals: globals.node,
     },
+    // The specs run browser code inside `page.evaluate`, where naming these APIs
+    // is the point — `insecure-origin.spec.ts` asserts one of them is *gone*.
+    rules: { 'no-restricted-syntax': 'off' },
   },
 ])

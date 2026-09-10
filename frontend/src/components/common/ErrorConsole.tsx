@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../../store/errorConsoleStore";
+import { useErrorConsoleStore, errorTypeLabel } from "../../store/errorConsoleStore";
+import CopyErrorsButton from "./CopyErrorsButton";
 
 function formatTimestamp(d: Date): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -72,13 +73,7 @@ export default function ErrorConsole() {
         <span style={{ fontWeight: 600, color: "var(--fg)", flex: 1 }}>
           Error Console ({errors.length})
         </span>
-        <button
-          className="btn sm"
-          onClick={() => navigator.clipboard.writeText(formatErrorsForCopy(errors)).catch(() => {})}
-          title="Copy all errors to clipboard"
-        >
-          Copy Errors
-        </button>
+        <CopyErrorsButton errors={errors} />
         <button className="btn sm" onClick={clearErrors} title="Clear all errors">
           Clear
         </button>

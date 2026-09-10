@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { jobsApi } from "../api/jobs";
-import { useErrorConsoleStore, errorTypeLabel, formatErrorsForCopy } from "../store/errorConsoleStore";
+import { useErrorConsoleStore, errorTypeLabel } from "../store/errorConsoleStore";
+import CopyErrorsButton from "../components/common/CopyErrorsButton";
 import type { Job } from "../types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -218,12 +219,7 @@ function ErrorsTab() {
         <span style={{ color: "var(--fg-dim)", fontSize: 12, flex: 1 }}>
           {errors.length} error{errors.length !== 1 ? "s" : ""} captured this session
         </span>
-        <button
-          className="btn sm"
-          onClick={() => navigator.clipboard.writeText(formatErrorsForCopy(errors)).catch(() => {})}
-        >
-          Copy Errors
-        </button>
+        <CopyErrorsButton errors={errors} />
         <button className="btn sm" onClick={clearErrors}>
           Clear
         </button>

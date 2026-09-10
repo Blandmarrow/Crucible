@@ -45,6 +45,25 @@ listing request over a stored context) and `serverPageContext` (the one way to r
 that context's ids with a verbatim server page — it clears the `injected` marker a
 listing response cannot carry) → `docs/dev/gallery-nav.md`.
 
+**`frontend/src/utils/clipboard.ts`** — `copyText(text): Promise<boolean>`, the one way this
+app writes to the clipboard. `navigator.clipboard` is `[SecureContext]`, so Chromium installs
+it on HTTPS, `localhost` and `127.0.0.1` and nowhere else — on `http://0.0.0.0:8000` or a LAN
+IP the object is simply absent and `navigator.clipboard.writeText(…)` throws a *synchronous*
+TypeError, which no `.catch()` can see. `copyText` is a **fallback, not a guard**: with no
+Clipboard API it copies through the hidden-`<textarea>` + `document.execCommand("copy")`
+recipe, so the button still works rather than politely explaining that it cannot. Two
+invariants callers depend on, both spelled out in its doc comment: it **never throws and
+never rejects** (`false` is the only failure signal — one caller is the error console, which
+owns the app's own `error` listeners), and the missing-API case **never leaves the click's
+tick** (it feature-tests `navigator.clipboard?.writeText` rather than awaiting a rejected
+call, because `execCommand` needs live user activation and the await spends it). Note that
+`navigator.clipboard?.writeText(t).then(…)` is *not* a fix — `?.` short-circuits the property
+access only, so the expression is `undefined` and `.then` on it throws. An eslint
+`no-restricted-syntax` rule bans bare `navigator.clipboard` and `crypto.randomUUID` in
+`frontend/src/` and points here. Four call sites: `CopyErrorsButton`, `GenerationMetadata`,
+`BooruPage`, `QualityPage`. See
+`docs/dev/postmortems/PM-024-non-secure-origin-stripped-browser-apis.md`.
+
 **`frontend/src/constants/aestheticModels.ts`** — `AESTHETIC_MODELS` (the picker's option list) and `aestheticModelLabel(marker)`, the one place the `Image.aesthetic_model` markers are named on screen. Four surfaces read it — the Score images picker, the duplicates *Keep best* refusal, the Export mixed-model advisory and the Stats coverage breakdown — and the copies that would drift are the ones inside warnings nobody reads until images have already been deleted. The marker set is **open** (a future learned head writes `head:{uuid}`), so `aestheticModelLabel` returns an unrecognised marker verbatim rather than swallowing it. See `docs/dev/scoring.md`.
 
 **`frontend/src/constants/captionModels.ts`** — `captionBackend(model)`, a hand-mirror of `_caption_backend` in `backend/routers/captioning.py` (same six prefixes, same order), plus `captionModelOptions`/`captionModelIds` over the `GET /captioning/models` payload. The mirror exists because that validator 422s an unrecognised id for the whole request, so `CaptioningPage`, `SelectionToolbar` and `ImageDetailPage` must refuse the Run before sending it. Two predicates, and they are not interchangeable: `captionBackend(id) === null` **blocks**; absence from `captionModelIds` is informational only, since an empty group usually means the service is down. Neither is `modelType` from `captionStyles.ts` — null there for the runnable `wd14:`/`openai_compat:`. Parity is enforced by `backend/tests/test_captioning_model_registry.py`. See `docs/dev/captioning.md`.

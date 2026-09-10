@@ -413,13 +413,13 @@ utilities → `docs/dev/shared-utilities.md`.
 - **New file:** docs/dev/llm-providers.md. There is no user doc of that name to mirror
   (provider setup is a section of `docs/settings.md`), so the name is taken from the
   Settings tab users actually see.
-- **Why here:** the file is over budget (3,785 against 3,500) and its title already carries
+- **Why here:** the file is over budget (3,975 against 3,500) and its title already carries
   the `and` warning sign — "Captioning post-processing **&** LLM providers". They are two
   subsystems: a provider row is CRUD plus a client, configured in Settings and consumed by
   one branch of the caption dispatch chain, while everything else in the file is about what
   the caption *text* goes through afterwards. The seam is where this session's work stopped:
   the empty-caption guard belongs entirely to the post-processing half, and the
-  `finish_reason` logging entirely to the provider half. Leaves ~3,050 and ~720 — the
+  `finish_reason` logging entirely to the provider half. Leaves ~3,255 and ~720 — the
   destination has room for the growth this arc will keep sending it, and the remaining
   captioning half is still near budget, so a second seam (§ The captioning model picker,
   ~820 words, which is really about *pickers* and their two predicates) is the next one to

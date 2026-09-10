@@ -179,7 +179,7 @@ def test_failure_headline_one_sentence_per_tally():
     assert timed is not None and "2 image(s) timed out" in timed
     assert "came back empty" not in timed
 
-    empty = _failure_headline(0, _Prov(), empty=3)
+    empty = _failure_headline(0, _Prov(), empty=3, empty_provider=_Prov())
     assert empty == (
         "3 image(s) came back empty — the model returned no caption text. "
         "Raise Max tokens in Settings → LLM Providers."
@@ -203,3 +203,34 @@ def test_failure_headline_drops_max_tokens_advice_without_a_provider():
     # A local Florence-2/WD14 run has no Max tokens setting to raise.
     local = _failure_headline(0, None, empty=4)
     assert local == "4 image(s) came back empty — the model returned no caption text."
+
+
+def test_failure_headline_attributes_the_two_sentences_independently():
+    """A pipeline can time out on one step's provider and empty on another's.
+
+    `/pipeline` tracks the two separately because its `openai_provider` is a step
+    variable: by the tail it holds the *last* step's, which is nobody's diagnosis.
+    Passing one object for both is what dropped the Max-tokens advice from a
+    `[LM Studio, WD14]` pipeline and attached it to `[WD14, LM Studio]`.
+    """
+    class _Other:
+        name = "openrouter"
+        timeout_s = 60
+
+    # Remote step emptied, local step timed out: advice on the empty sentence only.
+    mixed = _failure_headline(1, None, empty=2, empty_provider=_Prov())
+    assert mixed is not None
+    assert "provider '?'" in mixed  # a local timeout has no provider to name
+    assert "2 image(s) came back empty" in mixed and "Max tokens" in mixed
+
+    # Local step emptied (WD14 threshold), remote step timed out: no Max-tokens advice.
+    flipped = _failure_headline(1, _Prov(), empty=2)
+    assert flipped is not None
+    assert "'lmstudio' did not respond" in flipped
+    assert "Max tokens" not in flipped
+
+    # Two different remote providers: each sentence names its own.
+    two = _failure_headline(1, _Other(), empty=1, empty_provider=_Prov())
+    assert two is not None
+    assert "'openrouter' did not respond within its 60s" in two
+    assert "Max tokens" in two

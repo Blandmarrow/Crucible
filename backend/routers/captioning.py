@@ -36,7 +36,11 @@ except ImportError:  # pragma: no cover - `openai` is not in requirements-ci.txt
 
 
 def _failure_headline(
-    timed_out: int, provider: object, empty: int = 0, stripped: int = 0
+    timed_out: int,
+    timeout_provider: object,
+    empty: int = 0,
+    stripped: int = 0,
+    empty_provider: object | None = None,
 ) -> str | None:
     """One sentence per diagnosis naming *why* images failed, for the badge and Logs row.
 
@@ -44,20 +48,27 @@ def _failure_headline(
     wording — only a failure we can name is worth stating. The three tallies are
     independent: a run can time some images out, get nothing back for others and
     post-process a third group down to nothing.
+
+    The two provider arguments are **separate on purpose**: a pipeline can time out
+    on one step's provider and come back empty on another's, and only the step that
+    actually produced each kind can say whether a remote provider was involved. A
+    single-model run passes the same object for both. `empty_provider` defaults to
+    None — i.e. *no* Max-tokens advice — so a caller that forgets it understates the
+    diagnosis rather than inventing a setting the run does not have.
     """
     parts: list[str] = []
     if timed_out:
         parts.append(
             f"{timed_out} image(s) timed out — provider "
-            f"'{getattr(provider, 'name', '?')}' did not respond within its "
-            f"{getattr(provider, 'timeout_s', '?')}s timeout. "
+            f"'{getattr(timeout_provider, 'name', '?')}' did not respond within its "
+            f"{getattr(timeout_provider, 'timeout_s', '?')}s timeout. "
             "Raise Timeout in Settings \u2192 LLM Providers."
         )
     if empty:
         sentence = (
             f"{empty} image(s) came back empty — the model returned no caption text."
         )
-        if provider is not None:
+        if empty_provider is not None:
             # Only a remote provider has a Max tokens setting; the advice is
             # meaningless for a local Florence-2/WD14 run.
             sentence += " Raise Max tokens in Settings \u2192 LLM Providers."
@@ -656,7 +667,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     "vram_used_mb": cached_vram_mb,
                 })
 
-        headline = _failure_headline(timed_out, openai_provider, empty_count, stripped_count)
+        # One model for the whole run, so the same provider (None for a local
+        # backend) attributes both provider-dependent sentences.
+        headline = _failure_headline(
+            timed_out, openai_provider, empty_count, stripped_count, openai_provider
+        )
 
         # Emit a summary event so the frontend can surface any failures to the user
         if failed_image_ids:
@@ -819,14 +834,29 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         timed_out = 0
         empty_count = 0
         stripped_count = 0
+        # `openai_provider` below is a *step* variable, reset to None at the top of
+        # every step, so by the tail it holds the last step's — which is nobody's
+        # diagnosis. These hold the first provider that actually produced each kind
+        # of failure, so a `[LM Studio, WD14]` pipeline keeps the Max-tokens advice
+        # its empties earned and `[WD14, LM Studio]` does not collect advice for a
+        # threshold problem. Each stays None when only local backends failed that way.
+        timeout_provider: object | None = None
+        empty_provider: object | None = None
 
         def _record_empty(img_id: str, file_path: str, reason: str, *, stripped: bool = False) -> None:
-            """See the matching closure in /run's loop; the ids are a set here."""
-            nonlocal empty_count, stripped_count
+            """See the matching closure in /run's loop; the ids are a set here.
+
+            Reads `is_openai_compat`/`openai_provider` off the enclosing step the same
+            way the log line reads `step_idx`, so the attribution lands on the step
+            that produced the empty rather than the one running at the tail.
+            """
+            nonlocal empty_count, stripped_count, empty_provider
             if stripped:
                 stripped_count += 1
             else:
                 empty_count += 1
+                if is_openai_compat and empty_provider is None:
+                    empty_provider = openai_provider
             logger.warning(
                 "Pipeline step %d caption empty for %s: %s", step_idx + 1, file_path, reason
             )
@@ -977,6 +1007,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             getattr(openai_provider, "timeout_s", "?"),
                         )
                         timed_out += 1
+                        if timeout_provider is None:
+                            timeout_provider = openai_provider
                         errored = True
                         failed_image_ids.add(img_id)
                         if len(failed_details) < _MAX_FAILED_DETAILS:
@@ -1080,7 +1112,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             if is_florence or is_paligemma or is_joycaption:
                 await model_manager.evict_all()
 
-        headline = _failure_headline(timed_out, openai_provider, empty_count, stripped_count)
+        headline = _failure_headline(
+            timed_out, timeout_provider, empty_count, stripped_count, empty_provider
+        )
 
         if failed_image_ids:
             from backend.workers.progress import broadcaster

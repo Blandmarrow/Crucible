@@ -69,7 +69,11 @@ function legacyCopy(text: string): boolean {
   ta.style.top = "-9999px";
   ta.style.left = "-9999px";
   ta.style.opacity = "0";
+  // `aria-hidden` on a focusable element is a contradiction assistive tech is
+  // entitled to complain about, and this one gets focused a line below — so take
+  // it out of the tab order to match.
   ta.setAttribute("aria-hidden", "true");
+  ta.tabIndex = -1;
   // `readOnly` + `setSelectionRange` rather than `select()`: iOS Safari ignores
   // `select()` on an editable field and pops the keyboard instead.
   ta.readOnly = true;

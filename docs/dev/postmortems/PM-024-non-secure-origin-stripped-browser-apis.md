@@ -36,8 +36,8 @@ Synchronously is the operative word for the clipboard sites. Two of the five wro
 TypeError is raised while evaluating the expression, before any promise exists.
 
 `0.0.0.0` is a bind address, not an address to browse to, but it is the one the user lands on. Both
-launchers print `Starting server at http://localhost:8000` ([manage.sh:634](../../../manage.sh#L634),
-[manage.ps1:668](../../../manage.ps1#L668)) — and uvicorn's own banner, `Uvicorn running on
+launchers print `Starting server at http://localhost:8000` ([manage.sh:636](../../../manage.sh#L636),
+[manage.ps1:669](../../../manage.ps1#L669)) — and uvicorn's own banner, `Uvicorn running on
 http://0.0.0.0:8000`, prints immediately after and is the last, terminal-hyperlinked URL on
 screen. And anyone reaching the app over their LAN (`http://192.168.1.5:8000`) is on an insecure
 origin no matter which URL we print.
@@ -96,11 +96,15 @@ Branch `Blandmarrow/issue93-insecure-origin`:
   fixing a second bug: `GenerationMetadata` (no `.catch()` at all; its 1500 ms timer is also now
   cleared on unmount), `BooruPage` (toasted success unconditionally), and the two byte-identical
   Copy Errors handlers, now the shared `components/common/CopyErrorsButton.tsx`.
-- **`frontend/src/main.tsx`** — before `createRoot`, `location.hostname === "0.0.0.0"` redirects
-  to the `localhost` equivalent, preserving port, path and query. Exactly that one hostname: a LAN
-  IP is insecure too, but it is a deliberate remote-access choice and rewriting it would point the
-  browser at the wrong machine. Complementary, not primary — the fallbacks are what make the
-  features work everywhere; the redirect stops the specific footgun we hand people.
+- **`frontend/src/main.tsx`** — `location.hostname === "0.0.0.0"` redirects to the `localhost`
+  equivalent, preserving port, path and query, with the `createRoot` call as the **`else` branch**:
+  `location.replace` queues a navigation and does not halt script execution, so falling through
+  would mount the whole app against `0.0.0.0` — SSE stream, initial queries, and a zustand
+  `persist` hydration into that origin's separate `localStorage` — for the milliseconds before the
+  navigation lands. Exactly that one hostname: a LAN IP is insecure too, but it is a deliberate
+  remote-access choice and rewriting it would point the browser at the wrong machine.
+  Complementary, not primary — the fallbacks are what make the features work everywhere; the
+  redirect stops the specific footgun we hand people.
 - **`frontend/e2e/insecure-origin.spec.ts`** (new) — fakes the origin with `page.addInitScript`.
   The trap: `delete navigator.clipboard` deletes a non-existent *own* property, returns `true`,
   and changes nothing. Both APIs live on a **prototype** (`Navigator.prototype.clipboard` is an
@@ -108,8 +112,10 @@ Branch `Blandmarrow/issue93-insecure-origin`:
   there is both what works and what a real insecure origin looks like: never installed.
 - **`frontend/eslint.config.js`** — `no-restricted-syntax` bans bare `navigator.clipboard` and
   `crypto.randomUUID` in `frontend/src/`, pointing at the helpers, so the rule above is
-  enforceable rather than aspirational. (`npm run lint` is `continue-on-error` in CI, so it
-  documents more than it blocks.)
+  enforceable rather than aspirational. The two selectors are named constants so the one
+  exemption — `utils/clipboard.ts`, which must name the API it wraps — can re-declare the
+  *other* restriction instead of switching the rule off and quietly un-banning both.
+  (`npm run lint` is `continue-on-error` in CI, so it documents more than it blocks.)
 
 ### Status & date
 

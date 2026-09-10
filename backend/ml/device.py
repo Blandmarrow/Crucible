@@ -59,12 +59,17 @@ def memory_allocated_bytes() -> int:
     Bytes currently allocated on the active accelerator.
       cuda → torch.cuda.memory_allocated()
       mps  → torch.mps.current_allocated_memory() (PyTorch >= 2.0), else 0
-      cpu  → 0
+      cpu  → 0, and so is a torch-free install (see the try below)
     """
-    import torch
-
-    dev = get_device()
+    # Both the import and get_device() sit *inside* the try: on a torch-free
+    # install the lazy import raises at **call** time, which every caller's
+    # `try: from … import … / except ImportError: lambda: 0` guard is powerless to
+    # catch — it guards importing the *function*, which succeeds. A reporter whose
+    # documented answer for "no accelerator" is already 0 has no business raising.
     try:
+        import torch
+
+        dev = get_device()
         if dev == "cuda":
             return torch.cuda.memory_allocated()
         if dev == "mps" and hasattr(torch.mps, "current_allocated_memory"):
@@ -80,12 +85,12 @@ def memory_reserved_mb() -> int:
       cuda → torch.cuda.memory_reserved() // 1024 // 1024
       mps  → torch.mps.current_allocated_memory() // 1024 // 1024
              (MPS has no 'reserved' concept; allocated is the best proxy)
-      cpu  → 0
+      cpu  → 0, and so is a torch-free install (see memory_allocated_bytes)
     """
-    import torch
-
-    dev = get_device()
     try:
+        import torch
+
+        dev = get_device()
         if dev == "cuda":
             return torch.cuda.memory_reserved() // (1024 * 1024)
         if dev == "mps" and hasattr(torch.mps, "current_allocated_memory"):

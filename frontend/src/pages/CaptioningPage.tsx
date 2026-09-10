@@ -789,7 +789,8 @@ export default function CaptioningPage() {
   const stepTotal = (jobProgress as { step_total?: number } | undefined)?.step_total;
   // Failed image count and the reason — populated by the caption_summary SSE event
   // merged into the job store. `failureSummary` is set only when the run has a
-  // diagnosis worth stating (today: a provider timeout).
+  // diagnosis worth stating (a provider timeout, an empty caption, or one
+  // post-processing removed entirely), and composes a sentence per kind.
   const failedCount = jobProgress?.failed_count ?? 0;
   const failureSummary = jobProgress?.failure_summary;
 

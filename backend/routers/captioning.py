@@ -35,20 +35,50 @@ except ImportError:  # pragma: no cover - `openai` is not in requirements-ci.txt
         pass
 
 
-def _failure_headline(timed_out: int, provider: object) -> str | None:
-    """One sentence naming *why* images failed, for the badge and the Logs row.
+def _failure_headline(
+    timed_out: int,
+    timeout_provider: object,
+    empty: int = 0,
+    stripped: int = 0,
+    empty_provider: object | None = None,
+) -> str | None:
+    """One sentence per diagnosis naming *why* images failed, for the badge and Logs row.
 
-    None when nothing timed out, so the caller's badge keeps its existing generic
-    wording — only a timeout has a diagnosis specific enough to be worth stating.
+    None when every tally is zero, so the caller's badge keeps its existing generic
+    wording — only a failure we can name is worth stating. The three tallies are
+    independent: a run can time some images out, get nothing back for others and
+    post-process a third group down to nothing.
+
+    The two provider arguments are **separate on purpose**: a pipeline can time out
+    on one step's provider and come back empty on another's, and only the step that
+    actually produced each kind can say whether a remote provider was involved. A
+    single-model run passes the same object for both. `empty_provider` defaults to
+    None — i.e. *no* Max-tokens advice — so a caller that forgets it understates the
+    diagnosis rather than inventing a setting the run does not have.
     """
-    if not timed_out:
-        return None
-    return (
-        f"{timed_out} image(s) timed out — provider "
-        f"'{getattr(provider, 'name', '?')}' did not respond within its "
-        f"{getattr(provider, 'timeout_s', '?')}s timeout. "
-        "Raise Timeout in Settings \u2192 LLM Providers."
-    )
+    parts: list[str] = []
+    if timed_out:
+        parts.append(
+            f"{timed_out} image(s) timed out — provider "
+            f"'{getattr(timeout_provider, 'name', '?')}' did not respond within its "
+            f"{getattr(timeout_provider, 'timeout_s', '?')}s timeout. "
+            "Raise Timeout in Settings \u2192 LLM Providers."
+        )
+    if empty:
+        sentence = (
+            f"{empty} image(s) came back empty — the model returned no caption text."
+        )
+        if empty_provider is not None:
+            # Only a remote provider has a Max tokens setting; the advice is
+            # meaningless for a local Florence-2/WD14 run.
+            sentence += " Raise Max tokens in Settings \u2192 LLM Providers."
+        parts.append(sentence)
+    if stripped:
+        parts.append(
+            f"{stripped} image(s) had their whole caption removed by post-processing "
+            "— turn off Strip thinking blocks or Strip refusals."
+        )
+    return " ".join(parts) if parts else None
 
 
 _REFUSAL_RE = re.compile(
@@ -385,10 +415,41 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         total = len(image_data)
         start_time = time.monotonic()
         failed_image_ids: list[str] = []
-        # Per-file diagnoses for the durable job row (capped) and the tally the
+        # Per-file diagnoses for the durable job row (capped) and the tallies the
         # headline is built from. See the result_data write at the tail.
         failed_details: list[dict] = []
         timed_out = 0
+        empty_count = 0
+        stripped_count = 0
+
+        def _record_empty(img_id: str, file_path: str, reason: str, *, stripped: bool = False) -> None:
+            """Count an image that finished with no caption text as a named failure.
+
+            An empty caption used to fall through `if caption:` with no exception:
+            no tally, no log, no sidecar, job green. Routing it here puts it on the
+            same failed_image_ids → caption_summary → result_data path as a timeout,
+            so the user gets a count and a reason. See the matching closure in
+            /pipeline's loop.
+            """
+            nonlocal empty_count, stripped_count
+            if stripped:
+                stripped_count += 1
+            else:
+                empty_count += 1
+            logger.warning("Caption empty for %s: %s", file_path, reason)
+            failed_image_ids.append(img_id)
+            if len(failed_details) < _MAX_FAILED_DETAILS:
+                failed_details.append({"file": Path(file_path).name, "error": reason})
+
+        if is_wd14:
+            _empty_reason = "no tags above the confidence threshold"
+        elif is_ollama:
+            # ollama_captioner.caption_image logs the real exception itself and
+            # hands back "", so all this layer knows is that nothing came back.
+            _empty_reason = "the Ollama request returned no caption text"
+        else:
+            _empty_reason = "provider returned an empty caption"
+
         # Cache VRAM reading every 10 images to avoid per-image GPU calls
         cached_vram_mb = 0
 
@@ -412,6 +473,9 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
                 # Generate caption for this image
                 caption = ""
+                # Set by both except branches so an already-counted exception is
+                # not counted a second time as an empty caption below.
+                errored = False
                 try:
                     if is_florence:
                         from backend.ml.florence_captioner import caption_image as _fi
@@ -468,14 +532,20 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                         getattr(openai_provider, "timeout_s", "?"),
                     )
                     timed_out += 1
+                    errored = True
                     failed_image_ids.append(img_id)
                     if len(failed_details) < _MAX_FAILED_DETAILS:
                         failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
                 except Exception as exc:
                     logger.error("Caption failed for %s", file_path, exc_info=True)
+                    errored = True
                     failed_image_ids.append(img_id)
                     if len(failed_details) < _MAX_FAILED_DETAILS:
                         failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+
+                # Reason A — nothing came back at all, without an exception to explain it.
+                if not caption and not errored:
+                    _record_empty(img_id, file_path, _empty_reason)
 
                 # Save immediately if a caption was produced
                 if caption:
@@ -515,45 +585,65 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                 new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
                             caption = ", ".join(new_tags)
 
-                        if body.delimiter_mode == "append" and existing_caption:
-                            caption = existing_caption + body.delimiter + caption
-                        elif body.delimiter_mode == "prepend" and existing_caption:
-                            caption = caption + body.delimiter + existing_caption
-
-                        if body.save_backup:
-                            await asyncio.get_running_loop().run_in_executor(
-                                None, _backup_sidecar, file_path
+                        # Reason C — post-processing (thinking/refusal/hedge stripping,
+                        # tag dedupe) removed every word. Guarded here rather than at the
+                        # save because the delimiter merge below would otherwise write
+                        # "existing, " and set_caption would blank a good caption and its
+                        # .txt sidecar; skipping the write leaves both untouched.
+                        if not caption:
+                            _record_empty(
+                                img_id, file_path,
+                                "post-processing removed the entire caption",
+                                stripped=True,
                             )
+                        else:
+                            if body.delimiter_mode == "append" and existing_caption:
+                                caption = existing_caption + body.delimiter + caption
+                            elif body.delimiter_mode == "prepend" and existing_caption:
+                                caption = caption + body.delimiter + existing_caption
 
-                        await set_caption(session, img_id, caption, body.style, body.model,
-                                          has_ai_artifacts=artifact_detected)
+                            if body.save_backup:
+                                await asyncio.get_running_loop().run_in_executor(
+                                    None, _backup_sidecar, file_path
+                                )
 
-                        if body.rename_on_caption:
-                            try:
-                                new_stem = slugify_filename(img_subfolder.replace("/", "_")) if img_subfolder else "image"
-                                old_path = Path(file_path)
-                                suf = old_path.suffix.lower()
-                                _rename_db_names.discard(img_filename)
-                                new_filename = unique_filename_with_thumb(
-                                    old_path.parent, new_stem, suf,
-                                    _rename_db_names, _occupied_thumb_stems, _planned_thumb_stems,
-                                )
-                                new_path = old_path.parent / new_filename
-                                old_thumb = Path(thumbnail_path_for(str(old_path)))
-                                new_thumb = Path(thumbnail_path_for(str(new_path)))
-                                db_values: dict = dict(filename=new_filename, file_path=str(new_path))
-                                if new_path != old_path:
-                                    rename_with_sidecar(old_path, new_path)
-                                    if old_thumb.exists() and old_thumb != new_thumb:
-                                        old_thumb.replace(new_thumb)
-                                    db_values["is_auto_named"] = True
-                                    db_values["thumbnail_path"] = str(new_thumb)
-                                await session.execute(
-                                    sa_update(Image).where(Image.id == img_id).values(**db_values)
-                                )
-                                await session.commit()
-                            except Exception:
-                                logger.error("Rename failed for %s", file_path, exc_info=True)
+                            await set_caption(session, img_id, caption, body.style, body.model,
+                                              has_ai_artifacts=artifact_detected)
+
+                            if body.rename_on_caption:
+                                try:
+                                    new_stem = slugify_filename(img_subfolder.replace("/", "_")) if img_subfolder else "image"
+                                    old_path = Path(file_path)
+                                    suf = old_path.suffix.lower()
+                                    _rename_db_names.discard(img_filename)
+                                    new_filename = unique_filename_with_thumb(
+                                        old_path.parent, new_stem, suf,
+                                        _rename_db_names, _occupied_thumb_stems, _planned_thumb_stems,
+                                    )
+                                    new_path = old_path.parent / new_filename
+                                    old_thumb = Path(thumbnail_path_for(str(old_path)))
+                                    new_thumb = Path(thumbnail_path_for(str(new_path)))
+                                    db_values: dict = dict(filename=new_filename, file_path=str(new_path))
+                                    if new_path != old_path:
+                                        rename_with_sidecar(old_path, new_path)
+                                        if old_thumb.exists() and old_thumb != new_thumb:
+                                            old_thumb.replace(new_thumb)
+                                        db_values["is_auto_named"] = True
+                                        db_values["thumbnail_path"] = str(new_thumb)
+                                    await session.execute(
+                                        sa_update(Image).where(Image.id == img_id).values(**db_values)
+                                    )
+                                    await session.commit()
+                                except Exception:
+                                    logger.error("Rename failed for %s", file_path, exc_info=True)
+                    else:
+                        # Reason B — the whole reply was a refusal and Strip refusals
+                        # removed it, leaving nothing to save.
+                        _record_empty(
+                            img_id, file_path,
+                            "the reply was entirely a refusal, removed by Strip refusals",
+                            stripped=True,
+                        )
 
                 # Refresh VRAM reading only every 10 images (GPU call is not free)
                 if i % 10 == 0:
@@ -577,7 +667,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     "vram_used_mb": cached_vram_mb,
                 })
 
-        headline = _failure_headline(timed_out, openai_provider)
+        # One model for the whole run, so the same provider (None for a local
+        # backend) attributes both provider-dependent sentences.
+        headline = _failure_headline(
+            timed_out, openai_provider, empty_count, stripped_count, openai_provider
+        )
 
         # Emit a summary event so the frontend can surface any failures to the user
         if failed_image_ids:
@@ -607,6 +701,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                     job_row.result_data = {
                         "failed_count": len(failed_image_ids),
                         "timed_out": timed_out,
+                        "empty": empty_count,
+                        "stripped": stripped_count,
                         "failure_summary": headline,
                         "failed": failed_details,
                     }
@@ -736,6 +832,37 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         # because a pipeline can fail the same image on more than one step.
         failed_details: list[dict] = []
         timed_out = 0
+        empty_count = 0
+        stripped_count = 0
+        # `openai_provider` below is a *step* variable, reset to None at the top of
+        # every step, so by the tail it holds the last step's — which is nobody's
+        # diagnosis. These hold the first provider that actually produced each kind
+        # of failure, so a `[LM Studio, WD14]` pipeline keeps the Max-tokens advice
+        # its empties earned and `[WD14, LM Studio]` does not collect advice for a
+        # threshold problem. Each stays None when only local backends failed that way.
+        timeout_provider: object | None = None
+        empty_provider: object | None = None
+
+        def _record_empty(img_id: str, file_path: str, reason: str, *, stripped: bool = False) -> None:
+            """See the matching closure in /run's loop; the ids are a set here.
+
+            Reads `is_openai_compat`/`openai_provider` off the enclosing step the same
+            way the log line reads `step_idx`, so the attribution lands on the step
+            that produced the empty rather than the one running at the tail.
+            """
+            nonlocal empty_count, stripped_count, empty_provider
+            if stripped:
+                stripped_count += 1
+            else:
+                empty_count += 1
+                if is_openai_compat and empty_provider is None:
+                    empty_provider = openai_provider
+            logger.warning(
+                "Pipeline step %d caption empty for %s: %s", step_idx + 1, file_path, reason
+            )
+            failed_image_ids.add(img_id)
+            if len(failed_details) < _MAX_FAILED_DETAILS:
+                failed_details.append({"file": Path(file_path).name, "error": reason})
 
         for step_idx, step in enumerate(body.steps):
             is_ollama = step.model.startswith("ollama:")
@@ -744,6 +871,14 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             is_joycaption = step.model.startswith("joycaption_")
             is_openai_compat = step.model.startswith("openai_compat:")
             is_wd14 = step.model.startswith("wd14:")
+
+            # See the matching reason in /run's loop.
+            if is_wd14:
+                _empty_reason = "no tags above the confidence threshold"
+            elif is_ollama:
+                _empty_reason = "the Ollama request returned no caption text"
+            else:
+                _empty_reason = "provider returned an empty caption"
 
             florence_entry = None
             paligemma_entry = None
@@ -821,6 +956,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     resolved_prompt = step.custom_prompt.replace("{previous_caption}", prev_caption)
 
                     caption = ""
+                    # See the matching flag in /run's loop.
+                    errored = False
                     try:
                         if is_florence:
                             from backend.ml.florence_captioner import caption_image as _fi
@@ -870,14 +1007,22 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                             getattr(openai_provider, "timeout_s", "?"),
                         )
                         timed_out += 1
+                        if timeout_provider is None:
+                            timeout_provider = openai_provider
+                        errored = True
                         failed_image_ids.add(img_id)
                         if len(failed_details) < _MAX_FAILED_DETAILS:
                             failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
                     except Exception as exc:
                         logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
+                        errored = True
                         failed_image_ids.add(img_id)
                         if len(failed_details) < _MAX_FAILED_DETAILS:
                             failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+
+                    # Reason A — see the matching branch in /run's loop.
+                    if not caption and not errored:
+                        _record_empty(img_id, file_path, _empty_reason)
 
                     if caption:
                         if step.strip_refusals:
@@ -915,13 +1060,30 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                                     existing_set = set(new_tags)
                                     new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
                                 caption = ", ".join(new_tags)
-                            existing = prev_captions.get(img_id, "")
-                            if step.delimiter_mode == "append" and existing:
-                                caption = existing + step.delimiter + caption
-                            elif step.delimiter_mode == "prepend" and existing:
-                                caption = caption + step.delimiter + existing
-                            await set_caption(session, img_id, caption, step.style, step.model,
-                                              has_ai_artifacts=artifact_detected)
+                            # Reason C — see the matching branch in /run's loop: guarded
+                            # before the merge so a blanked caption never reaches
+                            # set_caption or the delimiter join.
+                            if not caption:
+                                _record_empty(
+                                    img_id, file_path,
+                                    "post-processing removed the entire caption",
+                                    stripped=True,
+                                )
+                            else:
+                                existing = prev_captions.get(img_id, "")
+                                if step.delimiter_mode == "append" and existing:
+                                    caption = existing + step.delimiter + caption
+                                elif step.delimiter_mode == "prepend" and existing:
+                                    caption = caption + step.delimiter + existing
+                                await set_caption(session, img_id, caption, step.style, step.model,
+                                                  has_ai_artifacts=artifact_detected)
+                        else:
+                            # Reason B — see the matching branch in /run's loop.
+                            _record_empty(
+                                img_id, file_path,
+                                "the reply was entirely a refusal, removed by Strip refusals",
+                                stripped=True,
+                            )
 
                     overall_done += 1
                     if i % 10 == 0:
@@ -950,7 +1112,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             if is_florence or is_paligemma or is_joycaption:
                 await model_manager.evict_all()
 
-        headline = _failure_headline(timed_out, openai_provider)
+        headline = _failure_headline(
+            timed_out, timeout_provider, empty_count, stripped_count, empty_provider
+        )
 
         if failed_image_ids:
             from backend.workers.progress import broadcaster
@@ -972,6 +1136,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     job_row.result_data = {
                         "failed_count": len(failed_image_ids),
                         "timed_out": timed_out,
+                        "empty": empty_count,
+                        "stripped": stripped_count,
                         "failure_summary": headline,
                         "failed": failed_details,
                     }

@@ -402,3 +402,33 @@ utilities → `docs/dev/shared-utilities.md`.
   SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
   import) with the inpainter — they are the reason the section is long, and they are about
   this model rather than about the manager.
+
+
+## docs/dev/captioning.md
+
+- **Moves:** § OpenAI-compatible providers in full (~720 words) — the `/providers` router
+  table, the `OpenAIProvider` model and schema, `ml/openai_compat_captioner.py`, the
+  `openai_compat:{provider_id}:{model_name}` id format, the Settings LLM Providers tab and
+  the `ModelPicker` component.
+- **New file:** docs/dev/llm-providers.md. There is no user doc of that name to mirror
+  (provider setup is a section of `docs/settings.md`), so the name is taken from the
+  Settings tab users actually see.
+- **Why here:** the file is over budget (3,975 against 3,500) and its title already carries
+  the `and` warning sign — "Captioning post-processing **&** LLM providers". They are two
+  subsystems: a provider row is CRUD plus a client, configured in Settings and consumed by
+  one branch of the caption dispatch chain, while everything else in the file is about what
+  the caption *text* goes through afterwards. The seam is where this session's work stopped:
+  the empty-caption guard belongs entirely to the post-processing half, and the
+  `finish_reason` logging entirely to the provider half. Leaves ~3,255 and ~720 — the
+  destination has room for the growth this arc will keep sending it, and the remaining
+  captioning half is still near budget, so a second seam (§ The captioning model picker,
+  ~820 words, which is really about *pickers* and their two predicates) is the next one to
+  take if ~3,050 proves too tight.
+- **Watch for:** the two halves are cross-linked in both directions — the post-processing
+  half's § Progress and failures names `max_retries=0` and `timeout_s`, both defined in the
+  provider half, and the provider half's § Captioner points back at the empty-caption
+  bullet. Turn each into an explicit `docs/dev/…` pointer rather than leaving a bare
+  `§ Section` reference. `docs/dev/settings.md` and `docs/dev/comfy-prompts.md` both cite
+  `docs/dev/captioning.md` for provider configuration; grep `captioning.md` across `docs/`
+  and `backend/` before finishing, and give both files a Documentation Map row with fresh
+  `Words` cells.

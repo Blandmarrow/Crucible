@@ -299,9 +299,10 @@ export interface JobProgress {
    *  event only. Same pass-through as `plan_id` — the terminal event does not repeat it,
    *  and jobStore's spread merge keeps it. */
   failed_count?: number;
-  /** caption / caption_pipeline: the specific reason those images failed (a provider
-   *  timeout names the provider and its configured timeout), or absent when the run has
-   *  no diagnosis more specific than "the API returned an error". */
+  /** caption / caption_pipeline: the specific reasons those images failed — one
+   *  sentence each for provider timeouts, captions that came back empty, and captions
+   *  post-processing removed entirely — or absent when the run has no diagnosis more
+   *  specific than "the API returned an error". */
   failure_summary?: string;
 }
 

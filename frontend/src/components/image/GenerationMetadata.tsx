@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Cpu, Copy, Check } from "lucide-react";
+import toast from "react-hot-toast";
+import { copyText } from "../../utils/clipboard";
 import type { GenerationMetadata as GenMeta } from "../../types";
 
 interface Props {
@@ -8,10 +10,20 @@ interface Props {
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  // `copyText` rather than `navigator.clipboard`, which is absent on an insecure
+  // origin (issue #93). There was no `.catch()` here at all, so a failed copy
+  // became an unhandled rejection that popped the global error console — which is
+  // why a failed copy on `0.0.0.0` looked like a crash.
   const copy = () => {
-    navigator.clipboard.writeText(text).then(() => {
+    void copyText(text).then((ok) => {
+      if (!ok) { toast.error("Could not copy to the clipboard"); return; }
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
     });
   };
   return (

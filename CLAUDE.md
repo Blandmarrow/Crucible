@@ -143,7 +143,7 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 
 | File | Read this when... | Words |
 |---|---|---|
-| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary, the shared frontend components | ~1570 |
+| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary, the shared frontend components | ~1795 |
 | `docs/dev/ml-models.md` | Working on captioning models, the LaMa inpainter, or `backend/ml/` loading — the model manager (VRAM/unload), model ID registry, device abstraction, EXIF-consistent opening, the ambient `HF_TOKEN` every loader relies on, TorchDynamo, the hash-pinned TorchScript weight download | ~3615 |
 | `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, or LUT color grading — the two pipelines that rewrite pixels through a loaded model: the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, both replace/new-file surfaces | ~1810 |
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, `DetectionJobRequest` scope, per-model overwrite scoping, `mask_area`, watermark flag sync | ~2140 |
@@ -185,7 +185,7 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the `ThresholdSettings` singleton row and every tab it backs, the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
 | `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the eight endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~3525 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~2850 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~3015 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~2430 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~1435 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2250 |
@@ -195,7 +195,7 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient | ~2865 |
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — the one-shot generate endpoint, the durable `comfy_prompts` job, `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow`, the `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, ComfyUI API constraints | ~710 |
-| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~1525 |
+| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~1610 |
 
 ### Code review & bug investigation
 

@@ -3,6 +3,7 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../utils/apiError";
+import { copyText } from "../utils/clipboard";
 import { qualityApi, type DuplicateGroup, type DuplicateImage } from "../api/quality";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { formatFramePosition, formatTimeAgo } from "../utils/duration";
@@ -996,9 +997,9 @@ export default function QualityPage() {
                   className="btn"
                   onClick={() => {
                     const ids = Array.from(selectedRefIds).join(",");
-                    navigator.clipboard.writeText(ids)
-                      .then(() => toast.success(`Copied ${selectedRefIds.size} reference ID${selectedRefIds.size === 1 ? "" : "s"}`))
-                      .catch(() => toast.error("Could not copy to the clipboard"));
+                    void copyText(ids).then((ok) => ok
+                      ? toast.success(`Copied ${selectedRefIds.size} reference ID${selectedRefIds.size === 1 ? "" : "s"}`)
+                      : toast.error("Could not copy to the clipboard"));
                   }}
                   disabled={selectedRefIds.size === 0}
                   title="Copy the selected dataset reference image IDs as a comma-separated list"

@@ -30,6 +30,8 @@ Only `start` does this — `dev` leaves your browser alone. Two other things wor
 
 - To launch without a browser (a headless machine, or you simply have the tab open already), set `CRUCIBLE_NO_BROWSER=1`: `CRUCIBLE_NO_BROWSER=1 ./manage.sh start`, or `$env:CRUCIBLE_NO_BROWSER=1` before `.\manage.ps1 start` on Windows. Nothing opens and no placeholder runs; startup is otherwise identical.
 - If something else already holds port 8000 — usually a copy of Crucible you forgot to stop — the placeholder steps aside silently and no browser opens, so what you see is the server's own "address already in use" error rather than a page from the other instance.
+- **Use `localhost:8000`, not `0.0.0.0:8000`.** Both launchers print the right URL, but uvicorn's own banner (`Uvicorn running on http://0.0.0.0:8000`) prints just after it and is usually the last clickable link in the terminal. `0.0.0.0` is a bind address rather than somewhere to browse to, and browsers treat it as a *non-secure origin*, which withholds a handful of APIs Crucible uses. Land on it anyway and Crucible now bounces you to the `localhost` equivalent, keeping your port, path and query — so the wrong link costs you nothing.
+- **Browsing from another machine on your network** (`http://192.168.1.5:8000`, say) is also a non-secure origin, and that one is left alone — it is a deliberate choice about where you want to reach the app from, and rewriting it would point your browser at the wrong machine. Everything works there; copy buttons fall back to an older browser mechanism, which is invisible in use.
 
 ## Restarting & shutting down
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { booruApi } from "../api/booru";
+import { copyText } from "../utils/clipboard";
 
 const CATEGORY_COLORS: Record<string, string> = {
   character: "var(--info)",
@@ -128,7 +129,9 @@ export default function BooruPage() {
                     <button
                       className="btn ghost sm"
                       style={{ fontSize: 11.5 }}
-                      onClick={() => { navigator.clipboard.writeText(tag.tag); toast.success(`Copied "${tag.tag}"`); }}
+                      onClick={() => void copyText(tag.tag).then((ok) => ok
+                        ? toast.success(`Copied "${tag.tag}"`)
+                        : toast.error("Could not copy to the clipboard"))}
                     >
                       Copy
                     </button>

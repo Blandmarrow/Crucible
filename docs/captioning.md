@@ -112,6 +112,31 @@ Chain two or more captioning steps that run in sequence as a single job:
 
 Multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. A queue badge in the page header shows how many jobs are waiting. Each job shows a descriptive auto-generated name (model and image count) in the queue; enter a custom **label** in the optional field before starting to distinguish runs more clearly.
 
+## When images come back uncaptioned
+
+Some images can finish a run with no caption at all. Every one of them is now **counted and
+named**: the Captioning page shows an amber "N images failed" badge with a sentence saying
+why, the same sentence appears on the run's row in the Logs page, and the per-file list
+there names the images. Nothing is written for those images — in particular, a caption they
+already had is left alone rather than blanked.
+
+Three reasons, each with its own fix:
+
+- **"came back empty — the model returned no caption text."** The provider answered, but
+  with nothing in it. The usual cause is a reasoning model spending its entire token budget
+  thinking: raise **Max tokens** in Settings → LLM Providers. The terminal log names the
+  model and the provider's `finish_reason`, which confirms it. For a WD14 run the reason
+  reads *no tags above the confidence threshold* instead — lower **WD14 threshold**.
+- **"had their whole caption removed by post-processing."** The reply was entirely a
+  thinking block or entirely a refusal, and **Strip thinking blocks** or **Strip refusal
+  phrases** removed all of it. Turn the matching option off to see what the model actually
+  said, or change the prompt.
+- **"timed out."** The provider did not answer within its configured timeout — raise
+  **Timeout** in Settings → LLM Providers.
+
+These are per-image and usually intermittent, so the quickest recovery is to re-run with
+the scope set to uncaptioned images only (leave **Overwrite existing captions** off).
+
 ## Prompt Preset Manager
 
 Save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.

@@ -71,7 +71,28 @@ def _caption_sync(
     if not resp.choices:
         logger.warning("Provider returned no choices (choices=%r); returning empty caption", resp.choices)
         return ""
-    return (resp.choices[0].message.content or "").strip()
+    choice = resp.choices[0]
+    text = (choice.message.content or "").strip()
+    finish_reason = getattr(choice, "finish_reason", None)
+    if not text:
+        # The router counts this as a failure; what it cannot see from a bare ""
+        # is *why*. A reasoning model that spends its whole budget thinking comes
+        # back finish_reason="length" with the text in `reasoning_content` — a
+        # provider extension the SDK carries as an extra field, hence getattr.
+        has_reasoning = bool(getattr(choice.message, "reasoning_content", None))
+        logger.warning(
+            "Model '%s' returned an empty caption (finish_reason=%r, reasoning_content=%s). "
+            "If this is a reasoning model it may have spent its whole budget thinking \u2014 "
+            "raise Max tokens in Settings \u2192 LLM Providers.",
+            model_name, finish_reason, "present" if has_reasoning else "absent",
+        )
+    elif finish_reason == "length":
+        logger.warning(
+            "Model '%s' hit its token limit mid-caption (finish_reason='length'); the caption "
+            "is truncated. Raise Max tokens in Settings \u2192 LLM Providers.",
+            model_name,
+        )
+    return text
 
 
 async def caption_image(

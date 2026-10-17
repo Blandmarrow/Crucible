@@ -1,0 +1,462 @@
+"""Batch B probes (GPT-008/009/010/011/016/017/020). Report-only; never touches repo files."""
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+from sqlalchemy import select
+
+import backend.models  # noqa
+from backend.models import Image
+from backend.models.detection import Detection
+from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
+
+
+def _locked(msg="locked"):
+    e = PermissionError(13, msg)
+    e.winerror = 32
+    return e
+
+
+def _client(app):
+    # real status codes instead of re-raised app exceptions
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                             base_url="http://test")
+
+
+async def _row(env, iid):
+    async with env.Session() as db:
+        return await db.get(Image, iid)
+
+
+async def _ds(env, dsid):
+    return (await env.client.get(f"{API}/datasets/{dsid}")).json()
+
+
+# ---------------------------------------------------------------- GPT-008
+def test_gpt008_locked_image_delete_commits_row_then_500(tmp_path, monkeypatch):
+    from backend.main import app
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png")
+            row = await _row(env, img["id"])
+            target = Path(row.file_path)
+            assert (await _ds(env, ds["id"]))["image_count"] == 1
+
+            real_unlink = Path.unlink
+
+            def fake_unlink(self, *a, **kw):
+                if self == target:
+                    raise _locked()
+                return real_unlink(self, *a, **kw)
+
+            monkeypatch.setattr(Path, "unlink", fake_unlink)
+            async with _client(app) as c:
+                r = await c.delete(f"{API}/images/{img['id']}")
+            print("DELETE status", r.status_code)
+            assert r.status_code == 500
+            assert await _row(env, img["id"]) is None          # row already gone
+            assert target.exists()                              # file remains
+            cnt = (await _ds(env, ds["id"]))["image_count"]
+            print("image_count after failed delete:", cnt)
+            assert cnt == 1                                     # stale dataset stats
+            monkeypatch.setattr(Path, "unlink", real_unlink)
+            r2 = await env.client.delete(f"{API}/images/{img['id']}")
+            assert r2.status_code == 404                        # retry impossible
+            assert target.exists()                              # orphan file persists
+    run(scenario())
+
+
+# ---------------------------------------------------------------- GPT-009
+def _patch_txt_rename(monkeypatch):
+    real_rename = Path.rename
+
+    def fake_rename(self, target):
+        if self.suffix == ".txt":
+            raise _locked()
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+    return real_rename
+
+
+def test_gpt009_gallery_rename_sidecar_fail_strands_row(tmp_path, monkeypatch):
+    from backend.main import app
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png")
+            row = await _row(env, img["id"])
+            old = Path(row.file_path)
+            side = old.with_suffix(".txt")
+            side.write_text("cap", encoding="utf-8")
+            _patch_txt_rename(monkeypatch)
+            async with _client(app) as c:
+                r = await c.patch(f"{API}/images/{img['id']}/rename", json={"new_stem": "zzz"})
+            print("rename status", r.status_code)
+            assert r.status_code == 500
+            new = old.with_name("zzz.png")
+            assert new.exists() and not old.exists()            # image moved
+            assert side.exists()                                # caption left behind at old name
+            assert not new.with_suffix(".txt").exists()
+            after = await _row(env, img["id"])
+            assert after.file_path == str(old)                  # DB still names the dead path
+            r2 = await env.client.get(f"{API}/images/{img['id']}/file")
+            print("GET /file", r2.status_code)
+            assert r2.status_code == 404
+    run(scenario())
+
+
+def test_gpt009_filesystem_rename_sidecar_fail_strands_row(tmp_path, monkeypatch):
+    from backend.main import app
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png")
+            row = await _row(env, img["id"])
+            old = Path(row.file_path)
+            side = old.with_suffix(".txt")
+            side.write_text("cap", encoding="utf-8")
+            _patch_txt_rename(monkeypatch)
+            async with _client(app) as c:
+                r = await c.post(f"{API}/filesystem/rename", json={"path": str(old), "new_name": "zzz.png"})
+            print("fs rename status", r.status_code, r.text)
+            assert r.status_code == 403
+            new = old.with_name("zzz.png")
+            assert new.exists() and not old.exists() and side.exists()
+            assert (await _row(env, img["id"])).file_path == str(old)
+            assert (await env.client.get(f"{API}/images/{img['id']}/file")).status_code == 404
+    run(scenario())
+
+
+# ---------------------------------------------------------------- GPT-010
+def test_gpt010_single_crop_remap_failure_leaves_pixels_ahead_of_row(tmp_path, monkeypatch):
+    from backend.main import app
+    import backend.routers.images as images_router
+    from PIL import Image as Pil
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(32, 32)))
+            row = await _row(env, img["id"])
+            assert (row.width, row.height) == (32, 32)
+
+            async def boom(*a, **k):
+                raise OSError("simulated remap failure")
+            monkeypatch.setattr(images_router, "remap_detections_for_crop", boom)
+            async with _client(app) as c:
+                r = await c.post(f"{API}/images/{img['id']}/crop",
+                                 json={"x": 0, "y": 0, "width": 16, "height": 16, "replace": True})
+            print("crop status", r.status_code)
+            assert r.status_code == 500
+            with Pil.open(row.file_path) as f:
+                print("disk size", f.size)
+                assert f.size == (16, 16)
+            after = await _row(env, img["id"])
+            print("db geometry", after.width, after.height, "history", after.processing_history)
+            assert (after.width, after.height) == (32, 32)
+            assert not after.processing_history
+    run(scenario())
+
+
+def test_gpt010_realistic_trigger_malformed_mask_json(tmp_path):
+    """Not the reviewer's injection: does real remap code raise on odd stored data?"""
+    from backend.main import app
+    from PIL import Image as Pil
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(32, 32)))
+            from sqlalchemy import text
+            async with env.Session() as db:
+                d = Detection(image_id=img["id"], label="x", bbox=[0.1, 0.1, 0.9, 0.9],
+                              model="m", task="t", mask=None)
+                db.add(d)
+                await db.commit()
+                # raw SQL: the ORM mask_area listener itself rejects this value
+                await db.execute(text("UPDATE detections SET mask=:m"), {"m": json.dumps({"polygons": 5})})
+                await db.commit()
+            row = await _row(env, img["id"])
+            async with _client(app) as c:
+                r = await c.post(f"{API}/images/{img['id']}/crop",
+                                 json={"x": 0, "y": 0, "width": 16, "height": 16, "replace": True})
+            print("crop status with malformed mask", r.status_code)
+            with Pil.open(row.file_path) as f:
+                print("disk", f.size, "db", (await _row(env, img["id"])).width)
+            assert r.status_code == 500
+    run(scenario())
+
+
+def test_gpt010_batch_crop_remap_failure_fails_job_after_overwrite(tmp_path, monkeypatch):
+    import backend.routers.images as images_router
+    from PIL import Image as Pil
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            row = await _row(env, img["id"])
+
+            async def boom(*a, **k):
+                raise OSError("simulated remap failure")
+            monkeypatch.setattr(images_router, "remap_detections_for_crop", boom)
+            r = await env.client.post(f"{API}/images/batch/crop",
+                                      json={"image_ids": [img["id"]], "target_ar": 1.0})
+            job = await wait_for_job(env, r.json()["job_id"])
+            print("job", job["status"], job.get("error_msg"))
+            with Pil.open(row.file_path) as f:
+                print("disk", f.size)
+                assert f.size == (20, 20)
+            after = await _row(env, img["id"])
+            print("db", after.width, after.height, after.processing_history)
+            assert job["status"] == "failed"
+            assert (after.width, after.height) == (40, 20)
+    run(scenario())
+
+
+# ---------------------------------------------------------------- GPT-011
+async def _set_auto(env):
+    r = await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "auto"})
+    assert r.status_code == 200, r.text
+
+
+def test_gpt011_dotdot_alias_bypasses_row_scope_and_snapshot_protection(tmp_path):
+    from backend.services import version_service
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await _set_auto(env)
+            # ---- aliased
+            ds = await env.create_dataset("alias")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes((1, 2, 3)))
+            row = await _row(env, img["id"])
+            fp = Path(row.file_path)
+            images_dir = fp.parent
+            async with env.Session() as db:
+                snap = await version_service.create_snapshot(db, ds["id"], "s1", "")
+            alias = f"{images_dir}/../images"
+            r = await env.client.post(f"{API}/filesystem/delete", json={"path": alias})
+            print("alias delete", r.status_code, r.text)
+            assert r.status_code == 200
+            assert not fp.exists()
+            after = await _row(env, img["id"])
+            assert after is not None and after.file_path == str(fp)     # row kept
+            assert (await env.client.get(f"{API}/images/{img['id']}/file")).status_code == 404
+            async with env.Session() as db:
+                res = await version_service.restore_snapshot(db, ds["id"], snap.id,
+                                                             pre_restore_snapshot=False)
+            print("alias restore result:", res)
+            assert res["files_restored"] == 0
+            assert res["files_unavailable"] == 0 and res["files_failed"] == 0
+            assert not fp.exists()                                      # still gone
+
+            # ---- control: canonical path
+            ds2 = await env.create_dataset("canon")
+            img2 = await upload_image(env, ds2["id"], "b.png", png_bytes((9, 9, 9)))
+            row2 = await _row(env, img2["id"])
+            fp2 = Path(row2.file_path)
+            async with env.Session() as db:
+                snap2 = await version_service.create_snapshot(db, ds2["id"], "s1", "")
+            r = await env.client.post(f"{API}/filesystem/delete", json={"path": str(fp2.parent)})
+            assert r.status_code == 200
+            assert await _row(env, img2["id"]) is None                  # row removed
+            async with env.Session() as db:
+                res2 = await version_service.restore_snapshot(db, ds2["id"], snap2.id,
+                                                              pre_restore_snapshot=False)
+            print("canonical restore result:", res2)
+            assert res2["files_restored"] == 1
+            assert fp2.exists()
+    run(scenario())
+
+
+# ---------------------------------------------------------------- GPT-016
+def _patterned_png(w=128, h=96) -> bytes:
+    import io
+    import random
+    from PIL import Image as Pil
+    rnd = random.Random(0)
+    im = Pil.new("RGB", (w, h))
+    px = im.load()
+    cols = [(rnd.randrange(256), rnd.randrange(256), rnd.randrange(256)) for _ in range(40)]
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = cols[((x // 12) * 7 + (y // 12) * 13) % 40]
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    return b.getvalue()
+
+
+def test_gpt016_resize_leaves_stale_size_and_phash(tmp_path):
+    import imagehash
+    from PIL import Image as Pil
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            before = await _row(env, img["id"])
+            r = await env.client.post(f"{API}/images/{img['id']}/resize",
+                                      json={"width": 32, "height": 96, "maintain_ar": False})
+            assert r.status_code == 200, r.text
+            after = await _row(env, img["id"])
+            actual_size = Path(after.file_path).stat().st_size
+            with Pil.open(after.file_path) as f:
+                actual_hash = str(imagehash.phash(f))
+            print("stored size", after.file_size_bytes, "actual", actual_size)
+            print("stored phash", after.phash, "actual", actual_hash, "(before:", before.phash, ")")
+            assert (after.width, after.height) == (32, 96)
+            assert after.file_size_bytes != actual_size
+            # phash is scale-robust: for this fixture the stale value happens to equal the true one;
+            # the code never recomputes it either way (see batch-crop probe for a visible divergence)
+            assert after.phash == before.phash
+    run(scenario())
+
+
+def test_gpt016_batch_crop_leaves_stale_size_and_phash(tmp_path):
+    import imagehash
+    from PIL import Image as Pil
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            before = await _row(env, img["id"])
+            r = await env.client.post(f"{API}/images/batch/crop",
+                                      json={"image_ids": [img["id"]], "target_ar": 1.0})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed"
+            after = await _row(env, img["id"])
+            actual_size = Path(after.file_path).stat().st_size
+            with Pil.open(after.file_path) as f:
+                actual_hash = str(imagehash.phash(f))
+            print("batch crop stored", after.file_size_bytes, "actual", actual_size,
+                  "phash", after.phash, "actual", actual_hash)
+            assert after.file_size_bytes != actual_size
+            assert after.phash == before.phash != actual_hash
+    run(scenario())
+
+
+def test_gpt016_restore_keeps_stale_phash_and_recreated_row_has_none(tmp_path):
+    """Restore half. Uses single replace-crop (which DOES refresh phash) so the stale
+    value after restore is attributable to restore, not to the resize gap."""
+    import imagehash
+    from PIL import Image as Pil
+    from backend.services import version_service
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await _set_auto(env)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            h0 = (await _row(env, img["id"])).phash
+            async with env.Session() as db:
+                snap = await version_service.create_snapshot(db, ds["id"], "s1", "")
+            r = await env.client.post(f"{API}/images/{img['id']}/crop",
+                                      json={"x": 0, "y": 0, "width": 64, "height": 48, "replace": True})
+            assert r.status_code == 200, r.text
+            h1 = (await _row(env, img["id"])).phash
+            assert h1 != h0
+            async with env.Session() as db:
+                res = await version_service.restore_snapshot(db, ds["id"], snap.id,
+                                                             pre_restore_snapshot=False)
+            print("restore", res)
+            after = await _row(env, img["id"])
+            with Pil.open(after.file_path) as f:
+                actual = str(imagehash.phash(f))
+                size = f.size
+            print("size", size, "actual phash", actual, "db phash", after.phash, "orig", h0, "cropped", h1)
+            assert size == (128, 96)
+            assert actual == h0
+            assert after.phash == h1 != actual            # stale: restore did not recompute
+
+            # recreated row
+            img2 = await upload_image(env, ds["id"], "b.png", _patterned_png(64, 64))
+            async with env.Session() as db:
+                snap2 = await version_service.create_snapshot(db, ds["id"], "s2", "")
+            assert (await env.client.delete(f"{API}/images/{img2['id']}")).status_code == 204
+            async with env.Session() as db:
+                res = await version_service.restore_snapshot(db, ds["id"], snap2.id,
+                                                             pre_restore_snapshot=False)
+            print("restore2", res)
+            re = await _row(env, img2["id"])
+            print("re-created row phash:", re.phash if re else "NO ROW")
+            assert re is not None and re.phash is None
+    run(scenario())
+
+
+# ---------------------------------------------------------------- GPT-017
+def test_gpt017_polygon_outside_crop_gets_invented_mask(tmp_path):
+    from backend.ml.mask_utils import remap_detection_geometry
+    from backend.main import app
+
+    mask = json.dumps({"polygons": [[[0, 0], [0.6, 0], [0, 0.6]]]})
+    out = remap_detection_geometry(mask, [0, 0, 0.6, 0.6], (40, 40, 60, 60), (100, 100))
+    print("helper:", out)
+    assert out is not None and out[0] is not None
+    polys = json.loads(out[0])["polygons"]
+    assert polys == [[[0.0, 0.0], [0.3333, 0.0], [0.0, 0.3333]]]
+
+    # geometric truth: triangle is x/100+y/100<=0.6; crop region needs x>=40,y>=40 -> x+y>=80 > 60
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(100, 100)))
+            async with env.Session() as db:
+                d = Detection(image_id=img["id"], label="x", bbox=[0, 0, 0.6, 0.6], model="m", task="t")
+                db.add(d)
+                await db.flush()
+                d.mask = mask
+                await db.commit()
+            r = await env.client.post(f"{API}/images/{img['id']}/crop",
+                                      json={"x": 40, "y": 40, "width": 60, "height": 60, "replace": True})
+            assert r.status_code == 200, r.text
+            async with env.Session() as db:
+                ds_ = (await db.execute(select(Detection).where(Detection.image_id == img["id"]))).scalars().all()
+            print("persisted", [(x.bbox, x.mask, x.mask_area) for x in ds_])
+            assert len(ds_) == 1 and ds_[0].mask is not None and ds_[0].mask_area > 0.05
+    run(scenario())
+
+
+def test_gpt017_control_polygon_on_one_side_is_dropped(tmp_path):
+    """Control: a polygon entirely left of the crop collapses to zero-area and IS dropped."""
+    from backend.ml.mask_utils import remap_detection_geometry
+    mask = json.dumps({"polygons": [[[0.0, 0.5], [0.3, 0.5], [0.0, 0.9]]]})
+    out = remap_detection_geometry(mask, [0.0, 0.5, 0.45, 0.9], (50, 0, 50, 100), (100, 100))
+    print("control:", out)
+    assert out is None or out[0] is None
+
+
+# ---------------------------------------------------------------- GPT-020
+def test_gpt020_zero_dimension_resize(tmp_path):
+    from backend.main import app
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(100, 1)))
+            before = Path((await _row(env, img["id"])).file_path).read_bytes()
+            async with _client(app) as c:
+                r = await c.post(f"{API}/images/{img['id']}/resize", json={"scale": 0.5})
+            print("status", r.status_code)
+            assert r.status_code == 500
+            assert Path((await _row(env, img["id"])).file_path).read_bytes() == before
+            after = await _row(env, img["id"])
+            assert (after.width, after.height) == (100, 1) and not after.processing_history
+
+            # control: batch job -> counted failed, not job-fatal
+            r = await env.client.post(f"{API}/images/batch/resize",
+                                      json={"image_ids": [img["id"]], "scale": 0.5})
+            job = await wait_for_job(env, r.json()["job_id"])
+            print("batch job", job["status"], job["result_data"])
+            # other paths to 0: width-only maintain_ar
+            async with _client(app) as c:
+                r3 = await c.post(f"{API}/images/{img['id']}/resize", json={"height": 1, "width": 1,
+                                                                        "maintain_ar": True})
+            print("w=1,h=1,maintain_ar status", r3.status_code)
+    run(scenario())

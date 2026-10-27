@@ -109,6 +109,35 @@ def sanitize_abs_path(path: str) -> Path:
     return p
 
 
+def canonical_abs_path(path: str, root: Path) -> Path:
+    """`sanitize_abs_path`, then one canonical spelling for the path (GPT-011).
+
+    Use it wherever a client-supplied path is matched against *stored* paths —
+    the file-browser routes, whose row scopes and folder guards compare
+    `Image.file_path`/`Dataset.folder_path` strings. A bare `Path` keeps `..`,
+    so `{ds}/images/../images` matched no row while `rmtree` resolved it and
+    deleted the bytes, skipping the snapshot backup on the way.
+
+    Plain `.resolve()` would be just as wrong in the other direction: stored
+    paths are deliberately **unresolved** (`str(settings.datasets_dir / slug)`),
+    and `datasets_dir` may sit under a symlink, a junction or `subst`, so a
+    resolved string would match nothing. Hence resolve, then rebase anything
+    under `root.resolve()` back onto `root` — the stored form. Paths outside
+    `root` come back resolved; no row names them.
+
+    A path whose *last* component is a symlink keeps it: only its parent is
+    resolved, so deleting or renaming a link acts on the link, not its target.
+    Full resolution also gives Windows' on-disk case, so a case variant matches
+    the stored string too.
+    """
+    p = sanitize_abs_path(path)
+    canonical = p.parent.resolve() / p.name if p.is_symlink() else p.resolve()
+    real_root = root.resolve()
+    if canonical.is_relative_to(real_root):
+        return root / canonical.relative_to(real_root)
+    return canonical
+
+
 def within_datasets_dir(path_str: str, base_dir: Path) -> Path | None:
     """Resolve a stored file path, returning it only if it is inside `base_dir`.
 

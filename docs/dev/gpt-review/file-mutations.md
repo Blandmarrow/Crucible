@@ -5,30 +5,6 @@ These are the verified findings where a file operation and its DB row can disagr
 `docs/dev/image-files.md` / `docs/dev/file-browser.md`. All of these findings were reproduced with
 `docs/dev/gpt-review/probes/backend/probe_file_mutations.py`. Conventions are in `docs/dev/gpt-review/README.md`.
 
-## GPT-011 — [P3, GPT said P2] `..` path aliases bypass filesystem-delete bookkeeping and snapshot protection
-
-**Verdict:** CONFIRMED. NEW. Downgraded because the UI sends canonical paths, so this is reachable
-only through a direct API call. That said, the API is unauthenticated, and the effect is silent
-data loss whose restore reports nothing.
-
-**Mechanism.**
-- `sanitize_abs_path` (`utils.py:97-109`) returns `Path(path)` without collapsing `..`.
-- `filesystem.delete_path` derives its DB scope from the raw string (`old_prefix`), while
-  `shutil.rmtree` resolves the alias.
-
-**Observed** (`test_gpt011_dotdot_alias_bypasses_row_scope_and_snapshot_protection`, with
-`versioning_mode=auto`):
-- Deleting `{ds}/images/../images` returned 200 and the bytes were gone.
-- The row stayed, so `/file` returns 404.
-- `restore_snapshot` reported 0 restored, 0 unavailable and 0 failed, and the file stays gone.
-- The canonical-path control removes the row and restores the file correctly.
-
-**Fix notes.**
-- Canonicalize once, with `resolve()`, before both the row matching and the mutation, and use the
-  same identity for both.
-- Consider doing it inside `sanitize_abs_path` for every filesystem route.
-- Test symlinked and case-variant paths too.
-
 ## GPT-016 — [P3] Resize and batch crop keep stale `file_size_bytes`/`phash`
 
 **Verdict:** CONFIRMED-KNOWN. `docs/dev/bulk-image-jobs.md` § batch resize/crop says

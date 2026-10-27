@@ -120,61 +120,6 @@ def test_gpt010_batch_crop_remap_failure_fails_job_after_overwrite(tmp_path, mon
     run(scenario())
 
 
-# ---------------------------------------------------------------- GPT-011
-async def _set_auto(env):
-    r = await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "auto"})
-    assert r.status_code == 200, r.text
-
-
-def test_gpt011_dotdot_alias_bypasses_row_scope_and_snapshot_protection(tmp_path):
-    from backend.services import version_service
-
-    async def scenario():
-        async with api_env(tmp_path) as env:
-            await _set_auto(env)
-            # ---- aliased
-            ds = await env.create_dataset("alias")
-            img = await upload_image(env, ds["id"], "a.png", png_bytes((1, 2, 3)))
-            row = await _row(env, img["id"])
-            fp = Path(row.file_path)
-            images_dir = fp.parent
-            async with env.Session() as db:
-                snap = await version_service.create_snapshot(db, ds["id"], "s1", "")
-            alias = f"{images_dir}/../images"
-            r = await env.client.post(f"{API}/filesystem/delete", json={"path": alias})
-            print("alias delete", r.status_code, r.text)
-            assert r.status_code == 200
-            assert not fp.exists()
-            after = await _row(env, img["id"])
-            assert after is not None and after.file_path == str(fp)     # row kept
-            assert (await env.client.get(f"{API}/images/{img['id']}/file")).status_code == 404
-            async with env.Session() as db:
-                res = await version_service.restore_snapshot(db, ds["id"], snap.id,
-                                                             pre_restore_snapshot=False)
-            print("alias restore result:", res)
-            assert res["files_restored"] == 0
-            assert res["files_unavailable"] == 0 and res["files_failed"] == 0
-            assert not fp.exists()                                      # still gone
-
-            # ---- control: canonical path
-            ds2 = await env.create_dataset("canon")
-            img2 = await upload_image(env, ds2["id"], "b.png", png_bytes((9, 9, 9)))
-            row2 = await _row(env, img2["id"])
-            fp2 = Path(row2.file_path)
-            async with env.Session() as db:
-                snap2 = await version_service.create_snapshot(db, ds2["id"], "s1", "")
-            r = await env.client.post(f"{API}/filesystem/delete", json={"path": str(fp2.parent)})
-            assert r.status_code == 200
-            assert await _row(env, img2["id"]) is None                  # row removed
-            async with env.Session() as db:
-                res2 = await version_service.restore_snapshot(db, ds2["id"], snap2.id,
-                                                              pre_restore_snapshot=False)
-            print("canonical restore result:", res2)
-            assert res2["files_restored"] == 1
-            assert fp2.exists()
-    run(scenario())
-
-
 # ---------------------------------------------------------------- GPT-016
 def _patterned_png(w=128, h=96) -> bytes:
     import io

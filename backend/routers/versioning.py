@@ -46,6 +46,20 @@ async def _require_versioning_enabled(db: AsyncSession) -> str:
     return settings.versioning_mode
 
 
+async def _store_result(session: AsyncSession, job_id: str, result: dict) -> None:
+    """Write a restore/checkout outcome to the job row's `result_data`.
+
+    A restore that could not restore some files still ends `completed`, so the
+    counts and `failure_summary` are the only record of it once the live
+    progress is gone (PM-023's `failed_count` convention, GPT-025). Called
+    inside the `busy` block, before the job queue marks the row completed.
+    """
+    job_row = await session.get(BackgroundJob, job_id)
+    if job_row is not None:
+        job_row.result_data = result
+        await session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Branches
 # ---------------------------------------------------------------------------
@@ -182,11 +196,12 @@ async def checkout_branch(
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session, busy(dataset_id, "branch checkout"):
-            await version_service.checkout_branch(
+            result = await version_service.checkout_branch(
                 session, dataset_id, branch_id,
                 pre_restore_snapshot=pre_restore,
                 job_id=job_id,
             )
+            await _store_result(session, job_id, result)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
@@ -415,12 +430,13 @@ async def restore_version(
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session, busy(dataset_id, "restore"):
-            await version_service.restore_snapshot(
+            result = await version_service.restore_snapshot(
                 session, dataset_id, version_id,
                 handle_extra_images=h_extra,
                 pre_restore_snapshot=pre_restore,
                 job_id=job_id,
             )
+            await _store_result(session, job_id, result)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

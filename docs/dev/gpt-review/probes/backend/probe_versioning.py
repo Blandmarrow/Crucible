@@ -47,53 +47,6 @@ async def _restore_svc(env, ds_id, vid, **kw):
         return await version_service.restore_snapshot(db, ds_id, vid, **kw)
 
 
-def test_gpt025_failed_copy_job_still_completed(tmp_path, monkeypatch):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "manual")
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
-            vid = await _snap(env, ds["id"], "orig")
-            await _crop(env, img["id"])
-            real = shutil.copy2
-            hits = {"n": 0}
-            def selective(src, dst, *a, **k):
-                if "/.versions/objects/" in str(src) and ".versions" not in str(dst):
-                    hits["n"] += 1
-                    raise OSError("injected object->target copy failure")
-                return real(src, dst, *a, **k)
-            monkeypatch.setattr(version_service.shutil, "copy2", selective)
-            r = await env.client.post(f"{API}/datasets/{ds['id']}/versions/{vid}/restore",
-                                      json={"handle_extra_images": "keep", "pre_restore_snapshot": False})
-            j = await wait_for_job(env, r.json()["job_id"])
-            print("job", j["status"], "error_msg", j.get("error_msg"), "result_data", j.get("result_data"), "hits", hits)
-            path, w, h = await _row(env, img["id"])
-            print("DB", (w, h), "pixels", _size(path))
-            assert j["status"] == "completed" and not j.get("error_msg") and not j.get("result_data")
-            assert (w, h) == (100, 80) and _size(path) == (40, 40) and hits["n"] == 1
-    run(scenario())
-
-
-def test_gpt025_service_returns_files_failed(tmp_path, monkeypatch):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "manual")
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
-            vid = await _snap(env, ds["id"], "orig")
-            await _crop(env, img["id"])
-            real = shutil.copy2
-            def selective(src, dst, *a, **k):
-                if "/.versions/objects/" in str(src) and ".versions" not in str(dst):
-                    raise OSError("injected")
-                return real(src, dst, *a, **k)
-            monkeypatch.setattr(version_service.shutil, "copy2", selective)
-            res = await _restore_svc(env, ds["id"], vid, pre_restore_snapshot=False)
-            print("service result", res)
-            assert res["files_failed"] == 1
-    run(scenario())
-
-
 def test_gpt026_detection_geometry_not_restored(tmp_path):
     async def scenario():
         async with api_env(tmp_path, foreign_keys=True) as env:

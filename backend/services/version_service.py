@@ -23,6 +23,7 @@ is_present semantics:
   object store (the deletion hook backs up the file before it is unlinked).
 """
 import asyncio
+import copy
 import hashlib
 import logging
 import os
@@ -34,7 +35,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,12 +44,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
 from backend.models.image import Image
-from backend.models.label import Label
+from backend.models.label import ImageLabel, Label
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
 from backend.services.label_service import labels_by_image, live_label_ids, set_labels
 from backend.services.threshold_service import get_thresholds
-from backend.utils import chunked, contained_path, thumbnail_path_for, within_datasets_dir
+from backend.utils import (
+    chunked, contained_path, replace_retrying, score_columns, thumbnail_path_for,
+    within_datasets_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +165,104 @@ def _remove_stale_files(file_path: str | None, sidecar: bool, thumbnail_path: st
         pass
 
 
+def _copy_object_to_tmp(dataset_folder: str, object_path: Path) -> Path:
+    """Copy a stored object to a fresh ``.tmp-{uuid}`` in ``objects/``. Sync.
+
+    The temp lives where ``_store_object``'s do: prune already sweeps
+    ``.tmp-*`` there, and no rescan ever looks under ``.versions``. Same
+    filesystem as the dataset's files, so the ``replace`` that follows is atomic.
+    A copy that fails leaves no temp behind.
+    """
+    objects_dir = Path(dataset_folder) / ".versions" / "objects"
+    objects_dir.mkdir(parents=True, exist_ok=True)
+    tmp = objects_dir / f".tmp-{uuid4().hex}"
+    try:
+        shutil.copy2(str(object_path), str(tmp))
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
+async def _write_object_atomically(
+    dataset_folder: str, object_path: Path, target: Path
+) -> None:
+    """Put a stored object's bytes at ``target`` all at once, or not at all (GPT-025).
+
+    ``shutil.copy2`` straight onto the target truncated it first, so a copy
+    that failed half way left neither the old pixels nor the new ones. The
+    bytes go to a temp file first and ``replace_retrying`` swaps it in — the
+    overwriting form, which on Windows retries a file another handle holds and
+    then raises ``FileInUseError``; either way the old file is intact until the
+    swap. The temp never outlives the call.
+    """
+    loop = asyncio.get_running_loop()
+    tmp = await loop.run_in_executor(None, _copy_object_to_tmp, dataset_folder, object_path)
+    try:
+        await replace_retrying(tmp, target)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Could not remove restore temp %s: %s", tmp, exc)
+
+
+# Columns describing a row's *pixels* rather than its curation, captured before
+# a restore writes the snapshot's values so that a file whose content could not
+# be restored gets them back (GPT-025). The ten scores and what qualifies them
+# were measured on the surviving pixels; the geometry is re-measured on top.
+# Never `source_meta`: it is deferred, and it is provenance, not pixels.
+_PIXEL_QUALIFIERS = (
+    "aesthetic_model", "scores_stale", "quality_flags", "dino_layer_scores",
+    "processing_history", "width", "height", "file_size_bytes", "format", "phash",
+)
+
+
+def _capture_pre_pixel(img: Image) -> dict:
+    cols = sorted(score_columns(Image)) + list(_PIXEL_QUALIFIERS)
+    # Deep copies: the JSON columns are reassigned later, and SQLAlchemy only
+    # sees a change on a different object (CLAUDE.md, loaded JSON columns).
+    return {c: copy.deepcopy(getattr(img, c)) for c in cols}
+
+
+async def _measure_into(img: Image) -> None:
+    """Measure the row's file and assign what could be measured. Never raises.
+
+    Geometry, size, format and phash come from the file on disk rather than a
+    snapshot mirror. ``get_image_info`` returns ``{}`` on any failure, so an
+    unreadable file keeps whatever the row already holds.
+    """
+    from backend.services.image_service import get_image_info
+
+    try:
+        info = await asyncio.get_running_loop().run_in_executor(
+            None, get_image_info, img.file_path
+        )
+    except Exception as exc:
+        logger.warning("Could not measure %s: %s", img.file_path, exc)
+        return
+    for key in ("width", "height", "file_size_bytes", "format", "phash"):
+        if key in info:
+            setattr(img, key, info[key])
+
+
+_FAILURE_DETAIL_CAP = 50
+
+
+def _failure_summary(failed_count: int, failures: list[dict]) -> str | None:
+    """One line for the job's ``result_data`` (PM-023's convention), ≤ 300 chars."""
+    if not failed_count:
+        return None
+    names = ", ".join(f["file"] for f in failures[:3])
+    more = failed_count - min(3, len(failures))
+    text = f"{failed_count} file(s) could not be restored: {names}"
+    if more > 0:
+        text += f" and {more} more"
+    if failures:
+        text += f" ({failures[0]['error']})"
+    return text if len(text) <= 300 else text[:297] + "..."
+
+
 def _sync_caption_sidecar(image_path: str, caption: str | None) -> None:
     """Make the on-disk .txt sidecar match the restored caption.
 
@@ -180,7 +282,10 @@ def _sync_caption_sidecar(image_path: str, caption: str | None) -> None:
                 txt.write_text(text, encoding="utf-8")
         elif txt.exists():
             txt.unlink()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers UnicodeDecodeError: a non-UTF-8 sidecar used to
+        # escape Pass 3b and skip restore's final commit, losing every
+        # compensating fixup with it.
         logger.warning("Caption sidecar sync failed for %s: %s", image_path, exc)
 
 
@@ -249,6 +354,11 @@ class _RestorePlan:
     recreated: bool = False
     fork_new_id: str | None = None     # fresh ID when state.image_id now lives in another dataset
     skip_recreate: bool = False        # foreign ID + no recorded content — nothing to restore
+    # GPT-025: the row's pixel-derived values before the restore (Pass 0, or
+    # Pass 0b on adoption), put back when its content could not be written.
+    pre_pixel: dict | None = None
+    content_written: bool = False      # the snapshot's bytes are now at the target
+    failure_recorded: bool = False     # counted once, however many steps then fail
 
 
 class SnapshotIncomplete(RuntimeError):
@@ -942,8 +1052,29 @@ async def restore_snapshot(
     files_restored = 0
     files_unavailable = 0
     files_failed = 0
+    extras_failed = 0
+    thumbnails_stale = 0
     images_re_created = 0
     images_removed = 0
+    # One entry per counted failure (capped), so the job's result_data can name
+    # the files rather than only count them (GPT-025, PM-023).
+    failures: list[dict] = []
+
+    def _note_failure(name: str, error: object) -> None:
+        if len(failures) < _FAILURE_DETAIL_CAP:
+            failures.append({"file": name, "error": str(error)[:200]})
+
+    def _record_failure(p: "_RestorePlan", kind: str, error: object) -> None:
+        """Count a plan's failure once, as "failed" or "unavailable"."""
+        nonlocal files_failed, files_unavailable
+        if p.failure_recorded:
+            return
+        p.failure_recorded = True
+        if kind == "unavailable":
+            files_unavailable += 1
+        else:
+            files_failed += 1
+        _note_failure(p.state.filename, error)
 
     # The restore runs in four passes so that (a) COW protection only fires for
     # files that will actually be overwritten/moved/deleted, hashing each file at
@@ -965,6 +1096,7 @@ async def restore_snapshot(
             current_path=current_path,
             renamed=img is not None and current_path != target_path,
             old_thumbnail=img.thumbnail_path if img is not None else None,
+            pre_pixel=_capture_pre_pixel(img) if img is not None else None,
         ))
     # ── Pass 0b: resolve snapshot images whose ID now lives in another dataset ──
     # (moved out via batch move — the ID cannot be re-inserted here). Adopt a
@@ -1002,6 +1134,7 @@ async def restore_snapshot(
             p.current_path = candidate.file_path
             p.renamed = candidate.file_path != p.target_path
             p.old_thumbnail = candidate.thumbnail_path
+            p.pre_pixel = _capture_pre_pixel(candidate)
             adopted_ids.add(candidate.id)
         elif p.state.file_hash is not None:
             p.fork_new_id = str(uuid4())
@@ -1213,7 +1346,10 @@ async def restore_snapshot(
         img = p.img
         if img is None and p.state.image_id is not None:
             if p.skip_recreate:
-                files_unavailable += 1
+                _record_failure(
+                    p, "unavailable",
+                    "no recorded content (the image now lives in another dataset)",
+                )
                 continue
             img = Image(
                 id=p.fork_new_id or p.state.image_id,
@@ -1337,6 +1473,8 @@ async def restore_snapshot(
             # Leave the row at its new name: the old path will be overwritten by
             # the restore; the extra's content was COW-protected in Pass 1.
             logger.warning("Rename-aside failed for extra %s: %s", e.filename, exc)
+            extras_failed += 1
+            _note_failure(e.filename, f"could not be moved aside: {exc}")
 
     # Handles swaps/renumber chains: moving each colliding source to a temp name
     # first means no restore write can land on top of a file that is still
@@ -1353,7 +1491,10 @@ async def restore_snapshot(
                     await loop.run_in_executor(None, rename_with_sidecar, cur, tmp)
                     p.staged = tmp
                 except Exception as exc:
+                    # Counted, not made safe: the plan whose target this is may
+                    # still write over the unstaged file (a known gap).
                     logger.warning("Staging failed for %s: %s", p.state.filename, exc)
+                    _record_failure(p, "failed", f"could not be staged: {exc}")
 
     def _compensate_paths(p: _RestorePlan) -> None:
         """A move failed after Pass 2 committed the intended target paths — point
@@ -1399,7 +1540,7 @@ async def restore_snapshot(
         try:
             if state.file_hash is not None:
                 needs_restore = p.needs_restore
-                if needs_restore is None:  # renamed: decide now, post-staging
+                if needs_restore is None:  # renamed or re-created: decide now, post-staging
                     needs_restore = True
                     if target_file.exists():
                         try:
@@ -1410,12 +1551,18 @@ async def restore_snapshot(
                                 needs_restore = False
                         except Exception:
                             pass
+                    p.needs_restore = needs_restore
+                if not needs_restore:
+                    p.content_written = True  # the target already holds those bytes
 
                 object_path = _object_store_path(dataset.folder_path, state.file_hash)
                 if needs_restore and object_path.exists():
                     target_file.parent.mkdir(parents=True, exist_ok=True)
-                    await loop.run_in_executor(None, shutil.copy2, str(object_path), str(target_file))
+                    await _write_object_atomically(
+                        dataset.folder_path, object_path, target_file
+                    )
                     p.file_restored = True
+                    p.content_written = True
                     files_restored += 1
                     if p.renamed:
                         # The pre-rename copy (backed up in Pass 1) is now stale.
@@ -1426,7 +1573,9 @@ async def restore_snapshot(
                     # Object store copy is missing. NEVER delete the current file —
                     # it may be the only remaining copy. If renamed, move it to the
                     # target so disk matches the committed DB paths.
-                    files_unavailable += 1
+                    _record_failure(
+                        p, "unavailable", "its snapshot copy is missing from the object store"
+                    )
                     if p.renamed and src.exists():
                         try:
                             target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1462,18 +1611,53 @@ async def restore_snapshot(
                             )
                     except Exception as exc:
                         logger.warning("Rename restore failed for %s: %s", state.filename, exc)
+                        _record_failure(p, "failed", f"could not be renamed back: {exc}")
                         _compensate_paths(p)
                 elif target_file.exists():
                     # Source gone but the target already holds a file (e.g. an earlier
                     # partially-applied restore) — keep the committed target paths.
                     p.file_restored = True
                 else:
-                    files_unavailable += 1
+                    _record_failure(p, "unavailable", "the file is missing")
                     _compensate_paths(p)
+
+            elif p.recreated:
+                # Re-created with no recorded content change: only a file
+                # already at the target can back the row.
+                if target_file.exists():
+                    p.content_written = True
+                else:
+                    _record_failure(p, "unavailable", "no recorded content to re-create it from")
         except Exception as exc:
             logger.error("Restore failed for %s: %s", state.filename, exc)
-            files_failed += 1
+            _record_failure(p, "failed", exc)
             _compensate_paths(p)
+
+        # Reconcile a row whose content could not be written (GPT-025): Pass 2
+        # committed the snapshot's metadata, but the pixels on disk are still
+        # the pre-restore ones (the write is atomic, so they survived intact).
+        # A re-created row has no pixels at all and goes; any other row gets
+        # its pre-restore pixel values back and is re-measured. Caption,
+        # provenance, labels, sort order, generation metadata and lineage keep
+        # the snapshot's values: the metadata restore succeeded, only the
+        # pixels did not. Wrapped: Pass 3b sits between two commits (PM-013).
+        needed_content = p.recreated or (
+            state.file_hash is not None and bool(p.needs_restore)
+        )
+        if p.img is not None and needed_content and not p.content_written:
+            try:
+                if p.recreated:
+                    await db.execute(delete(ImageLabel).where(ImageLabel.image_id == p.img.id))
+                    await db.delete(p.img)
+                    images_re_created -= 1
+                    p.img = None
+                else:
+                    for key, value in (p.pre_pixel or {}).items():
+                        setattr(p.img, key, value)
+                    await _measure_into(p.img)
+            except Exception as exc:
+                logger.warning("Could not reconcile %s after a failed restore: %s",
+                               state.filename, exc)
 
         # Regenerate the thumbnail whenever the file content changed or the stem
         # moved (a renamed image needs a thumbnail under its new stem, and its old
@@ -1486,6 +1670,7 @@ async def restore_snapshot(
                 p.img.thumbnail_path = thumb
             except Exception as exc:
                 logger.warning("Thumbnail regen failed for %s: %s", state.filename, exc)
+                thumbnails_stale += 1
             # Force updated_at to change so the frontend's ?v= cache-bust param gets a new
             # value. Without this, if all other restored metadata values match what's already
             # in the DB, SQLAlchemy may skip the UPDATE entirely, leaving the browser serving
@@ -1543,13 +1728,22 @@ async def restore_snapshot(
     await refresh_stats(db, dataset_id)
     await db.commit()
 
+    # The outcome travels in the return value, which the router writes to the
+    # job's result_data: a restore that lost files still ends `completed`, so
+    # this is the only place the loss is visible afterwards (PM-023, GPT-025).
+    failed_count = files_failed + files_unavailable + extras_failed
     return {
         "files_restored": files_restored,
         "files_unavailable": files_unavailable,
         "files_failed": files_failed,
+        "extras_failed": extras_failed,
+        "thumbnails_stale": thumbnails_stale,
         "images_re_created": images_re_created,
         "images_removed": images_removed,
         "pre_restore_version_id": pre_restore_version_id,
+        "failed_count": failed_count,
+        "failure_summary": _failure_summary(failed_count, failures),
+        "failed": failures,
     }
 
 

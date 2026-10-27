@@ -8,29 +8,6 @@ Several of these findings compound each other: 022 and 023 both end as a "comple
 restore because of 025, so fix them as one branch. (021 and 015, which compounded the same
 way, are fixed — see PM-025.)
 
-## GPT-025 — [P2] Restore failures are discarded and the job reports complete
-
-**Verdict:** CONFIRMED. NEW.
-
-**Where.** `restore_snapshot` counts `files_failed` and `files_unavailable` and returns them
-(~`version_service.py:1277-1288`). The router's `_run` closure (`routers/versioning.py:396-405`)
-drops that return value. The job therefore ends `completed` with `result_data={}`, and
-`frontend/src/components/versioning/RestoreConfirmModal.tsx` toasts "Restore complete". Nothing in
-the frontend reads `files_failed`.
-
-**Observed.** The probes are `probe_versioning.py::test_gpt025_failed_copy_job_still_completed`
-and `test_gpt025_service_returns_files_failed`. Only the object→target `shutil.copy2` was
-injected to fail. The service returned `files_failed=1`, while the job showed `completed` with a
-NULL `error_msg`. The DB says 100×80 and the file on disk is 40×40. A missing object behaves the
-same way, counted as `files_unavailable`.
-
-**Fix notes.**
-- Persist the summary in `result_data`, and give the job a partial or failed outcome.
-- Surface the outcome in the modal.
-- For each failed image, reconcile its DB metadata with the pixels that survived, while keeping
-  the deliberate DB-before-filesystem ordering.
-- Checkout reuses `restore_snapshot`, so it needs the same treatment.
-
 ## GPT-026 — [P3] Pixel restore leaves detection geometry from the cropped image
 
 **Verdict:** CONFIRMED-KNOWN. `docs/dev/bulk-image-jobs.md` says: "Known limitation: a

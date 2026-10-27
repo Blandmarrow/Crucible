@@ -101,6 +101,33 @@ def _store_object(dataset_folder: str, src_path: str) -> str:
         raise
 
 
+def _store_row_bytes(dataset_folder: str, file_path: str) -> str | None:
+    """Store a row's file in the object store — the **single** place a dataset
+    file's bytes enter ``{ds}/.versions/objects/``. Sync — call via executor.
+
+    Returns the stored hash, or ``None`` when the path does not resolve inside
+    ``dataset_folder`` (a resolve error counts as out of tree). A stored object
+    is retrievable through a snapshot restore, so an out-of-tree ``file_path``
+    would be an arbitrary-file **read** primitive even where nothing is
+    unlinked. ``within_datasets_dir`` resolves, which is what catches the one
+    live vector: a symlink in ``{ds}/images/`` that rescan registers under its
+    in-tree path while ``open()`` follows it out of tree. The base is the row's
+    own dataset folder rather than ``settings.datasets_dir`` — stricter, and it
+    also catches a row pointing into a *different* dataset.
+
+    Both callers route through here: ``_backup_and_record_hash`` (and so both
+    copy-on-write hooks) and Manual ``create_snapshot``'s eager copy, which went
+    ungated until the second caller was noticed. Copy errors propagate.
+    """
+    try:
+        inside = within_datasets_dir(file_path, Path(dataset_folder)) is not None
+    except (OSError, RuntimeError, ValueError):
+        inside = False
+    if not inside:
+        return None
+    return _store_object(dataset_folder, file_path)
+
+
 def _remove_stale_files(file_path: str | None, sidecar: bool, thumbnail_path: str | None) -> None:
     """Best-effort removal of an image file, its .txt sidecar, and/or its thumbnail.
 
@@ -169,19 +196,13 @@ async def _backup_and_record_hash(
     the hash of the bytes actually stored, so a file mutating between the caller's
     hash and the copy can never poison the store or the state rows.
 
-    The containment gate here is the *whole* COW surface: this is the only function
-    that copies a row's bytes into ``{ds}/.versions/objects/``, and both hooks
-    (``protect_file_before_overwrite``, ``mark_image_deleted_in_versions``) route
-    through it, so one guard covers every call site of either. Since a stored object
-    is retrievable through a snapshot restore, an out-of-tree ``file_path`` would be
-    an arbitrary-file **read** primitive even where no unlink follows. The base is
-    the row's own ``dataset_folder`` rather than ``settings.datasets_dir`` — stricter,
-    and it also catches a row pointing into a *different* dataset. Skip-and-log, per
-    CLAUDE.md's destructive-site rule: an out-of-tree row still completes its
-    overwrite or deletion instead of failing the whole job. ``within_datasets_dir``
-    resolves, so this catches the one live vector — a symlink placed in
-    ``{ds}/images/`` that rescan registers under its in-tree path while ``open()``
-    follows it out of tree.
+    The copy goes through ``_store_row_bytes``, whose containment gate covers
+    every call site of both hooks (``protect_file_before_overwrite``,
+    ``mark_image_deleted_in_versions``) at once. Skip-and-log, per CLAUDE.md's
+    destructive-site rule: an out-of-tree row still completes its overwrite or
+    deletion instead of failing the whole job. The ``precomputed_sha256`` fast
+    path stays in front of it because it copies nothing — it only records the
+    hash of an object that is already stored.
     """
     null_check = await db.execute(
         select(VersionImageState.id).where(
@@ -191,16 +212,18 @@ async def _backup_and_record_hash(
     )
     if null_check.first() is None or not Path(file_path).exists():
         return None
-    if within_datasets_dir(file_path, Path(dataset_folder)) is None:
-        logger.warning(
-            "_backup_and_record_hash: refusing out-of-tree path for image %s: %s",
-            image_id, file_path,
-        )
-        return None
     loop = asyncio.get_running_loop()
     sha256 = precomputed_sha256
     if sha256 is None or not _object_store_path(dataset_folder, sha256).exists():
-        sha256 = await loop.run_in_executor(None, _store_object, dataset_folder, file_path)
+        sha256 = await loop.run_in_executor(
+            None, _store_row_bytes, dataset_folder, file_path
+        )
+        if sha256 is None:
+            logger.warning(
+                "_backup_and_record_hash: refusing out-of-tree path for image %s: %s",
+                image_id, file_path,
+            )
+            return None
     await db.execute(
         update(VersionImageState)
         .where(VersionImageState.image_id == image_id, VersionImageState.file_hash.is_(None))
@@ -226,6 +249,16 @@ class _RestorePlan:
     recreated: bool = False
     fork_new_id: str | None = None     # fresh ID when state.image_id now lives in another dataset
     skip_recreate: bool = False        # foreign ID + no recorded content — nothing to restore
+
+
+class SnapshotIncomplete(RuntimeError):
+    """A snapshot that had to be complete could not back up every file (GPT-023).
+
+    Raised by ``create_snapshot(require_complete=True)`` — the pre-restore safety
+    snapshot — before anything is committed, so no partial version is left and
+    the branch head does not move. A ``RuntimeError`` so restore's wrapper turns
+    it into the job's ``error_msg`` like any other abort.
+    """
 
 
 class RestoreRefused(RuntimeError):
@@ -442,7 +475,21 @@ async def create_snapshot(
     parent_id: str | None = None,
     job_id: str | None = None,
     source: str = "manual",
+    *,
+    require_complete: bool = False,
 ) -> DatasetVersion:
+    """Record a version of the dataset's current state.
+
+    In Manual mode every file is copied into the object store eagerly. A
+    per-file copy failure leaves that row's hash NULL — which a restore reads as
+    "content unchanged" — so it is counted and surfaced as a ``[warning]`` line
+    on the version. ``require_complete=True`` (the pre-restore safety snapshot)
+    turns any such failure into ``SnapshotIncomplete`` instead, raised after a
+    rollback and before the commit: a safety net with a hole is refused rather
+    than recorded. A row whose path resolves outside the dataset is skipped
+    (``_store_row_bytes`` refuses it) and reported on its own warning line; that
+    is a refusal, not a failure, so it never aborts.
+    """
     from backend.workers.progress import broadcaster
 
     settings = await get_thresholds(db)
@@ -515,6 +562,8 @@ async def create_snapshot(
     loop = asyncio.get_running_loop()
     states = []
     backup_failures = 0
+    first_failure: tuple[str, str] | None = None
+    skipped_unsafe = 0
 
     for i, img in enumerate(images):
         file_hash: str | None = None
@@ -522,11 +571,19 @@ async def create_snapshot(
         if mode == "manual" and Path(img.file_path).exists():
             try:
                 file_hash = await loop.run_in_executor(
-                    None, _store_object, dataset.folder_path, img.file_path
+                    None, _store_row_bytes, dataset.folder_path, img.file_path
                 )
+                if file_hash is None:
+                    skipped_unsafe += 1
+                    logger.warning(
+                        "Snapshot: not backing up out-of-tree path for image %s: %s",
+                        img.id, img.file_path,
+                    )
             except Exception as exc:
                 logger.warning("Could not back up %s: %s", img.file_path, exc)
                 backup_failures += 1
+                if first_failure is None:
+                    first_failure = (img.filename, str(exc))
                 file_hash = None
 
         states.append(VersionImageState(
@@ -582,12 +639,31 @@ async def create_snapshot(
                 "message": f"Snapshotting {img.filename}",
             })
 
+    if require_complete and backup_failures:
+        # Nothing of this snapshot is committed: the version row, a lazily
+        # created main branch and its current-branch update were only flushed.
+        # Objects already copied stay as unreferenced files for prune to sweep.
+        await db.rollback()
+        fname, err = first_failure or ("?", "?")
+        raise SnapshotIncomplete(
+            f"{backup_failures} file(s) could not be backed up "
+            f"(first: {fname}: {err})"
+        )
+
     db.add_all(states)
 
     # A manual snapshot promises a full backup — a silent hole (file_hash=NULL
     # restores as "content unchanged") must be visible on the version card.
+    warnings: list[str] = []
     if backup_failures:
-        warning = f"{backup_failures} file(s) could not be backed up to the object store"
+        warnings.append(
+            f"{backup_failures} file(s) could not be backed up to the object store"
+        )
+    if skipped_unsafe:
+        warnings.append(
+            f"{skipped_unsafe} file(s) outside the dataset folder were not backed up"
+        )
+    for warning in warnings:
         version.description = f"{version.description}\n[warning] {warning}".strip()
         logger.warning("Snapshot %s: %s", version.name, warning)
         if job_id:
@@ -932,12 +1008,17 @@ async def restore_snapshot(
     pre_restore_version_id: str | None = None
     if pre_restore_snapshot:
         try:
+            # Complete or abort (GPT-023): a safety snapshot holding a NULL hash
+            # for a file it failed to copy would let the restore overwrite the
+            # only copy. Only Manual mode copies here; in Auto the backups are
+            # Pass 1's, and a failure there aborts before any file changes.
             pre = await create_snapshot(
                 db, dataset_id,
                 name=None,
                 description="Pre-restore auto-snapshot",
                 job_id=None,
                 source="pre_restore",
+                require_complete=True,
             )
             pre_restore_version_id = pre.id
         except Exception as exc:

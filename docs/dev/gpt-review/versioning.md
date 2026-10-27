@@ -31,24 +31,6 @@ same way, counted as `files_unavailable`.
   the deliberate DB-before-filesystem ordering.
 - Checkout reuses `restore_snapshot`, so it needs the same treatment.
 
-## GPT-023 — [P2] A failed per-file safety backup does not abort restore
-
-**Verdict:** CONFIRMED. Partly known: `docs/dev/versioning-service.md` documents the `[warning]`
-line on a backup failure, but not that restore then proceeds anyway.
-
-**Mechanism.** Manual `create_snapshot` catches each per-file backup failure and still commits the
-version, with a NULL hash and a warning in its description. The pre-restore gate
-(~`version_service.py:696-716`) aborts only if `create_snapshot` *raises*.
-
-**Observed** (`test_gpt023_failed_backup_does_not_abort_restore`, with `_store_object` stubbed to
-raise once): the restore went ahead and overwrote the edited 40×40 file. The safety version holds
-no copy of that 40×40 file, so restoring the safety version gives DB 40×40 over pixels at 100×80,
-with 0 failed reported.
-
-**Fix notes.** Make the pre-restore snapshot "complete or abort": a required file that was not
-backed up stops the restore before any mutation. Leave Manual-snapshot warnings as they are for
-user-initiated snapshots.
-
 ## GPT-026 — [P3] Pixel restore leaves detection geometry from the cropped image
 
 **Verdict:** CONFIRMED-KNOWN. `docs/dev/bulk-image-jobs.md` says: "Known limitation: a

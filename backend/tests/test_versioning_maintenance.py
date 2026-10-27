@@ -209,6 +209,44 @@ def test_backup_refuses_symlink_escaping_the_dataset(tmp_path):
     run(scenario())
 
 
+def test_manual_snapshot_refuses_symlink_escaping_the_dataset(tmp_path):
+    """The eager Manual copy is the second way bytes enter the object store, and
+    it went ungated: the same symlink copied the secret in on every Manual
+    snapshot. Both routes now share `_store_row_bytes`. A refusal is not a
+    backup failure — the row keeps a NULL hash and the version says why."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(
+            tmp_path, {"1.png": b"REAL"}, mode="manual")
+        outside = tmp_path / "secret.txt"
+        outside.write_bytes(b"SECRET")
+        link = ds_dir / "images" / "link.png"
+        link.symlink_to(outside)
+        async with Session() as db:
+            db.add(Image(
+                dataset_id=ds_id, filename="link.png", original_filename="link.png",
+                subfolder="", file_path=str(link),
+                thumbnail_path=str(ds_dir / "thumbnails" / "link.webp"),
+            ))
+            await db.commit()
+
+        async with Session() as db:
+            ver = await version_service.create_snapshot(db, ds_id, "s1", "")
+            states = {
+                s.filename: s for s in (await db.execute(select(VersionImageState).where(
+                    VersionImageState.version_id == ver.id))).scalars()
+            }
+
+        secret_hash = hashlib.sha256(b"SECRET").hexdigest()
+        assert not version_service._object_store_path(str(ds_dir), secret_hash).exists()
+        assert states["link.png"].file_hash is None
+        assert states["1.png"].file_hash == hashlib.sha256(b"REAL").hexdigest()
+        assert "[warning] 1 file(s) outside the dataset folder" in ver.description
+        assert "could not be backed up" not in ver.description
+        await engine.dispose()
+
+    run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Prune
 # ---------------------------------------------------------------------------

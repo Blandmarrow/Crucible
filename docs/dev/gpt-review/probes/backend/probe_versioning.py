@@ -47,40 +47,6 @@ async def _restore_svc(env, ds_id, vid, **kw):
         return await version_service.restore_snapshot(db, ds_id, vid, **kw)
 
 
-def test_gpt023_failed_backup_does_not_abort_restore(tmp_path, monkeypatch):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "manual")
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
-            vid = await _snap(env, ds["id"], "orig")
-            await _crop(env, img["id"])
-            real = version_service._store_object
-            calls = {"n": 0}
-            def boom(folder, src, *a, **k):
-                calls["n"] += 1
-                raise OSError("injected backup failure")
-            monkeypatch.setattr(version_service, "_store_object", boom)
-            res = await _restore_svc(env, ds["id"], vid, pre_restore_snapshot=True)
-            monkeypatch.setattr(version_service, "_store_object", real)
-            print("restore result", res, "store calls", calls)
-            safety = res["pre_restore_version_id"]
-            async with env.Session() as db:
-                sv = await db.get(DatasetVersion, safety)
-                st = (await db.execute(select(VersionImageState).where(VersionImageState.version_id == safety))).scalars().one()
-                print("safety desc:", repr(sv.description), "hash:", st.file_hash, "dims", st.width, st.height)
-            path, w, h = await _row(env, img["id"])
-            print("after restore1 DB", (w, h), "pixels", _size(path))
-            assert (w, h) == (100, 80)
-            assert st.file_hash is None and "[warning]" in sv.description
-            res2 = await _restore_svc(env, ds["id"], safety, pre_restore_snapshot=False)
-            path, w, h = await _row(env, img["id"])
-            print("restore safety:", res2, "DB", (w, h), "pixels", _size(path))
-            assert res2["files_failed"] == 0 and res2["files_unavailable"] == 0
-            assert (w, h) == (40, 40) and _size(path) == (100, 80)
-    run(scenario())
-
-
 def test_gpt025_failed_copy_job_still_completed(tmp_path, monkeypatch):
     async def scenario():
         async with api_env(tmp_path, foreign_keys=True) as env:

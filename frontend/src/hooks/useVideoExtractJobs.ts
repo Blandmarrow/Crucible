@@ -3,6 +3,7 @@ import { jobsApi } from "../api/jobs";
 import { useJobStore } from "../store/jobStore";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import { isNotFound } from "../utils/apiError";
+import { jobRowToProgress } from "../utils/jobReconcile";
 import { clearPersisted, loadPersisted, savePersisted } from "../utils/persistentState";
 import type { JobProgress } from "../types";
 
@@ -101,9 +102,7 @@ export function useVideoExtractJobs(
             return;
           }
           useJobStore.getState().updateJob(j.id, {
-            type: "progress", job_id: j.id, job_type: j.job_type, label: j.label,
-            status: j.status, done: j.done_items, total: j.total_items,
-            percent: 0, video_id: id, dataset_id: j.dataset_id ?? undefined,
+            ...jobRowToProgress(j), percent: 0, video_id: id,
           });
         })
         .catch((err) => {

@@ -168,7 +168,8 @@ export default function TopBar() {
       // still land between the click and the cooperative cancel, and reacting at
       // click time would consume this job's one invalidation before it does. The
       // backend always emits a terminal SSE event (even for pending jobs, reaped
-      // at dequeue), and useSSE clears the flag, so the real event gets through.
+      // at dequeue), and useSSE clears the flag, so the real event gets through;
+      // one lost to an SSE gap is synthesized by `utils/jobReconcile.ts`.
       if (
         TERMINAL_JOB_STATUSES.has(progress.status) &&
         !progress.optimistic &&
@@ -180,9 +181,9 @@ export default function TopBar() {
         // trace in the UI: the image is correct and committed, but the gallery
         // keeps drawing the old tile. Read after the `processedJobsRef` add, so
         // crop_upscale's two terminal events (its own, then job_queue's) toast
-        // once. Transport is a fetch, not the SSE payload: `broadcaster.emit`
-        // silently drops events when a subscriber's 200-slot queue fills, so a
-        // piggybacked count would under-report.
+        // once. Transport is a fetch, not the SSE payload: a terminal status can
+        // also be synthesized by `utils/jobReconcile.ts` after an SSE gap, and a
+        // count piggybacked on the live event would be missing from that one.
         //
         // `cancelled` is included — every one of these workers commits its
         // counts above `raise_if_cancelled`. `failed` is not: `job_queue` fails a
@@ -268,9 +269,15 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
           }
+          // `video_id` arrives on the worker's own emits, and a reconciled row
+          // carries it from `config`; an entry with neither (only the queue's
+          // events seen) falls back to every video, rather than to none.
           if (progress.video_id) {
             qc.invalidateQueries({ queryKey: ["video", progress.video_id] });
             qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          } else {
+            qc.invalidateQueries({ queryKey: ["video"] });
+            qc.invalidateQueries({ queryKey: ["video-frames"] });
           }
         }
         // Pass 2 rewrites frames in place, changing width/height/phash and the
@@ -287,6 +294,8 @@ export default function TopBar() {
           }
           if (progress.video_id) {
             qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          } else {
+            qc.invalidateQueries({ queryKey: ["video-frames"] });
           }
         }
       }

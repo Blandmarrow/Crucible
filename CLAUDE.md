@@ -69,7 +69,7 @@ the module *errors* on the runner rather than skipping. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
-after a model/migration change (CI job `migration-drift`). To launch the app itself, use the `run-app` skill.
+after a model/migration change (CI job `migration-drift`; see `docs/dev/database.md` § Migration drift check). To launch the app itself, use the `run-app` skill.
 
 Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
 
@@ -190,7 +190,8 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~1435 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2250 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — CSS tokens, `@layer components`, `CrucibleMark` drift, `ConfirmDialog`, `useModalBehavior`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2515 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, Alembic migrations, SSE, or job cancellation — production frontend serving, the shutdown/restart loop and `JobQueue.stop()`'s open hang, DB indexes and deferred columns, the SSE broadcaster | ~3900 |
+| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, SSE, the job queue or job cancellation — production frontend serving, app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s open hang, the CI workflows, the SSE broadcaster, stale-job cleanup and retention | ~2170 |
+| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — WAL and per-connection pragmas, the FK inventory, virtual subfolders, the images/videos index inventories, UTC datetime serialization, the orphan-folder sweep, the drift check's `ACCEPTED_DRIFT`, `db_maintenance` rotation | ~1885 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~2685 |
 | `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient | ~2865 |
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — the one-shot generate endpoint, the durable `comfy_prompts` job, `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |

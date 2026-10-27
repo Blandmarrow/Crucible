@@ -51,26 +51,6 @@ measures phash, size, format and geometry from the file it wrote — see
   treat a failure as non-fatal.
 - Refresh dataset totals as well.
 
-## GPT-008 — [P3, GPT said P2] A locked image delete commits the row removal, then 500s
-
-**Verdict:** CONFIRMED-KNOWN. CLAUDE.md, in the PM-021 bullet, already lists `images.py` as
-"wholly unconverted". The lock was simulated with `PermissionError(winerror=32)`.
-
-**Observed** (`test_gpt008_locked_image_delete_commits_row_then_500`):
-- DELETE returns 500.
-- The row is gone and the file remains.
-- **`image_count` stays 1, because `refresh_stats` runs after the failing unlink.** That part is
-  new.
-- A retry returns 404.
-
-`batch_delete` and `bulk_delete_filtered` have the same raw post-commit unlink; they were not
-probed.
-
-**Fix notes.**
-- Convert the three image-delete sites to `utils.unlink_retrying`, using the PM-021 pattern from
-  `videos.delete_video`, where the raise sits before the row goes.
-- Make the stats refresh independent of the unlink outcome.
-
 ## GPT-010 — [P3, GPT said P2] Crop remap is fallible DB work between the pixel overwrite and the commit
 
 **Verdict:** PARTIAL. The ordering is real, but it is a deliberate design:

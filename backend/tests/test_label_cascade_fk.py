@@ -79,7 +79,7 @@ def test_batch_delete_takes_their_labels(tmp_path):
             r = await env.client.request(
                 "DELETE", f"{API}/images/batch/delete", json=ids[:2]
             )
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
             assert await _join_count(env) == 1
 
     run(scenario())

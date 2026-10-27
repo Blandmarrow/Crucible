@@ -12,7 +12,7 @@ import ReextractFramesModal from "../video/ReextractFramesModal";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
-import { imagesApi, type ProvenanceEdit } from "../../api/images";
+import { imagesApi, keptImagesMessage, type ProvenanceEdit } from "../../api/images";
 import { labelsApi } from "../../api/labels";
 import { datasetsApi } from "../../api/datasets";
 import { captioningApi, type DelimiterMode } from "../../api/captioning";
@@ -255,12 +255,15 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
   const deleteMutation = useMutation({
     mutationFn: () => imagesApi.batchDelete(ids),
-    onSuccess: () => {
+    onSuccess: (data) => {
       invalidateDatasetContentScope(qc, datasetId);
       clear();
       setShowDeleteConfirm(false);
-      toast.success(`Deleted ${ids.length} images`);
+      if (data.deleted > 0) toast.success(`Deleted ${data.deleted} image${data.deleted !== 1 ? "s" : ""}`);
+      const kept = keptImagesMessage(data);
+      if (kept) toast.error(kept);
     },
+    onError: (err) => toast.error(apiErrorDetail(err, "Delete failed")),
   });
 
   const moveSubfolderMutation = useMutation({

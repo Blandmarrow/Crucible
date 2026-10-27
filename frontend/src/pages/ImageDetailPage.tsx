@@ -1035,7 +1035,9 @@ export default function ImageDetailPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => imagesApi.batchDelete([imageId!]),
+    // The single-image route, so a file open in another program is a 409 whose
+    // detail the toast can show, with the image still here to navigate from.
+    mutationFn: () => imagesApi.delete(imageId!),
     // Re-derives the nav context from the server rather than splicing the deleted
     // id out. A delete shifts server-side paging by one, so page N now ends with a
     // row the stored list has never seen — and a spliced list is `limit - 1` long,
@@ -1100,7 +1102,7 @@ export default function ImageDetailPage() {
         paneGo(`/datasets/${datasetId}/gallery`, { page: "gallery", datasetId }, { replace: true });
       }
     },
-    onError: () => toast.error("Delete failed"),
+    onError: (err) => toast.error(apiErrorDetail(err, "Delete failed")),
   });
 
   // Seat a confirmed write in the cache before the draft goes, so the editor never

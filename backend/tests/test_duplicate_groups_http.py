@@ -99,7 +99,7 @@ def test_a_pair_is_a_group_of_two_led_by_the_kept_image(tmp_path):
                 "keep_ids": [group[0]["id"]],
                 "delete_ids": [m["id"] for m in group[1:]],
             })
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
 
             async with env.Session() as db:
                 remaining = (await db.execute(
@@ -107,7 +107,7 @@ def test_a_pair_is_a_group_of_two_led_by_the_kept_image(tmp_path):
                 )).scalars().all()
             assert [row.filename for row in remaining] == ["keep.png"]
 
-            assert r.status_code == 204
+            assert r.status_code == 200
             assert (await env.client.get(
                 f"{API}/quality/duplicates/{ds['id']}")).json()["groups"] == []
 
@@ -349,7 +349,7 @@ def test_many_groups_resolve_in_one_call(tmp_path):
                 "keep_ids": keep_ids,
                 "delete_ids": delete_ids,
             })
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
 
             assert not any(p.exists() for p in deleted_paths)
             async with env.Session() as db:
@@ -546,7 +546,7 @@ def test_a_partial_resolve_prunes_the_survivor_it_was_not_told_about(tmp_path):
                 "keep_ids": [],
                 "delete_ids": [imgs[0]["id"], imgs[1]["id"]],
             })
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
 
             assert await _flags(env, imgs[2]["id"]) == {}
             assert await _duplicate_count(env, ds["id"]) == 0

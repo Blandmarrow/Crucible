@@ -33,42 +33,6 @@ async def _ds(env, dsid):
     return (await env.client.get(f"{API}/datasets/{dsid}")).json()
 
 
-# ---------------------------------------------------------------- GPT-008
-def test_gpt008_locked_image_delete_commits_row_then_500(tmp_path, monkeypatch):
-    from backend.main import app
-
-    async def scenario():
-        async with api_env(tmp_path) as env:
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "a.png")
-            row = await _row(env, img["id"])
-            target = Path(row.file_path)
-            assert (await _ds(env, ds["id"]))["image_count"] == 1
-
-            real_unlink = Path.unlink
-
-            def fake_unlink(self, *a, **kw):
-                if self == target:
-                    raise _locked()
-                return real_unlink(self, *a, **kw)
-
-            monkeypatch.setattr(Path, "unlink", fake_unlink)
-            async with _client(app) as c:
-                r = await c.delete(f"{API}/images/{img['id']}")
-            print("DELETE status", r.status_code)
-            assert r.status_code == 500
-            assert await _row(env, img["id"]) is None          # row already gone
-            assert target.exists()                              # file remains
-            cnt = (await _ds(env, ds["id"]))["image_count"]
-            print("image_count after failed delete:", cnt)
-            assert cnt == 1                                     # stale dataset stats
-            monkeypatch.setattr(Path, "unlink", real_unlink)
-            r2 = await env.client.delete(f"{API}/images/{img['id']}")
-            assert r2.status_code == 404                        # retry impossible
-            assert target.exists()                              # orphan file persists
-    run(scenario())
-
-
 # ---------------------------------------------------------------- GPT-010
 def test_gpt010_single_crop_remap_failure_leaves_pixels_ahead_of_row(tmp_path, monkeypatch):
     from backend.main import app

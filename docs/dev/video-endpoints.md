@@ -92,8 +92,8 @@ schema with `create_all` and never gets the `PRAGMA foreign_keys=ON` that
 belt-and-braces. `source_timestamp_ms` and `source_shot_index` survive, so a frame keeps
 knowing where in a video it came from once the video is gone.
 
-It unlinks **before** committing the row delete — the reverse of `delete_image`, and
-deliberate. If the commit fails, the row survives pointing at nothing, which
+It unlinks **before** committing the row delete — deliberately, and the four image deletes
+now share the order (`backend/services/image_delete.py`, GPT-008). If the commit fails, the row survives pointing at nothing, which
 `_rescan_videos` reports under `videos_missing` and the user can retry. Committing first
 and then failing the unlink would leave an orphan in `videos/` that the next rescan
 silently re-registers, undoing the delete.

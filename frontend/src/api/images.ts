@@ -20,6 +20,25 @@ export interface BatchMoveSubfolderResult {
   subfolder: string;
 }
 
+/** What a batch image delete did. A row whose file is open in another program
+ *  (`in_use`) or could not be removed (`failed`) is kept, file and all — the
+ *  server deletes files first and only then the rows whose file went. */
+export interface DeleteResult {
+  deleted: number;
+  in_use: number;
+  failed: number;
+}
+
+/** The toast line for the images a delete kept, or null when it kept none. */
+export function keptImagesMessage(r: DeleteResult): string | null {
+  const kept = r.in_use + r.failed;
+  if (kept === 0) return null;
+  const noun = `image${kept !== 1 ? "s" : ""}`;
+  return r.failed === 0
+    ? `${kept} ${noun} not deleted: open in another program. Close it and try again.`
+    : `${kept} ${noun} could not be deleted (open in another program, or not removable)`;
+}
+
 export interface BatchMoveDatasetResult {
   moved: number;
   target_dataset_id: string;
@@ -156,7 +175,7 @@ export const imagesApi = {
   get: (id: string) => client.get<ImageDetail>(`/images/${id}`).then((r) => r.data),
   delete: (id: string) => client.delete(`/images/${id}`),
   batchDelete: (image_ids: string[]) =>
-    client.delete("/images/batch/delete", { data: image_ids }),
+    client.delete<DeleteResult>("/images/batch/delete", { data: image_ids }).then((r) => r.data),
   fileUrl: (id: string) => `/api/v1/images/${id}/file`,
   fileUrlVersioned: (id: string, updatedAt: string) =>
     `/api/v1/images/${id}/file?v=${Date.parse(updatedAt)}`,
@@ -238,7 +257,7 @@ export const imagesApi = {
       updates,
     }).then((r) => r.data),
   bulkDelete: (datasetId: string, params: BulkDeleteParams) =>
-    client.post<{ deleted: number }>("/images/bulk-delete", {
+    client.post<DeleteResult>("/images/bulk-delete", {
       dataset_id: datasetId,
       image_ids: params.imageIds ?? null,
       quality_flags: params.qualityFlags ?? null,

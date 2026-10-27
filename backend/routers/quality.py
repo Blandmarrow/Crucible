@@ -8,24 +8,22 @@ from typing import Literal
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import settings
 from backend.database import get_db
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
 from backend.models.style_run import REFERENCE_IDS_STORED_MAX
-from backend.services import version_service
+from backend.services.image_delete import unlink_files_for_rows
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import get_style_distribution, refresh_stats
 from backend.services.duplicate_service import (
     apply_duplicate_groups,
     prune_orphaned_duplicate_flags,
 )
-from backend.utils import chunked, contained_path, normalize_subfolder, score_columns
+from backend.utils import chunked, normalize_subfolder, score_columns
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -1067,12 +1065,14 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
     return {"groups": list(groups.values())}
 
 
-@router.post("/duplicates/resolve", status_code=204)
+@router.post("/duplicates/resolve")
 async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(get_db)):
     # Every `IN (...)` here is `chunked()`: the Quality page's bulk bar resolves
     # every filtered group in one call, so `delete_ids` is a few thousand rows on
     # a large dataset rather than the handful this endpoint was first written for.
     dataset_ids: set[str] = set()
+    deletable: list[str] = []
+    in_use = failed = 0
     if body.delete_ids:
         rows = []
         for chunk in chunked(body.delete_ids):
@@ -1084,31 +1084,15 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         dataset_ids = {r.dataset_id for r in rows}
         for did in dataset_ids:
             ensure_not_busy(did)
-        files_to_delete: list[Path] = []
-        for r in rows:
-            # Same shape as `images.batch_delete`: gate per row, unlink the
-            # *resolved* path, and gate the versioning hook with it — it copies the
-            # bytes into `{ds}/.versions/objects/`, so an out-of-tree `file_path`
-            # is a read primitive even with the unlink skipped. The row delete
-            # below is unconditional.
-            p = contained_path(
-                r.file_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
-            )
-            if p is not None:
-                await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-                files_to_delete.extend([p, p.with_suffix(".txt")])
-            t = contained_path(
-                r.thumbnail_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
-            )
-            if t is not None:
-                files_to_delete.append(t)
-
-        for chunk in chunked(body.delete_ids):
+        # Same shape as `images.batch_delete`: files first, per row, gated by
+        # `contained_path` — the versioning hook copies the bytes into
+        # `{ds}/.versions/objects/`, so an out-of-tree `file_path` is a read
+        # primitive even with the unlink skipped. A row whose file is locked is
+        # kept (PM-021, GPT-008); it stays a flagged duplicate of its root.
+        deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="resolve_duplicates")
+        for chunk in chunked(deletable):
             await db.execute(delete(Image).where(Image.id.in_(chunk)))
         await db.commit()
-
-        for f in files_to_delete:
-            f.unlink(missing_ok=True)
 
         for did in dataset_ids:
             await refresh_stats(db, did)
@@ -1142,3 +1126,4 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     # group's keep with its own deletes.
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}

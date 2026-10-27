@@ -1,4 +1,5 @@
 import client from "./client";
+import type { DeleteResult } from "./images";
 
 export interface DuplicateImage {
   id: string;
@@ -130,7 +131,9 @@ export const qualityApi = {
       .then((r) => r.data),
 
   resolveDuplicates: (keep_ids: string[], delete_ids: string[]) =>
-    client.post("/quality/duplicates/resolve", { keep_ids, delete_ids }),
+    client
+      .post<DeleteResult>("/quality/duplicates/resolve", { keep_ids, delete_ids })
+      .then((r) => r.data),
 
   embedReferences: (files: File[]) => {
     const form = new FormData();

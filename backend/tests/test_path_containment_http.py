@@ -205,7 +205,8 @@ def test_batch_delete_skips_an_escaped_path_and_deletes_its_neighbour(tmp_path):
             r = await env.client.request(
                 "DELETE", f"{API}/images/batch/delete", json=[bad["id"], good["id"]]
             )
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
+            assert r.json() == {"deleted": 2, "in_use": 0, "failed": 0}
 
             assert escaped.exists()
             assert not good_file.exists()
@@ -235,7 +236,8 @@ def test_resolving_duplicates_skips_an_escaped_path_and_deletes_its_neighbour(tm
                 f"{API}/quality/duplicates/resolve",
                 json={"keep_ids": [keeper["id"]], "delete_ids": [bad["id"], good["id"]]},
             )
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
+            assert r.json() == {"deleted": 2, "in_use": 0, "failed": 0}
 
             assert escaped.exists(), "an out-of-tree path must never be unlinked"
             assert not good_file.exists()

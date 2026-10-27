@@ -49,7 +49,7 @@ Key functions:
 |---|---|
 | `backend/routers/images.py` | `resize` endpoint, batch crop `_run`, batch resize `_run` — calls `protect_file_before_overwrite` |
 | `backend/routers/images.py` | `crop` endpoint, replace=True branch — calls `protect_file_before_overwrite` |
-| `backend/routers/images.py` | `delete_image`, `batch_delete`, `bulk_delete_filtered` (`POST /images/bulk-delete`) — calls `mark_image_deleted_in_versions` |
+| `backend/services/image_delete.py` | `unlink_image_files`, the files-first half of `images.delete_image`, `images.batch_delete`, `images.bulk_delete_filtered` and `quality.resolve_duplicates` — calls `mark_image_deleted_in_versions` before the unlink |
 | `backend/routers/upscaling.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/detection.py` | `crop_to_detection` `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |

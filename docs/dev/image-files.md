@@ -30,6 +30,10 @@ Images receive human-readable names derived from their original filename via `sl
 
 Frontend entry points for both: `SelectionToolbar` ("Move to Dataset" / "Copy to Dataset" buttons) and `GalleryPage` subfolder sidebar (arrow icon for move, copy icon for copy). Shared modal: `MoveToDatasetModal` (`frontend/src/components/common/MoveToDatasetModal.tsx`) — accepts an optional `mode?: "move" | "copy"` prop (default `"move"`) which changes the icon, title, and confirm button label. Callback prop is `onConfirm(targetDatasetId, subfolder)`.
 
+### Deleting images
+
+**Files first, row second** — the order `videos.delete_video` set (PM-021), shared by all four image deletes through `backend/services/image_delete.py` (GPT-008). `unlink_image_files` gates each path through `contained_path`, backs the file up with `mark_image_deleted_in_versions` (it copies the bytes, so it must precede the unlink), unlinks the image through `unlink_retrying`, then the `.txt` and thumbnail best-effort. It raises **only while the image file is still on disk**, so the caller keeps the row. `delete_image` lets that raise — a lock is the `main.py` 409, with row and file intact. `batch_delete`, `bulk_delete_filtered` and `quality.resolve_duplicates` use `unlink_files_for_rows`, which keeps the row of any file that would not go and answers `{deleted, in_use, failed}`; refusing the whole batch would be wrong, since the files before the lock are already gone. Then the DELETE, `prune_orphaned_duplicate_flags`, `commit()`, and `refresh_stats` — which used to run after the unlink and so never ran when one raised. The old order (commit, then unlink) answered 500 with the row gone and the file stranded, and a retry 404'd.
+
 ### Importing captions & folder rescan
 
 Captions are persisted *out* to `{stem}.txt` sidecars (`caption_service._write_txt_sidecar`) and read *in* via `utils.read_caption_sidecar(image_path) -> str | None`. Three import paths feed captions/images in from disk; all overwrite existing captions and stamp `captioned_by="import"`:

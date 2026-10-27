@@ -54,6 +54,7 @@ from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.duplicate_service import carry_duplicate_flags, prune_orphaned_duplicate_flags
+from backend.services.image_delete import unlink_files_for_rows, unlink_image_files
 from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
 from backend.services.image_service import (
     crop_image_to_dest,
@@ -695,64 +696,45 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Image not found")
     dataset_id = img.dataset_id
     ensure_not_busy(dataset_id)
-    # The *resolved* paths the guard hands back are what gets unlinked — validating
-    # one path and deleting another would defeat the check entirely.
-    p = contained_path(img.file_path, settings.datasets_dir, context="delete_image", ident=img.id)
-    t = contained_path(
-        img.thumbnail_path, settings.datasets_dir, context="delete_image", ident=img.id
-    )
-    txt = p.with_suffix(".txt") if p is not None else None
-    if p is not None:
-        await version_service.mark_image_deleted_in_versions(img.id, str(p), db)
+    # Files first, row second (PM-021, GPT-008): a lock on the image file raises
+    # `FileInUseError` here — a 409 — with the row and the file both intact.
+    await unlink_image_files(db, img.id, img.file_path, img.thumbnail_path, context="delete_image")
     await db.delete(img)
     # `is_duplicate` is a relationship to another row, so deleting this one can
     # orphan a survivor's flag. Between the DELETE and the commit at every such
-    # site: one commit, atomic with the delete, ahead of the unlinks (PM-013,
-    # PM-022).
+    # site: one commit, atomic with the delete (PM-022).
     await prune_orphaned_duplicate_flags(db, [dataset_id])
     await db.commit()
-    for f in [p, t, txt]:
-        if f and f.exists():
-            f.unlink(missing_ok=True)
     await refresh_stats(db, dataset_id)
 
 
-@router.delete("/batch/delete", status_code=204)
+@router.delete("/batch/delete")
 async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
-        .where(Image.id.in_(image_ids))
-    )
-    rows = result.all()
+    rows = []
+    for chunk in chunked(image_ids):
+        result = await db.execute(
+            select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
+            .where(Image.id.in_(chunk))
+        )
+        rows.extend(result.all())
     if not rows:
-        return
+        return {"deleted": 0, "in_use": 0, "failed": 0}
 
     dataset_ids = {r.dataset_id for r in rows}
     for did in dataset_ids:
         ensure_not_busy(did)
-    files_to_delete: list[Path] = []
-    for r in rows:
-        # Per row, not per request: one escaped path must not stop its neighbours
-        # from being deleted properly.
-        p = contained_path(r.file_path, settings.datasets_dir, context="batch_delete", ident=r.id)
-        if p is not None:
-            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-            files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = contained_path(
-            r.thumbnail_path, settings.datasets_dir, context="batch_delete", ident=r.id
-        )
-        if t is not None:
-            files_to_delete.append(t)
-
-    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    # Files first, per row (PM-021, GPT-008): a row whose file is locked is kept
+    # and counted, and every other row goes. One escaped path must not stop its
+    # neighbours from being deleted properly either.
+    deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="batch_delete")
+    for chunk in chunked(deletable):
+        await db.execute(delete(Image).where(Image.id.in_(chunk)))
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
 
-    for f in files_to_delete:
-        f.unlink(missing_ok=True)
-
     for did in dataset_ids:
         await refresh_stats(db, did)
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}
 
 
 @router.post("/bulk-count")
@@ -1031,32 +1013,17 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
     result = await db.execute(query)
     rows = result.all()
     if not rows:
-        return {"deleted": 0}
+        return {"deleted": 0, "in_use": 0, "failed": 0}
 
-    image_ids = [r.id for r in rows]
-    files_to_delete: list[Path] = []
-    for r in rows:
-        p = contained_path(
-            r.file_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
-        )
-        if p is not None:
-            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-            files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = contained_path(
-            r.thumbnail_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
-        )
-        if t is not None:
-            files_to_delete.append(t)
-
-    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    # Files first, per row, as `batch_delete` (PM-021, GPT-008).
+    deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="bulk_delete_filtered")
+    for chunk in chunked(deletable):
+        await db.execute(delete(Image).where(Image.id.in_(chunk)))
     await prune_orphaned_duplicate_flags(db, [body.dataset_id])
     await db.commit()
 
-    for f in files_to_delete:
-        f.unlink(missing_ok=True)
-
     await refresh_stats(db, body.dataset_id)
-    return {"deleted": len(image_ids)}
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}
 
 
 @router.post("/bulk-thumbnails")

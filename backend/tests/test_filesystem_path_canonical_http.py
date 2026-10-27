@@ -171,3 +171,21 @@ def test_a_symlinked_datasets_dir_still_matches_rows(tmp_path):
             assert await _row(env, b["id"]) is None
 
     run(scenario())
+
+
+def test_canonical_abs_path_keeps_a_final_windows_junction(tmp_path, monkeypatch):
+    """A junction is not a symlink to `is_symlink()` but `resolve()` follows it,
+    so it must be detected on its own or a delete of the link would act on the
+    target. Simulated with a symlink that reports itself only as a junction."""
+    import pathlib
+
+    root = tmp_path / "datasets"
+    target = root / "real"
+    target.mkdir(parents=True)
+    junction = root / "junction"
+    junction.symlink_to(target, target_is_directory=True)
+
+    real_is_symlink = pathlib.Path.is_symlink
+    monkeypatch.setattr(pathlib.Path, "is_symlink", lambda self: False if self == junction else real_is_symlink(self))
+    monkeypatch.setattr(pathlib.Path, "is_junction", lambda self: self == junction, raising=False)
+    assert canonical_abs_path(str(junction), root) == junction

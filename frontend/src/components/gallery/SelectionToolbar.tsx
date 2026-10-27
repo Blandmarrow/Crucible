@@ -277,7 +277,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       setShowMoveSubfolder(false);
       clear();
-      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      if (data.moved > 0) {
+        toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      }
       if (data.failed > 0) {
         toast.error(`${data.failed} image${data.failed !== 1 ? "s" : ""} could not be renamed and stayed where they were`);
       }

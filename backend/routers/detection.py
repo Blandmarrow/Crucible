@@ -930,6 +930,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             # deferred `source_meta`) rather than touched expired, which would
             # lazy-load on an async session and raise MissingGreenlet.
             needs_reload = False
+            touched_datasets: set[str] = set()
             for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
@@ -1107,6 +1108,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     last_image_id = new_img.id
 
                 counts["cropped"] += 1
+                touched_datasets.add(img.dataset_id)
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i + 1, "total": len(images),
@@ -1122,6 +1124,17 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             if job_row:
                 job_row.result_data = counts
             await session.commit()
+
+            # Both modes moved `total_size_bytes` (a replace rewrote the file,
+            # a copy added a row). After the final commit, so a failed refresh
+            # cannot roll back the copy rows, their labels or the counts.
+            from backend.services.dataset_service import refresh_stats
+            for ds_id in touched_datasets:
+                try:
+                    await refresh_stats(session, ds_id)
+                except Exception:
+                    logger.warning("Detection crop: could not refresh stats for %s", ds_id, exc_info=True)
+                    await session.rollback()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 

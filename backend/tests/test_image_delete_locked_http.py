@@ -224,3 +224,71 @@ def test_a_non_lock_failure_is_counted_failed_and_keeps_the_row(tmp_path, monkey
             await _assert_only_the_locked_one_survives(env, ds, ids, victim)
 
     run(scenario())
+
+
+# ── The snapshot backup outlives a failure after the unlink ──────────────────
+# The versioning hook records the doomed file's hash on its snapshot rows. Left
+# pending in the delete's own transaction, a failure after the unlink — here the
+# duplicate prune — rolled that record back with the file already gone, and no
+# retry could re-record it (the hook skips a missing file). It is now committed
+# before the first unlink.
+
+async def _auto_snapshot(env, dataset_id):
+    from backend.services import version_service
+    r = await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": "auto"})
+    assert r.status_code == 200, r.text
+    async with env.Session() as db:
+        await version_service.create_snapshot(db, dataset_id, "s1", "")
+
+
+async def _snapshot_hashes(env, image_id) -> list:
+    from backend.models.versioning import VersionImageState
+    async with env.Session() as db:
+        rows = (await db.execute(
+            select(VersionImageState.file_hash).where(VersionImageState.image_id == image_id)
+        )).scalars().all()
+    return list(rows)
+
+
+def _break_prune(monkeypatch, module):
+    async def boom(*_a, **_k):
+        raise RuntimeError("simulated failure after the unlink")
+    monkeypatch.setattr(module, "prune_orphaned_duplicate_flags", boom)
+
+
+def test_a_failure_after_the_unlink_keeps_the_snapshot_backup(tmp_path, monkeypatch):
+    import backend.routers.images as images_router
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png")
+            await _auto_snapshot(env, ds["id"])
+            _break_prune(monkeypatch, images_router)
+
+            async with _client() as c:
+                r = await c.delete(f"{API}/images/{img['id']}")
+            assert r.status_code == 500
+            hashes = await _snapshot_hashes(env, img["id"])
+            assert hashes and all(h is not None for h in hashes), hashes
+
+    run(scenario())
+
+
+def test_a_failure_after_the_batch_unlinks_keeps_every_snapshot_backup(tmp_path, monkeypatch):
+    import backend.routers.images as images_router
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, ids, _locked = await _three(env)
+            await _auto_snapshot(env, ds["id"])
+            _break_prune(monkeypatch, images_router)
+
+            async with _client() as c:
+                r = await c.request("DELETE", f"{API}/images/batch/delete", json=ids)
+            assert r.status_code == 500
+            for image_id in ids:
+                hashes = await _snapshot_hashes(env, image_id)
+                assert hashes and all(h is not None for h in hashes), (image_id, hashes)
+
+    run(scenario())

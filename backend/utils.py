@@ -2,8 +2,10 @@ import asyncio
 import errno
 import json
 import logging
+import os
 import re
 import shutil
+import stat
 import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
@@ -109,6 +111,19 @@ def sanitize_abs_path(path: str) -> Path:
     return p
 
 
+def _is_link(p: Path) -> bool:
+    """A symlink or a Windows junction (a mount-point reparse point)."""
+    if p.is_symlink():
+        return True
+    is_junction = getattr(p, "is_junction", None)  # Path.is_junction: Python 3.12+
+    if is_junction is not None:
+        return is_junction()
+    try:
+        return getattr(os.lstat(p), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", -1)
+    except OSError:
+        return False
+
+
 def canonical_abs_path(path: str, root: Path) -> Path:
     """`sanitize_abs_path`, then one canonical spelling for the path (GPT-011).
 
@@ -125,13 +140,15 @@ def canonical_abs_path(path: str, root: Path) -> Path:
     under `root.resolve()` back onto `root` — the stored form. Paths outside
     `root` come back resolved; no row names them.
 
-    A path whose *last* component is a symlink keeps it: only its parent is
-    resolved, so deleting or renaming a link acts on the link, not its target.
+    A path whose *last* component is a symlink — or a Windows directory
+    junction, which `is_symlink()` does not report but `resolve()` follows — keeps
+    it: only its parent is resolved, so deleting or renaming a link acts on the
+    link, not its target.
     Full resolution also gives Windows' on-disk case, so a case variant matches
     the stored string too.
     """
     p = sanitize_abs_path(path)
-    canonical = p.parent.resolve() / p.name if p.is_symlink() else p.resolve()
+    canonical = p.parent.resolve() / p.name if _is_link(p) else p.resolve()
     real_root = root.resolve()
     if canonical.is_relative_to(real_root):
         return root / canonical.relative_to(real_root)

@@ -321,3 +321,47 @@ def test_batch_crop_refreshes_size_phash_and_dataset_totals(tmp_path):
             assert total == row.file_size_bytes
 
     run(scenario())
+
+
+def test_a_failed_stats_refresh_does_not_fail_a_batch_whose_edits_committed(tmp_path, monkeypatch):
+    """`refresh_stats` ends in a commit; a failed one leaves the session needing a
+    rollback, and without it the job's own `result_data` write raised
+    `PendingRollbackError` and failed a run whose every edit had committed."""
+    import backend.routers.images as images_router
+
+    async def broken_refresh(db, _dataset_id):
+        db.add(Image())  # NOT NULL columns unset: the flush inside commit fails
+        await db.commit()
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            monkeypatch.setattr(images_router, "refresh_stats", broken_refresh)
+            r = await env.client.post(f"{API}/images/batch/resize",
+                                      json={"image_ids": [img["id"]], "scale": 0.5})
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["result_data"]["processed"] == 1
+            assert (await _row(env, img["id"])).width == 32
+
+    run(scenario())
+
+
+def test_a_detection_crop_refreshes_dataset_totals(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png(40, 20))
+            await _with_detection(env, img["id"], (0.25, 0.25, 0.75, 0.75))
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]], "replace": True,
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            row = await _row(env, img["id"])
+            _assert_row_describes_its_file(row)
+            total = (await env.client.get(f"{API}/datasets/{ds['id']}")).json()["total_size_bytes"]
+            assert total == row.file_size_bytes
+
+    run(scenario())

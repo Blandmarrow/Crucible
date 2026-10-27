@@ -1222,6 +1222,11 @@ async def _refresh_stats_after_edit(db: AsyncSession, dataset_id: str) -> None:
         await refresh_stats(db, dataset_id)
     except Exception:
         logger.warning("Could not refresh stats for dataset %s", dataset_id, exc_info=True)
+        # A failed commit leaves the session needing a rollback; without it the
+        # caller's next statement (a job's `result_data` write) raises
+        # `PendingRollbackError` and fails a run whose edits all committed.
+        # Expires every instance — callers read what they return *before* this.
+        await db.rollback()
 
 
 def _discard_temp(tmp: Path) -> None:
@@ -1638,8 +1643,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     logger.warning(
                         "Crop: thumbnail for %s could not be regenerated: %s", img.filename, exc
                     )
+            result = {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
             await _refresh_stats_after_edit(db, img.dataset_id)
-            return {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
+            return result
 
         # Replace + upscale: crop to temp, enqueue job that upscales to original path
         old_size = (img.width, img.height)

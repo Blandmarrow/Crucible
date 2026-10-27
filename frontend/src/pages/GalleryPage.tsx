@@ -949,7 +949,14 @@ export default function GalleryPage() {
       // Only for multi-moves — dragging a single unselected card must not wipe
       // an unrelated selection.
       if (vars.ids.length > 1) clear();
-      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      if (data.moved > 0) {
+        toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      }
+      // Same report as SelectionToolbar's move: a rename that failed leaves the
+      // image where it was, and a 200 must not read as a clean move.
+      if (data.failed > 0) {
+        toast.error(`${data.failed} image${data.failed !== 1 ? "s" : ""} could not be renamed and stayed where they were`);
+      }
     },
     onError: (err) => {
       toast.error(apiErrorDetail(err, "Move failed"));

@@ -13,6 +13,14 @@ These helpers give the four image-delete sites the same order:
 `images.delete_image`, `images.batch_delete`, `images.bulk_delete_filtered` and
 `quality.resolve_duplicates`. The caller deletes the rows (and prunes duplicate
 flags) for the ids that came back clean, then commits, then refreshes stats.
+
+**The snapshot backup is committed before anything is unlinked.** The
+versioning hook records the file's hash on its snapshot rows, and that record
+is only true while the bytes exist — but it stays true whatever happens next.
+Left pending in the delete's own transaction, a failure after the unlink (the
+row DELETE, the duplicate prune, the commit itself) rolled the record back with
+the file already gone: the snapshot row read "live file unchanged" with no live
+file, and no retry could re-record it, since the hook skips a missing file.
 """
 
 import logging
@@ -50,10 +58,23 @@ async def unlink_image_files(
     `file_path` is skipped, not raised on: the row still goes, as it always has.
     The versioning hook runs before the unlink because it copies the bytes.
     """
+    p = await _back_up(db, image_id, file_path, context=context)
+    await db.commit()  # the backup must outlive any failure past the unlink
+    await _unlink_files(p, thumbnail_path, image_id, context=context)
+
+
+async def _back_up(db: AsyncSession, image_id: str, file_path: str | None, *, context: str):
+    """Gate `file_path` and run the versioning hook on it; returns the gated path."""
     p = contained_path(file_path, settings.datasets_dir, context=context, ident=image_id)
-    t = contained_path(thumbnail_path, settings.datasets_dir, context=context, ident=image_id)
     if p is not None:
         await version_service.mark_image_deleted_in_versions(image_id, str(p), db)
+    return p
+
+
+async def _unlink_files(p, thumbnail_path: str | None, image_id: str, *, context: str) -> None:
+    """Unlink the gated image path (raising), then its `.txt` and thumbnail (best-effort)."""
+    t = contained_path(thumbnail_path, settings.datasets_dir, context=context, ident=image_id)
+    if p is not None:
         await unlink_retrying(p)
     for extra in (p.with_suffix(".txt") if p is not None else None, t):
         if extra is None:
@@ -74,11 +95,18 @@ async def unlink_files_for_rows(
     deleted. A locked file costs its own row, never the batch — refusing the whole
     request would be wrong too, since the files before it are already gone.
     """
+    rows = list(rows)
+    # Every backup first, in one commit, ahead of the first unlink (see the
+    # module docstring): a hook failing on row k must not strand rows 1..k-1
+    # already unlinked, and a failure after the unlinks must not roll back the
+    # records of what they removed.
+    gated = [await _back_up(db, r.id, r.file_path, context=context) for r in rows]
+    await db.commit()
     deletable: list[str] = []
     in_use = failed = 0
-    for r in rows:
+    for r, p in zip(rows, gated):
         try:
-            await unlink_image_files(db, r.id, r.file_path, r.thumbnail_path, context=context)
+            await _unlink_files(p, r.thumbnail_path, r.id, context=context)
         except FileInUseError:
             in_use += 1
             continue

@@ -10,6 +10,7 @@ import { useJobStore } from "../../store/jobStore";
 import { BRANCH_SNAPSHOT_KEY } from "../../constants/storage";
 import JobProgressBar from "../common/JobProgressBar";
 import type { Branch } from "../../types";
+import { showRestoreSummaryToast } from "../../utils/restoreToast";
 
 interface Props {
   datasetId: string;
@@ -156,7 +157,9 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
-      toast.success("Switched branch");
+      // Checkout is a restore underneath, and a partial one still switches
+      // branch: the toast reads result_data and warns (GPT-025).
+      if (checkoutJobId) showRestoreSummaryToast(checkoutJobId, "Switched branch");
       if (pendingBranchId) onSelect(pendingBranchId);
       setPendingBranchId(null);
       setCheckoutJobId(null);
@@ -169,7 +172,7 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       setPendingBranchId(null);
       setCheckoutJobId(null);
     }
-  }, [checkoutProgress?.status, checkoutProgress?.message, qc, datasetId, onSelect, pendingBranchId]);
+  }, [checkoutProgress?.status, checkoutProgress?.message, checkoutJobId, qc, datasetId, onSelect, pendingBranchId]);
 
   async function doCheckout(branchId: string, preRestoreSnapshot: boolean) {
     setPendingBranchId(branchId);

@@ -27,16 +27,17 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-// The six jobs that re-cut an image thumbnail as a best-effort post-commit
+// The eight jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
 // the forms that start these jobs (LutForm, UpscaleForm, InpaintForm,
 // BulkEditPage, SelectionToolbar, ImageDetailPage's three handlers,
-// ReextractFramesForm) because TopBar is always mounted — and a 400-frame
-// re-extraction is exactly the job you walk away from.
+// ReextractFramesForm, RestoreConfirmModal, BranchSelector) because TopBar is
+// always mounted — and a 400-frame re-extraction is exactly the job you walk
+// away from. Restore and checkout regenerate thumbnails in Pass 3b.
 const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
   "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "batch_inpaint",
-  "video_reextract",
+  "video_reextract", "restore_snapshot", "checkout_branch",
 ]);
 
 const PAGE_LABELS: Record<string, string> = {

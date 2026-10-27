@@ -44,6 +44,19 @@ export default function DetectionsPanel({
   const [editLabel, setEditLabel] = useState("");
   const [mergeIds, setMergeIds] = useState<number[]>([]);   // selection order preserved
 
+  // The panel stays mounted across arrow-key navigation to a cached neighbour, so
+  // drop the per-image selection and rename draft when the image changes — else
+  // "Merge 2" shows on the next image and merges the previous image's detections.
+  // The render-time-adjust idiom (see `common/NumberField.tsx`), not a `key=`:
+  // a remount would also reset `open`, which should survive navigation.
+  const [seenImageId, setSeenImageId] = useState(imageId);
+  if (imageId !== seenImageId) {
+    setSeenImageId(imageId);
+    setMergeIds([]);
+    setEditingId(null);
+    setEditLabel("");
+  }
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["image", imageId] });
     // Refresh all dataset-scoped detection caches (labels + models + stats) so a

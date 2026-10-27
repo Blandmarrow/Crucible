@@ -5,39 +5,6 @@ throwaway DB on :8199. The specs are in `docs/dev/gpt-review/probes/frontend/`; 
 Read `docs/dev/image-detail.md`, `docs/dev/gallery.md`, `docs/dev/frontend-jobs.md` and
 `docs/dev/styling.md` as relevant.
 
-## GPT-027 — [P1, GPT said P2] An unsaved caption draft is saved onto a cached neighbouring image
-
-**Verdict:** CONFIRMED, and re-run independently. NEW. Raised to P1 because ordinary
-arrow-key navigation **silently writes the wrong training caption**.
-
-**Mechanism** (`frontend/src/pages/ImageDetailPage.tsx`):
-- **Copy effect (~998-1003)**: copies `captionData` into the editor only when `!captionDirty`.
-  Its only dependency is `[captionData]`.
-- **Reset effect (~1005-1007)**: resets `captionDirty` when `imageId` changes.
-- **Navigation to a cached image**: if the next image's `["caption", imageId]` query is warm
-  (global staleTime is 30 s, `App.tsx:37`), `captionData` and `imageId` change in the same render.
-  - The copy effect sees the stale `dirty=true` and skips.
-  - The reset effect then clears the flag, but the copy effect does not run again.
-- **Save** (~1097): uses the new `imageId` with the old text.
-
-**Observed** (`gpt027.spec.ts`):
-1. Visit A, then B, then A again.
-2. Type "DRAFT-FOR-A" on A without saving, and press Next.
-3. B's textarea shows "DRAFT-FOR-A" and Save is disabled.
-4. Type " +edit" and Save.
-
-Afterwards the API reports A = "ORIG-A" and B = "DRAFT-FOR-A +edit". The control, where B is not
-cached, shows "ORIG-B" correctly.
-
-**Fix notes.**
-- Key the draft and dirty state to the image id, so they reset atomically when the id changes.
-  For example, store `{imageId, text, dirty}` together, or remount the editor with
-  `key={imageId}`.
-- Preserve same-image edits across refetches.
-- Regression: invert the spec into `frontend/e2e/caption-edit.spec.ts`.
-- Check the other per-image editors on the page for the same two-effect pattern: tags, labels and
-  provenance.
-
 ## GPT-030 — [P2] A folder import that fails asynchronously shows only "Import started"
 
 **Verdict:** CONFIRMED. NEW. `docs/dev/image-files.md` describes only the success and

@@ -4,35 +4,6 @@ These are the verified findings in launchers, CI and the test harnesses, plus th
 decision. Read `docs/dev/environment-setup.md` and `docs/dev/backend-infrastructure.md` as relevant.
 Conventions are in `docs/dev/gpt-review/README.md`.
 
-## GPT-003 + GPT-005 — [P2, fix together] The SPA-containment tests never run in CI, and turning them on would hang it
-
-**Verdict:** both CONFIRMED. 005 was reproduced at runtime. NEW.
-
-- **003:** `backend/tests/test_spa_fallback_containment.py:40-43` skips the whole module when
-  `frontend/dist/index.html` is missing. None of the 7 workflows both builds `dist` and runs this
-  module: `backend-tests.yml` never builds, and `frontend-build.yml`/`e2e-smoke.yml` never run
-  pytest. **So the PM-015 regression tests are always skipped in CI.**
-- **005:** the raw-ASGI helper's `receive()` (~:77-78) returns `http.request` immediately on every
-  call, and its scope (~:89) has no `spec_version`.
-  - Starlette **1.8.0**'s `FileResponse` then runs a `while True: await receive()` disconnect
-    listener (`starlette/responses.py` ~393-405), which never yields. It starves the response, so
-    `test_an_absolute_path_does_not_replace_the_dist_root` hangs.
-  - This was reproduced in a throwaway venv: `pip install -r backend/requirements-ci.txt -r
-    backend/requirements-dev.txt` resolved starlette 1.8.0 / fastapi 0.143.3. The test hung,
-    while the other 3 passed.
-  - Starlette 1.3.1 (the repo `venv/`) and 1.6.0 pass; the loop is new in 1.8.0.
-  - Adding `"spec_version": "2.4"` to the scope fixes it. That was confirmed with
-    `docs/dev/gpt-review/probes/backend/spa_raw_asgi_probe.py`.
-  - There are no upper caps (`fastapi>=0.116`, `starlette>=1.0.1`), so **a fresh CI install today
-    gets 1.8.0**.
-
-**Fix notes.**
-1. Fix the helper first: add `spec_version: "2.4"` to the scope, and make `receive()` return the
-   request once and then block, for example on an `asyncio.Event` until a disconnect.
-2. Bound it with a timeout so a future protocol mismatch fails instead of hanging.
-3. Only then make CI build `dist` (or provide a minimal stub `dist`) before running this module,
-   and make the skip a failure in CI.
-
 ## GPT-001 — [P2] Setup accepts Node versions the locked toolchain does not support
 
 **Verdict:** CONFIRMED (static). NEW.

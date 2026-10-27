@@ -42,7 +42,9 @@ Two buttons sit at the right of the top bar. Both ask for confirmation first, an
 
 > **The server only comes back on its own if you started it with `manage`** (`manage.ps1 start` / `./manage.sh start`, or `Crucible.bat`). Those scripts run the server in a loop that relaunches it after a restart. If you started uvicorn by hand, Restart stops the server and you will need to start it again yourself.
 
-Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](#logs) history.
+If a job is running when you restart or shut down, it is asked to stop and given about **10 seconds** to do so. Snapshot, restore and branch-checkout jobs get up to **2 minutes**, because stopping one halfway would leave the dataset half-changed. After that the server stops it regardless, so a restart can take that much longer while a job is running. Jobs still waiting in the queue are not started.
+
+Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](#logs) history. Work a job finished before it stopped is kept, as it is when you cancel one. If the app lost touch with the server while a job finished, the top bar and the open page catch up by themselves once the connection is back, with no reload needed.
 
 ## Database backups
 

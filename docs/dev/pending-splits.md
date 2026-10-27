@@ -426,3 +426,23 @@ utilities → `docs/dev/shared-utilities.md`.
   grep `versioning-service.md` across `docs/`, `CLAUDE.md` and `backend/` (an alembic
   migration docstring cites it too) and repoint whichever ones mean restore. Add a
   Documentation Map row for the new file.
+
+## docs/workspace.md
+
+- **Moves:** § Starting up (353 words), § Restarting & shutting down (336) and § Database
+  backups (246)
+- **New file:** docs/server.md (the user half of docs/dev/backend-infrastructure.md and
+  docs/dev/database.md)
+- **Why here:** those three are one subject, the server process's life: launching it,
+  stopping or restarting it, and what it does to the database at startup. The rest of the
+  page is the app's own furniture: dialogs, the top bar, meters, Split View, Logs, the File
+  Browser and Booru. It tripped the budget when § Restarting & shutting down gained the
+  shutdown grace for running jobs (GPT-012). The seam leaves ~935 and ~1,575 words. The
+  remainder sits just over the ~1,500 target, so if it must go lower, § File Browser (557)
+  is the next self-contained move, to docs/file-browser.md, mirroring docs/dev/file-browser.md.
+- **Watch for:** README links three of the moving anchors (`#starting-up`,
+  `#restarting--shutting-down`, `#database-backups`) and needs a Docs-table row for the new
+  file. `docs/features.md` takes a row, not prose. `docs/dev/database.md` and
+  `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
+  horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
+  stays behind, so that link must become `workspace.md#logs`.

@@ -5,26 +5,6 @@ throwaway DB on :8199. The specs are in `docs/dev/gpt-review/probes/frontend/`; 
 Read `docs/dev/image-detail.md`, `docs/dev/gallery.md`, `docs/dev/frontend-jobs.md` and
 `docs/dev/styling.md` as relevant.
 
-## GPT-030 — [P2] A folder import that fails asynchronously shows only "Import started"
-
-**Verdict:** CONFIRMED. NEW. `docs/dev/image-files.md` describes only the success and
-partial-failure toasts.
-
-**Observed** (`gpt014_030.spec.ts`): importing a nonexistent folder through the gallery's Import
-modal. The job fails with "Folder not found: …", but over 8 s the only toast is "Import started",
-and the TopBar then says "Ready".
-
-**Where:**
-- `ImportFolderModal.tsx:53-62` toasts and closes on submit.
-- `GalleryPage.tsx:697-708` watches only for `completed`.
-- `DatasetsPage.tsx:344-345` silently clears the job id when it sees `failed`.
-
-**Fix notes.**
-- Handle `failed` and `cancelled` in a watcher that outlives the modal, and toast the server's
-  `error`.
-- Word the submit toast as "submitted", not "started".
-- Fix alongside GPT-014 (`docs/dev/gpt-review/jobs-ml.md`), since both need terminal handling that cannot be missed.
-
 ## GPT-028 — [P2] A cross-dataset delete leaves the other split-view pane showing deleted images
 
 **Verdict:** CONFIRMED. NEW. Cross-dataset selection itself is intended (`docs/dev/gallery.md`,

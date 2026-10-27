@@ -1,102 +1,12 @@
-# Job queue, SSE and ML-lifetime findings
+# ML-lifetime and ComfyUI findings
 
-These are the verified findings for the job worker, progress events and model lifetimes. Read
+These are the verified findings for model lifetimes and the ComfyUI job. The job-queue and SSE
+findings (GPT-012, 013, 014) are fixed; see PM-027
+(`docs/dev/postmortems/PM-027-shutdown-cancel-swallowed-by-job-handler.md`). Read
 `docs/dev/backend-infrastructure.md`, `docs/dev/frontend-jobs.md` and `docs/dev/ml-models.md`
-first. The probes are `docs/dev/gpt-review/probes/backend/probe_jobs.py`, `probe_caption_unload.py`, `probe_comfy.py` and
+first. The probes are `docs/dev/gpt-review/probes/backend/probe_caption_unload.py`, `probe_comfy.py` and
 `probe_gdino.py`. All of them are mock-level: no GPU, no model download and no real ComfyUI.
 Conventions are in `docs/dev/gpt-review/README.md`.
-
-## GPT-012 — [P2] Shutdown with a running job hangs, and queued jobs start mid-shutdown
-
-**Verdict:** CONFIRMED. This is **the root cause of `docs/dev/backend-infrastructure.md` §
-"`JobQueue.stop()` can hang — open, unexplained"**.
-
-**Mechanism.**
-1. `JobQueue._worker` has a job-level `except asyncio.CancelledError` inside `while True`
-   (~`job_queue.py:195-202`).
-2. `stop()` (~104-111) delivers a single `task.cancel()` and awaits the task with no timeout.
-3. If that cancel lands while a job is running, including during its completion bookkeeping, the
-   job handler swallows it.
-4. The job is marked `cancelled`, the loop goes back to `await self._queue.get()`, and it waits
-   forever. That is exactly the doc's "stuck on the pending future inside `_queue.get()`".
-
-It looks like a race only because a cancel that lands while the worker is idle in `get()`
-propagates normally. Production's lifespan (`main.py:79`) awaits this same `stop()`, so a SIGTERM
-or the Restart button during any running job wedges shutdown.
-
-**Observed** (`probe_jobs.py::test_012_*`):
-- Idle stop returns.
-- With an active job, stop is still pending after 1 s, the job is recorded `cancelled`, and a
-  queued second job *runs*.
-- The hang also happens with no queued job, and with a cancel during the post-`fn` bookkeeping.
-- `test_012_executor_cancel_marks_cancelled_thread_runs`: the job is marked cancelled while its
-  executor thread keeps running.
-
-The doc's "enqueue-then-tear-down-mid-job passes repeatedly" did not reproduce: mid-job
-teardown hung every time.
-
-**Fix notes.**
-- Separate queue shutdown from job cancellation. For example, set a `_stopping` flag before
-  `cancel()`.
-- In the job handler, re-raise if `_stopping` is set, or check `asyncio.current_task().cancelling()`.
-- Stop dequeuing once shutdown begins.
-- A `wait_for` bound around `stop()` is a backstop, not the fix.
-- Keep ordinary per-job cancellation working, with the queue still usable afterwards
-  (`raise_if_cancelled`).
-- Rewrite the doc section once this is fixed.
-
-## GPT-013 — [P2] A failure while starting a job kills the only worker
-
-**Verdict:** CONFIRMED. NEW.
-
-**Mechanism.** The worker dequeues, then opens a session and writes the `running` status
-(~`job_queue.py:135-173`), all *before* the job's `try`. A raise there escapes `_worker`. That
-skips `task_done` and cleanup, and nothing restarts the worker. The cancelled-while-queued branch
-also runs outside the `try`.
-
-**Observed** (`test_013_session_failure_kills_worker`): one injected `AsyncSessionLocal()` failure,
-then the real factory restored.
-- The worker task is done, with the exception.
-- Both job rows stay `pending` forever.
-- `_unfinished_tasks` is 2, and `current_job_id` is stuck.
-
-**Fix notes.**
-- Wrap the whole per-item lifecycle, including the start-status write and failure reporting.
-- Always balance `task_done`.
-- Consider a supervisor that logs and restarts the worker, but never automatically retries
-  irreversible work.
-
-## GPT-014 — [P2] A missed terminal SSE event never reconciles in the UI
-
-**Verdict:** CONFIRMED (backend and browser). Partly known: `docs/dev/frontend-jobs.md`
-documents the silent drop on a full 200-slot queue, but not the consequence.
-
-**Backend** (`test_014_full_queue_drops_terminal`, `test_014_no_replay_for_late_subscriber`):
-- With 200 undrained events, the job and global queues both hold only `running` events, and the
-  `completed` event is lost (`progress.py` `put_nowait` → `QueueFull` → `pass`).
-- A subscriber that arrives after `completed` gets nothing, because there is no replay and no
-  snapshot (`routers/jobs.py:56-76`).
-- The realistic trigger is a disconnect gap rather than queue overflow.
-
-**Frontend** (`probes/frontend/gpt014_030.spec.ts`): SSE was aborted with `page.route` while a
-240-image import finished.
-- After SSE reconnects, the gallery still says 0 images and the TopBar says "Ready", while the API
-  has 240.
-- Only a reload fixes it.
-- The control, an import with SSE unblocked, reconciles on its own.
-
-In the source:
-- `useSSE.ts`: `useAllJobsSSE` only logs `onerror`, and `useJobSSE` reconnects without fetching
-  status.
-- `jobStore.ts` expires jobs only on a terminal event, with no TTL.
-- `TopBar.tsx` never hydrates from `jobsApi`.
-
-**Fix notes.**
-- On (re)connect, fetch the durable state of active jobs (`jobsApi.list`/`get`) and synthesize
-  terminal handling for jobs that finished in the gap: invalidations and toasts.
-- Optionally coalesce or never drop terminal events server-side.
-- Fix together with GPT-030 (`docs/dev/gpt-review/frontend.md`), since both live in the
-  terminal-handling path.
 
 ## GPT-032 — [P2] Caption-model unload during a run fails every remaining image
 

@@ -236,28 +236,35 @@ async def restart():
     threading.Thread(target=_do_restart, daemon=True).start()
 
 
-# Serve built React frontend — must come last so API routes take priority
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
+# The built SPA has exactly one class of cacheable file: the content-hashed
+# /assets/* bundles (served by the StaticFiles mount below), whose filenames
+# change whenever their contents do. Everything served by literal path keeps a
+# *stable* URL across rebuilds — index.html plus the unhashed root files it
+# references (favicon.svg, favicon-32.png, apple-touch-icon.png, …). Those must
+# be revalidated, or a logo/markup change only appears after a manual browser
+# cache clear. no-cache makes the browser revalidate (a cheap 304 when
+# unchanged); it does not disable caching.
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+def mount_spa(target: FastAPI, dist: Path) -> None:
+    """Serve the built React frontend in `dist` from `target`.
+
+    A function rather than inline module code so the containment guard can be
+    tested against a throwaway `dist` (`test_spa_fallback_containment.py`): the
+    real `frontend/dist` exists only after `npm run build`, which no job that runs
+    pytest does, so a test against the real one was skipped in every CI run
+    (GPT-003). Call it last, so API routes take priority over the catch-all.
+    """
     # Mount static assets (JS/CSS/images) at their exact paths
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+    target.mount("/assets", StaticFiles(directory=str(dist / "assets")), name="assets")
 
-    # The built SPA has exactly one class of cacheable file: the content-hashed
-    # /assets/* bundles (served by the StaticFiles mount above), whose filenames
-    # change whenever their contents do. Everything served below by literal path
-    # keeps a *stable* URL across rebuilds — index.html plus the unhashed root
-    # files it references (favicon.svg, favicon-32.png, apple-touch-icon.png, …).
-    # Those must be revalidated, or a logo/markup change only appears after a
-    # manual browser cache clear. no-cache makes the browser revalidate (a cheap
-    # 304 when unchanged); it does not disable caching.
-    _NO_CACHE = {"Cache-Control": "no-cache"}
-
-    _INDEX_HTML = frontend_dist / "index.html"
-    _DIST_ROOT = frontend_dist.resolve()
+    index_html = dist / "index.html"
+    dist_root = dist.resolve()
 
     # Catch-all: serve index.html for any unmatched path so React Router handles
     # client-side navigation on hard refresh / direct URL access.
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @target.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         # Containment first, then is_file() — the same order every router uses, and
         # for the same reason: `full_path` is raw client input and this is a
@@ -267,12 +274,18 @@ if frontend_dist.exists():
         # side when the right is absolute, so a leading `/` (sent as `//etc/passwd`)
         # escapes without needing dots at all. Anything not inside dist falls
         # through to the SPA, which is what an unknown route should do regardless.
-        candidate = frontend_dist / full_path
+        candidate = dist / full_path
         try:
             resolved = candidate.resolve()
         except OSError:
             resolved = None
-        if resolved is not None and resolved.is_relative_to(_DIST_ROOT) and resolved.is_file():
+        if resolved is not None and resolved.is_relative_to(dist_root) and resolved.is_file():
             return FileResponse(str(resolved), headers=_NO_CACHE)
         # Otherwise hand off to the SPA so React Router owns the route.
-        return FileResponse(str(_INDEX_HTML), headers=_NO_CACHE)
+        return FileResponse(str(index_html), headers=_NO_CACHE)
+
+
+# Serve built React frontend — must come last so API routes take priority
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    mount_spa(app, frontend_dist)

@@ -135,8 +135,8 @@ correctly and only empty declared folders are lost.
 folder (`characters_001.png`) keeps that stem after `characters` → `people`; the remedies
 are the existing **Renumber Files** button and move-to-subfolder-with-rename. Contrast
 `POST /images/batch/move-subfolder`'s `rename_on_move`. Renaming files here would turn one
-atomic transaction into a fallible filesystem batch, pulling in PM-013, PM-021 (`images.py`
-is wholly unconverted) and the stem-keyed thumbnail collision rule. There is no
+atomic transaction into a fallible filesystem batch, pulling in PM-013, PM-021 (`images.py`'s
+renames are unconverted) and the stem-keyed thumbnail collision rule. There is no
 `record_in_place`, no thumbnail work and no filesystem mutation at all.
 
 `backend/tests/test_subfolder_repath_http.py` is the request-level coverage: the subtree

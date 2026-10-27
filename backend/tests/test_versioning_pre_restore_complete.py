@@ -130,3 +130,87 @@ def test_a_user_manual_snapshot_still_commits_with_its_warning(tmp_path, monkeyp
             assert stored is not None
             assert "[warning] 1 file(s) could not be backed up" in stored.description
     run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Pass 1 in Auto mode (new gap 6b): the backups are taken here, not by the
+# snapshot, so a file that cannot be hashed or read must not slip through.
+# ---------------------------------------------------------------------------
+
+async def _edited_auto_dataset(env):
+    """Auto mode; lazy snapshot "orig" of a 100×80 image, then a crop to 40×40
+    (which backs the original up and fills orig's hash)."""
+    await _mode(env, "auto")
+    ds = await env.create_dataset("d")
+    img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
+    async with env.Session() as db:
+        ver = await version_service.create_snapshot(db, ds["id"], "orig", "")
+    await _crop(env, img["id"])
+    return ds["id"], img["id"], ver.id
+
+
+def test_a_file_that_fails_to_hash_is_still_protected(tmp_path, monkeypatch):
+    """Pass 1 used to skip the backup when `_compute_sha256` raised — and Pass 3
+    still overwrote the file, so the safety snapshot's lazy row claimed the
+    restored bytes as the pre-restore state."""
+    import hashlib
+
+    async def scenario():
+        async with api_env(tmp_path, foreign_keys=True) as env:
+            ds_id, img_id, vid = await _edited_auto_dataset(env)
+            async with env.Session() as db:
+                cropped = (await db.get(Image, img_id)).file_path
+            with open(cropped, "rb") as f:
+                cropped_sha = hashlib.sha256(f.read()).hexdigest()
+
+            def no_hash(path):
+                raise OSError("injected hash failure")
+            monkeypatch.setattr(version_service, "_compute_sha256", no_hash)
+            async with env.Session() as db:
+                res = await version_service.restore_snapshot(db, ds_id, vid)
+            monkeypatch.undo()
+            assert _size(cropped) == (100, 80)
+
+            from backend.models.versioning import VersionImageState
+            async with env.Session() as db:
+                st = (await db.execute(select(VersionImageState).where(
+                    VersionImageState.version_id == res["pre_restore_version_id"]
+                ))).scalars().one()
+            assert st.file_hash == cropped_sha
+
+            async with env.Session() as db:
+                await version_service.restore_snapshot(
+                    db, ds_id, res["pre_restore_version_id"], pre_restore_snapshot=False
+                )
+            async with env.Session() as db:
+                row = await db.get(Image, img_id)
+            assert (row.width, row.height) == (40, 40)
+            assert _size(row.file_path) == (40, 40)
+    run(scenario())
+
+
+def test_a_backup_that_cannot_read_the_file_aborts_before_any_change(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path, foreign_keys=True) as env:
+            ds_id, img_id, vid = await _edited_auto_dataset(env)
+            n_before, _, head_before = await _versions_and_head(env, ds_id)
+            async with env.Session() as db:
+                path = (await db.get(Image, img_id)).file_path
+            with open(path, "rb") as f:
+                before = f.read()
+
+            _break_the_object_store(monkeypatch)
+            async with env.Session() as db:
+                with pytest.raises(RuntimeError, match="aborted before any file was changed"):
+                    await version_service.restore_snapshot(db, ds_id, vid)
+
+            with open(path, "rb") as f:
+                assert f.read() == before
+            async with env.Session() as db:
+                row = await db.get(Image, img_id)
+            assert (row.width, row.height) == (40, 40)
+            # The safety snapshot it had already committed is discarded again,
+            # and the branch head is back where it was.
+            n, pre, head = await _versions_and_head(env, ds_id)
+            assert (n, pre, head) == (n_before, 0, head_before)
+    run(scenario())

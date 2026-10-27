@@ -876,6 +876,32 @@ async def diff_versions(
 # Restore
 # ---------------------------------------------------------------------------
 
+async def _discard_snapshot(db: AsyncSession, version_id: str) -> None:
+    """Delete a just-committed pre-restore snapshot whose restore then aborted.
+
+    Called from an abort path, so it must not raise over the error being
+    reported: a failure here is logged and the version is left behind — a
+    harmless extra snapshot of the unchanged dataset. The branch head moves
+    back to the version's parent, which is where `create_snapshot` found it.
+    """
+    try:
+        ver = await db.get(DatasetVersion, version_id)
+        if ver is None:
+            return
+        if ver.branch_id:
+            branch = await db.get(DatasetBranch, ver.branch_id)
+            if branch is not None and branch.head_version_id == version_id:
+                branch.head_version_id = ver.parent_id
+        await db.delete(ver)
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Could not discard pre-restore snapshot %s: %s", version_id, exc)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
 async def restore_snapshot(
     db: AsyncSession,
     dataset_id: str,
@@ -1035,57 +1061,75 @@ async def restore_snapshot(
     # is what makes the restore undoable. Only fires for files the restore will
     # actually touch; a pure rename is moved, never overwritten, so it needs no
     # backup.
-    for p in plans:
-        if p.img is None or p.state.image_id is None:
-            continue
-        if p.state.file_hash is not None:
-            if not p.renamed:
-                # In place: the target IS the current file — hash it once, decide
-                # needs_restore, and reuse the hash for the backup.
-                cur_hash: str | None = None
-                if Path(p.current_path).exists():
-                    try:
-                        cur_hash = await loop.run_in_executor(
-                            None, _compute_sha256, p.current_path
-                        )
-                    except Exception:
-                        pass
-                p.needs_restore = cur_hash != p.state.file_hash
-                if p.needs_restore and cur_hash is not None:
-                    # p.img.id, not state.image_id: an adopted plan's current row
-                    # is a different image than the one the snapshot recorded.
-                    await protect_file_before_overwrite(
-                        p.img.id, p.current_path, db, precomputed_sha256=cur_hash
-                    )
-            else:
-                # Renamed with recorded content: the current file will be removed
-                # (or moved) after the restore — protect it. needs_restore is
-                # resolved in Pass 3 (the target may change during staging).
-                await protect_file_before_overwrite(p.img.id, p.current_path, db)
-        # Pure rename (file_hash is None): moved, not overwritten — no protection.
-
-    # Extras occupying a restore target would be clobbered by Pass 3 — back them
-    # up first. In "remove" mode every extra is deleted anyway, so fire the
-    # deletion hook for all of them here (before any FS write), making the
-    # removal undoable via the pre-restore snapshot.
     #
-    # The containment gate covers the **whole** loop, not just the "remove"
-    # branch: both hooks end at `_store_object`, which copies the named file's
-    # bytes into `{ds}/.versions/objects/` where a restore hands them back, so an
-    # out-of-tree `file_path` is the same arbitrary-file read primitive either
-    # way. Gated per row, and the restore carries on without the extra — the row
-    # itself is still removed or renamed by Pass 2.
-    for extra_img in extra_imgs:
-        safe_extra = contained_path(
-            extra_img.file_path, app_settings.datasets_dir,
-            context="restore_snapshot extras", ident=extra_img.id,
-        )
-        if safe_extra is None:
-            continue
-        if handle_extra_images == "remove":
-            await mark_image_deleted_in_versions(extra_img.id, str(safe_extra), db)
-        elif extra_img.file_path in all_targets:
-            await protect_file_before_overwrite(extra_img.id, str(safe_extra), db)
+    # All or nothing: a backup that raises here (an unreadable file, a full
+    # disk) aborts the restore before any dataset file changes, and the
+    # backfills already flushed roll back with the pre-restore snapshot
+    # discarded — proceeding would overwrite a file nothing holds a copy of.
+    try:
+        for p in plans:
+            if p.img is None or p.state.image_id is None:
+                continue
+            if p.state.file_hash is not None:
+                if not p.renamed:
+                    # In place: the target IS the current file — hash it once, decide
+                    # needs_restore, and reuse the hash for the backup.
+                    cur_hash: str | None = None
+                    if Path(p.current_path).exists():
+                        try:
+                            cur_hash = await loop.run_in_executor(
+                                None, _compute_sha256, p.current_path
+                            )
+                        except Exception:
+                            pass
+                    p.needs_restore = cur_hash != p.state.file_hash
+                    if p.needs_restore and Path(p.current_path).exists():
+                        # p.img.id, not state.image_id: an adopted plan's current row
+                        # is a different image than the one the snapshot recorded.
+                        # Protected even when hashing failed (cur_hash None): the
+                        # hook then re-streams the file itself, and Pass 3 is about
+                        # to overwrite it either way (new gap 6b).
+                        await protect_file_before_overwrite(
+                            p.img.id, p.current_path, db, precomputed_sha256=cur_hash
+                        )
+                else:
+                    # Renamed with recorded content: the current file will be removed
+                    # (or moved) after the restore — protect it. needs_restore is
+                    # resolved in Pass 3 (the target may change during staging).
+                    await protect_file_before_overwrite(p.img.id, p.current_path, db)
+            # Pure rename (file_hash is None): moved, not overwritten — no protection.
+
+        # Extras occupying a restore target would be clobbered by Pass 3 — back them
+        # up first. In "remove" mode every extra is deleted anyway, so fire the
+        # deletion hook for all of them here (before any FS write), making the
+        # removal undoable via the pre-restore snapshot.
+        #
+        # The containment gate covers the **whole** loop, not just the "remove"
+        # branch: both hooks end at `_store_object`, which copies the named file's
+        # bytes into `{ds}/.versions/objects/` where a restore hands them back, so an
+        # out-of-tree `file_path` is the same arbitrary-file read primitive either
+        # way. Gated per row, and the restore carries on without the extra — the row
+        # itself is still removed or renamed by Pass 2.
+        for extra_img in extra_imgs:
+            safe_extra = contained_path(
+                extra_img.file_path, app_settings.datasets_dir,
+                context="restore_snapshot extras", ident=extra_img.id,
+            )
+            if safe_extra is None:
+                continue
+            if handle_extra_images == "remove":
+                await mark_image_deleted_in_versions(extra_img.id, str(safe_extra), db)
+            elif extra_img.file_path in all_targets:
+                await protect_file_before_overwrite(extra_img.id, str(safe_extra), db)
+    except Exception as exc:
+        logger.error("restore of dataset %s: Pass 1 backup failed: %s", dataset_id, exc)
+        await db.rollback()
+        if pre_restore_version_id is not None:
+            await _discard_snapshot(db, pre_restore_version_id)
+        raise RuntimeError(
+            f"Could not back up a file before overwriting it ({exc}); restore "
+            "aborted before any file was changed."
+        ) from exc
 
     # ── Pass 2: all DB updates, then commit (DB is authoritative before FS) ──
     # Filename moves need DB-level staging too: SQLite checks uq_dataset_filename

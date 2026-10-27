@@ -17,8 +17,9 @@ up.
 The behavioural round-trips follow, including the two that are properties of
 *not* writing code: `batch_move_dataset` needs no label handling at all
 (`image_labels` deliberately carries no `dataset_id`, and a move UPDATEs
-`Image.dataset_id` in place without changing `Image.id`), and a restore into a
-different dataset needs no id remapping (the vocabulary is global).
+`Image.dataset_id` in place without changing `Image.id`), and a restore that
+forks an image since moved to another dataset needs no id remapping (the
+vocabulary is global).
 """
 import ast
 import inspect

@@ -119,28 +119,6 @@ def test_gpt023_failed_backup_does_not_abort_restore(tmp_path, monkeypatch):
     run(scenario())
 
 
-def test_gpt024_foreign_branch(tmp_path):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "auto")
-            A = await env.create_dataset("A"); B = await env.create_dataset("B")
-            await upload_image(env, A["id"], "a.png", png_bytes((1, 2, 3)))
-            await upload_image(env, B["id"], "b.png", png_bytes((3, 2, 1)))
-            await _snap(env, A["id"], "a1"); await _snap(env, B["id"], "b1")
-            bb = (await env.client.get(f"{API}/datasets/{B['id']}/versions/branches")).json()[0]
-            ab = (await env.client.get(f"{API}/datasets/{A['id']}/versions/branches")).json()[0]
-            print("B branch head before", bb["head_version_id"])
-            r = await env.client.post(f"{API}/datasets/{A['id']}/versions", json={"name": "x", "branch_id": bb["id"]})
-            print("status", r.status_code, r.text[:300])
-            assert r.status_code == 200
-            vid = r.json()["id"]
-            bb2 = (await env.client.get(f"{API}/datasets/{B['id']}/versions/branches")).json()[0]
-            ver = (await env.client.get(f"{API}/datasets/{A['id']}/versions/{vid}")).json()
-            print("B head after", bb2["head_version_id"], "== A's new version?", bb2["head_version_id"] == vid, "version.dataset_id", ver["dataset_id"], "branch_id", ver["branch_id"])
-            assert bb2["head_version_id"] == vid and ver["dataset_id"] == A["id"]
-    run(scenario())
-
-
 def test_gpt025_failed_copy_job_still_completed(tmp_path, monkeypatch):
     async def scenario():
         async with api_env(tmp_path, foreign_keys=True) as env:

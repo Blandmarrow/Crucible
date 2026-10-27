@@ -78,7 +78,7 @@ CARRIED_COLUMNS = SCORE_COLUMNS | SCORE_QUALIFIERS
 # (`Image.id` is absent because it *is* mirrored, as `VersionImageState.image_id`
 # alongside that table's own surrogate `id`.)
 NOT_MIRRORED = {
-    "dataset_id",            # a restore can target a different dataset
+    "dataset_id",            # implied by the version: a restore refuses another dataset's (GPT-024)
     "thumbnail_path",        # re-derived from file_path on restore
     "is_auto_named",         # a naming provenance flag, not image content
     "created_at",            # the state row carries the version's timestamp
@@ -394,9 +394,10 @@ def test_every_rebuild_path_carries_scores_stale():
 
 
 def test_version_image_state_does_not_carry_a_video_foreign_key():
-    """Matching `image_id`, which is FK-free because a restore can target
-    another dataset. A snapshot must also survive its source video's deletion —
-    which is precisely when the lineage record is worth the most."""
+    """Matching `image_id`, which is FK-free because a snapshot outlives the
+    image it names — deleted, or moved to another dataset (restore's Pass 0b).
+    A snapshot must also survive its source video's deletion — which is
+    precisely when the lineage record is worth the most."""
     fks = {fk.parent.key for fk in VersionImageState.__table__.foreign_keys}
     assert "source_video_id" not in fks
 

@@ -436,6 +436,8 @@ async def create_snapshot(
     mode = settings.versioning_mode
 
     dataset = await db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise ValueError(f"Dataset {dataset_id} not found")
 
     # Resolve branch: explicit branch_id wins; otherwise the dataset's current
     # branch (so auto-snapshots — pre-restore, checkout — land on the branch the
@@ -451,7 +453,12 @@ async def create_snapshot(
             branch = await _ensure_main_branch(db, dataset_id)
         branch_id = branch.id
     else:
+        # Ownership is checked here, not only in the router (GPT-024): a foreign
+        # branch would record this dataset's version on it and move *that*
+        # dataset's head. Raised before anything is added to the session.
         branch = await db.get(DatasetBranch, branch_id)
+        if branch is None or branch.dataset_id != dataset_id:
+            raise ValueError("Branch not found")
 
     # Resolve parent from branch head
     if parent_id is None and branch is not None:
@@ -668,6 +675,11 @@ async def diff_versions(
     version_id_a: str,
     version_id_b: str,
 ) -> dict:
+    for vid in (version_id_a, version_id_b):
+        ver = await db.get(DatasetVersion, vid)
+        if ver is None or ver.dataset_id != dataset_id:
+            raise ValueError(f"Version {vid} not found")
+
     def _state_dict(rows: list) -> dict:
         out: dict = {}
         for s in rows:
@@ -791,6 +803,11 @@ async def restore_snapshot(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise ValueError(f"Dataset {dataset_id} not found")
+    # Refused before anything is read or written (GPT-024): another dataset's
+    # version would plan that dataset's paths here and move its branch head.
+    ver = await db.get(DatasetVersion, version_id)
+    if ver is None or ver.dataset_id != dataset_id:
+        raise ValueError("Version not found")
 
     # Load target version states
     result = await db.execute(
@@ -1134,8 +1151,9 @@ async def restore_snapshot(
     # live vocabulary; a label deleted since the snapshot is dropped with one
     # aggregate warning rather than resurrected.
     #
-    # A restore targeting a *different* dataset needs no id remapping at all —
-    # the direct payoff of the vocabulary being global rather than per-dataset.
+    # A row Pass 0b forked (its image now lives in another dataset) needs no
+    # label id remapping at all — the direct payoff of the vocabulary being
+    # global rather than per-dataset.
     wanted_labels: dict[str, list[str]] = {}
     snapshot_label_ids: set[str] = set()
     for p in plans:
@@ -1373,11 +1391,14 @@ async def restore_snapshot(
                 extra_img.file_path, True, extra_img.thumbnail_path,
             )
 
-    # Move branch head to the restored version so the UI marks it as Current
+    # Move branch head to the restored version so the UI marks it as Current.
+    # The ownership check is belt-and-braces over the one at the top: a
+    # version's branch is always its own dataset's, but a head move is the one
+    # write here that reaches outside the dataset if that ever stops being true.
     ver = await db.get(DatasetVersion, version_id)
-    if ver and ver.branch_id:
+    if ver is not None and ver.branch_id:
         branch = await db.get(DatasetBranch, ver.branch_id)
-        if branch:
+        if branch is not None and branch.dataset_id == dataset_id:
             branch.head_version_id = version_id
 
     await db.commit()
@@ -1405,6 +1426,16 @@ async def create_branch(
     from_version_id: str | None = None,
     include_snapshot: bool = True,
 ) -> tuple[DatasetBranch, DatasetVersion | None]:
+    dataset = await db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise ValueError("Dataset not found")
+    # A foreign `from_version_id` would record another dataset's version as this
+    # branch-init snapshot's parent (GPT-024).
+    if from_version_id is not None:
+        src_ver = await db.get(DatasetVersion, from_version_id)
+        if src_ver is None or src_ver.dataset_id != dataset_id:
+            raise ValueError("Version not found")
+
     # Validate name uniqueness
     existing = await db.execute(
         select(DatasetBranch).where(
@@ -1418,7 +1449,6 @@ async def create_branch(
     # Resolve source version: branch from the current branch's head (main only
     # as a fallback for never-branched datasets).
     if from_version_id is None:
-        dataset = await db.get(Dataset, dataset_id)
         source_branch: DatasetBranch | None = None
         if dataset is not None and dataset.current_branch_id:
             source_branch = await db.get(DatasetBranch, dataset.current_branch_id)
@@ -1461,6 +1491,10 @@ async def checkout_branch(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise ValueError("Dataset not found")
+    if branch.head_version_id is not None:
+        head = await db.get(DatasetVersion, branch.head_version_id)
+        if head is None or head.dataset_id != dataset_id:
+            raise ValueError("Branch head version not found")
 
     result = {"branch_id": target_branch_id, "branch_name": branch.name}
 

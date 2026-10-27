@@ -86,6 +86,12 @@ async def create_branch(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
+    # Before the job row, so a foreign or bogus id is a 404 rather than a failed
+    # job; the service checks again (GPT-024).
+    if body.from_version_id is not None:
+        src_ver = await db.get(DatasetVersion, body.from_version_id)
+        if src_ver is None or src_ver.dataset_id != dataset_id:
+            raise HTTPException(404, "Version not found")
     await _require_versioning_enabled(db)
 
     # Count images to decide sync vs async
@@ -233,6 +239,13 @@ async def create_snapshot(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
+    # A foreign branch would take this dataset's version and move *its* head
+    # (GPT-024). Checked before the job row, matching the checkout route; the
+    # service refuses it too.
+    if body.branch_id is not None:
+        branch = await db.get(DatasetBranch, body.branch_id)
+        if branch is None or branch.dataset_id != dataset_id:
+            raise HTTPException(404, "Branch not found")
 
     from sqlalchemy import func
     from backend.models.image import Image
@@ -270,11 +283,14 @@ async def create_snapshot(
         await job_queue.enqueue(job, _run)
         return {"job_id": job.id}
 
-    version = await version_service.create_snapshot(
-        db, dataset_id,
-        name=body.name, description=body.description,
-        branch_id=body.branch_id,
-    )
+    try:
+        version = await version_service.create_snapshot(
+            db, dataset_id,
+            name=body.name, description=body.description,
+            branch_id=body.branch_id,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return VersionOut.model_validate(version)
 
 

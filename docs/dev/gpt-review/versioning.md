@@ -72,18 +72,6 @@ with 0 failed reported.
 backed up stops the restore before any mutation. Leave Manual-snapshot warnings as they are for
 user-initiated snapshots.
 
-## GPT-024 — [P3, GPT said P2] Snapshot creation accepts another dataset's branch
-
-**Verdict:** CONFIRMED. NEW. Downgraded because the UI never sends a foreign `branch_id`.
-
-**Observed** (`test_gpt024_foreign_branch`): POST `/datasets/{A}/versions` with B's `branch_id`
-returns 200. The new version has `dataset_id=A` and `branch_id=B's branch`, and B's branch head
-now points at it. `create_snapshot` does `db.get(DatasetBranch, branch_id)` with no ownership
-check (~`version_service.py:358`). The router forwards the id untouched.
-
-**Fix notes.** Validate `branch_id` and `from_version_id` against the dataset, both in the router
-and inside the service.
-
 ## GPT-026 — [P3] Pixel restore leaves detection geometry from the cropped image
 
 **Verdict:** CONFIRMED-KNOWN. `docs/dev/bulk-image-jobs.md` says: "Known limitation: a

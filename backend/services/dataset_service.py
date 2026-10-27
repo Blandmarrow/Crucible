@@ -35,6 +35,7 @@ from backend.utils import (
     thumbnail_path_for,
     unique_filename_with_thumb,
     unique_poster_path,
+    within_datasets_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -2116,7 +2117,18 @@ async def duplicate_dataset(
                     / state.file_hash[2:]
                 )
             else:
-                src_file = Path(state.file_path)
+                # A lazy (Auto-mode, NULL-hash) row reads the live file at the
+                # snapshot's recorded path — history, which may name somewhere
+                # outside the source dataset (GPT-021's read-side twin). Copying
+                # it would pull another dataset's bytes into the duplicate.
+                src_file = within_datasets_dir(state.file_path, Path(source_dataset.folder_path))
+                if src_file is None:
+                    log.warning(
+                        "duplicate_dataset: snapshot path %s for %s is outside %s, skipping",
+                        state.file_path, state.filename, source_dataset.folder_path,
+                    )
+                    skipped += 1
+                    continue
 
             if not src_file.exists():
                 log.warning("duplicate_dataset: source file missing for %s, skipping", state.filename)

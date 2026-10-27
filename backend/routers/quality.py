@@ -381,8 +381,12 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             # that raises should not strand 3.5 GB; and the DB `commit()` above is
             # already past, so this is the PM-013 post-commit epilogue — it logs and
             # can never change the job's outcome. Awaiting here is safe because
-            # cancellation is cooperative (`raise_if_cancelled` raises by hand; the
-            # task is never `.cancel()`ed).
+            # cancellation is cooperative (`raise_if_cancelled` raises by hand). The
+            # one exception is shutdown: `JobQueue.stop()` cancels the worker task
+            # once if the job outlives its grace. Landing earlier, that cancel only
+            # brings us here, where the awaits run normally; landing on one of
+            # them, it cuts the remaining unloads short — which costs nothing in a
+            # process that is exiting.
             #
             # Scoped to `loaded_ids`, never `evict_all()`: a Florence-2 or SAM2
             # someone loaded for other work is not this job's to evict.

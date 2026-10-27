@@ -68,7 +68,6 @@ Already known before the review:
 
 Docs whose text these findings **prove wrong**. Fix them alongside the bug:
 - `docs/dev/backend-infrastructure.md` § "`JobQueue.stop()` can hang — open, unexplained". 012 explains it.
-- `backend/tests/test_video_lineage_mirrors.py` comment "phash: recomputed from the restored file". 016: restore never recomputes it.
 - `docs/dev/comfyui.md` claims that the ComfyUI queue is "never stacked" and that nothing of ours waits in it (033).
 - The tie-rule comments in `frontend/src/utils/percentile.ts` and `docs/dev/image-similarity.md` (019).
 - The docstring of `utils.rename_with_sidecar`, which says "atomically" (009).

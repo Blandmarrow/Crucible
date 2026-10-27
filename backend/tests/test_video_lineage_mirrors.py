@@ -83,7 +83,8 @@ NOT_MIRRORED = {
     "is_auto_named",         # a naming provenance flag, not image content
     "created_at",            # the state row carries the version's timestamp
     "updated_at",
-    "phash",                 # recomputed from the restored file
+    "phash",                 # measured from the restored file by restore_snapshot; a mirror
+                             # would carry a value that may itself be stale (GPT-016)
     "clip_embedding",        # blobs: megabytes per row, recomputed on demand
     "dino_embedding",
     "dino_layer_embeddings",

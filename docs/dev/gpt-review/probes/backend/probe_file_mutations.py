@@ -342,54 +342,6 @@ def test_gpt016_batch_crop_leaves_stale_size_and_phash(tmp_path):
     run(scenario())
 
 
-def test_gpt016_restore_keeps_stale_phash_and_recreated_row_has_none(tmp_path):
-    """Restore half. Uses single replace-crop (which DOES refresh phash) so the stale
-    value after restore is attributable to restore, not to the resize gap."""
-    import imagehash
-    from PIL import Image as Pil
-    from backend.services import version_service
-
-    async def scenario():
-        async with api_env(tmp_path) as env:
-            await _set_auto(env)
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
-            h0 = (await _row(env, img["id"])).phash
-            async with env.Session() as db:
-                snap = await version_service.create_snapshot(db, ds["id"], "s1", "")
-            r = await env.client.post(f"{API}/images/{img['id']}/crop",
-                                      json={"x": 0, "y": 0, "width": 64, "height": 48, "replace": True})
-            assert r.status_code == 200, r.text
-            h1 = (await _row(env, img["id"])).phash
-            assert h1 != h0
-            async with env.Session() as db:
-                res = await version_service.restore_snapshot(db, ds["id"], snap.id,
-                                                             pre_restore_snapshot=False)
-            print("restore", res)
-            after = await _row(env, img["id"])
-            with Pil.open(after.file_path) as f:
-                actual = str(imagehash.phash(f))
-                size = f.size
-            print("size", size, "actual phash", actual, "db phash", after.phash, "orig", h0, "cropped", h1)
-            assert size == (128, 96)
-            assert actual == h0
-            assert after.phash == h1 != actual            # stale: restore did not recompute
-
-            # recreated row
-            img2 = await upload_image(env, ds["id"], "b.png", _patterned_png(64, 64))
-            async with env.Session() as db:
-                snap2 = await version_service.create_snapshot(db, ds["id"], "s2", "")
-            assert (await env.client.delete(f"{API}/images/{img2['id']}")).status_code == 204
-            async with env.Session() as db:
-                res = await version_service.restore_snapshot(db, ds["id"], snap2.id,
-                                                             pre_restore_snapshot=False)
-            print("restore2", res)
-            re = await _row(env, img2["id"])
-            print("re-created row phash:", re.phash if re else "NO ROW")
-            assert re is not None and re.phash is None
-    run(scenario())
-
-
 # ---------------------------------------------------------------- GPT-017
 def test_gpt017_polygon_outside_crop_gets_invented_mask(tmp_path):
     from backend.ml.mask_utils import remap_detection_geometry

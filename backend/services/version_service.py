@@ -1658,6 +1658,14 @@ async def restore_snapshot(
             except Exception as exc:
                 logger.warning("Could not reconcile %s after a failed restore: %s",
                                state.filename, exc)
+        elif p.img is not None and needed_content:
+            # The snapshot's bytes were written (or re-created): measure them
+            # rather than trust a mirror (GPT-016). phash is not mirrored on
+            # VersionImageState — a backfill would copy today's possibly stale
+            # value into history — so without this an in-place restore kept the
+            # edited image's phash and a re-created row got NULL, dropping out
+            # of duplicate scans. Size, format and geometry come along.
+            await _measure_into(p.img)
 
         # Regenerate the thumbnail whenever the file content changed or the stem
         # moved (a renamed image needs a thumbnail under its new stem, and its old

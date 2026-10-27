@@ -247,12 +247,20 @@ def _copy_video_sync(old_path: Path, new_path: Path, old_poster: Path | None, ne
         shutil.copy2(old_poster, new_poster)
 
 
-def _copy_snapshot_image_sync(src_file: Path, new_path: Path, new_thumb: Path, caption_text: str) -> None:
-    """Copy a snapshot object into a new dataset, writing its sidecar + regenerating a thumbnail."""
+def _copy_snapshot_image_sync(
+    src_file: Path, new_path: Path, new_thumb: Path, caption_text: str
+) -> str | None:
+    """Copy a snapshot object into a new dataset, writing its sidecar + regenerating a thumbnail.
+
+    Returns the copy's measured phash (None when it cannot be measured).
+    `VersionImageState` deliberately does not mirror phash (GPT-016), so the
+    new row would otherwise get NULL and drop out of every duplicate scan.
+    """
     shutil.copy2(src_file, new_path)
     if caption_text:
         new_path.with_suffix(".txt").write_text(caption_text, encoding="utf-8")
     generate_thumbnail(str(new_path), str(new_thumb))
+    return get_image_info(str(new_path)).get("phash")
 
 
 def _name_to_slug(name: str) -> str:
@@ -2139,7 +2147,7 @@ async def duplicate_dataset(
             new_thumb = dest_thumbs / (Path(state.filename).stem + ".webp")
 
             try:
-                await loop.run_in_executor(
+                phash = await loop.run_in_executor(
                     None, _copy_snapshot_image_sync, src_file, new_path, new_thumb, state.caption_text or "",
                 )
 
@@ -2159,6 +2167,7 @@ async def duplicate_dataset(
                     height=state.height,
                     file_size_bytes=state.file_size_bytes,
                     format=state.format,
+                    phash=phash,
                     nsfw_score=state.nsfw_score,
                     aesthetic_score=state.aesthetic_score,
                     aesthetic_model=state.aesthetic_model,

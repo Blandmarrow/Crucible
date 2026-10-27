@@ -55,34 +55,26 @@ data loss whose restore reports nothing.
 - Consider doing it inside `sanitize_abs_path` for every filesystem route.
 - Test symlinked and case-variant paths too.
 
-## GPT-016 — [P2 restore half / P3 resize-crop half] Pixel edits and restore keep stale `file_size_bytes`/`phash`
+## GPT-016 — [P3] Resize and batch crop keep stale `file_size_bytes`/`phash`
 
-**Verdict:** CONFIRMED.
-- **The resize/crop half is KNOWN:** `docs/dev/bulk-image-jobs.md` § batch resize/crop says
-  "neither handler refreshes `file_size_bytes`/`phash` after the overwrite (nor do the
-  single-image twins)".
-- **The restore half is NEW** and belongs with the versioning branch.
-- The single replace-crop *does* refresh both, at `images.py` ~1561-1564. Only resize, batch
-  resize and batch crop do not.
+**Verdict:** CONFIRMED-KNOWN. `docs/dev/bulk-image-jobs.md` § batch resize/crop says
+"neither handler refreshes `file_size_bytes`/`phash` after the overwrite (nor do the
+single-image twins)". The single replace-crop *does* refresh both, at `images.py` ~1561-1564.
+Only resize, batch resize and batch crop do not. (The restore half is fixed: restore now
+measures phash, size, format and geometry from the file it wrote — see
+`docs/dev/versioning-service.md`.)
 
 **Observed:**
 - `test_gpt016_resize_leaves_stale_size_and_phash`: the stored size is 563 while the actual size
   is 601. phash happened to match, because it is scale-robust.
 - `test_gpt016_batch_crop_leaves_stale_size_and_phash`: the size is 563 against 507, and the phash
   is `f8d5…` against `be9e…`.
-- `test_gpt016_restore_keeps_stale_phash_and_recreated_row_has_none`, a crop followed by a
-  restore: the disk is back to the original phash `f8d5…`, but the DB keeps the cropped `eded…`.
-  A row that restore re-creates gets `phash=None`, which drops it out of duplicate scans.
-
-The comment at `backend/tests/test_video_lineage_mirrors.py:86` ("phash: recomputed from the
-restored file") is false.
 
 **Fix notes.**
 - Measure the size and phash from the written output, and assign them with the geometry and
   history *before* the commit. They are cheap and pure, but they must not add a fallible step
   between the overwrite and the commit (PM-013); compute them from the in-memory output, or
   treat a failure as non-fatal.
-- In restore, recompute or mirror phash.
 - Refresh dataset totals as well.
 
 ## GPT-008 — [P3, GPT said P2] A locked image delete commits the row removal, then 500s

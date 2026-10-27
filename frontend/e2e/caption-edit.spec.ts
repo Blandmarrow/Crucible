@@ -146,3 +146,44 @@ test('a save that lands after navigating away writes its own image and spares th
   await expect(box).toHaveValue('SAVED-ON-A')
   await expect(save).toBeDisabled()
 })
+
+test('a detection merge selection does not survive navigating to a neighbour', async ({ page, request }) => {
+  const { ds, a, b } = await seed(request, 'merge')
+  const addBox = async (image_id: string, label: string) => {
+    const r = await request.post('/api/v1/detection/manual', {
+      data: { image_id, bbox: [0.1, 0.1, 0.5, 0.5], label, refine_with_sam: false },
+    })
+    expect(r.ok()).toBeTruthy()
+  }
+  await addBox(a, 'cat')
+  await addBox(a, 'dog')
+  await addBox(b, 'bird')   // B must have a detection, or the merge bar is not rendered at all
+
+  await openFirst(page, ds.id, a)
+  await warmUp(page, a, b)
+  const ticks = page.getByTitle('Select for merge')
+  await expect(ticks).toHaveCount(2)
+  await ticks.nth(0).check()
+  await ticks.nth(1).check()
+  const mergeBar = page.getByRole('button', { name: /^Merge 2/ })
+  await expect(mergeBar).toBeVisible()
+
+  // Before the fix B showed "Merge 2 →", and clicking it merged A's two boxes.
+  await step(page, 'next', b)
+  await expect(ticks).toHaveCount(1)
+  await expect(mergeBar).toBeHidden()
+
+  await step(page, 'prev', a)
+  await expect(ticks).toHaveCount(2)
+  await expect(ticks.nth(0)).not.toBeChecked()
+  await expect(ticks.nth(1)).not.toBeChecked()
+  await expect(mergeBar).toBeHidden()
+  const img = await (await request.get(`/api/v1/images/${a}`)).json()
+  expect(img.detections).toHaveLength(2)
+
+  // The reset is render-time, not a remount: the panel's collapse state survives.
+  await page.getByRole('button', { name: /^Detections/ }).click()
+  await expect(ticks).toHaveCount(0)
+  await step(page, 'next', b)
+  await expect(ticks).toHaveCount(0)
+})

@@ -3,7 +3,7 @@
 An external review of commit `c685ab5` (run on native Windows, report `GPT_Findings.md`, not
 checked in) claimed 34 defects. Every claim was independently re-verified on 2026-10-17 in the
 Linux dev container, using throwaway databases only. **All 34 hold**: 29 were reproduced at
-runtime, 5 were confirmed by reading the code, and none were refuted. Fixed so far, on branch `fix/gpt-review`: 021, 027 and 015.
+runtime, 5 were confirmed by reading the code, and none were refuted. Fixed so far, on branch `fix/gpt-review`: 021, 027 and 015; then 025, 022, 023, 024 and the restore half of 016 (grouping (a), PM-026).
 This folder is the handoff for the remediation sessions.
 
 **Lifecycle**: this folder is transient, like `docs/dev/roadmap/`. When a finding is fixed:
@@ -20,8 +20,8 @@ here carry no Documentation Map row and no word budget.
 
 | File | Findings |
 |---|---|
-| `docs/dev/gpt-review/versioning.md` | 025, 022, 023, 024, 026, and the restore half of 016 |
-| `docs/dev/gpt-review/file-mutations.md` | 009, 011, 016, 008, 010, 017, 020 |
+| `docs/dev/gpt-review/versioning.md` | 026 |
+| `docs/dev/gpt-review/file-mutations.md` | 009, 011, 016 (resize/crop half), 008, 010, 017, 020 |
 | `docs/dev/gpt-review/jobs-ml.md` | 012, 013, 014, 032, 033, 034 |
 | `docs/dev/gpt-review/frontend.md` | 028, 030, 029, 031 |
 | `docs/dev/gpt-review/stats.md` | 018, 019, 035 |
@@ -43,12 +43,12 @@ Fix notes give a direction, not a design; plan each fix against the code at the 
 | Pri | IDs |
 |---|---|
 | **P1** | None open. 021 and 027 are fixed on `fix/gpt-review`. |
-| P2 | 012, 025, 032, 022, 023, 009, 013, 014, 030, 028, 016 (restore half), 033, 001, 003+005 (fix together) |
-| P3 | 011, 010, 008, 016 (resize/crop half), 017, 018, 019, 020, 024, 026, 029, 031, 034, 035, 002, 004 |
+| P2 | 012, 032, 009, 013, 014, 030, 028, 033, 001, 003+005 (fix together) |
+| P3 | 011, 010, 008, 016 (resize/crop half), 017, 018, 019, 020, 026, 029, 031, 034, 035, 002, 004 |
 | Decision | 007: unauthenticated API on `0.0.0.0`. This is a deliberate LAN-access choice, so revisit it as policy rather than as a bug. |
 
 Suggested grouping for remediation branches:
-- **(a) Versioning integrity:** 025, 022, 023, 024, plus the restore half of 016.
+- **(a) Versioning integrity:** done — 025, 022, 023, 024 and the restore half of 016 (PM-026). 026 is left, pending a contract decision.
 - **(b) Job queue:** 012, 013, then 014 together with 030.
 - **(d) File-mutation ordering:** 009, 011, 008, 010.
 - **(e) Small correctness items:** 018, 019, 020, 031, 035, 017, 028.
@@ -83,7 +83,7 @@ the repo root with the venv active, in one shell:
 
 ```bash
 source venv/bin/activate && python -m pytest docs/dev/gpt-review/probes/backend \
-  -o python_files='probe_*.py' -q -p no:cacheprovider     # 38 passed (42 on 2026-10-17, before the 021/015 fixes)
+  -o python_files='probe_*.py' -q -p no:cacheprovider     # 31 collected; 29 pass without torch (38 before grouping (a), 42 on 2026-10-17)
 ```
 
 They use `api_env(tmp_path, foreign_keys=True)` via `probes/backend/conftest.py`. Windows file locks

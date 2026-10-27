@@ -1,11 +1,8 @@
-import hashlib, shutil
-import pytest
 from PIL import Image as PILImage
 from sqlalchemy import select
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
 from backend.models.image import Image
 from backend.models.detection import Detection
-from backend.models.versioning import DatasetVersion, DatasetBranch, VersionImageState
 from backend.services import version_service
 
 

@@ -314,8 +314,8 @@ NULL.
   exactly as a caption edit does. It deletes only for image ids in `wanted`, so
   `handle_extra_images="keep"` images keep theirs.
 
-A restore targeting a *different* dataset needs no id remapping at all — the
-direct payoff of the vocabulary being global.
+A row Pass 0b forks (its image now lives in another dataset) needs no id
+remapping at all — the direct payoff of the vocabulary being global.
 
 The diff triple: `VersionImageState.label_ids` is in `_DIFF_COLS` and
 `_DIFF_COMPARE_FIELDS`, and **not** in `_HEAVY_DIFF_FIELDS`. It is mutable state

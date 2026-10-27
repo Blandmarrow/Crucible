@@ -67,16 +67,25 @@ in `jobStore.ts`, so extra event keys already flow through untouched. See
 `docs/dev/captioning.md` for what the caption loops write, and
 `docs/dev/postmortems/PM-023-timeout-and-the-green-job.md`.
 
+**Restore and checkout use the same convention** (GPT-025, PM-026). Both routes write the
+service's outcome dict to `result_data` — `failed_count`, `failure_summary` and a capped
+`failed: [{file, error}]` list among the counts — and the job stays `completed`. Their
+completion toasts go through `utils/restoreToast.ts::showRestoreSummaryToast(jobId,
+doneMessage)`, modelled on `importToast.ts`: it fetches the job and shows "`<done>` with
+problems: `<summary>` (see Logs)" when `failed_count > 0`, else the plain success toast
+(also the fallback when the fetch fails). It is fire-and-forget because both callers —
+`RestoreConfirmModal` and `BranchSelector` — unmount or reset the moment the job completes.
+
 ## The stale-thumbnail warning, and the ordering rule behind it
 
 `THUMBNAIL_EPILOGUE_JOB_TYPES` — `batch_lut`, `batch_upscale`, `crop_upscale`,
-`crop_to_detection`, `batch_inpaint`, `video_reextract` — are the six jobs that re-cut an
-image thumbnail as
-a best-effort post-commit epilogue (PM-013). Each reports `result_data["thumbnails_stale"]`,
+`crop_to_detection`, `batch_inpaint`, `video_reextract`, `restore_snapshot`,
+`checkout_branch` — are the eight jobs that re-cut an image thumbnail as
+a best-effort post-commit epilogue (PM-013); restore and checkout do it in Pass 3b. Each reports `result_data["thumbnails_stale"]`,
 and **one branch in `TopBar`** turns that into the only warning the user gets. It lives there,
 not in the forms that start these jobs (`LutForm`, `UpscaleForm`, `InpaintForm`,
 `BulkEditPage`, `SelectionToolbar`, `ImageDetailPage`'s three handlers,
-`ReextractFramesForm`), because
+`ReextractFramesForm`, `RestoreConfirmModal`, `BranchSelector`), because
 `TopBar` is always mounted — a 400-frame re-extraction is exactly the job you walk away
 from — and because it already watches every terminal job deduped by `processedJobsRef`.
 Those forms keep their own outcome toasts and are deliberately silent about the count;

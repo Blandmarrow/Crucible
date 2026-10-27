@@ -27,11 +27,13 @@ _SNAPSHOT_INLINE_LIMIT = 100
 async def _require_versioning_enabled(db: AsyncSession) -> str:
     """Refuse a versioning *write* when the mode is "off", and return the mode.
 
-    Off mode no-ops both copy-on-write hooks — `protect_file_before_overwrite`
-    fires only in "auto", `mark_image_deleted_in_versions` returns immediately on
-    "off" — so a restore or a version delete run in this mode overwrites and
-    unlinks the current files with nothing kept in the object store. The UI hides
-    the page, which is not a guard: the routes are reachable directly.
+    Off means the user turned the feature off, so nothing here may create,
+    restore, delete or prune versions. The UI hides the page, which is not a
+    guard: the routes are reachable directly. (The guard used to carry a second
+    reason — both copy-on-write hooks no-op'd in Off, so a restore here
+    overwrote files with nothing kept. They now fire in every mode, gated on
+    lazy snapshot rows rather than the mode (GPT-022), so existing snapshots
+    stay protected; the refusal is about the feature being off.)
 
     The four read routes are deliberately *not* gated. `Sidebar` and
     `DatasetsPage` call `listBranches`/`listVersions` whatever the mode is, so

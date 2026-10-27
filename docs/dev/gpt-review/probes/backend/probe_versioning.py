@@ -47,44 +47,6 @@ async def _restore_svc(env, ds_id, vid, **kw):
         return await version_service.restore_snapshot(db, ds_id, vid, **kw)
 
 
-def test_gpt022_auto_to_manual_unprotected(tmp_path):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "auto")
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
-            vid = await _snap(env, ds["id"], "autosnap")
-            async with env.Session() as db:
-                st = (await db.execute(select(VersionImageState).where(VersionImageState.version_id == vid))).scalars().one()
-                print("auto snapshot hash:", st.file_hash)
-                assert st.file_hash is None
-            await _mode(env, "manual")
-            await _crop(env, img["id"])
-            path, w, h = await _row(env, img["id"])
-            print("after crop", _size(path), w, h)
-            res = await _restore_svc(env, ds["id"], vid, pre_restore_snapshot=False)
-            path, w, h = await _row(env, img["id"])
-            print("restore result", res, "DB", (w, h), "pixels", _size(path))
-            assert res["files_failed"] == 0 and res["files_unavailable"] == 0
-            assert (w, h) == (100, 80) and _size(path) == (40, 40)
-    run(scenario())
-
-
-def test_gpt022_control_stay_auto(tmp_path):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            await _mode(env, "auto")
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
-            vid = await _snap(env, ds["id"], "autosnap")
-            await _crop(env, img["id"])
-            res = await _restore_svc(env, ds["id"], vid, pre_restore_snapshot=False)
-            path, w, h = await _row(env, img["id"])
-            print("control", res, (w, h), _size(path))
-            assert (w, h) == (100, 80) and _size(path) == (100, 80)
-    run(scenario())
-
-
 def test_gpt023_failed_backup_does_not_abort_restore(tmp_path, monkeypatch):
     async def scenario():
         async with api_env(tmp_path, foreign_keys=True) as env:

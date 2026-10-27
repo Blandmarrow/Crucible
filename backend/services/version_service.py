@@ -4,10 +4,17 @@ Dataset versioning service.
 Object store layout:
   {dataset.folder_path}/.versions/objects/{sha256[:2]}/{sha256[2:]}
 
-Copy-on-write (COW) strategy:
-  - "off":    all hooks are no-ops
-  - "manual": deletion hook fires; snapshot copies all files eagerly (full point-in-time backup)
-  - "auto":   deletion hook fires; overwrite hook backs up files before overwrite (lazy COW)
+Copy-on-write (COW) strategy — the mode decides how a *new* snapshot is taken:
+  - "off":    no new snapshots (the versioning write routes refuse)
+  - "manual": a snapshot copies all files eagerly (full point-in-time backup)
+  - "auto":   a snapshot records rows only (`file_hash=NULL`, lazy COW)
+
+Protection is gated on the data, never on the mode (GPT-022): both hooks fire in
+every mode whenever the image has a lazy (NULL-hash) snapshot row, and back the
+current bytes up before an overwrite or a delete. A NULL hash means "unchanged
+since the snapshot", which only stays true while every overwrite fills it first —
+gating on the current mode left Auto-era rows unprotected after a switch to
+Manual or Off, and a restore then read the overwritten file as the snapshot's.
 
 is_present semantics:
   A VersionImageState row always has is_present=True — it records that the image was present
@@ -321,32 +328,42 @@ async def _refuse_unsafe_restore_paths(
 # Copy-on-write hooks
 # ---------------------------------------------------------------------------
 
+async def _has_lazy_rows(db: AsyncSession, image_id: str) -> bool:
+    """True when some snapshot row of this image still has `file_hash IS NULL`.
+
+    The single gate for both hooks, and deliberately the only one: a lazy row
+    claims "content unchanged since the snapshot", so whatever the current
+    versioning mode, the bytes must be backed up before anything changes them.
+    One indexed (`image_id`) `LIMIT 1` probe, so an image with no lazy rows —
+    every image in a dataset that was never snapshotted in Auto mode — costs one
+    cheap query per overwrite.
+    """
+    result = await db.execute(
+        select(VersionImageState.id).where(
+            VersionImageState.image_id == image_id,
+            VersionImageState.file_hash.is_(None),
+        ).limit(1)
+    )
+    return result.first() is not None
+
+
 async def protect_file_before_overwrite(
     image_id: str, file_path: str, db: AsyncSession,
     precomputed_sha256: str | None = None,
 ) -> str | None:
     """Back up the file to the object store before an in-place overwrite.
 
-    Only fires in "auto" mode. The is_present=True filter is intentional: it avoids
-    loading img/dataset when no active snapshot references this image with a null hash.
-    Returns the SHA-256 hash, or None if no-op.
+    Fires in **every** versioning mode, gated only on `_has_lazy_rows` (GPT-022):
+    an Auto snapshot's lazy rows still need protecting after the mode is switched
+    to Manual or Off. A dataset with no lazy rows pays one indexed query and loads
+    nothing else. Returns the SHA-256 hash, or None if no-op.
 
     The hash backfill is only flushed, not committed. Callers that overwrite the
     file before their own final commit must commit right after this call —
     otherwise a crash during the overwrite rolls back the backfill and the
     snapshot rows silently claim "content unchanged" (the post-overwrite file).
     """
-    settings = await get_thresholds(db)
-    if settings.versioning_mode != "auto":
-        return None
-    result = await db.execute(
-        select(VersionImageState.id).where(
-            VersionImageState.image_id == image_id,
-            VersionImageState.file_hash.is_(None),
-            VersionImageState.is_present.is_(True),
-        ).limit(1)
-    )
-    if result.first() is None:
+    if not await _has_lazy_rows(db, image_id):
         return None
     img_row = await db.get(Image, image_id)
     dataset = await db.get(Dataset, img_row.dataset_id) if img_row else None
@@ -362,17 +379,13 @@ async def mark_image_deleted_in_versions(
 ) -> None:
     """Back up a file to the object store just before it is deleted.
 
-    Fires in both "manual" and "auto" modes. Does NOT touch is_present — existing
-    snapshot rows stay True so restoring a pre-deletion snapshot can re-create the image.
-    Post-deletion snapshots simply won't include a row for the image at all.
+    Fires in **every** versioning mode, Off included, gated only on
+    `_has_lazy_rows` (GPT-022) — a fully hashed snapshot already holds the bytes.
+    Does NOT touch is_present — existing snapshot rows stay True so restoring a
+    pre-deletion snapshot can re-create the image. Post-deletion snapshots simply
+    won't include a row for the image at all.
     """
-    settings = await get_thresholds(db)
-    if settings.versioning_mode == "off":
-        return
-    result = await db.execute(
-        select(VersionImageState.id).where(VersionImageState.image_id == image_id).limit(1)
-    )
-    if result.first() is None:
+    if not await _has_lazy_rows(db, image_id):
         return
     img_row = await db.get(Image, image_id)
     dataset = await db.get(Dataset, img_row.dataset_id) if img_row else None

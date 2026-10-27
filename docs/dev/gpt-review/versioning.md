@@ -31,29 +31,6 @@ same way, counted as `files_unavailable`.
   the deliberate DB-before-filesystem ordering.
 - Checkout reuses `restore_snapshot`, so it needs the same treatment.
 
-## GPT-022 — [P2] Switching Auto → Manual leaves earlier lazy snapshots unprotected
-
-**Verdict:** CONFIRMED. NEW: `docs/dev/versioning.md` describes the modes but not this hazard.
-
-**Mechanism.**
-- Auto snapshots are copy-on-write, with `file_hash=NULL` until the file is first overwritten.
-- `protect_file_before_overwrite` returns early outside Auto (~`version_service.py:244`).
-- `PATCH /settings/thresholds` (`routers/settings.py:70-83`) just flips the mode.
-- Restore then reads a NULL hash as "unchanged".
-
-**Observed** (`test_gpt022_auto_to_manual_unprotected`, control `test_gpt022_control_stay_auto`):
-1. Take an Auto snapshot of a 100×80 image.
-2. Switch to Manual.
-3. Replace-crop the image to 40×40.
-4. Restore the snapshot.
-
-The restore reports 0 failed and 0 unavailable. The DB says 100×80, while the pixels stay 40×40.
-In the control the mode stays Auto, and the same restore brings the file back correctly.
-
-**Fix notes.** Either protect lazy references regardless of the current mode, or materialize every
-outstanding NULL-hash snapshot before leaving Auto. If materialization fails, refuse the mode
-change.
-
 ## GPT-023 — [P2] A failed per-file safety backup does not abort restore
 
 **Verdict:** CONFIRMED. Partly known: `docs/dev/versioning-service.md` documents the `[warning]`

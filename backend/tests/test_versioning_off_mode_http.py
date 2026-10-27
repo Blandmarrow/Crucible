@@ -1,12 +1,12 @@
 """`versioning_mode == "off"` refuses every versioning *write*, and no read.
 
 Off mode used to guard only `create_snapshot` and `prune_versions`. The other six
-write routes ran — and off mode also no-ops both copy-on-write hooks
-(`protect_file_before_overwrite` fires only in `"auto"`,
-`mark_image_deleted_in_versions` returns immediately on `"off"`), so a restore or
-a version delete overwrote and unlinked the current files with nothing kept in
-the object store. `VersionsPage` returns its disabled placeholder in this mode,
-which is not a guard: the routes are reachable directly, and on an
+write routes ran — and at the time off mode also no-op'd both copy-on-write
+hooks, so a restore or a version delete overwrote and unlinked the current files
+with nothing kept in the object store. The hooks now fire in every mode, gated on
+lazy snapshot rows (GPT-022, `test_versioning_protection.py`), but a disabled
+feature still accepts no writes. `VersionsPage` returns its disabled placeholder
+in this mode, which is not a guard: the routes are reachable directly, and on an
 unauthenticated API that is the whole exposure.
 
 **The read half of this module is the load-bearing half.** `Sidebar` and

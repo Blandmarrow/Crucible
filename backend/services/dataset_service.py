@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from backend.models import Dataset, Image, ImageLabel, StyleSimilarityRun, Video
+from backend.models import Dataset, DatasetVersion, Image, ImageLabel, StyleSimilarityRun, Video, VersionImageState
 from backend.services.caption_service import _write_txt_sidecar
 from backend.services.duplicate_service import carry_duplicate_flags
 from backend.services.label_service import copy_labels, live_label_ids
@@ -27,6 +27,7 @@ from backend.services.image_service import (
 )
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.utils import (
+    chunked,
     copy_with_sidecar,
     poster_path_for,
     read_caption_sidecar,
@@ -448,9 +449,15 @@ async def rename_dataset(
     query is fallible and the rename is not, so running it afterwards meant a
     failed `SELECT` left the folder moved with nothing committed to describe it.
 
-    `.versions` needs nothing — `version_service._object_store_path` derives the
-    object store from `dataset.folder_path` at read time, so it travels as soon
-    as that column is updated.
+    The object store needs nothing — `version_service._object_store_path`
+    derives it from `dataset.folder_path` at read time, so it travels as soon as
+    that column is updated. **Snapshot rows do**: `VersionImageState.file_path`
+    is absolute, and a restore writes to it, so a pre-rename snapshot left
+    naming the old root made the restore re-create that root — and, when a new
+    dataset had since taken the old name, overwrite that dataset's files
+    (GPT-021, PM-025). They are rebased with the same rule as the live rows,
+    before the rename and in the same transaction, so a failed rename rolls the
+    rebase back with nothing on disk moved.
     """
     old_folder = Path(ds.folder_path)
     new_slug = _name_to_slug(new_name)
@@ -460,6 +467,20 @@ async def rename_dataset(
         if new_folder.exists():
             new_folder = settings.datasets_dir / f"{new_slug}_{ds.id[:8]}"
 
+        def _rebase(value: str | None) -> str | None:
+            # `/move`'s house shape (routers/filesystem.py) rather than a bare
+            # `startswith(old_str)`: one place for every column either model
+            # keeps a path in, and no dependence on the query's dataset scoping
+            # to keep a prefix from over-matching a sibling folder. Unresolved
+            # on purpose: restore's Pass 0 compares a snapshot path with the
+            # live one as raw strings, so both must be rewritten identically.
+            if not value:
+                return value
+            p = Path(value)
+            if not p.is_relative_to(old_folder):
+                return value
+            return str(new_folder / p.relative_to(old_folder))
+
         images = (
             await db.execute(select(Image).where(Image.dataset_id == ds.id))
         ).scalars().all()
@@ -467,19 +488,31 @@ async def rename_dataset(
             await db.execute(select(Video).where(Video.dataset_id == ds.id))
         ).scalars().all()
 
-        old_folder.rename(new_folder)
+        # Every snapshot row of every version — tuples, not entities, since this
+        # is versions x images rows. Written now, uncommitted: the UPDATE is the
+        # fallible half and must precede the irreversible rename (PM-013).
+        state_rows = (
+            await db.execute(
+                select(VersionImageState.id, VersionImageState.file_path)
+                .join(DatasetVersion, DatasetVersion.id == VersionImageState.version_id)
+                .where(DatasetVersion.dataset_id == ds.id)
+            )
+        ).all()
+        state_updates = [
+            {"id": sid, "file_path": rebased}
+            for sid, fp in state_rows
+            if (rebased := _rebase(fp)) != fp
+        ]
+        for chunk in chunked(state_updates, 1000):
+            # ORM bulk UPDATE by primary key (executemany).
+            await db.execute(sa_update(VersionImageState), list(chunk))
 
-        def _rebase(value: str | None) -> str | None:
-            # `/move`'s house shape (routers/filesystem.py) rather than a bare
-            # `startswith(old_str)`: one place for every column either model
-            # keeps a path in, and no dependence on the query's dataset scoping
-            # to keep a prefix from over-matching a sibling folder.
-            if not value:
-                return value
-            p = Path(value)
-            if not p.is_relative_to(old_folder):
-                return value
-            return str(new_folder / p.relative_to(old_folder))
+        try:
+            old_folder.rename(new_folder)
+        except Exception:
+            # Nothing moved, so nothing the session staged may survive either.
+            await db.rollback()
+            raise
 
         for img in images:
             img.file_path = _rebase(img.file_path)
@@ -2052,8 +2085,6 @@ async def duplicate_dataset(
 
     # --- Step 2B: copy from snapshot ---
     else:
-        from backend.models.versioning import VersionImageState
-
         result = await db.execute(
             select(VersionImageState).where(
                 VersionImageState.version_id == source_version_id,

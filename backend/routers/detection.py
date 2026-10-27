@@ -34,6 +34,7 @@ from backend.utils import (
     chunked,
     normalize_subfolder,
     record_in_place,
+    replace_retrying,
     slugify_filename,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -922,10 +923,25 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             last_image_id: str | None = None
             cancelled = False
-            for i, img in enumerate(images):
+            image_ids = [im.id for im in images]
+            by_id = {im.id: im for im in images}
+            # A failed replace-mode crop rolls the session back, which expires
+            # every instance in it; from then on each row is re-read (with its
+            # deferred `source_meta`) rather than touched expired, which would
+            # lazy-load on an async session and raise MissingGreenlet.
+            needs_reload = False
+            for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                if needs_reload:
+                    img = await session.get(
+                        Image, image_id, options=[undefer(Image.source_meta)], populate_existing=True
+                    )
+                    if img is None:
+                        continue
+                else:
+                    img = by_id[image_id]
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i, "total": len(images),
@@ -955,50 +971,60 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
                     tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+                    filename = img.filename
+                    # Stage, flush, swap, commit (GPT-010). Every row field and the
+                    # detection remap — DB work that can fail: a locked database, a
+                    # malformed stored mask — are staged and flushed while the
+                    # original is still intact; the swap over it is the one
+                    # irreversible step, and only the per-image commit follows it
+                    # (PM-013). A failure before the swap rolls back this image
+                    # alone, with its pixels, row and detections untouched.
                     try:
                         info = await loop.run_in_executor(
                             None, crop_image_to_dest, str(src_path), str(tmp_path), *rect,
                         )
-                        tmp_path.replace(src_path)
+                        img.width = info["width"]
+                        img.height = info["height"]
+                        img.file_size_bytes = info["file_size_bytes"]
+                        img.format = info["format"]
+                        img.phash = info["phash"]
+                        # `updated_at` is stamped by `record_in_place`, which also
+                        # writes `processing_history` *and* `scores_stale` — the
+                        # crop changed both the framing and the resolution the
+                        # scores were measured against.
+                        record_in_place(
+                            img,
+                            "crop_to_detection",
+                            mode=cfg["mode"],
+                            labels=cfg["labels"],
+                            padding_pct=cfg["padding_pct"],
+                            target_ar=cfg["target_ar"],
+                        )
+                        # Remap the image's detections into the crop frame (drop
+                        # ones outside), in the transaction of the geometry it
+                        # describes.
+                        await remap_detections_for_crop(session, img.id, rect, old_size)
+                        await session.flush()
+                        await replace_retrying(tmp_path, src_path)
                     except Exception as exc:
-                        logger.error("Detection crop failed for %s: %s", img.filename, exc)
-                        tmp_path.unlink(missing_ok=True)
+                        await session.rollback()
+                        needs_reload = True
+                        try:
+                            tmp_path.unlink(missing_ok=True)
+                        except OSError:
+                            logger.warning("Detection crop: could not remove %s", tmp_path, exc_info=True)
+                        logger.error("Detection crop failed for %s: %s", filename, exc)
                         counts["failed"] += 1
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
                             "percent": round((i + 1) / len(images) * 100, 1),
-                            "current_item": img.filename,
+                            "current_item": filename,
                             "message": f"Failed: {exc}",
                         })
                         continue
-                    img.width = info["width"]
-                    img.height = info["height"]
-                    img.file_size_bytes = info["file_size_bytes"]
-                    img.format = info["format"]
-                    img.phash = info["phash"]
-                    # `updated_at` is stamped by `record_in_place` below.
-                    # Writes `processing_history` *and* `scores_stale` — the crop
-                    # changed both the framing and the resolution the scores were
-                    # measured against. Pure dict building, so it cannot raise
-                    # between the overwrite above and the commit below (PM-013).
-                    record_in_place(
-                        img,
-                        "crop_to_detection",
-                        mode=cfg["mode"],
-                        labels=cfg["labels"],
-                        padding_pct=cfg["padding_pct"],
-                        target_ar=cfg["target_ar"],
-                    )
-                    # Replace-mode crop changed the image geometry: remap the
-                    # image's detections into the crop frame (drop ones outside).
-                    # In the same transaction as the geometry it describes.
-                    await remap_detections_for_crop(session, img.id, rect, old_size)
-                    # Nothing fallible between the (already-done) overwrite and this
-                    # commit — a raise before here would roll back the geometry,
-                    # processing_history and detection remaps of *every* image the
-                    # loop has already overwritten on disk (PM-013). Committing per
-                    # image is what bounds the damage to the one that failed.
+                    # Per image: committing after the loop would let one raise
+                    # roll back the rows of every image already swapped on disk.
                     await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the crop ---

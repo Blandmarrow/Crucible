@@ -25,6 +25,41 @@ def masks_to_polygons(masks: np.ndarray, img_w: int, img_h: int) -> list[list[li
     return polygons
 
 
+def stored_polygons(mask_json: str | None) -> list[list[list[float]]]:
+    """The well-formed polygons in a stored ``Detection.mask``, and nothing else.
+
+    Every reader of the column goes through this. A stored value is not proof of
+    its shape — a raw SQL write, an older build or a hand-edited database can hold
+    ``{"polygons": 5}``, an int polygon, or a dict for a point — and each of those
+    used to raise ``TypeError``/``KeyError`` out of a ``len(p)`` or ``pt[0]``. On
+    the crop paths that raise failed the crop of every image carrying such a
+    mask (GPT-010). Malformed JSON, a non-list ``polygons``, a polygon with fewer
+    than three usable points and a point that is not two numbers are all dropped,
+    so a reader sees either clean ``[[x, y], ...]`` lists or none.
+    """
+    if not mask_json:
+        return []
+    try:
+        raw = json.loads(mask_json).get("polygons") or []
+    except (ValueError, AttributeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    polygons: list[list[list[float]]] = []
+    for poly in raw:
+        if not isinstance(poly, list):
+            continue
+        points: list[list[float]] = []
+        for pt in poly:
+            try:
+                points.append([float(pt[0]), float(pt[1])])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+        if len(points) >= 3:
+            polygons.append(points)
+    return polygons
+
+
 def detection_mask_area(mask_json: str | None, bbox: list | None) -> float | None:
     """Estimate a detection's area as a fraction (0–1) of the whole image.
 
@@ -38,13 +73,7 @@ def detection_mask_area(mask_json: str | None, bbox: list | None) -> float | Non
     elements. Returns ``None`` when neither yields geometry. Tolerates malformed
     JSON like :func:`rasterize_detections`. The result is clamped to [0, 1].
     """
-    polygons: list = []
-    if mask_json:
-        try:
-            polygons = json.loads(mask_json).get("polygons") or []
-        except (ValueError, AttributeError):
-            polygons = []
-    polygons = [p for p in polygons if len(p) >= 3]
+    polygons = stored_polygons(mask_json)
 
     if polygons:
         total = 0.0
@@ -88,13 +117,7 @@ def rasterize_detections(
     canvas = PilImage.new("L", (width, height), 0)
     draw = ImageDraw.Draw(canvas)
     for mask_json, bbox in detections:
-        polygons = []
-        if mask_json:
-            try:
-                polygons = json.loads(mask_json).get("polygons") or []
-            except (ValueError, AttributeError):
-                polygons = []
-        polygons = [p for p in polygons if len(p) >= 3]
+        polygons = stored_polygons(mask_json)
         if polygons:
             for poly in polygons:
                 draw.polygon([(x * width, y * height) for x, y in poly], fill=255)
@@ -271,13 +294,7 @@ def merge_detection_geometry(
     parsed: list[tuple[list[list[float]], list[float] | None]] = []
 
     for mask_json, bbox in entries:
-        polys: list[list[float]] = []
-        if mask_json:
-            try:
-                polys = json.loads(mask_json).get("polygons") or []
-            except (ValueError, AttributeError):
-                polys = []
-        polys = [p for p in polys if len(p) >= 3]
+        polys = stored_polygons(mask_json)
 
         clean_box: list[float] | None = None
         if bbox and len(bbox) == 4:
@@ -376,13 +393,7 @@ def remap_detection_geometry(
     new_bbox = [round(nbx1, 4), round(nby1, 4), round(nbx2, 4), round(nby2, 4)]
 
     # --- polygons (optional) ---
-    polygons: list = []
-    if mask_json:
-        try:
-            polygons = json.loads(mask_json).get("polygons") or []
-        except (ValueError, AttributeError):
-            polygons = []
-    polygons = [p for p in polygons if len(p) >= 3]
+    polygons = stored_polygons(mask_json)
 
     new_polys: list[list[list[float]]] = []
     for poly in polygons:

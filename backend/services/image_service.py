@@ -342,15 +342,43 @@ def generate_thumbnail(src_path: str, dest_path: str, size: int = 256) -> None:
     img.save(dest_path, "WEBP", quality=85)
 
 
+def _save_measured(img: Image.Image, dest_path: str) -> dict:
+    """Save ``img`` to ``dest_path`` and describe what was written.
+
+    The row fields an in-place edit must refresh — geometry, format, size and
+    pHash — measured from the output itself, so a resized or cropped image never
+    keeps the pre-edit ``file_size_bytes``/``phash`` (GPT-016). The pHash comes
+    from the in-memory pixels, before the save, matching every other derivative.
+    """
+    import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
+
+    phash_str = str(imagehash.phash(img))
+    img.save(dest_path, **_save_kwargs(dest_path))
+    return {
+        "width": img.width,
+        "height": img.height,
+        "format": Path(dest_path).suffix.lstrip(".").upper(),
+        "file_size_bytes": Path(dest_path).stat().st_size,
+        "phash": phash_str,
+    }
+
+
 def resize_image(
-    path: str,
+    src_path: str,
+    dest_path: str,
     width: int | None = None,
     height: int | None = None,
     scale: float | None = None,
     maintain_ar: bool = True,
     resample: str = "LANCZOS",
-) -> tuple[int, int]:
-    img = _open_safe(path)
+) -> dict:
+    """Resize ``src_path`` into ``dest_path``; returns ``_save_measured``'s dict.
+
+    Callers write to a temp file and swap it over the original only after the
+    row is staged (`routers/images.py`, PM-013), so a failure anywhere here
+    leaves the original untouched.
+    """
+    img = _open_safe(src_path)
     orig_w, orig_h = img.width, img.height
     resampler = RESAMPLE_MAP.get(resample, Image.Resampling.LANCZOS)
 
@@ -374,8 +402,8 @@ def resize_image(
         raise ValueError("Provide width, height, or scale")
 
     resized = img.resize((new_w, new_h), resampler)
-    resized.save(path, **_save_kwargs(path))
-    return new_w, new_h
+    img.close()
+    return _save_measured(resized, dest_path)
 
 
 def crop_image_to_dest(
@@ -388,8 +416,6 @@ def crop_image_to_dest(
     output_width: int | None = None,
     output_height: int | None = None,
 ) -> dict:
-    import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
-
     img = _open_safe(src_path)
     cropped = img.crop((x, y, x + width, y + height))
     img.close()
@@ -401,31 +427,23 @@ def crop_image_to_dest(
     elif output_height is not None:
         ow = round(cropped.width * (output_height / cropped.height))
         cropped = cropped.resize((ow, output_height), Image.Resampling.LANCZOS)
-    w, h = cropped.width, cropped.height
-    phash_str = str(imagehash.phash(cropped))
-    cropped.save(dest_path, **_save_kwargs(dest_path))
-    return {
-        "width": w,
-        "height": h,
-        "format": Path(dest_path).suffix.lstrip(".").upper(),
-        "file_size_bytes": Path(dest_path).stat().st_size,
-        "phash": phash_str,
-    }
+    return _save_measured(cropped, dest_path)
 
 
-def crop_to_aspect(
+def aspect_crop_rect(
     path: str, target_ar: float, strategy: str = "center"
-) -> tuple[int, int, tuple[int, int, int, int], tuple[int, int]]:
-    """Center/top crop an image to ``target_ar`` in place.
+) -> tuple[tuple[int, int, int, int], tuple[int, int]]:
+    """The rectangle that crops ``path`` to ``target_ar``, without writing anything.
 
-    Returns ``(new_w, new_h, rect, orig_size)`` where ``rect`` is the crop
-    rectangle ``(x, y, w, h)`` and ``orig_size`` the pre-crop ``(w, h)``, both in
-    the EXIF-transposed frame (``_open_safe``). The extra return values let the
-    single caller (``routers/images.py::batch_crop``) remap detections through the
-    crop.
+    Returns ``(rect, orig_size)``: the crop rectangle ``(x, y, w, h)`` and the
+    pre-crop ``(w, h)``, both in the EXIF-transposed frame (``_open_safe``) that
+    detection coordinates and ``crop_image_to_dest`` share. Pure, so
+    ``routers/images.py::batch_crop`` can remap detections *before* the pixels
+    change (GPT-010) and then crop through ``crop_image_to_dest``.
     """
     img = _open_safe(path)
     orig_w, orig_h = img.width, img.height
+    img.close()
     current_ar = orig_w / orig_h
 
     if current_ar > target_ar:
@@ -440,10 +458,7 @@ def crop_to_aspect(
         y = (orig_h - new_h) // 2
     else:
         x, y = 0, 0
-
-    cropped = img.crop((x, y, x + new_w, y + new_h))
-    cropped.save(path, **_save_kwargs(path))
-    return cropped.width, cropped.height, (x, y, new_w, new_h), (orig_w, orig_h)
+    return (x, y, new_w, new_h), (orig_w, orig_h)
 
 
 def convert_and_save(src_path: str, dest_path: str, fmt: str = "PNG", quality: int = 95) -> None:

@@ -92,7 +92,8 @@ audited on 2026-07-31): a future `PATCH /images/batch/rename` would be dead behi
     `BackgroundJob.dataset_id` when the selection resolves to exactly one dataset.
   - Both loops restructured to the PM-013 shape: per-image `commit()` with nothing fallible
     above it, thumbnail and emit in a post-commit epilogue, `remap_detections_for_crop`
-    *before* the commit because it is DB-only work (matching `_run_crop_upscale_replace`),
+    *before* the commit because it is DB-only work (matching `_run_crop_upscale_replace`;
+    superseded by GPT-010 — the remap now runs before the *swap*, see PM-013's fourth amendment),
     a `counts` dict seeded from the LUT/upscale twins, and the `job_queue.cancel_requested`
     pair.
   - `label: str | None` on `BatchResizeRequest`/`BatchCropRequest`, used as

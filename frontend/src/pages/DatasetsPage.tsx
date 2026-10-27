@@ -361,7 +361,8 @@ export default function DatasetsPage() {
       setRescanJobId(null);
       setRescanTargetId(null);
     } else if (rescanJobProgress.status === "cancelled" && !rescanJobProgress.optimistic) {
-      // A rescan commits per file, so a cancelled one still changed the dataset.
+      // A cancelled rescan still commits what it registered before the stop, so
+      // the dataset has changed.
       // Not on the cancel button's optimistic write: rows can land until the
       // server confirms.
       const dsId = rescanJobProgress.dataset_id;

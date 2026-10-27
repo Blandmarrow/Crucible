@@ -681,8 +681,8 @@ export default function GalleryPage() {
 
   // Any terminal status the server reported (never a cancel button's optimistic
   // write): a failed or cancelled rescan used to leave the button disabled until
-  // a reload, since only `completed` cleared the state. A rescan commits per
-  // file, so every outcome refreshes the rescanned dataset.
+  // a reload, since only `completed` cleared the state. A cancelled rescan still
+  // commits what it registered, so every outcome refreshes the rescanned dataset.
   useEffect(() => {
     if (!rescan || !rescanProgress) return;
     if (!TERMINAL_JOB_STATUSES.has(rescanProgress.status) || rescanProgress.optimistic) return;

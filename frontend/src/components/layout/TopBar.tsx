@@ -239,7 +239,7 @@ export default function TopBar() {
         // Browser's ImportModal). All of them close on submit and adopt the job, so
         // no page-local watcher exists to double the toast — and the user who
         // walked away from the page that started it still hears how it ended
-        // (GPT-030). Every terminal status, since an import commits per file.
+        // (GPT-030). Every terminal status, since an import commits as it goes.
         if (progress.job_type === "import") {
           if (progress.dataset_id) {
             // Rows were added: the shared content scope (counts, subfolders,

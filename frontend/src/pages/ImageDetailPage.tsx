@@ -41,7 +41,7 @@ import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
 import { detectionCropPrefill } from "../utils/detectionCrop";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
-import type { Detection, ImageDetail } from "../types";
+import type { CaptionData, Detection, ImageDetail } from "../types";
 import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, serverPageContext, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useLabels } from "../hooks/useLabels";
@@ -225,10 +225,7 @@ export default function ImageDetailPage() {
   const isImageSelected = useSelectionStore((s) => (imageId ? s.isSelected(imageId) : false));
   const toggle = useSelectionStore((s) => s.toggle);
 
-  const [captionText, setCaptionText] = useState("");
-  const [captionStyle, setCaptionStyle] = useState("");
   const captionRef = useRef<HTMLTextAreaElement>(null);
-  const [captionDirty, setCaptionDirty] = useState(false);
   const [captionDragActive, setCaptionDragActive] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const [cropReplace, setCropReplace] = useState(false);
@@ -301,7 +298,9 @@ export default function ImageDetailPage() {
   const [aiCustomPrompt, setAiCustomPrompt] = useState("");
   const [aiTargetWidth, setAiTargetWidth] = useState<number | null>(null);
   const [aiTargetHeight, setAiTargetHeight] = useState<number | null>(null);
-  const [aiJobId, setAiJobId] = useState<string | null>(null);
+  // The image the job captions travels with it: the user can arrow away while it
+  // runs, and the completion effect must refresh *that* image, not the one on screen.
+  const [aiJob, setAiJob] = useState<{ jobId: string; imageId: string; datasetId: string } | null>(null);
   const [aiProviderModel, setAiProviderModel] = useState("");
   const [aiWd14Threshold, setAiWd14Threshold] = useState(0.35);
   const [aiDelimiterMode, setAiDelimiterMode] = useState<DelimiterMode>("overwrite");
@@ -310,19 +309,6 @@ export default function ImageDetailPage() {
   const [renameMode, setRenameMode] = useState(false);
   const [renameStem, setRenameStem] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  // GPT-2 token count from the lazily-loaded tokenizer (null until it loads).
-  const tokens = useTokenCount(captionText);
-  const captionStats = useMemo(() => {
-    const trimmed = captionText.trim();
-    const words = trimmed ? trimmed.split(/\s+/).length : 0;
-    const tokenColor =
-      tokens === null ? "text-gray-500"
-      : tokens >= 77 ? "text-red-400"
-      : tokens >= 70 ? "text-yellow-400"
-      : "text-gray-500";
-    return { words, tokens, tokenColor };
-  }, [captionText, tokens]);
 
   // ---- Live nav refresh ----------------------------------------------------
   // Bumped by `refreshNavContext` below, and read by the `navCtx` memo as its
@@ -785,6 +771,39 @@ export default function ImageDetailPage() {
     enabled: !!imageId,
   });
 
+  // The unsaved caption edit, stamped with the image it was typed on (GPT-027).
+  // Everything else is derived, never copied: the editor shows the draft only
+  // while it belongs to the image on screen, and the stored caption otherwise.
+  // Navigating to a cached neighbour changes `imageId` and `captionData` in one
+  // render, so the old pair of sync effects (copy-unless-dirty + reset-on-id)
+  // let a draft leak onto it and Save write it there. Do not reintroduce a copy
+  // of `captionData` into state, and key every async writer below on the id it
+  // started with (its mutation variables) — TanStack swaps each render's options
+  // onto a pending mutation, so a hook-level closure sees the *new* `imageId`.
+  const [draft, setDraft] = useState<{ imageId: string; text: string } | null>(null);
+  const captionDirty = !!imageId && draft?.imageId === imageId;
+  const captionText = captionDirty ? draft!.text : (captionData?.caption_text ?? "");
+  const captionStyle = captionData?.caption_style ?? "";   // persisted unchanged; no picker
+
+  // Leaving an image discards its unsaved draft (as it always has). Tidiness
+  // only: `captionDirty` already ignores a draft stamped with another id.
+  useEffect(() => {
+    setDraft((d) => (d && d.imageId !== imageId ? null : d));
+  }, [imageId]);
+
+  // GPT-2 token count from the lazily-loaded tokenizer (null until it loads).
+  const tokens = useTokenCount(captionText);
+  const captionStats = useMemo(() => {
+    const trimmed = captionText.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    const tokenColor =
+      tokens === null ? "text-gray-500"
+      : tokens >= 77 ? "text-red-400"
+      : tokens >= 70 ? "text-yellow-400"
+      : "text-gray-500";
+    return { words, tokens, tokenColor };
+  }, [captionText, tokens]);
+
   // The video this frame was extracted from, for the lineage line below. Same
   // `["video", id]` key VideoDetailPage uses, so navigating there is a cache hit.
   // A frame keeps its timestamp and shot index after the video is deleted, but
@@ -838,7 +857,7 @@ export default function ImageDetailPage() {
   const activeJobs = useJobStore((s) => s.activeJobs);
 
   // Track AI job progress from the global SSE store (TopBar already subscribes to all jobs)
-  const aiJobProgress = useJobStore((s) => s.activeJobs.get(aiJobId ?? ""));
+  const aiJobProgress = useJobStore((s) => s.activeJobs.get(aiJob?.jobId ?? ""));
 
   // Upscale job progress
   const upscaleJobProgress = useJobStore((s) => s.activeJobs.get(upscaleJobId ?? ""));
@@ -904,20 +923,22 @@ export default function ImageDetailPage() {
     }
   }, [refineJobProgress?.status, refineJobId, imageId, datasetId, qc, enterMode]);
 
-  // When AI job completes, refresh caption
+  // When AI job completes, refresh the caption of the image it ran on — which
+  // need not be the one on screen. A draft on that image is discarded so the
+  // generated caption shows (as before); a draft on any other image is kept.
   useEffect(() => {
-    if (!aiJobId || !aiJobProgress) return;
+    if (!aiJob || !aiJobProgress) return;
     if (aiJobProgress.status === "completed") {
-      setCaptionDirty(false);
-      qc.invalidateQueries({ queryKey: ["caption", imageId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      setAiJobId(null);
+      setDraft((d) => (d?.imageId === aiJob.imageId ? null : d));
+      qc.invalidateQueries({ queryKey: ["caption", aiJob.imageId] });
+      qc.invalidateQueries({ queryKey: ["images", aiJob.datasetId] });
+      setAiJob(null);
       toast.success("Caption generated");
     } else if (aiJobProgress.status === "failed") {
-      setAiJobId(null);
+      setAiJob(null);
       toast.error("Captioning failed");
     }
-  }, [aiJobProgress?.status, aiJobId, imageId, datasetId, qc]);
+  }, [aiJobProgress?.status, aiJob, qc]);
 
   // Standalone upscale job tracking
   useEffect(() => {
@@ -994,17 +1015,6 @@ export default function ImageDetailPage() {
       toast.error("Crop+upscale failed");
     }
   }, [cropUpscaleJobProgress?.status, cropUpscaleJobId, datasetId, imageId, cropReplace, qc, paneGo]);
-
-  useEffect(() => {
-    if (captionData && !captionDirty) {
-      setCaptionText(captionData.caption_text);
-      setCaptionStyle(captionData.caption_style);
-    }
-  }, [captionData]);
-
-  useEffect(() => {
-    setCaptionDirty(false);
-  }, [imageId]);
 
   useEffect(() => {
     const el = captionRef.current;
@@ -1093,17 +1103,29 @@ export default function ImageDetailPage() {
     onError: () => toast.error("Delete failed"),
   });
 
+  // Seat a confirmed write in the cache before the draft goes, so the editor never
+  // flashes the pre-save text while the refetch is in flight. Then drop the draft
+  // only if it is still the one that was written: a draft on another image, or
+  // typing that continued during the request, survives.
+  const settleCaptionWrite = (id: string, text: string, result: CaptionData) => {
+    qc.setQueryData(["caption", id], result);
+    setDraft((d) => (d?.imageId === id && d.text === text ? null : d));
+    qc.invalidateQueries({ queryKey: ["caption", id] });
+  };
+
+  // Every id below comes from the mutation's variables, captured at click time —
+  // see the `draft` comment above for why the render's `imageId` is wrong here.
   const saveMutation = useMutation({
-    mutationFn: () => captionsApi.update(imageId!, { caption_text: captionText, caption_style: captionStyle }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["caption", imageId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
-      setCaptionDirty(false);
+    mutationFn: (v: { id: string; datasetId: string | undefined; text: string; style: string }) =>
+      captionsApi.update(v.id, { caption_text: v.text, caption_style: v.style }),
+    onSuccess: (result, v) => {
+      settleCaptionWrite(v.id, v.text, result);
+      qc.invalidateQueries({ queryKey: ["images", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["score-values", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", v.datasetId] });
       toast.success("Saved");
     },
     onError: () => toast.error("Save failed"),
@@ -1119,19 +1141,22 @@ export default function ImageDetailPage() {
     e.preventDefault();
     const txt = files.find((f) => f.name.toLowerCase().endsWith(".txt"));
     if (!txt) return;
+    // Captured now: `text()` and the PUT are both async, and the user can arrow
+    // to another image before either settles.
+    const id = imageId!;
+    const dsId = datasetId;
+    const style = captionStyle;
     txt.text()
       .then((text) => {
         const t = text.trim();
         // Keep the editor marked dirty until the save confirms, so a failed save
         // doesn't leave the box showing unsaved text labelled as saved.
-        setCaptionText(t);
-        setCaptionDirty(true);
+        setDraft({ imageId: id, text: t });
         return captionsApi
-          .update(imageId!, { caption_text: t, caption_style: captionStyle })
-          .then(() => {
-            setCaptionDirty(false);
-            qc.invalidateQueries({ queryKey: ["caption", imageId] });
-            qc.invalidateQueries({ queryKey: ["images", datasetId] });
+          .update(id, { caption_text: t, caption_style: style })
+          .then((result) => {
+            settleCaptionWrite(id, t, result);
+            qc.invalidateQueries({ queryKey: ["images", dsId] });
             toast.success("Caption applied");
           });
       })
@@ -1139,21 +1164,23 @@ export default function ImageDetailPage() {
   };
 
   const mergeTagsMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (v: { id: string; datasetId: string; text: string; style: string; dirty: boolean }) => {
       // If the editor has unsaved edits, persist them first so subsumption runs on the
       // text the user sees (the backend operates on the stored caption).
-      if (captionDirty) {
-        await captionsApi.update(imageId!, { caption_text: captionText, caption_style: captionStyle });
+      if (v.dirty) {
+        await captionsApi.update(v.id, { caption_text: v.text, caption_style: v.style });
       }
-      return tagConsolidationApi.subsume(datasetId!, { image_ids: [imageId!], dry_run: false });
+      return tagConsolidationApi.subsume(v.datasetId, { image_ids: [v.id], dry_run: false });
     },
-    onSuccess: (data) => {
-      setCaptionDirty(false); // allow the caption query refetch to refresh the textarea
-      qc.invalidateQueries({ queryKey: ["caption", imageId] });
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    onSuccess: (data, v) => {
+      // Drop the draft that was merged (so the refetch shows the result), but not
+      // typing that continued during the request, nor a draft on another image.
+      setDraft((d) => (d?.imageId === v.id && d.text === v.text ? null : d));
+      qc.invalidateQueries({ queryKey: ["caption", v.id] });
+      qc.invalidateQueries({ queryKey: ["images", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-stats", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", v.datasetId] });
       if (data.affected === 0) toast("No redundant tags found");
       else toast.success("Merged redundant tags");
     },
@@ -1302,10 +1329,10 @@ export default function ImageDetailPage() {
   });
 
   const aiMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (v: { imageId: string; datasetId: string }) =>
       captioningApi.run({
-        dataset_id: datasetId!,
-        image_ids: [imageId!],
+        dataset_id: v.datasetId,
+        image_ids: [v.imageId],
         model: resolveModelId(aiModel, aiProviderModel),
         style: aiStyle,
         overwrite: true,
@@ -1315,9 +1342,9 @@ export default function ImageDetailPage() {
         delimiter_mode: aiDelimiterMode,
         delimiter: aiDelimiterParts.join(""),
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, v) => {
       if (data.job_id) {
-        setAiJobId(data.job_id);
+        setAiJob({ jobId: data.job_id, imageId: v.imageId, datasetId: v.datasetId });
       } else {
         toast("Caption already exists — generation skipped");
       }
@@ -1361,7 +1388,9 @@ export default function ImageDetailPage() {
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
-  const aiRunning = !!aiJobId && aiJobProgress?.status === "running";
+  // Scoped to the job's own image: on a neighbour the panel is idle.
+  const aiJobHere = !!aiJob && aiJob.imageId === imageId;
+  const aiRunning = aiJobHere && aiJobProgress?.status === "running";
   const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
   const lutRunning = !!lutJobId && lutJobProgress?.status === "running";
@@ -2197,7 +2226,7 @@ export default function ImageDetailPage() {
                   : {}),
               }}
               value={captionText}
-              onChange={(e) => { setCaptionText(e.target.value); setCaptionDirty(true); }}
+              onChange={(e) => setDraft({ imageId: imageId!, text: e.target.value })}
               onDragOver={(e) => {
                 if (Array.from(e.dataTransfer.items || []).some((it) => it.kind === "file")) {
                   e.preventDefault();
@@ -2212,7 +2241,7 @@ export default function ImageDetailPage() {
 
           <button
             className="btn-primary w-full flex items-center justify-center gap-2"
-            onClick={() => saveMutation.mutate()}
+            onClick={() => saveMutation.mutate({ id: imageId!, datasetId, text: captionText, style: captionStyle })}
             disabled={!captionDirty || saveMutation.isPending}
           >
             <Save size={14} /> Save
@@ -2220,7 +2249,7 @@ export default function ImageDetailPage() {
 
           <button
             className="btn-ghost btn-sm w-full flex items-center justify-center gap-2"
-            onClick={() => mergeTagsMutation.mutate()}
+            onClick={() => mergeTagsMutation.mutate({ id: imageId!, datasetId: datasetId!, text: captionText, style: captionStyle, dirty: captionDirty })}
             disabled={mergeTagsMutation.isPending}
             title="Drop redundant tags (e.g. 'tail' when 'long tail' is present) and collapse duplicates"
           >
@@ -2441,7 +2470,7 @@ export default function ImageDetailPage() {
                 )}
 
                 {/* Progress */}
-                {aiJobId && aiJobProgress && (
+                {aiJobHere && aiJobProgress && (
                   <div className="space-y-1">
                     <div className="bg-gray-700 rounded-full h-1.5">
                       <div
@@ -2468,7 +2497,7 @@ export default function ImageDetailPage() {
 
                 <button
                   className="btn-primary w-full flex items-center justify-center gap-2"
-                  onClick={() => aiMutation.mutate()}
+                  onClick={() => aiMutation.mutate({ imageId: imageId!, datasetId: datasetId! })}
                   disabled={!aiModel || aiModelBlocked || aiMutation.isPending || aiRunning}
                 >
                   <Sparkles size={14} />

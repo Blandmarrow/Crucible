@@ -15,6 +15,8 @@ export interface UploadResult {
 
 export interface BatchMoveSubfolderResult {
   moved: number;
+  /** Images whose rename failed; each is left at its old name and subfolder. */
+  failed: number;
   subfolder: string;
 }
 

@@ -626,14 +626,24 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                     db_values: dict = dict(filename=new_filename, file_path=str(new_path))
                                     if new_path != old_path:
                                         rename_with_sidecar(old_path, new_path)
-                                        if old_thumb.exists() and old_thumb != new_thumb:
-                                            old_thumb.replace(new_thumb)
                                         db_values["is_auto_named"] = True
                                         db_values["thumbnail_path"] = str(new_thumb)
                                     await session.execute(
                                         sa_update(Image).where(Image.id == img_id).values(**db_values)
                                     )
                                     await session.commit()
+                                    # Epilogue, after the commit (PM-013): a failed
+                                    # thumbnail move must not roll back the row of a
+                                    # file that has already been renamed.
+                                    if new_path != old_path and old_thumb != new_thumb:
+                                        try:
+                                            if old_thumb.exists():
+                                                old_thumb.replace(new_thumb)
+                                        except OSError:
+                                            logger.warning(
+                                                "Thumbnail move failed for %s; it will be regenerated",
+                                                new_path.name, exc_info=True,
+                                            )
                                 except Exception:
                                     logger.error("Rename failed for %s", file_path, exc_info=True)
                     else:

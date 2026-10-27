@@ -275,6 +275,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       setShowMoveSubfolder(false);
       clear();
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      if (data.failed > 0) {
+        toast.error(`${data.failed} image${data.failed !== 1 ? "s" : ""} could not be renamed and stayed where they were`);
+      }
     },
     onError: () => toast.error("Move failed"),
   });

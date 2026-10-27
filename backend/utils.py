@@ -590,10 +590,20 @@ def require_free_space(
     )
 
 
-def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Rename a file and its .txt sidecar (if it exists) atomically.
+def rename_with_sidecar(old_path: Path, new_path: Path) -> bool:
+    """Rename a file, then move its .txt sidecar (if it exists) after it.
 
     Use this everywhere a file is renamed; never copy the two-step pattern inline.
+
+    **A raise means nothing moved.** Only the image rename can fail the call; the
+    sidecar is best-effort — a failure to move it is logged and reported by
+    returning False, with the image already at `new_path`. The two renames cannot
+    be made atomic, and the image is the half a row names: a raise *after* the
+    image moved would strand a rename-first caller's row on a path that no longer
+    exists (GPT-009), and send a commit-first caller's compensation (`bulk_rename`,
+    `batch_move_dataset`, `version_service.restore_snapshot`) back onto the old
+    path. A stranded `.txt` costs nothing durable — `Image.caption_text` is the
+    authority and the sidecar its mirror.
 
     **The caller must have proved `new_path` free.** `Path.rename` silently
     replaces an existing target on POSIX and raises `FileExistsError` on Windows,
@@ -606,8 +616,16 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     """
     old_path.rename(new_path)
     old_txt = old_path.with_suffix(".txt")
-    if old_txt.exists():
-        old_txt.rename(new_path.with_suffix(".txt"))
+    try:
+        if old_txt.exists():
+            old_txt.rename(new_path.with_suffix(".txt"))
+    except OSError:
+        logger.warning(
+            "rename_with_sidecar: moved %s to %s but not its caption sidecar %s",
+            old_path.name, new_path.name, old_txt.name, exc_info=True,
+        )
+        return False
+    return True
 
 
 def copy_with_sidecar(old_path: Path, new_path: Path) -> None:

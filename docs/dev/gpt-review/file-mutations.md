@@ -5,32 +5,6 @@ These are the verified findings where a file operation and its DB row can disagr
 `docs/dev/image-files.md` / `docs/dev/file-browser.md`. All of these findings were reproduced with
 `docs/dev/gpt-review/probes/backend/probe_file_mutations.py`. Conventions are in `docs/dev/gpt-review/README.md`.
 
-## GPT-009 — [P2] A sidecar rename failure strands the renamed image behind the old DB path
-
-**Verdict:** CONFIRMED. NEW. This is a PM-013 violation inside a helper, and it is not Windows-only:
-any failure of the second rename has the same effect.
-
-**Mechanism.**
-- `utils.rename_with_sidecar` (~`utils.py:593-610`) does `old.rename(new)` and then a separate
-  `.txt` rename, yet its docstring says "atomically".
-- The callers assign the new path fields, call the helper, and only then commit:
-  `routers/images.py` rename (~1921-1929) and `routers/filesystem.py` rename (~575-588).
-
-**Observed** (`test_gpt009_gallery_rename_sidecar_fail_strands_row`,
-`test_gpt009_filesystem_rename_sidecar_fail_strands_row`): with only the `.txt` rename raising a
-lock error, the gallery route returned 500 and the filesystem route returned 403. In both cases:
-- the image is at its new name;
-- the caption is still at the old name;
-- the row names the nonexistent old path;
-- `/images/{id}/file` returns 404.
-
-**Fix notes.**
-- Make the pair recoverable: if the sidecar rename fails, roll the image rename back, or commit
-  the image rename first and treat the sidecar as a logged, post-commit epilogue.
-- Correct the docstring.
-- Check every other caller of `rename_with_sidecar` (`bulk_rename`, move paths). Each one inherits
-  this.
-
 ## GPT-011 — [P3, GPT said P2] `..` path aliases bypass filesystem-delete bookkeeping and snapshot protection
 
 **Verdict:** CONFIRMED. NEW. Downgraded because the UI sends canonical paths, so this is reachable

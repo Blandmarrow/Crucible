@@ -1989,29 +1989,46 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
             new_thumb = Path(thumbnail_path_for(str(new_path)))
             renames.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename, str(new_path)))
 
-        # Apply all DB mutations in-memory (no commit yet).
-        for old_path, new_path, _ot, new_thumb, img_id, new_fn, new_fp in renames:
+        # One commit per image, right after its rename (PM-013): the rename is
+        # the item's only fallible step, so a failure rolls back that one row
+        # with its file still at the old name — and every image before it is
+        # already moved *and* committed. A single commit after the loop instead
+        # rolled back the rows of every file the loop had already renamed.
+        moved = failed = 0
+        for old_path, new_path, old_thumb, new_thumb, img_id, new_fn, new_fp in renames:
             values: dict = dict(subfolder=target, filename=new_fn, file_path=new_fp, thumbnail_path=str(new_thumb))
             if new_path != old_path:
                 values["is_auto_named"] = True
             await db.execute(sa_update(Image).where(Image.id == img_id).values(**values))
-
-        # Perform filesystem renames — if any raise, the exception propagates and
-        # db.commit() is never reached, so all DB mutations are rolled back.
-        for old_path, new_path, old_thumb, new_thumb, *_ in renames:
             if new_path != old_path:
-                rename_with_sidecar(old_path, new_path)
-                if old_thumb.exists():
-                    old_thumb.replace(new_thumb)
-    else:
-        # Just update the subfolder field; filenames stay unchanged.
-        for row in rows:
-            await db.execute(
-                sa_update(Image).where(Image.id == row.id).values(subfolder=target)
-            )
+                try:
+                    rename_with_sidecar(old_path, new_path)
+                except OSError:
+                    logger.warning("batch_move_subfolder %s: rename %s failed", img_id, old_path.name, exc_info=True)
+                    await db.rollback()
+                    failed += 1
+                    continue
+            await db.commit()
+            moved += 1
+            # --- epilogue: best-effort, cannot undo the committed rename ---
+            if old_thumb != new_thumb:
+                try:
+                    if old_thumb.exists():
+                        old_thumb.replace(new_thumb)
+                except OSError:
+                    logger.warning(
+                        "batch_move_subfolder %s: thumbnail move failed; it will be regenerated",
+                        img_id, exc_info=True,
+                    )
+        return {"moved": moved, "failed": failed, "subfolder": target}
 
+    # Just update the subfolder field; filenames stay unchanged.
+    for row in rows:
+        await db.execute(
+            sa_update(Image).where(Image.id == row.id).values(subfolder=target)
+        )
     await db.commit()
-    return {"moved": len(rows), "subfolder": target}
+    return {"moved": len(rows), "failed": 0, "subfolder": target}
 
 
 @router.post("/batch/move-dataset")

@@ -495,6 +495,8 @@ export default function DatasetsPage() {
       setDeleteTarget(null);
       toast.success("Dataset deleted");
     },
+    // A 409 (a versioning job holds the dataset) must not fail silently.
+    onError: (err) => toast.error(apiErrorDetail(err, "Failed to delete dataset")),
   });
 
   const renameMutation = useMutation({

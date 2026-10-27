@@ -143,6 +143,10 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         raise HTTPException(404, "Dataset not found")
 
     if body.name is not None and body.name != ds.name:
+        # A rename moves the folder and rebases every stored path under it, so it
+        # must not land mid-restore (GPT-015). Category/provenance-only PATCHes
+        # (DatasetsPage's bulk category edits) stay unguarded on purpose.
+        ensure_not_busy(dataset_id)
         conflict = await db.execute(select(Dataset).where(Dataset.name == body.name))
         if conflict.scalar():
             raise HTTPException(400, f"Dataset '{body.name}' already exists")
@@ -170,6 +174,9 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
+    # Deleting a dataset under a running versioning job would pull its rows and
+    # folder out from under the job (GPT-015).
+    ensure_not_busy(dataset_id)
     folder = Path(ds.folder_path)
     await db.delete(ds)
     await db.commit()
@@ -448,6 +455,9 @@ async def remove_subfolder(
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found")
+    # Rewrites Image.subfolder, which a snapshot restore also writes — the same
+    # reason repath_subfolder_endpoint guards.
+    ensure_not_busy(dataset_id)
     moved = await delete_subfolder(db, dataset_id, path)
     return {"deleted": path, "images_moved_to_root": moved}
 

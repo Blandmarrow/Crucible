@@ -1,5 +1,4 @@
 import hashlib, shutil
-from pathlib import Path
 import pytest
 from PIL import Image as PILImage
 from sqlalchemy import select
@@ -8,7 +7,6 @@ from backend.models.image import Image
 from backend.models.detection import Detection
 from backend.models.versioning import DatasetVersion, DatasetBranch, VersionImageState
 from backend.services import version_service
-from backend.services.dataset_busy import busy
 
 
 async def _mode(env, mode):
@@ -212,27 +210,4 @@ def test_gpt026_detection_geometry_not_restored(tmp_path):
             assert _size(path) == (100, 80)
             b = await bbox()
             assert [round(v, 3) for v in b] == [0.2, 0.2, 0.6, 0.6]
-    run(scenario())
-
-
-def test_gpt015_rename_and_delete_bypass_busy(tmp_path):
-    async def scenario():
-        async with api_env(tmp_path, foreign_keys=True) as env:
-            ds = await env.create_dataset("d")
-            img = await upload_image(env, ds["id"], "x.png", png_bytes((1, 2, 3)))
-            old = Path(ds["folder_path"])
-            with busy(ds["id"], "restore"):
-                # control: guarded endpoint
-                r = await env.client.delete(f"{API}/images/{img['id']}")
-                print("control image DELETE under busy:", r.status_code, r.text[:80])
-                assert r.status_code == 409
-                r = await env.client.patch(f"{API}/datasets/{ds['id']}", json={"name": "renamed"})
-                print("PATCH rename under busy:", r.status_code, r.json().get("folder_path"))
-                assert r.status_code == 200
-                assert not old.exists() and Path(r.json()["folder_path"]).exists()
-            ds2 = await env.create_dataset("d2")
-            with busy(ds2["id"], "restore"):
-                r = await env.client.delete(f"{API}/datasets/{ds2['id']}")
-                print("DELETE dataset under busy:", r.status_code)
-                assert r.status_code == 204
     run(scenario())

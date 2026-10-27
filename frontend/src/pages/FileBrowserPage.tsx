@@ -11,6 +11,7 @@ import { parentOf, breadcrumbsFromPath } from "../utils/pathUtils";
 import { apiErrorDetail } from "../utils/apiError";
 import { playbackErrorMessage } from "../utils/videoPlayback";
 import { datasetsApi } from "../api/datasets";
+import { adoptJob } from "../utils/jobReconcile";
 import ContextMenu, { type ContextMenuAction } from "../components/common/ContextMenu";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import type { Dataset, GenerationMetadata as GenMeta } from "../types";
@@ -151,8 +152,14 @@ function ImportModal({ folderPath, datasets, onClose }: { folderPath: string; da
   const mutation = useMutation({
     mutationFn: () =>
       datasetsApi.importFolder(selectedId, folderPath, "", false, true, undefined, includeVideos),
-    onSuccess: () => { toast.success("Import started"); onClose(); },
-    onError: () => toast.error("Import failed"),
+    // The same contract as ImportFolderModal: adopt the job and let TopBar report
+    // how it ends, wherever the user has gone by then (GPT-030).
+    onSuccess: (data) => {
+      void adoptJob(data.job_id);
+      toast.success("Import submitted");
+      onClose();
+    },
+    onError: (err) => toast.error(`Import failed: ${apiErrorDetail(err, "could not submit the import")}`),
   });
 
   return (

@@ -12,6 +12,8 @@ import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../store/paneStore";
 import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
+import { showImportSummaryToast } from "../../utils/importToast";
+import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
@@ -231,18 +233,33 @@ export default function TopBar() {
         }
         if (DATASET_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["datasets"] });
-          if (progress.job_type === "import" && progress.dataset_id) {
-            qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
-            // An import under `include_videos` creates Video rows. This is the
-            // always-mounted net, so it is what covers the user who started the
-            // import from DatasetsPage or the file browser and then walked into
-            // the gallery — the page-local handler there never ran.
+        }
+        // Folder import: the one place its outcome is handled, for all three entry
+        // points (the gallery's and DatasetsPage's ImportFolderModal, File
+        // Browser's ImportModal). All of them close on submit and adopt the job, so
+        // no page-local watcher exists to double the toast — and the user who
+        // walked away from the page that started it still hears how it ended
+        // (GPT-030). Every terminal status, since an import commits per file.
+        if (progress.job_type === "import") {
+          if (progress.dataset_id) {
+            // Rows were added: the shared content scope (counts, subfolders,
+            // stats, style meter, the detail view's boundary prefetch), plus the
+            // Video rows `include_videos` creates and the `other:` licenses a
+            // scraper sidecar brings in, unpickable until this refetches.
+            invalidateDatasetContentScope(qc, progress.dataset_id);
             qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["licenses-in-use", progress.dataset_id] });
+          }
+          const toastId = `import-${jobId}`;
+          if (progress.status === "completed") {
+            showImportSummaryToast(jobId, { id: toastId });
+          } else if (progress.status === "failed") {
+            toast.error(
+              progress.message ? `Import failed: ${progress.message}` : "Import failed — see Logs",
+              { id: toastId, duration: 8000 },
+            );
+          } else {
+            toast("Import cancelled — images already imported were kept", { id: toastId });
           }
         }
         // Detection jobs (run / manual box+SAM / mask refine) change per-image

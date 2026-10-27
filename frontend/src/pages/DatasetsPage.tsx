@@ -16,7 +16,6 @@ import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
 import { apiErrorDetail } from "../utils/apiError";
-import { showImportSummaryToast } from "../utils/importToast";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
@@ -229,8 +228,6 @@ export default function DatasetsPage() {
   // ── Import modal ─────────────────────────────────────────────────────────
   const [importOpen, setImportOpen] = useState(false);
   const [importInitialId, setImportInitialId] = useState<string | undefined>(undefined);
-  const [importJobId, setImportJobId] = useState<string | null>(null);
-  const importJobProgress = useJobStore((s) => s.activeJobs.get(importJobId ?? ""));
 
   // ── Rescan + caption-import jobs ──────────────────────────────────────────
   const [rescanJobId, setRescanJobId] = useState<string | null>(null);
@@ -324,31 +321,12 @@ export default function DatasetsPage() {
   const totalSize = datasets.reduce((s, d) => s + d.total_size_bytes, 0);
 
   // ── Effects ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!importJobId || !importJobProgress) return;
-    if (importJobProgress.status === "completed") {
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      if (importJobProgress.dataset_id) {
-        qc.invalidateQueries({ queryKey: ["images", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["dataset", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["dataset-stats", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["tag-stats", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["tag-cooccurrence", importJobProgress.dataset_id] });
-        // An import is a provenance writer: a scraper sidecar is the largest
-        // source of new `other:` licenses, unpickable until this refetches.
-        qc.invalidateQueries({ queryKey: ["licenses-in-use", importJobProgress.dataset_id] });
-      }
-      showImportSummaryToast(importJobId);
-      setImportJobId(null);
-    } else if (importJobProgress.status === "failed") {
-      setImportJobId(null);
-    }
-  }, [importJobProgress?.status, importJobId, qc]);
+  // No folder-import effect: its outcome (refresh and toast) is TopBar's, which
+  // outlives this page — see ImportFolderModal.
 
   const invalidateDatasetCaches = useCallback((datasetId: string) => {
     invalidateDatasetContentScope(qc, datasetId);
-    // Both callers (rescan and import) can add Video rows now, and the preview
+    // A rescan can add Video rows (it adopts clips out of videos/), and the preview
     // strip's counts come off `["dataset", id]` — so leaving this out desynced
     // the card's video count from the video list any pane opened next.
     qc.invalidateQueries({ queryKey: ["videos", datasetId] });
@@ -382,8 +360,17 @@ export default function DatasetsPage() {
       toast.error("Rescan failed");
       setRescanJobId(null);
       setRescanTargetId(null);
+    } else if (rescanJobProgress.status === "cancelled" && !rescanJobProgress.optimistic) {
+      // A rescan commits per file, so a cancelled one still changed the dataset.
+      // Not on the cancel button's optimistic write: rows can land until the
+      // server confirms.
+      const dsId = rescanJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      toast("Rescan cancelled");
+      setRescanJobId(null);
+      setRescanTargetId(null);
     }
-  }, [rescanJobProgress?.status, rescanJobId, invalidateDatasetCaches]);
+  }, [rescanJobProgress?.status, rescanJobProgress?.optimistic, rescanJobProgress?.dataset_id, rescanJobId, invalidateDatasetCaches]);
 
   useEffect(() => {
     if (!captionJobId || !captionJobProgress) return;
@@ -402,8 +389,14 @@ export default function DatasetsPage() {
     } else if (captionJobProgress.status === "failed") {
       toast.error("Caption import failed");
       setCaptionJobId(null);
+    } else if (captionJobProgress.status === "cancelled" && !captionJobProgress.optimistic) {
+      // Same as the rescan arm: captions matched before the stop were written.
+      const dsId = captionJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      toast("Caption import cancelled");
+      setCaptionJobId(null);
     }
-  }, [captionJobProgress?.status, captionJobId, invalidateDatasetCaches]);
+  }, [captionJobProgress?.status, captionJobProgress?.optimistic, captionJobProgress?.dataset_id, captionJobId, invalidateDatasetCaches]);
 
   useEffect(() => {
     if (!duplicateJobId || !duplicateJobProgress) return;
@@ -426,8 +419,12 @@ export default function DatasetsPage() {
     } else if (duplicateJobProgress.status === "failed") {
       setDuplicateJobId(null);
       toast.error("Duplicate failed");
+    } else if (duplicateJobProgress.status === "cancelled" && !duplicateJobProgress.optimistic) {
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      setDuplicateJobId(null);
+      toast("Duplicate cancelled");
     }
-  }, [duplicateJobProgress?.status, duplicateJobId, qc]);
+  }, [duplicateJobProgress?.status, duplicateJobProgress?.optimistic, duplicateJobId, qc]);
 
   useEffect(() => {
     localStorage.setItem(DECLARED_CATEGORIES_KEY, JSON.stringify(emptyCategories));
@@ -1557,7 +1554,6 @@ export default function DatasetsPage() {
         <ImportFolderModal
           datasets={datasets}
           initialDatasetId={importInitialId}
-          onStarted={setImportJobId}
           onClose={() => setImportOpen(false)}
         />
       )}

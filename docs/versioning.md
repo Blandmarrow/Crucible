@@ -41,6 +41,10 @@ between two snapshots.
 
 The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
 
-While a restore, checkout, snapshot, or prune job is running on a dataset, edits to that dataset (uploads, deletes, renames, caption saves, …) are rejected with a clear "Dataset is busy" message — retry once the job finishes.
+While a restore, checkout, snapshot, or prune job is running on a dataset, edits to that dataset (uploads, deletes, renames, caption saves, …) are rejected with a clear "Dataset is busy" message — retry once the job finishes. That includes renaming or deleting the dataset itself and deleting a subfolder; changing only its category or license defaults still works.
+
+**Snapshots follow a dataset rename.** Renaming a dataset moves its folder, and every snapshot is updated to the new location, so restoring a snapshot taken before the rename puts the images back in the dataset's current folder. Snapshots made by older versions of Crucible are repaired automatically when you update.
+
+**A restore never writes outside its dataset.** Before changing anything, a restore checks every file it would write or move. If any lies outside the dataset's folder, or belongs to another dataset, the restore (or branch switch) stops with an error that names the problem and says "Nothing was changed" — no files, no captions and no extra pre-restore snapshot. This mainly protects old snapshots that the update could not repair safely.
 
 Access via the **Versions** sidebar item on any dataset page.

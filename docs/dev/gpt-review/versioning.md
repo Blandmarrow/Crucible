@@ -4,57 +4,9 @@ These are the verified findings for snapshots, restore and branches. For the sub
 `docs/dev/versioning.md` and `docs/dev/versioning-service.md` first. The probes are in
 `docs/dev/gpt-review/probes/backend/probe_versioning*.py`, and the conventions are in `docs/dev/gpt-review/README.md`.
 
-Several of these findings compound each other:
-- 015 (rename during a restore) feeds 021.
-- 021, 022 and 023 all end as a "completed" restore because of 025.
-
-So fix them as one branch.
-
-## GPT-021 — [P1] Restoring after a dataset rename writes outside the dataset, and can overwrite another dataset's file
-
-**Verdict:** CONFIRMED. The real scope is **wider than claimed**. This was not documented anywhere.
-
-**Mechanism.**
-- Snapshots store **absolute** paths: `VersionImageState.file_path`, written in `create_snapshot`.
-- `dataset_service.rename_dataset` rebases the live `Image` and `Video` paths but never touches
-  `VersionImageState`.
-- In `restore_snapshot`:
-  - Pass 0 sets `target_path = state.file_path` (~`version_service.py:753`).
-  - Pass 2c writes `img.file_path = p.target_path` and commits (~:1055; GPT cited :980).
-  - Pass 3b copies or moves the bytes there (~:1151).
-- Nothing checks that the target lies under the dataset's current `folder_path`.
-
-**Observed, with name reuse** (`probe_versioning_021.py::test_gpt021_name_reuse_overwrites_B`):
-1. Dataset A was named `reused-name`. A snapshot was taken (Manual mode), then A was renamed to
-   `new-root-name`.
-2. Dataset B was created as `reused-name` with its own `x.png`.
-3. A's snapshot was restored with `pre_restore_snapshot=true`.
-
-The results:
-- The job reported `completed` with no error.
-- B's file sha256 changed to A's original bytes. B has no backup anywhere; the safety snapshot
-  only protects A.
-- Both rows now name `.../reused-name/images/x.png`.
-
-Auto mode clobbers B as well, through the pure-rename move path
-(`probe_versioning_021_auto.py::test_gpt021_auto_mode_name_reuse`).
-
-**Observed, without name reuse** (`test_gpt021_control_no_reuse`): B is untouched, but restore
-`mkdir`s the old root again and puts A's image there. A's row now points outside A's
-`folder_path`.
-
-**Any rename followed by a restore of a pre-rename snapshot hits this.** That variant alone is a
-P2 path escape, and it is easy to reach from the UI.
-
-**Fix notes.**
-- Store snapshot paths relative to the dataset root, or rebase them on read against the current
-  `folder_path`. This needs a migration or compatibility read for existing snapshots.
-  `dataset_service.rename_dataset` already rebases the live paths, so it is the place to also
-  rebase `VersionImageState`.
-- Before any write, refuse a target outside the dataset's root, or one owned by another dataset's
-  row, and do so before touching any file.
-- Regression: both probes, inverted.
-- Check `Video` paths in snapshots, if any, under the same rule.
+Several of these findings compound each other: 022 and 023 both end as a "completed"
+restore because of 025, so fix them as one branch. (021 and 015, which compounded the same
+way, are fixed — see PM-025.)
 
 ## GPT-025 — [P2] Restore failures are discarded and the job reports complete
 
@@ -119,22 +71,6 @@ with 0 failed reported.
 **Fix notes.** Make the pre-restore snapshot "complete or abort": a required file that was not
 backed up stops the restore before any mutation. Leave Manual-snapshot warnings as they are for
 user-initiated snapshots.
-
-## GPT-015 — [P2] Dataset rename and delete bypass the busy guard
-
-**Verdict:** CONFIRMED, and wider than claimed: DELETE is affected too. NEW. `docs/dev/versioning.md`
-says to "grep `ensure_not_busy` for the current set" and does not list this gap.
-
-**Observed** (`test_gpt015_rename_and_delete_bypass_busy`, holding
-`dataset_busy.busy(id, "restore")`):
-- `DELETE /images/{id}` → 409. This is the control.
-- `PATCH /datasets/{id}` (rename) → 200, and the folder moved.
-- `DELETE /datasets/{id}` → 204.
-
-The only `ensure_not_busy` call in `routers/datasets.py` is in the subfolder-rename endpoint.
-
-**Fix notes.** Add the guard to `update_dataset` (at least when the name or folder changes) and to
-`delete_dataset`. Then audit every other structural route.
 
 ## GPT-024 — [P3, GPT said P2] Snapshot creation accepts another dataset's branch
 

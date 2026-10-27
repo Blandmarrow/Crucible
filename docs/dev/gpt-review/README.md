@@ -20,7 +20,7 @@ here carry no Documentation Map row and no word budget.
 
 | File | Findings |
 |---|---|
-| `docs/dev/gpt-review/versioning.md` | 021 (P1), 025, 022, 023, 015, 024, 026, and the restore half of 016 |
+| `docs/dev/gpt-review/versioning.md` | 025, 022, 023, 024, 026, and the restore half of 016 |
 | `docs/dev/gpt-review/file-mutations.md` | 009, 011, 016, 008, 010, 017, 020 |
 | `docs/dev/gpt-review/jobs-ml.md` | 012, 013, 014, 032, 033, 034 |
 | `docs/dev/gpt-review/frontend.md` | 027 (P1), 028, 030, 029, 031 |
@@ -42,13 +42,13 @@ Fix notes give a direction, not a design; plan each fix against the code at the 
 
 | Pri | IDs |
 |---|---|
-| **P1** | **021** restore after a dataset rename writes outside the dataset, and can overwrite another dataset's file. **027** an unsaved caption draft is saved onto a cached neighbouring image. |
-| P2 | 012, 025, 032, 022, 023, 015, 009, 013, 014, 030, 028, 016 (restore half), 033, 001, 003+005 (fix together) |
+| **P1** | **027** an unsaved caption draft is saved onto a cached neighbouring image. |
+| P2 | 012, 025, 032, 022, 023, 009, 013, 014, 030, 028, 016 (restore half), 033, 001, 003+005 (fix together) |
 | P3 | 011, 010, 008, 016 (resize/crop half), 017, 018, 019, 020, 024, 026, 029, 031, 034, 035, 002, 004 |
 | Decision | 007: unauthenticated API on `0.0.0.0`. This is a deliberate LAN-access choice, so revisit it as policy rather than as a bug. |
 
 Suggested grouping for remediation branches:
-- **(a) Versioning integrity:** 021, 025, 022, 023, 015, 024, plus the restore half of 016.
+- **(a) Versioning integrity:** 025, 022, 023, 024, plus the restore half of 016.
 - **(b) Job queue:** 012, 013, then 014 together with 030.
 - **(c) Caption editor:** 027.
 - **(d) File-mutation ordering:** 009, 011, 008, 010.
@@ -85,7 +85,7 @@ the repo root with the venv active, in one shell:
 
 ```bash
 source venv/bin/activate && python -m pytest docs/dev/gpt-review/probes/backend \
-  -o python_files='probe_*.py' -q -p no:cacheprovider     # 42 passed on 2026-10-17
+  -o python_files='probe_*.py' -q -p no:cacheprovider     # 38 passed (42 on 2026-10-17, before the 021/015 fixes)
 ```
 
 They use `api_env(tmp_path, foreign_keys=True)` via `probes/backend/conftest.py`. Windows file locks

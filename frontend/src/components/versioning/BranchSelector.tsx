@@ -161,11 +161,15 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       setPendingBranchId(null);
       setCheckoutJobId(null);
     } else if (checkoutProgress?.status === "failed") {
-      toast.error("Branch checkout failed");
+      // The job's error message says *why* — e.g. a restore refused for an
+      // unsafe snapshot path, which changed nothing and keeps this branch.
+      toast.error(
+        "Branch checkout failed" + (checkoutProgress.message ? `: ${checkoutProgress.message}` : ""),
+      );
       setPendingBranchId(null);
       setCheckoutJobId(null);
     }
-  }, [checkoutProgress?.status, qc, datasetId, onSelect, pendingBranchId]);
+  }, [checkoutProgress?.status, checkoutProgress?.message, qc, datasetId, onSelect, pendingBranchId]);
 
   async function doCheckout(branchId: string, preRestoreSnapshot: boolean) {
     setPendingBranchId(branchId);

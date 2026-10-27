@@ -12,9 +12,10 @@ rename entirely.
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
-from backend.models import Image, Video
+from backend.models import Dataset, DatasetVersion, Image, VersionImageState, Video
 from backend.tests.conftest import (
     API,
     api_env,
@@ -24,6 +25,28 @@ from backend.tests.conftest import (
     upload_video,
     wait_for_job,
 )
+
+
+async def _set_mode(env, mode: str) -> None:
+    r = await env.client.patch(f"{API}/settings/thresholds", json={"versioning_mode": mode})
+    assert r.status_code == 200, r.text
+
+
+async def _snapshot(env, ds_id: str, name: str) -> None:
+    r = await env.client.post(f"{API}/datasets/{ds_id}/versions", json={"name": name})
+    assert r.status_code == 200, r.text
+    if "job_id" in r.json():
+        job = await wait_for_job(env, r.json()["job_id"])
+        assert job["status"] == "completed", job
+
+
+async def _state_paths(env, ds_id: str) -> list[str]:
+    async with env.Session() as db:
+        return sorted((await db.execute(
+            select(VersionImageState.file_path)
+            .join(DatasetVersion, DatasetVersion.id == VersionImageState.version_id)
+            .where(DatasetVersion.dataset_id == ds_id)
+        )).scalars().all())
 
 
 @needs_cv2
@@ -121,5 +144,82 @@ def test_a_rescan_after_the_rename_neither_re_adds_nor_reports_the_videos(tmp_pa
                 row = (await db.execute(select(Video))).scalar_one()
             assert row.id == vid["id"]
             assert Path(row.file_path).exists()
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["manual", "auto"])
+def test_renaming_a_dataset_rebases_its_snapshot_rows(tmp_path, mode):
+    """GPT-021's root cause. `VersionImageState.file_path` is absolute and a
+    restore writes to it, so a snapshot row still naming the old root made the
+    restore re-create that root — or overwrite whichever dataset had since taken
+    the old name. Both modes, because Auto's NULL-hash rows reach the file
+    through the path alone. Two versions, so the rewrite is not head-only."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await _set_mode(env, mode)
+            ds = await env.create_dataset("before")
+            await upload_image(env, ds["id"], "a.png")
+            await _snapshot(env, ds["id"], "one")
+            await upload_image(env, ds["id"], "b.png")
+            await _snapshot(env, ds["id"], "two")
+            # Another dataset's snapshot rows are not this rename's business.
+            other = await env.create_dataset("other")
+            await upload_image(env, other["id"], "a.png")
+            await _snapshot(env, other["id"], "o")
+            other_before = await _state_paths(env, other["id"])
+
+            old_root = Path(ds["folder_path"])
+            assert await _state_paths(env, ds["id"]) == sorted(
+                [str(old_root / "images" / "a.png")] * 2 + [str(old_root / "images" / "b.png")]
+            )
+
+            r = await env.client.patch(f"{API}/datasets/{ds['id']}", json={"name": "after"})
+            assert r.status_code == 200, r.text
+            new_root = Path(r.json()["folder_path"])
+            assert new_root != old_root
+
+            assert await _state_paths(env, ds["id"]) == sorted(
+                [str(new_root / "images" / "a.png")] * 2 + [str(new_root / "images" / "b.png")]
+            )
+            assert await _state_paths(env, other["id"]) == other_before
+
+    run(scenario())
+
+
+def test_a_failed_folder_rename_leaves_every_row_untouched(tmp_path, monkeypatch):
+    """PM-013 ordering: the snapshot-row UPDATE runs *before* the irreversible
+    `rename()`, uncommitted, so a rename that raises must roll it back — along
+    with everything else — instead of leaving snapshot rows pointing at a folder
+    that never moved."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await _set_mode(env, "auto")
+            ds = await env.create_dataset("before")
+            img = await upload_image(env, ds["id"], "a.png")
+            await _snapshot(env, ds["id"], "one")
+            old_root = Path(ds["folder_path"])
+            states_before = await _state_paths(env, ds["id"])
+            async with env.Session() as db:
+                row_before = (await db.get(Image, img["id"])).file_path
+
+            real_rename = Path.rename
+
+            def failing_rename(self, target):
+                if Path(self) == old_root:
+                    raise PermissionError(13, "simulated", str(self))
+                return real_rename(self, target)
+
+            monkeypatch.setattr(Path, "rename", failing_rename)
+            with pytest.raises(PermissionError):
+                await env.client.patch(f"{API}/datasets/{ds['id']}", json={"name": "after"})
+            monkeypatch.setattr(Path, "rename", real_rename)
+
+            assert old_root.is_dir()
+            assert await _state_paths(env, ds["id"]) == states_before
+            async with env.Session() as db:
+                assert (await db.get(Image, img["id"])).file_path == row_before
+                d = await db.get(Dataset, ds["id"])
+                assert d.folder_path == str(old_root) and d.name == "before"
 
     run(scenario())

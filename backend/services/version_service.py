@@ -41,7 +41,7 @@ from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImag
 from backend.models.video import Video
 from backend.services.label_service import labels_by_image, live_label_ids, set_labels
 from backend.services.threshold_service import get_thresholds
-from backend.utils import chunked, contained_path, within_datasets_dir
+from backend.utils import chunked, contained_path, thumbnail_path_for, within_datasets_dir
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,102 @@ class _RestorePlan:
     recreated: bool = False
     fork_new_id: str | None = None     # fresh ID when state.image_id now lives in another dataset
     skip_recreate: bool = False        # foreign ID + no recorded content — nothing to restore
+
+
+class RestoreRefused(RuntimeError):
+    """A restore whose plan would write outside its dataset or onto another
+    dataset's file (GPT-021, PM-025).
+
+    Raised by Pass 0c, before the pre-restore snapshot and before any row or
+    file is touched, so a refusal changes nothing. A `RuntimeError` so the job
+    wrapper records it as the job's `error_msg` like any other abort.
+    """
+
+
+async def _refuse_unsafe_restore_paths(
+    db: AsyncSession,
+    dataset: Dataset,
+    plans: list[_RestorePlan],
+    extras_touched: list[Image],
+) -> None:
+    """Pass 0c — prove every path the restore will write or move is safe.
+
+    A snapshot path is history: it names wherever the file lived when the
+    snapshot was taken, which a dataset rename (or a pre-fix restore that
+    followed one) can leave outside the dataset — and, once another dataset has
+    taken the old name, on top of *that* dataset's files. Three rules, every
+    violation collected and reported in one raise:
+
+    1. **Targets** — the restored path of every plan that yields a row must
+       resolve strictly inside the dataset folder, and not under `.versions`.
+    2. **Renamed sources** — a file Pass 3 moves, stages or unlinks must be
+       inside `settings.datasets_dir`. Looser than rule 1 on purpose, so a live
+       row a pre-fix restore left under the old root can be moved back home.
+    3. **Owned by another dataset** — no target, renamed source or touched extra
+       may be another dataset's `Image.file_path`. Exact string match, which is
+       sound because every writer builds paths from `datasets_dir / slug`.
+    """
+    def _resolve(path_str: str) -> Path | None:
+        try:
+            return Path(path_str).resolve() if path_str else None
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    root = Path(dataset.folder_path).resolve()
+    versions_dir = root / ".versions"
+    violations: dict[str, str] = {}
+
+    targets: set[str] = set()
+    for p in plans:
+        yields_row = p.img is not None or (
+            p.state.image_id is not None and not p.skip_recreate
+        )
+        if not yields_row:
+            continue
+        targets.add(p.target_path)
+        t = _resolve(p.target_path)
+        # The derived thumbnail too: Pass 3 regenerates it at
+        # `thumbnail_path_for(target)` (parent.parent), and `generate_thumbnail`
+        # mkdirs its parent — a target directly in the root would write one
+        # level above the dataset.
+        thumb = _resolve(thumbnail_path_for(p.target_path)) if p.target_path else None
+        if (
+            t is None or thumb is None
+            or t == root or not t.is_relative_to(root) or t.is_relative_to(versions_dir)
+            or not thumb.is_relative_to(root)
+        ):
+            violations.setdefault(p.target_path, "outside the dataset folder")
+
+    sources = {p.current_path for p in plans if p.img is not None and p.renamed}
+    datasets_root = app_settings.datasets_dir
+    for src in sources:
+        try:
+            inside = within_datasets_dir(src, datasets_root) is not None
+        except (OSError, RuntimeError, ValueError):
+            inside = False
+        if not inside:
+            violations.setdefault(src, "outside the datasets folder")
+
+    checked = targets | sources | {e.file_path for e in extras_touched if e.file_path}
+    for chunk in chunked(sorted(checked)):
+        rows = await db.execute(
+            select(Image.file_path, Dataset.name)
+            .join(Dataset, Dataset.id == Image.dataset_id)
+            .where(Image.file_path.in_(chunk), Image.dataset_id != dataset.id)
+        )
+        for fp, other_name in rows.all():
+            violations.setdefault(fp, f"a file of dataset '{other_name}'")
+
+    if violations:
+        example_path, reason = next(iter(sorted(violations.items())))
+        logger.error(
+            "restore of dataset %s refused: %d unsafe path(s): %s",
+            dataset.id, len(violations), sorted(violations.items())[:20],
+        )
+        raise RestoreRefused(
+            f"Restore refused: {len(violations)} file path(s) in this snapshot are "
+            f"unsafe to write — e.g. {example_path} is {reason}. Nothing was changed."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -689,30 +785,8 @@ async def restore_snapshot(
 ) -> dict:
     from backend.services.image_service import generate_thumbnail
     from backend.services.dataset_service import refresh_stats
-    from backend.utils import rename_with_sidecar, thumbnail_path_for, unique_filename_with_thumb
+    from backend.utils import rename_with_sidecar, unique_filename_with_thumb
     from backend.workers.progress import broadcaster
-
-    # Auto-snapshot current state before restoring. A failed safety snapshot must
-    # abort the restore — proceeding would silently make it non-undoable. The UI's
-    # pre-restore checkbox is the explicit way to opt out.
-    pre_restore_version_id: str | None = None
-    if pre_restore_snapshot:
-        try:
-            pre = await create_snapshot(
-                db, dataset_id,
-                name=None,
-                description="Pre-restore auto-snapshot",
-                job_id=None,
-                source="pre_restore",
-            )
-            pre_restore_version_id = pre.id
-        except Exception as exc:
-            logger.error("Pre-restore snapshot failed: %s", exc)
-            raise RuntimeError(
-                f"Pre-restore snapshot failed ({exc}); restore aborted before any "
-                "changes were made. Disable the pre-restore snapshot option to "
-                "restore anyway."
-            ) from exc
 
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
@@ -807,6 +881,42 @@ async def restore_snapshot(
         im for iid, im in current_images.items()
         if iid not in target_image_ids and iid not in adopted_ids
     ]
+
+    # ── Pass 0c: path gate (no writes yet) ───────────────────────────────────
+    # Everything above only read. The gate runs before the pre-restore snapshot
+    # so that a refusal leaves no orphan safety version behind either: the
+    # extras it checks are the ones Pass 2a/3 will move (keep mode: those on a
+    # restored filename) or unlink (remove mode: all of them).
+    if handle_extra_images == "remove":
+        extras_touched = list(extra_imgs)
+    else:
+        restored_names = {p.state.filename for p in plans}
+        extras_touched = [e for e in extra_imgs if e.filename in restored_names]
+    await _refuse_unsafe_restore_paths(db, dataset, plans, extras_touched)
+
+    # Auto-snapshot current state before restoring. A failed safety snapshot must
+    # abort the restore — proceeding would silently make it non-undoable. The UI's
+    # pre-restore checkbox is the explicit way to opt out. After planning (which
+    # writes nothing) and the gate, before Pass 1 — whose COW backfill fills this
+    # snapshot's NULL-hash rows.
+    pre_restore_version_id: str | None = None
+    if pre_restore_snapshot:
+        try:
+            pre = await create_snapshot(
+                db, dataset_id,
+                name=None,
+                description="Pre-restore auto-snapshot",
+                job_id=None,
+                source="pre_restore",
+            )
+            pre_restore_version_id = pre.id
+        except Exception as exc:
+            logger.error("Pre-restore snapshot failed: %s", exc)
+            raise RuntimeError(
+                f"Pre-restore snapshot failed ({exc}); restore aborted before any "
+                "changes were made. Disable the pre-restore snapshot option to "
+                "restore anyway."
+            ) from exc
 
     # ── Pass 1: gated COW protection, hash once (no dataset-file mutation) ──
     # Backs the current on-disk content into the pre-restore snapshot's NULL-hash
@@ -956,8 +1066,8 @@ async def restore_snapshot(
                 filename=p.state.filename,
                 original_filename=p.state.original_filename,
                 subfolder=p.state.subfolder,
-                file_path=p.state.file_path,
-                thumbnail_path=thumbnail_path_for(p.state.file_path),
+                file_path=p.target_path,  # the value Pass 0c gated
+                thumbnail_path=thumbnail_path_for(p.target_path),
                 width=p.state.width,
                 height=p.state.height,
                 file_size_bytes=p.state.file_size_bytes,

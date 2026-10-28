@@ -94,4 +94,10 @@ test('a histogram bar lists exactly the images it counts', async ({ page, reques
 
   const size = await openBar(page, '<0.1 MB: 1', 'File size')
   await expect(size).toHaveText(/^1 image( ·|$)/)
+  await page.keyboard.press('Escape')
+
+  // Every bar past the first used to be missing: the client's labels lacked the
+  // server's " MB" suffix, and fsEntries drops a label the server did not send.
+  const sizeNext = await openBar(page, '0.1–0.5 MB: 4', 'File size')
+  await expect(sizeNext).toHaveText(/^4 images( ·|$)/)
 })

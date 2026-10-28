@@ -42,7 +42,10 @@ const LUM_LABELS   = ["<0.15", "0.15–0.3", "0.3–0.5", "0.5–0.7", "0.7+"];
 const MP_EDGES     = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 const MP_LABELS    = ["<0.25", "0.25–0.5", "0.5–1", "1–2", "2–4", "4–8", "8+"];
 const FS_EDGES_MB  = [0.1, 0.5, 1.0, 2.0, 5.0];
-const FS_LABELS    = ["<0.1 MB", "0.1–0.5", "0.5–1", "1–2", "2–5", "5+"];
+// Must match `fs_labels` in dataset_service._aggregate_dataset_stats key for key:
+// fsEntries keeps only labels present in the server's dict, so a mismatch hides
+// the bar rather than failing.
+const FS_LABELS    = ["<0.1 MB", "0.1–0.5 MB", "0.5–1 MB", "1–2 MB", "2–5 MB", "5+ MB"];
 const AR_EDGES     = [0.5, 0.67, 0.85, 1.15, 1.4, 1.6, 1.95];
 const AR_LABELS    = ["9:16+", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "21:9+"];
 const WC_EDGES     = [1, 6, 11, 21, 51];

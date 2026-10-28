@@ -446,7 +446,10 @@ utilities → `docs/dev/shared-utilities.md`.
   half of it is restore alone — a four-pass algorithm plus its failure contract, read
   whenever a restore misbehaves. What stays (the two hooks, `_store_row_bytes`, snapshot
   creation, diff, the mirror bullets, the injection table) is what every *overwrite path
-  elsewhere* needs. Leaves roughly 1,550 (restore) and 2,000 words, both under the 60% target. Give both files `##` headings
+  elsewhere* needs. Leaves roughly 1,550 (restore) and 2,000 words, both under the 60% target —
+  the latter before GPT-026 added ~330 words of detections-mirror bullets beside the labels
+  one; if the stay half is then over 60%, the labels and detections mirror bullets are the
+  next to move, since each spans snapshot, restore and diff. Give both files `##` headings
   per subject while splitting; this one has none below `## Service`.
 - **Watch for:** CLAUDE.md's preamble to the invariants says two invariants "point at
   restore's Pass 2 and Pass 3" in this file, and `docs/dev/versioning.md`,

@@ -39,13 +39,23 @@ Every quality score is captured, including brightness, saturation and the NSFW
 score — a restore brings those back too, and a diff shows one that changed
 between two snapshots.
 
+A snapshot also captures each image's **detections** — the boxes and masks on
+the image detail page — and a restore puts back exactly the set the snapshot
+had. That keeps them lined up with the pixels: if you crop an image and then
+restore a snapshot from before the crop, the boxes return to where they were on
+the uncropped picture, and a detection added after the snapshot is removed. A
+diff lists detection changes per image as a short summary such as
+"3: face×2, hand". Snapshots made before this update did not record detections,
+so restoring one leaves each image's current detections as they are.
+Duplicating a dataset still does not copy detections.
+
 The object store lives at `{dataset_folder}/.versions/objects/` and is content-addressed — identical file content is stored only once regardless of how many snapshots reference it.
 
 While a restore, checkout, snapshot, or prune job is running on a dataset, edits to that dataset (uploads, deletes, renames, caption saves, …) are rejected with a clear "Dataset is busy" message — retry once the job finishes. That includes renaming or deleting the dataset itself and deleting a subfolder; changing only its category or license defaults still works.
 
 **Snapshots follow a dataset rename.** Renaming a dataset moves its folder, and every snapshot is updated to the new location, so restoring a snapshot taken before the rename puts the images back in the dataset's current folder. Snapshots made by older versions of Crucible are repaired automatically when you update.
 
-**A restore that cannot bring every file back says so.** If some files could not be restored (a missing backup, a disk error, a file held open by another program), the restore still finishes, but the toast reads *"Restore complete with problems"* and names up to three of them; the full list is on the job's entry in **Logs**. Those images keep the pixels they had before the restore, along with their scores and dimensions, while their captions and other details come from the snapshot. A branch switch reports problems the same way and still switches branch.
+**A restore that cannot bring every file back says so.** If some files could not be restored (a missing backup, a disk error, a file held open by another program), the restore still finishes, but the toast reads *"Restore complete with problems"* and names up to three of them; the full list is on the job's entry in **Logs**. Those images keep the pixels they had before the restore, along with their scores, dimensions and detections, while their captions and other details come from the snapshot. A branch switch reports problems the same way and still switches branch.
 
 **A restore never writes outside its dataset.** Before changing anything, a restore checks every file it would write or move. If any lies outside the dataset's folder, or belongs to another dataset, the restore (or branch switch) stops with an error that names the problem and says "Nothing was changed" — no files, no captions and no extra pre-restore snapshot. This mainly protects old snapshots that the update could not repair safely.
 

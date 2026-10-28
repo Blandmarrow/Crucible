@@ -268,11 +268,16 @@ export default function TopBar() {
         // stale otherwise (bulk detect run finishing after navigation).
         // crop_to_detection is included too: replace-mode crops now remap (and can
         // drop) detection geometry, so those rollups must refresh as well — and so
-        // is batch_inpaint, which *deletes* the detections it painted over.
+        // is batch_inpaint, which *deletes* the detections it painted over. So are
+        // restore_snapshot and checkout_branch: a snapshot records each image's
+        // detections and a restore writes them back (GPT-026), replacing the
+        // per-image rows and every dataset rollup over them.
         if (
           progress.job_type === "detection" ||
           progress.job_type === "crop_to_detection" ||
-          progress.job_type === "batch_inpaint"
+          progress.job_type === "batch_inpaint" ||
+          progress.job_type === "restore_snapshot" ||
+          progress.job_type === "checkout_branch"
         ) {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);

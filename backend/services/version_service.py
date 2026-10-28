@@ -43,10 +43,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # get_thresholds(db)` as a local, so the plain name is a shadowing trap.
 from backend.config import settings as app_settings
 from backend.models.dataset import Dataset
+from backend.models.detection import Detection
 from backend.models.image import Image
 from backend.models.label import ImageLabel, Label
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
+from backend.services.detection_service import (
+    canonical_detections, detections_by_image, set_detections,
+)
 from backend.services.label_service import labels_by_image, live_label_ids, set_labels
 from backend.services.threshold_service import get_thresholds
 from backend.utils import (
@@ -357,6 +361,12 @@ class _RestorePlan:
     # GPT-025: the row's pixel-derived values before the restore (Pass 0, or
     # Pass 0b on adoption), put back when its content could not be written.
     pre_pixel: dict | None = None
+    # GPT-026: the row's detections before the restore (canonical serialized
+    # form), captured after Pass 0b so an adopted row's are the ones read.
+    # Detection geometry is normalized to the pixels on disk, so it is a pixel
+    # qualifier like `pre_pixel`: put back when the content could not be written.
+    pre_detections: list[dict] | None = None
+    detections_written: bool = False   # Pass 2c replaced this row's detections
     content_written: bool = False      # the snapshot's bytes are now at the target
     failure_recorded: bool = False     # counted once, however many steps then fail
 
@@ -656,6 +666,9 @@ async def create_snapshot(
     # Labels for the whole dataset in one query. A per-image lookup inside the
     # state loop below would be N+1 over a 20k-image dataset.
     labels_by_id = await labels_by_image(db, [img.id for img in images])
+    # Detections the same way (GPT-026). Their geometry is in the frame of the
+    # pixels being snapshotted, which is why it is recorded here at all.
+    detections_by_id = await detections_by_image(db, [img.id for img in images])
 
     version = DatasetVersion(
         dataset_id=dataset_id,
@@ -737,6 +750,9 @@ async def create_snapshot(
             # Never `or None` — the column is NOT NULL, and an unlabelled image
             # snapshots as `[]`, which is what it means.
             label_ids=labels_by_id.get(img.id, []),
+            # Always a list on a new snapshot — `[]` is "recorded: none". NULL is
+            # reserved for rows that predate the column ("not recorded").
+            detections=detections_by_id.get(img.id, []),
             is_present=True,
         ))
 
@@ -840,6 +856,12 @@ _DIFF_COLS = (
     # resolved to names once, after the modified list is built, so `DiffModal`
     # shows names rather than uuids.
     VersionImageState.label_ids,
+    # Mutable (a detection run, a crop's remap) and pixel-qualifying, so diffed.
+    # Compared only when **both** sides recorded it: NULL is "not recorded" (a
+    # row older than the column), and NULL vs a list says nothing about the
+    # image. Rendered as a summary string, never the polygons — see
+    # `_detections_change`.
+    VersionImageState.detections,
     # Deliberately absent: source_video_id / source_timestamp_ms /
     # source_shot_index. Frame lineage is immutable for the life of an image —
     # extraction writes it once and nothing else ever changes it — so it can
@@ -864,8 +886,43 @@ _DIFF_COMPARE_FIELDS = (
     "style_similarity_score", "scores_stale",
     "dino_layer_scores", "generation_metadata", "processing_history",
     "source_name", "source_url", "license", "attribution",
-    "source_meta", "sort_order", "label_ids",
+    "source_meta", "sort_order", "label_ids", "detections",
 )
+
+
+def _detections_summary(dets: list[dict]) -> str:
+    """`"3: face×2, hand"` — the count, then each label with its multiplicity."""
+    if not dets:
+        return "none"
+    counts: dict[str, int] = {}
+    for d in dets:
+        label = d.get("label") or "?"
+        counts[label] = counts.get(label, 0) + 1
+    parts = [
+        f"{label}×{n}" if n > 1 else label
+        for label, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return f"{len(dets)}: " + ", ".join(parts)
+
+
+def _detections_change(va: list[dict], vb: list[dict]) -> dict:
+    """A detections diff entry as two summary strings, so `DiffModal` renders it
+    like any scalar and the response never carries polygons.
+
+    The lists already differ when this is called. When the summaries come out
+    identical (a crop moves every box but keeps every label), the `to` side says
+    what kind of change it was, so the row never reads "X → X": " (geometry
+    changed)" when the boxes or masks differ, " (re-detected)" when only the
+    score/model/task/time do.
+    """
+    frm, to = _detections_summary(va), _detections_summary(vb)
+    if frm == to:
+        def _geometry(dets):
+            return sorted(
+                (repr(d.get("bbox")), d.get("mask") or "") for d in dets
+            )
+        to += " (geometry changed)" if _geometry(va) != _geometry(vb) else " (re-detected)"
+    return {"from": frm, "to": to}
 
 
 async def diff_versions(
@@ -922,6 +979,12 @@ async def diff_versions(
         for field in _DIFF_COMPARE_FIELDS:
             va, vb = getattr(sa, field), getattr(sb, field)
             if va != vb:
+                if field == "detections":
+                    # NULL is "not recorded", not "none" — no row for a side
+                    # that predates the column.
+                    if va is not None and vb is not None:
+                        changes[field] = _detections_change(va, vb)
+                    continue
                 # Heavy JSON columns (full ComfyUI workflow payloads, per-layer
                 # score dicts) are compared but never embedded — a compact marker
                 # keeps the diff response small.
@@ -1140,6 +1203,15 @@ async def restore_snapshot(
             p.fork_new_id = str(uuid4())
         else:
             p.skip_recreate = True
+
+    # Detections of every row a plan will write, read once now that Pass 0b has
+    # settled which row that is (an adopted plan's row is the candidate, not the
+    # snapshot's id). Pass 2c compares against these to skip unchanged images,
+    # and Pass 3b's reconcile puts them back.
+    pre_dets = await detections_by_image(db, [p.img.id for p in plans if p.img is not None])
+    for p in plans:
+        if p.img is not None:
+            p.pre_detections = pre_dets.get(p.img.id, [])
 
     all_targets = {p.target_path for p in plans}
     extra_imgs = [
@@ -1454,6 +1526,28 @@ async def restore_snapshot(
             iid: [i for i in ids if i in live_labels] for iid, ids in wanted_labels.items()
         })
 
+    # Detections (GPT-026), beside the labels and for the same reasons: keyed on
+    # `p.img.id`, authoritative replace, only the ids named here are touched (so
+    # keep-mode extras keep theirs), and all of it before the commit. Their
+    # geometry is normalized to the snapshot's pixels, so restoring those pixels
+    # without it left a later crop's boxes over the older picture.
+    #
+    # A state with `detections IS NULL` predates the mirror ("not recorded") and
+    # leaves the image's current detections alone. An image whose detections
+    # already equal the snapshot's is skipped, so a restore that changes nothing
+    # does not churn detection ids.
+    wanted_detections: dict[str, list[dict]] = {}
+    for p in plans:
+        if p.img is None or p.state.detections is None:
+            continue
+        snap_dets = canonical_detections(p.state.detections)
+        if p.pre_detections is not None and p.pre_detections == snap_dets:
+            continue
+        wanted_detections[p.img.id] = snap_dets
+        p.detections_written = True
+    if wanted_detections:
+        await set_detections(db, wanted_detections)
+
     await db.commit()
 
     # ── Pass 3a: move keep-mode extras off restored filenames, then stage
@@ -1637,23 +1731,30 @@ async def restore_snapshot(
         # committed the snapshot's metadata, but the pixels on disk are still
         # the pre-restore ones (the write is atomic, so they survived intact).
         # A re-created row has no pixels at all and goes; any other row gets
-        # its pre-restore pixel values back and is re-measured. Caption,
-        # provenance, labels, sort order, generation metadata and lineage keep
-        # the snapshot's values: the metadata restore succeeded, only the
-        # pixels did not. Wrapped: Pass 3b sits between two commits (PM-013).
+        # its pre-restore pixel values back and is re-measured — and its
+        # pre-restore detections, whose geometry is in the frame of the pixels
+        # still on disk (GPT-026). Caption, provenance, labels, sort order,
+        # generation metadata and lineage keep the snapshot's values: the
+        # metadata restore succeeded, only the pixels did not. Wrapped: Pass 3b
+        # sits between two commits (PM-013).
         needed_content = p.recreated or (
             state.file_hash is not None and bool(p.needs_restore)
         )
         if p.img is not None and needed_content and not p.content_written:
             try:
                 if p.recreated:
+                    # Explicit, not left to the FK cascade: the harness and any
+                    # connection without `PRAGMA foreign_keys` would orphan them.
                     await db.execute(delete(ImageLabel).where(ImageLabel.image_id == p.img.id))
+                    await db.execute(delete(Detection).where(Detection.image_id == p.img.id))
                     await db.delete(p.img)
                     images_re_created -= 1
                     p.img = None
                 else:
                     for key, value in (p.pre_pixel or {}).items():
                         setattr(p.img, key, value)
+                    if p.detections_written:
+                        await set_detections(db, {p.img.id: p.pre_detections or []})
                     await _measure_into(p.img)
             except Exception as exc:
                 logger.warning("Could not reconcile %s after a failed restore: %s",

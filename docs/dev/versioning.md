@@ -39,7 +39,7 @@ Files are stored **only once per unique content** (idempotent). All writes go th
 |---|---|
 | `dataset_branches` | Named branches; `head_version_id` FK to latest snapshot on the branch |
 | `dataset_versions` | Snapshot records; `parent_id` self-ref for chain; auto-named `Snapshot YYYY-MM-DD HH:MM` if name omitted |
-| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) + the five provenance columns (see **Provenance mirror** below) + all ten `*_score` columns + the three frame-lineage columns (`source_video_id`, `source_timestamp_ms`, `source_shot_index`) |
+| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) + the five provenance columns (see **Provenance mirror** below) + all ten `*_score` columns + the three frame-lineage columns (`source_video_id`, `source_timestamp_ms`, `source_shot_index`) + the two join-table mirrors, `label_ids` (NOT NULL, `'[]'`) and `detections` (nullable: NULL = recorded before the column existed, which a restore leaves alone) — see `docs/dev/versioning-service.md` |
 
 The last two groups are recent and each carries a rule. A `*_score` column counts as
 **authored** data to a snapshot — nothing recomputes one on restore — so all ten are mirrored

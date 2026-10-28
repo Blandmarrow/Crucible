@@ -341,7 +341,11 @@ Cross-dataset:
 Labels travel on a copy while **detections do not** (there are no `Detection`
 references in `dataset_service.py`). Not a bug — "this image is a reject" is a
 fact about the image — but surprising enough that someone will otherwise "fix"
-it.
+it. *Snapshots* are the exception: since GPT-026 a snapshot mirrors detections
+too (`VersionImageState.detections`) and a restore writes them back, because a
+restore swaps the pixels their geometry is measured against. Duplicating a
+dataset, from disk or from a snapshot, still leaves them behind. See
+`docs/dev/versioning-service.md`.
 
 **Same-dataset derivatives carry labels too**, for the same reason and by the
 same rule as `copy_provenance`: a crop is the same picture at a different

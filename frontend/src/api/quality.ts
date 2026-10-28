@@ -161,10 +161,11 @@ export const qualityApi = {
 
   /** Free every resident scoring model, and nothing else — a captioning or
    *  detection model loaded for other work survives. `freed_mb` sums the
-   *  `vram_mb` of what was resident when the call arrived. */
+   *  `vram_mb` of what was resident when the call arrived and actually left;
+   *  a model something still holds a lease on stays and is named in `in_use`. */
   unloadModels: () =>
     client
-      .post<{ unloaded: string[]; freed_mb: number }>("/quality/models/unload")
+      .post<{ unloaded: string[]; freed_mb: number; in_use: string[] }>("/quality/models/unload")
       .then((r) => r.data),
 
   /** The dataset's style-score distribution plus its run descriptor. An unknown

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import re
 from pathlib import Path
@@ -343,7 +344,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
 
     image_data = [(r.id, r.file_path, r.filename, r.subfolder or "", r.caption_text or "") for r in rows]
 
-    async def _run(job_id: str) -> None:
+    async def _run_body(job_id: str, held: contextlib.ExitStack) -> None:
+        """The caption job. `held` owns the model lease (see `_run`)."""
         import time
         from backend.database import AsyncSessionLocal
         from backend.services.caption_service import set_caption
@@ -377,17 +379,22 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
             florence_entry = await model_manager.load_florence2(
                 variant, job_id=job_id, loop=_loop, dataset_id=body.dataset_id
             )
+            # No await between the load and the lease: an unload landing there
+            # would release the weights the loop is about to read (GPT-032).
+            held.enter_context(model_manager.lease(florence_entry))
             model_label = f"Florence-2 ({variant})"
         elif is_paligemma:
             paligemma_entry = await model_manager.load_paligemma2(
                 job_id=job_id, loop=_loop, dataset_id=body.dataset_id
             )
+            held.enter_context(model_manager.lease(paligemma_entry))
             model_label = "PaliGemma-2"
         elif is_joycaption:
             jc_variant = body.model.removeprefix("joycaption_")
             joycaption_entry = await model_manager.load_joycaption(
                 variant=jc_variant, job_id=job_id, loop=_loop, dataset_id=body.dataset_id
             )
+            held.enter_context(model_manager.lease(joycaption_entry))
             model_label = f"JoyCaption ({jc_variant})"
         elif is_ollama:
             ollama_model_name = body.model.removeprefix("ollama:")
@@ -729,12 +736,25 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                 await session.commit()
             await refresh_stats(session, body.dataset_id)
 
+    async def _run(job_id: str) -> None:
+        # The local model's lease lives for the whole body, so an unload while
+        # the loop runs answers 409 instead of failing every image left
+        # (GPT-032); the stack releases it however the body ends, cancel included.
+        with contextlib.ExitStack() as held:
+            await _run_body(job_id, held)
+
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(rows)}
 
 
 @router.delete("/model/{model_id}/unload", status_code=204)
 async def unload_model(model_id: str):
+    """Unload one caption model. A no-op (204) for a model that is not resident.
+
+    A model a running caption or pipeline job holds a lease on answers 409 —
+    `ModelInUseError`, mapped by the app-level handler in `main.py` — rather than
+    being pulled out from under the job (GPT-032). Retry once the job finishes.
+    """
     await model_manager.unload(model_id)
 
 
@@ -832,7 +852,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
 
     image_data = [(r.id, r.file_path, r.filename, r.subfolder or "") for r in rows]
 
-    async def _run_pipeline_job(job_id: str) -> None:
+    async def _run_pipeline_body(job_id: str, held: contextlib.ExitStack) -> None:
+        """The pipeline job. Each step's lease lives on a per-step stack entered
+        into `held`, so a step that raises still releases it (see
+        `_run_pipeline_job`)."""
         import time
         from backend.database import AsyncSessionLocal
         from backend.services.caption_service import set_caption
@@ -910,23 +933,31 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             model_label = step.model
 
             _step_loop = asyncio.get_running_loop()
+            # This step's lease. Closed before the between-step `evict_all` so that
+            # call still unloads the step's model; entered into `held` so an
+            # exception anywhere in the step releases it too.
+            step_held = held.enter_context(contextlib.ExitStack())
 
             if is_florence:
                 variant = "promptgen" if "promptgen" in step.model else "large"
                 florence_entry = await model_manager.load_florence2(
                     variant, job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
                 )
+                # No await between the load and the lease — see /run.
+                step_held.enter_context(model_manager.lease(florence_entry))
                 model_label = f"Florence-2 ({variant})"
             elif is_paligemma:
                 paligemma_entry = await model_manager.load_paligemma2(
                     job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
                 )
+                step_held.enter_context(model_manager.lease(paligemma_entry))
                 model_label = "PaliGemma-2"
             elif is_joycaption:
                 jc_variant = step.model.removeprefix("joycaption_")
                 joycaption_entry = await model_manager.load_joycaption(
                     variant=jc_variant, job_id=job_id, loop=_step_loop, dataset_id=body.dataset_id
                 )
+                step_held.enter_context(model_manager.lease(joycaption_entry))
                 model_label = f"JoyCaption ({jc_variant})"
             elif is_ollama:
                 ollama_model_name = step.model.removeprefix("ollama:")
@@ -1128,6 +1159,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         "vram_used_mb": cached_vram_mb,
                     })
 
+            # Release the step's lease first, or evict_all would skip the very
+            # model it is here to free.
+            step_held.close()
             # Evict local ML models between steps to free VRAM
             if is_florence or is_paligemma or is_joycaption:
                 await model_manager.evict_all()
@@ -1163,6 +1197,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     }
                 await session.commit()
             await refresh_stats(session, body.dataset_id)
+
+    async def _run_pipeline_job(job_id: str) -> None:
+        with contextlib.ExitStack() as held:
+            await _run_pipeline_body(job_id, held)
 
     await job_queue.enqueue(job, _run_pipeline_job)
     return {"job_id": job.id, "total": len(rows) * len(body.steps)}

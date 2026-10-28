@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # manage.sh - Crucible launcher (Linux / macOS)
-# Usage: ./manage.sh <setup|start|update|dev>
+# Usage: ./manage.sh <setup|start|update|dev> [--lan]
+#   --lan (start, dev): listen on every network interface so other devices can
+#   connect. Off by default - the API has no authentication. CRUCIBLE_HOST in the
+#   environment or .env sets the bind address persistently; see scripts/bind_host.py.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -253,6 +256,68 @@ _migrate() {
     echo "  Migrations applied."
 }
 
+# --- Bind address ----------------------------------------------------------
+# The API has no authentication, so uvicorn (and the splash, and in dev Vite)
+# listen on loopback unless the user opts in: --lan for one run, CRUCIBLE_HOST in
+# the environment or .env for good. scripts/bind_host.py owns that precedence -
+# this side only passes --lan through and acts on the answer (GPT-007).
+CRUCIBLE_LAN_ARG=""
+BIND_HOST="127.0.0.1"
+
+_parse_run_args() {
+    # $1 = command name, the rest = its arguments. Only `start` and `dev` take any.
+    local cmd="$1"
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --lan) CRUCIBLE_LAN_ARG="--lan" ;;
+            *)
+                echo "Unknown option for $cmd: $1" >&2
+                echo "Usage: $0 $cmd [--lan]" >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+_resolve_bind_host() {
+    # Unquoted on purpose: empty or "--lan". Needs the venv's python (or any
+    # python 3) - the script is stdlib only.
+    # shellcheck disable=SC2086
+    BIND_HOST="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG)" || BIND_HOST=""
+    if [ -z "$BIND_HOST" ]; then
+        echo "ERROR: could not resolve the bind address (scripts/bind_host.py failed)." >&2
+        exit 1
+    fi
+}
+
+_is_loopback_host() {
+    case "$1" in
+        localhost|::1|"[::1]"|127.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_print_access() {
+    # $1 = the port people browse to, $2 = the command to suggest --lan for.
+    if _is_loopback_host "$BIND_HOST"; then
+        echo "LAN access is off (this machine only). For other devices: $0 $2 --lan, or set CRUCIBLE_HOST=0.0.0.0 in .env."
+        return 0
+    fi
+    local urls url
+    # shellcheck disable=SC2086
+    urls="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG --urls "$1" 2>/dev/null || true)"
+    if [ -n "$urls" ]; then
+        for url in $urls; do
+            echo "On your network: $url"
+        done
+    else
+        echo "Listening on $BIND_HOST (could not work out this machine's LAN address)."
+    fi
+    echo "WARNING: LAN access is on and Crucible has no authentication - anyone who can reach it can use it. Only do this on networks you trust."
+}
+
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
@@ -292,8 +357,8 @@ _start_splash() {
 
     # Silenced: the only thing it has to say is "port taken", and uvicorn says
     # that far more clearly further down. Run it by hand to see the message.
-    python "$ROOT/scripts/splash_server.py" --parent-pid $$ --ready-file "$ready" \
-        >/dev/null 2>&1 &
+    python "$ROOT/scripts/splash_server.py" --host "$BIND_HOST" --parent-pid $$ \
+        --ready-file "$ready" >/dev/null 2>&1 &
     _SPLASH_PID=$!
 
     # Wait for the sentinel, not for a fixed delay: the server writes it from
@@ -631,6 +696,7 @@ cmd_start() {
     fi
 
     _activate
+    _resolve_bind_host
 
     echo ""
     echo "=== Crucible ==="
@@ -660,6 +726,7 @@ cmd_start() {
 
     echo ""
     echo "Starting server at http://localhost:8000"
+    _print_access 8000 start
     echo "Press Ctrl+C to stop."
     echo ""
 
@@ -675,7 +742,7 @@ cmd_start() {
     _stop_splash
 
     while true; do
-        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 || true
+        python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 || true
         if [ -f "$ROOT/.restart" ]; then
             rm -f "$ROOT/.restart"
             echo ""
@@ -840,10 +907,12 @@ cmd_dev() {
 
     _activate
     _require_node
+    _resolve_bind_host
     _migrate
 
     echo "Starting backend on :8000 and frontend dev server on :5173..."
     echo "Open http://localhost:5173 in your browser."
+    _print_access 5173 dev
     echo ""
 
     rm -f "$ROOT/.restart"
@@ -856,7 +925,7 @@ cmd_dev() {
         _uvicorn_pid=""
         trap 'kill "$_uvicorn_pid" 2>/dev/null' EXIT INT TERM
         while true; do
-            python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend &
+            python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 --reload --reload-dir backend &
             _uvicorn_pid=$!
             wait "$_uvicorn_pid" || true
             if [ -f "$ROOT/.restart" ]; then
@@ -873,7 +942,12 @@ cmd_dev() {
     trap 'kill "$BACKEND_PID" 2>/dev/null' EXIT INT TERM
 
     cd "$ROOT/frontend"
-    npm run dev
+    if _is_loopback_host "$BIND_HOST"; then
+        npm run dev
+    else
+        # Vite's own --host; its /api proxy still reaches uvicorn on localhost:8000.
+        npm run dev -- --host "$BIND_HOST"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -894,18 +968,19 @@ _menu() {
         1) cmd_setup  ;;
         2) cmd_start  ;;
         3) cmd_update ;;
-        *) echo "Invalid choice. Run: $0 <setup|start|update|dev>" >&2; exit 1 ;;
+        *) echo "Invalid choice. Run: $0 <setup|start|update|dev> [--lan]" >&2; exit 1 ;;
     esac
 }
 
 case "${1:-}" in
     setup)  cmd_setup  ;;
-    start)  cmd_start  ;;
+    start)  shift; _parse_run_args start "$@"; cmd_start ;;
     update) cmd_update ;;
-    dev)    cmd_dev    ;;
+    dev)    shift; _parse_run_args dev "$@"; cmd_dev ;;
     "")     _menu      ;;
     *)
-        echo "Usage: $0 <setup|start|update|dev>" >&2
+        echo "Usage: $0 <setup|start|update|dev> [--lan]" >&2
+        echo "  --lan  (start, dev) let other devices on your network connect - no authentication" >&2
         exit 1
         ;;
 esac

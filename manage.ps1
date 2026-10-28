@@ -1,14 +1,37 @@
 # manage.ps1 - Crucible launcher (Windows)
-# Usage: .\manage.ps1 <setup|start|update|dev>
+# Usage: .\manage.ps1 <setup|start|update|dev> [-Lan]
+#   -Lan (start, dev; --lan also accepted): listen on every network interface so
+#   other devices can connect. Off by default - the API has no authentication.
+#   CRUCIBLE_HOST in the environment or .env sets the bind address persistently;
+#   see scripts\bind_host.py.
 
+# Deliberately a simple (non-advanced) script - no [Parameter()]/[CmdletBinding()]
+# attributes - so an argument the binder does not recognise, such as the POSIX-style
+# --lan, lands in $args instead of failing the whole invocation.
 param(
-    [Parameter(Mandatory = $false, Position = 0)]
     [ValidateSet("setup", "start", "update", "dev")]
-    [string]$Command
+    [string]$Command,
+    [switch]$Lan
 )
 
 $ErrorActionPreference = "Stop"
 $ROOT = $PSScriptRoot
+
+# $args is per-scope: read it here, at script scope, before any function shadows it.
+$script:LanRequested = [bool]$Lan
+foreach ($extra in $args) {
+    if ("$extra" -eq "--lan") {
+        $script:LanRequested = $true
+    } else {
+        Write-Host "Unknown option: $extra" -ForegroundColor Red
+        Write-Host "Usage: .\manage.ps1 <setup|start|update|dev> [-Lan]" -ForegroundColor Red
+        exit 1
+    }
+}
+if ($script:LanRequested -and $Command -and $Command -ne "start" -and $Command -ne "dev") {
+    Write-Host "-Lan applies to start and dev only." -ForegroundColor Red
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -448,6 +471,68 @@ function Run-Migrations {
     Write-Host "  Migrations applied." -ForegroundColor Green
 }
 
+# --- Bind address ----------------------------------------------------------
+# The API has no authentication, so uvicorn (and the splash, and in dev Vite)
+# listen on loopback unless the user opts in: -Lan for one run, CRUCIBLE_HOST in
+# the environment or .env for good. scripts\bind_host.py owns that precedence -
+# this side only passes --lan through and acts on the answer (GPT-007).
+# Never name a variable $host here: it is PowerShell's read-only automatic $Host.
+$script:BindHost = "127.0.0.1"
+
+function Invoke-BindHostScript {
+    # Runs scripts\bind_host.py with the given extra arguments and returns its
+    # stdout lines. Preference dropped as elsewhere (PM-019): a redirected native
+    # stderr line must not become a terminating NativeCommandError.
+    param([string[]]$ExtraArgs)
+    $py = "$ROOT\venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { $py = "python" }
+    $bindArgs = @("$ROOT\scripts\bind_host.py")
+    if ($script:LanRequested) { $bindArgs += "--lan" }
+    if ($ExtraArgs) { $bindArgs += $ExtraArgs }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = @(& $py @bindArgs 2>$null | Where-Object { $_ -is [string] })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($code -ne 0) { return @() }
+    return $out
+}
+
+function Resolve-BindHost {
+    $out = @(Invoke-BindHostScript)
+    $resolved = ""
+    if ($out.Count -gt 0) { $resolved = ([string]$out[0]).Trim() }
+    if (-not $resolved) {
+        Write-Host "ERROR: could not resolve the bind address (scripts\bind_host.py failed)." -ForegroundColor Red
+        exit 1
+    }
+    $script:BindHost = $resolved
+}
+
+function Test-LoopbackHost {
+    param([string]$Name)
+    return ($Name -eq "localhost" -or $Name -eq "::1" -or $Name -eq "[::1]" -or $Name -like "127.*")
+}
+
+function Write-AccessInfo {
+    # $Port = the port people browse to, $CommandName = the command to suggest -Lan for.
+    param([int]$Port, [string]$CommandName)
+    if (Test-LoopbackHost $script:BindHost) {
+        Write-Host "LAN access is off (this machine only). For other devices: .\manage.ps1 $CommandName -Lan, or set CRUCIBLE_HOST=0.0.0.0 in .env." -ForegroundColor DarkGray
+        return
+    }
+    $urls = @(Invoke-BindHostScript -ExtraArgs @("--urls", "$Port") | Where-Object { "$_".Trim() -ne "" })
+    if ($urls.Count -gt 0) {
+        foreach ($url in $urls) { Write-Host "On your network: $("$url".Trim())" -ForegroundColor Green }
+    } else {
+        Write-Host "Listening on $($script:BindHost) (could not work out this machine's LAN address)." -ForegroundColor Green
+    }
+    Write-Host "WARNING: LAN access is on and Crucible has no authentication - anyone who can reach it can use it. Only do this on networks you trust." -ForegroundColor Yellow
+}
+
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
@@ -472,7 +557,7 @@ function Start-Splash {
 
     try {
         $script:SplashProcess = Start-Process -FilePath $py `
-            -ArgumentList @("`"$splash`"", "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
+            -ArgumentList @("`"$splash`"", "--host", $script:BindHost, "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
             -WindowStyle Hidden -PassThru
     } catch {
         $script:SplashProcess = $null
@@ -671,6 +756,7 @@ function Cmd-Start {
     }
 
     Activate-Venv
+    Resolve-BindHost
 
     Write-Host ""
     Write-Host "=== Crucible ===" -ForegroundColor Cyan
@@ -701,6 +787,7 @@ function Cmd-Start {
 
     Write-Host ""
     Write-Host "Starting server at http://localhost:8000" -ForegroundColor Green
+    Write-AccessInfo -Port 8000 -CommandName "start"
     Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
     Write-Host ""
 
@@ -711,7 +798,7 @@ function Cmd-Start {
     if (Test-Path "$ROOT\.shutdown") { Remove-Item "$ROOT\.shutdown" -Force }
 
     :restart_loop while ($true) {
-        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+        python -m uvicorn backend.main:app --host $script:BindHost --port 8000
         if (Test-Path "$ROOT\.restart") {
             Remove-Item "$ROOT\.restart" -Force
             Write-Host ""
@@ -907,6 +994,7 @@ function Cmd-Dev {
 
     Activate-Venv
     Assert-NodeVersion
+    Resolve-BindHost
 
     Push-Location "$ROOT\backend"
     python -m alembic upgrade head
@@ -914,16 +1002,17 @@ function Cmd-Dev {
 
     Write-Host "Starting backend on :8000 and frontend dev server on :5173..." -ForegroundColor Cyan
     Write-Host "Open http://localhost:5173 in your browser." -ForegroundColor Green
+    Write-AccessInfo -Port 5173 -CommandName "dev"
     Write-Host ""
 
     $backendJob = Start-Job -ScriptBlock {
-        param($root)
+        param($root, $bindHost)
         Set-Location $root
 
         if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
 
         :restart_loop while ($true) {
-            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port 8000 --reload --reload-dir backend
             if (Test-Path "$root\.restart") {
                 Remove-Item "$root\.restart" -Force
                 Write-Host ""
@@ -933,10 +1022,17 @@ function Cmd-Dev {
                 break restart_loop
             }
         }
-    } -ArgumentList $ROOT
+    } -ArgumentList $ROOT, $script:BindHost
 
     Push-Location "$ROOT\frontend"
-    npm run dev
+    if (Test-LoopbackHost $script:BindHost) {
+        npm run dev
+    } else {
+        # Vite's own --host; its /api proxy still reaches uvicorn on localhost:8000.
+        # node + vite.js directly rather than `npm run dev -- --host`: when npm
+        # resolves to npm.ps1, PowerShell consumes the bare `--` itself.
+        node "$ROOT\frontend\node_modules\vite\bin\vite.js" --host $script:BindHost
+    }
     Pop-Location
 
     Stop-Job $backendJob -ErrorAction SilentlyContinue
@@ -961,7 +1057,7 @@ if ($Command -eq "") {
         "2" { $Command = "start" }
         "3" { $Command = "update" }
         default {
-            Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev>" -ForegroundColor Red
+            Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev> [-Lan]" -ForegroundColor Red
             exit 1
         }
     }

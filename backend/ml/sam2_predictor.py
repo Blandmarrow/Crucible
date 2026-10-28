@@ -16,29 +16,41 @@ _SAM2_REPO = "facebook/sam2.1-hiera-large"
 _GDINO_REPO = "IDEA-Research/grounding-dino-tiny"
 
 # ---------------------------------------------------------------------------
-# Grounding DINO — lazy module-level cache (loaded on first text_prompt call)
+# Grounding DINO — lazily loaded into the sam2 registry entry
 # ---------------------------------------------------------------------------
 
+# Serialises the lazy load only. The weights live in the sam2 `ModelEntry.model`
+# dict, never in a module global: a global cache is invisible to
+# `ModelManager.unload`/`evict_all`, so "Unload all" used to report sam2 freed
+# while Grounding DINO stayed on the accelerator for the life of the process
+# (GPT-034). As a tenant of the entry dict, `_release_to_cpu` moves it with no
+# unload hook, and the sam2 lease covers it as well.
 _gdino_lock = threading.Lock()
-_gdino_cache: dict | None = None
 
 
-def _ensure_gdino():
-    """Load Grounding DINO on first call; cached for the process lifetime."""
-    global _gdino_cache
-    if _gdino_cache is not None:
-        return _gdino_cache
+def _ensure_gdino(model_dict: dict) -> dict:
+    """Load Grounding DINO into the sam2 entry dict on the first text-prompt call.
+
+    Writes `gdino_processor`, `gdino_device` and `gdino_model` into `model_dict`
+    (the sam2 `ModelEntry.model`) and returns it. Double-checked under
+    `_gdino_lock`; `gdino_model` is assigned last, so a reader that sees it also
+    sees the other two.
+    """
+    if model_dict.get("gdino_model") is not None:
+        return model_dict
     with _gdino_lock:
-        if _gdino_cache is not None:
-            return _gdino_cache
+        if model_dict.get("gdino_model") is not None:
+            return model_dict
         from transformers import AutoProcessor, GroundingDinoForObjectDetection
         logger.info("Loading Grounding DINO from %s", _GDINO_REPO)
         dev = _device.get_device()
         processor = AutoProcessor.from_pretrained(_GDINO_REPO)
         model = GroundingDinoForObjectDetection.from_pretrained(_GDINO_REPO).to(dev).eval()
-        _gdino_cache = {"model": model, "processor": processor, "device": dev}
+        model_dict["gdino_processor"] = processor
+        model_dict["gdino_device"] = dev
+        model_dict["gdino_model"] = model
         logger.info("Grounding DINO loaded.")
-    return _gdino_cache
+    return model_dict
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +78,22 @@ def _load_sam2_sync(job_id=None, loop=None, dataset_id=None):
 
     vram_after = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
     delta_mb = (vram_after - vram_before) // (1024 * 1024)
-    vram_used = max(900, delta_mb) if _device.is_gpu_available() else 0
+    # 1800, not SAM2's own ~900: the floor budgets the Grounding DINO that
+    # `_ensure_gdino` lazily adds to this same entry, matching `list_models`'
+    # forecast for sam2. The lazy load measures nothing of its own.
+    vram_used = max(1800, delta_mb) if _device.is_gpu_available() else 0
+    # Every tenant holding weights is a value of this dict, so
+    # `model_manager._release_to_cpu` reaches each one. Upstream
+    # `SAM2ImagePredictor` is not an `nn.Module` — its network is
+    # `predictor.model` — so `predictor.cpu()` raises and is swallowed, and the
+    # `sam2_model` tenant is what actually moves SAM2's weights. `getattr` keeps
+    # this tolerant of a predictor without one (`_release_to_cpu` skips a None).
     return ModelEntry(
-        {"predictor": predictor, "device": dev},
+        {
+            "predictor": predictor,
+            "sam2_model": getattr(predictor, "model", None),
+            "device": dev,
+        },
         None,
         vram_mb=vram_used,
     )
@@ -78,15 +103,26 @@ def _load_sam2_sync(job_id=None, loop=None, dataset_id=None):
 # Prediction modes
 # ---------------------------------------------------------------------------
 
-def _predict_text(img_np: np.ndarray, img_w: int, img_h: int, predictor, text_prompt: str, gdino_threshold: float = 0.35) -> list[dict]:
-    """Grounding DINO → pixel-space boxes → SAM2 mask per box."""
+def _predict_text(
+    img_np: np.ndarray,
+    img_w: int,
+    img_h: int,
+    model_dict: dict,
+    text_prompt: str,
+    gdino_threshold: float = 0.35,
+) -> list[dict]:
+    """Grounding DINO → pixel-space boxes → SAM2 mask per box.
+
+    Takes the whole sam2 entry dict rather than the predictor, because Grounding
+    DINO is lazily loaded into that dict (`_ensure_gdino`)."""
     import torch
     from PIL import Image as _Image
 
-    gdino = _ensure_gdino()
-    gdino_model = gdino["model"]
-    gdino_processor = gdino["processor"]
-    gdino_dev = gdino["device"]
+    predictor = model_dict["predictor"]
+    _ensure_gdino(model_dict)
+    gdino_model = model_dict["gdino_model"]
+    gdino_processor = model_dict["gdino_processor"]
+    gdino_dev = model_dict["gdino_device"]
 
     img_pil = _Image.fromarray(img_np)
 
@@ -242,7 +278,7 @@ def predict_sync(
         if not text_prompt.strip():
             logger.warning("SAM2 text_prompt mode called with empty prompt")
             return []
-        return _predict_text(img_np, img_w, img_h, predictor, text_prompt, gdino_threshold)
+        return _predict_text(img_np, img_w, img_h, model_entry, text_prompt, gdino_threshold)
 
     if mode == "points":
         if not point_prompts:

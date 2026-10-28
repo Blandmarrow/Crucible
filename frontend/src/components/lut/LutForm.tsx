@@ -1,14 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Palette } from "lucide-react";
 import toast from "react-hot-toast";
 import { lutApi } from "../../api/lut";
 import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
+import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
 interface Props {
   datasetId: string;
   imageIds?: string[];
+  /** Every dataset `imageIds` belong to, when they come from a gallery selection
+   *  that can span split-view panes. This job's backend takes any dataset's ids,
+   *  and TopBar refreshes only the job's own `dataset_id`, so the others are
+   *  refreshed here on completion, from the list as it stood at submit (GPT-028). */
+  selectionDatasetIds?: string[];
   subfolder?: string;
   qualityFlags?: string[];
   onSuccess?: () => void;
@@ -30,7 +36,7 @@ function resultToast(result: Record<string, unknown>) {
   else toast.success(msg);
 }
 
-export default function LutForm({ datasetId, imageIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
+export default function LutForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
   const qc = useQueryClient();
 
   const [lutPath, setLutPath] = useState("");
@@ -38,6 +44,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, qualityFlags, 
   const [replace, setReplace] = useState(false);
   const [jobLabel, setJobLabel] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
+  const submittedDatasetIds = useRef<string[]>([]);
 
   const jobProgress = useJobStore((s) => s.activeJobs.get(jobId ?? ""));
 
@@ -51,6 +58,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, qualityFlags, 
     if (!jobId || !jobProgress) return;
     if (jobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      for (const dsId of submittedDatasetIds.current) invalidateDatasetContentScope(qc, dsId);
       const finishedId = jobId;
       setJobId(null);
       jobsApi
@@ -76,6 +84,7 @@ export default function LutForm({ datasetId, imageIds, subfolder, qualityFlags, 
         replace,
         label: jobLabel.trim() || undefined,
       }),
+    onMutate: () => { submittedDatasetIds.current = selectionDatasetIds ?? []; },
     onSuccess: (data) => {
       if (data.total === 0) {
         toast("No images to process");

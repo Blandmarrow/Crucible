@@ -5,23 +5,6 @@ throwaway DB on :8199. The specs are in `docs/dev/gpt-review/probes/frontend/`; 
 Read `docs/dev/image-detail.md`, `docs/dev/gallery.md`, `docs/dev/frontend-jobs.md` and
 `docs/dev/styling.md` as relevant.
 
-## GPT-028 — [P2] A cross-dataset delete leaves the other split-view pane showing deleted images
-
-**Verdict:** CONFIRMED. NEW. Cross-dataset selection itself is intended (`docs/dev/gallery.md`,
-`selectionStore.datasetByImageId`).
-
-**Observed** (`gpt028.spec.ts`): with one image selected in each pane (A and B), Delete was run from
-A. The toast says "Deleted 2 images" and the API shows both deleted. B's pane still shows the tile
-and "1 images" 5 s later.
-
-**Where:** `SelectionToolbar.tsx:255-263` calls `invalidateDatasetContentScope(qc, datasetId)` for
-the initiating dataset only.
-
-**Fix notes.**
-- Capture every affected dataset id before clearing the selection, using `datasetByImageId`, and
-  invalidate each one.
-- Audit the other multi-dataset selection actions: move, copy, labels, captions and provenance.
-
 ## GPT-029 — [P3, GPT said P2] Bare modal overlays lack dialog semantics and keyboard containment
 
 **Verdict:** CONFIRMED, half known. `docs/dev/styling.md` acknowledges that SelectionToolbar's

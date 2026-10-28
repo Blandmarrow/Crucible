@@ -210,6 +210,22 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     }));
   }, [selectedIds, datasetByImageId, allDatasets, datasetId]);
 
+  // Every dataset the selection touches, plus this pane's own. A selection spans
+  // split-view panes, and the backends of delete, move-to-dataset and the four
+  // image-rewriting jobs act on any dataset's ids — so invalidating only
+  // `datasetId` left the other pane showing rows that were gone (GPT-028).
+  // Callers pass this as mutation *variables*, which fixes it at submit time:
+  // `clear()` empties `datasetByImageId`, and a recomputed list read after it
+  // would hold this pane alone.
+  const selectionDatasetIds = useMemo(() => {
+    const out = new Set<string>([datasetId]);
+    for (const id of selectedIds) {
+      const dsId = datasetByImageId.get(id);
+      if (dsId) out.add(dsId);
+    }
+    return [...out];
+  }, [selectedIds, datasetByImageId, datasetId]);
+
   const datasetBreakdown = datasetGroups.length > 0 ? (
     <div className="flex flex-wrap gap-1 mt-1.5">
       {datasetGroups.map(({ id, name, count: cnt, isCurrent }) => (
@@ -254,9 +270,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => imagesApi.batchDelete(ids),
-    onSuccess: (data) => {
-      invalidateDatasetContentScope(qc, datasetId);
+    mutationFn: (vars: { ids: string[]; datasetIds: string[] }) => imagesApi.batchDelete(vars.ids),
+    onSuccess: (data, vars) => {
+      for (const dsId of vars.datasetIds) invalidateDatasetContentScope(qc, dsId);
       clear();
       setShowDeleteConfirm(false);
       if (data.deleted > 0) toast.success(`Deleted ${data.deleted} image${data.deleted !== 1 ? "s" : ""}`);
@@ -325,24 +341,14 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   });
 
   const moveDatasetMutation = useMutation({
-    mutationFn: (params: { targetId: string; subfolder: string }) =>
+    mutationFn: (params: { targetId: string; subfolder: string; sourceDatasetIds: string[] }) =>
       imagesApi.batchMoveDataset({ image_ids: ids }, params.targetId, params.subfolder),
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
-      qc.invalidateQueries({ queryKey: ["images", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["subfolders", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
-      qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["score-values", data.target_dataset_id] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", data.target_dataset_id] });
+    onSuccess: (data, params) => {
+      // Rows left every source dataset (the selection can span several) and
+      // arrived in the target: both ends of the move change counts and listings.
+      for (const dsId of new Set([...params.sourceDatasetIds, data.target_dataset_id])) {
+        invalidateDatasetContentScope(qc, dsId);
+      }
       setShowMoveDataset(false);
       clear();
       toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to dataset`);
@@ -1178,6 +1184,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <UpscaleForm
               datasetId={datasetId}
               imageIds={ids}
+              selectionDatasetIds={selectionDatasetIds}
               onSuccess={() => setShowUpscale(false)}
               onCancel={() => setShowUpscale(false)}
             />
@@ -1196,6 +1203,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <CropToDetectionForm
               datasetId={datasetId}
               imageIds={ids}
+              selectionDatasetIds={selectionDatasetIds}
               onSuccess={() => setShowCropDetect(false)}
               onCancel={() => setShowCropDetect(false)}
             />
@@ -1214,6 +1222,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <InpaintForm
               datasetId={datasetId}
               imageIds={ids}
+              selectionDatasetIds={selectionDatasetIds}
               onSuccess={() => setShowInpaint(false)}
               onCancel={() => setShowInpaint(false)}
             />
@@ -1262,6 +1271,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             <LutForm
               datasetId={datasetId}
               imageIds={ids}
+              selectionDatasetIds={selectionDatasetIds}
               onSuccess={() => setShowLut(false)}
               onCancel={() => setShowLut(false)}
             />
@@ -1275,7 +1285,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           message="This will permanently delete the selected images and their captions."
           confirmLabel="Delete All"
           danger
-          onConfirm={() => deleteMutation.mutate()}
+          onConfirm={() => deleteMutation.mutate({ ids, datasetIds: selectionDatasetIds })}
           onCancel={() => setShowDeleteConfirm(false)}
         />
       )}
@@ -1310,7 +1320,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           count={count}
           currentDatasetId={datasetId}
           isPending={moveDatasetMutation.isPending}
-          onConfirm={(targetId, subfolder) => moveDatasetMutation.mutate({ targetId, subfolder })}
+          onConfirm={(targetId, subfolder) =>
+            moveDatasetMutation.mutate({ targetId, subfolder, sourceDatasetIds: selectionDatasetIds })}
           onClose={() => setShowMoveDataset(false)}
           sourceInfo={datasetBreakdown}
         />

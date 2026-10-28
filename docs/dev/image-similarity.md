@@ -206,14 +206,18 @@ The service half is in `backend/services/dataset_service.py` — it must be, to 
 unit-test runner in this repo**, so every degenerate input is handled defensively there and
 the shapes that produce them are generated from the backend side by
 `backend/tests/test_style_distribution_http.py` (one scored image → 21 identical
-breakpoints; three scores → repeated values).
+breakpoints; three scores → repeated values). `frontend/e2e/percentile.spec.ts` feeds the
+backend's tied shape through the real module: a node-only Playwright spec that imports
+`../src/utils/percentile` and never opens a page, so the module must stay free of anything
+but type imports and plain constant modules.
 
 | Case | `percentileOf` returns |
 |---|---|
 | unscored image, or quantiles not loaded (`length < 2`) | `null` → render nothing. A zero-length bar reads as "0th percentile", not "not measured" |
 | all scores identical, including `scored === 1` | `null` → fall back to the raw cosine, no meter |
-| fewer scored images than breakpoints | repeated breakpoints; the `span > 0` guard answers with the low edge of the flat run |
-| score below q0 / above q100 | clamp to 0 / 100 |
+| score equal to an interior run of repeated breakpoints (fewer scored images than breakpoints) | the run's **low edge**: equality is tested first, against the first breakpoint *at or above* the score. Over `[0, 0.5, 1]`, 0.5 fills q30–q70 and reads 30. Walking to the first breakpoint *above* the score lands on the high edge (70), which is what the code did until GPT-019 |
+| score strictly between two breakpoints | linear interpolation between them; the span is never zero there |
+| score at or below q0 / at or above q100 | clamp to 0 / 100. The clamp wins over the low-edge rule, so the dataset's maximum reads 100 even when it fills a flat run at the top |
 
 `styleMatchTitle({percentile, score, run, stale})` is one shared tooltip builder so the card
 and the detail block cannot drift on the caveats (mode, reference count, mixed scope, stale

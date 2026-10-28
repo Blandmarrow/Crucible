@@ -12,9 +12,12 @@ import { styleModeLabel } from "../constants/styleModes";
  * dataset's own scores is mode-invariant by construction.
  *
  * There is **no frontend unit-test runner in this repo**, so every degenerate
- * input is handled defensively here and the shapes that produce them are
- * generated from the backend side by `backend/tests/test_style_distribution_http.py`
- * (one scored image → 21 identical breakpoints; three scores → repeated values).
+ * input is handled defensively here. The shapes that produce them are generated
+ * from the backend side by `backend/tests/test_style_distribution_http.py` (one
+ * scored image → 21 identical breakpoints; three scores → repeated values), and
+ * `frontend/e2e/percentile.spec.ts` feeds those shapes through this module in
+ * node — a Playwright spec with no page. That spec imports this file directly,
+ * so keep it free of anything but type imports and plain constant modules.
  */
 
 /**
@@ -35,9 +38,12 @@ import { styleModeLabel } from "../constants/styleModes";
  * "0th percentile", not as "not measured".
  *
  * Repeated breakpoints are normal whenever fewer images are scored than there are
- * breakpoints. The answer for a score inside a flat run is that run's **low
- * edge**, which is what walking forward to the first breakpoint above the score
- * gives. Scores outside the range clamp to 0 and 100.
+ * breakpoints. A score equal to an interior flat run answers with that run's
+ * **low edge** — the first breakpoint at or above the score, not the first one
+ * above it, which would be the run's high edge. Scores at or outside the ends
+ * clamp to 0 and 100, and the clamp wins over the low-edge rule: the dataset's
+ * maximum reads as the 100th percentile even when it fills a flat run at the
+ * top, which is the backend's own contract for q100 (`_style_quantiles`).
  */
 export function percentileOf(score: number | null | undefined, quantiles: number[] | undefined): number | null {
   if (score == null || !Number.isFinite(score)) return null;
@@ -51,16 +57,20 @@ export function percentileOf(score: number | null | undefined, quantiles: number
   if (score <= lo) return 0;
   if (score >= hi) return 100;
 
-  for (let i = 1; i < quantiles.length; i++) {
-    if (score < quantiles[i]) {
-      const span = quantiles[i] - quantiles[i - 1];
-      // A flat run has span 0 and no interior to interpolate: the score sits at
-      // the run's low edge, which is the previous breakpoint's percentile.
-      const frac = span > 0 ? (score - quantiles[i - 1]) / span : 0;
-      return Math.max(0, Math.min(100, (i - 1 + frac) * step));
-    }
-  }
-  return 100;
+  // The first breakpoint at or above the score. `score > lo` makes it index 1 or
+  // later, and `score < hi` guarantees one exists.
+  let i = 1;
+  while (quantiles[i] < score) i++;
+
+  // Equality is decided explicitly, and first: a score equal to a run of
+  // repeated breakpoints sits at that run's low edge, which is `i` itself
+  // (`quantiles[i - 1]` is strictly below it). Walking to the first breakpoint
+  // *above* the score instead lands on the run's high edge — the GPT-019 bug.
+  if (quantiles[i] === score) return i * step;
+
+  // Strictly between two breakpoints, so the span is never zero.
+  const frac = (score - quantiles[i - 1]) / (quantiles[i] - quantiles[i - 1]);
+  return (i - 1 + frac) * step;
 }
 
 /**

@@ -125,7 +125,8 @@ def test_one_scored_image_yields_21_identical_breakpoints(tmp_path):
 
 def test_three_scores_yield_repeated_breakpoints(tmp_path):
     """Fewer scored images than breakpoints is normal, not an error — the array
-    repeats, and the client answers with the low edge of each flat run."""
+    repeats, and the client answers with the low edge of each interior flat run
+    (`frontend/e2e/percentile.spec.ts` feeds it the same shape, from `[0, 0.5, 1]`)."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await _scored_dataset(env, [0.1, 0.5, 0.9])

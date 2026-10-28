@@ -330,9 +330,12 @@ def _style_quantiles(sorted_vals: list[float]) -> list[float]:
     change for one of them.
 
     Fewer scored images than breakpoints is normal and yields repeated values; the
-    client's percentile lookup is written for exactly that (it answers with the low
-    edge of a flat run) and for the all-identical case, where every breakpoint is
-    the same number and the meter is suppressed entirely.
+    client's percentile lookup is written for exactly that and for the
+    all-identical case, where every breakpoint is the same number and the meter is
+    suppressed entirely. A score equal to an interior flat run answers with the
+    run's low edge (over ``[0, 0.5, 1]``, 0.5 fills q30–q70 and reads 30), while
+    the q0/q100 clamp above wins at the ends. `frontend/e2e/percentile.spec.ts`
+    pins that against this function's own output shape.
     """
     if not sorted_vals:
         return []

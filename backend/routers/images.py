@@ -217,6 +217,8 @@ def _apply_image_filters(q, f: ImageFilterParams):
             q = q.where(score_col >= f.min_score)
         if f.max_score is not None:
             q = q.where(score_col <= f.max_score)
+        if f.max_score_lt is not None:
+            q = q.where(score_col < f.max_score_lt)
 
     if f.quality_flag:
         q = q.where(Image.quality_flags[f.quality_flag].as_boolean() == True)  # noqa: E712

@@ -139,6 +139,12 @@ class ImageFilterParams(BaseModel):
     search: str | None = None
     min_score: float | None = None
     max_score: float | None = None
+    # Exclusive twin of `max_score` (`score < max_score_lt`), for histogram
+    # click-through: the stats buckets are half-open, so sending a bucket's upper
+    # edge as the inclusive `max_score` also matched every value sitting exactly
+    # on that edge — which the stats put in the *next* bucket (GPT-018).
+    # `max_score` stays inclusive; users type it by hand.
+    max_score_lt: float | None = None
     score_field: str | None = None
     score_is_null: bool | None = None
     quality_flag: str | None = None

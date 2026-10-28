@@ -88,9 +88,14 @@ function flagHint(key: string, t: Thresholds): string {
   }
 }
 
+// Every bar click-through below mirrors the server's half-open buckets
+// (`dataset_service._bucket`: `edge <= val < next_edge`), so an upper edge is
+// sent as the *exclusive* `max_score_lt`, never the inclusive `max_score` — a
+// value sitting exactly on an edge is counted in the next bucket up, and the
+// inclusive bound listed it under both bars (GPT-018).
 const AESTHETIC_FILTER_MAP: Record<string, FilterParams> = {
-  "low (0-4)":   { min_score: 0, max_score: 4, sort: "aesthetic_score", order: "desc" },
-  "mid (4-6)":   { min_score: 4, max_score: 6, sort: "aesthetic_score", order: "desc" },
+  "low (0-4)":   { min_score: 0, max_score_lt: 4, sort: "aesthetic_score", order: "desc" },
+  "mid (4-6)":   { min_score: 4, max_score_lt: 6, sort: "aesthetic_score", order: "desc" },
   "high (6-10)": { min_score: 6, sort: "aesthetic_score", order: "desc" },
   "unscored":    { score_is_null: true, sort: "created_at", order: "desc" },
 };
@@ -134,7 +139,7 @@ function scoreEntries(
         filter: {
           score_field: field,
           min_score: i > 0 ? edges[i - 1] : undefined,
-          max_score: i < edges.length ? edges[i] : undefined,
+          max_score_lt: i < edges.length ? edges[i] : undefined,
           sort: field,
           order,
         },
@@ -162,12 +167,7 @@ function fsEntries(dist: Record<string, number>): ChartEntry[] {
     return {
       name,
       count: dist[name],
-      filter: {
-        file_size_min: i > 0 ? Math.round(FS_EDGES_MB[i - 1] * 1_048_576) : undefined,
-        file_size_max: i < FS_EDGES_MB.length ? Math.round(FS_EDGES_MB[i] * 1_048_576) : undefined,
-        sort: "file_size_bytes",
-        order: "asc" as const,
-      },
+      filter: mkFs(i > 0 ? FS_EDGES_MB[i - 1] : undefined, i < FS_EDGES_MB.length ? FS_EDGES_MB[i] : undefined),
     };
   });
 }
@@ -199,6 +199,12 @@ function arCoarseEntries(dist: Record<string, number>): ChartEntry[] {
   }));
 }
 
+// The watermark and style-similarity bins are `_watermark_bucket`'s ten tenths,
+// and the server folds 1.0 into the last one ("0.9–1.0"), so that bin's upper
+// edge must stay open or an exclusive `< 1.0` drops it — the `detScoreEntries`
+// rule below.
+const openTopBin = (hi: number): number | undefined => (isNaN(hi) || hi >= 1 ? undefined : hi);
+
 function wmEntries(dist: Record<string, number>): ChartEntry[] {
   return Object.entries(dist).map(([name, count]) => {
     const parts = name.split("–").map(Number);
@@ -208,7 +214,7 @@ function wmEntries(dist: Record<string, number>): ChartEntry[] {
       filter: {
         score_field: "watermark_score",
         min_score: isNaN(parts[0]) ? undefined : parts[0],
-        max_score: isNaN(parts[1]) ? undefined : parts[1],
+        max_score_lt: openTopBin(parts[1]),
         sort: "watermark_score",
         order: "desc" as const,
       },
@@ -225,7 +231,7 @@ function ssimEntries(dist: Record<string, number>): ChartEntry[] {
       filter: {
         score_field: "style_similarity_score",
         min_score: isNaN(parts[0]) ? undefined : parts[0],
-        max_score: isNaN(parts[1]) ? undefined : parts[1],
+        max_score_lt: openTopBin(parts[1]),
         sort: "style_similarity_score",
         order: "desc" as const,
       },
@@ -236,14 +242,25 @@ function ssimEntries(dist: Record<string, number>): ChartEntry[] {
 // ─── Rebucketing helpers ─────────────────────────────────────────────────────
 type FB = (min: number | undefined, max: number | undefined) => FilterParams | undefined;
 
+// `rebucketValues` places with `v < edge` and leaves its top bucket open (`max`
+// undefined), so the exclusive bound is exact here for every metric, including a
+// custom watermark edge of 1.
 const mkScore = (field: string, order: "asc" | "desc"): FB =>
-  (min, max) => ({ score_field: field, min_score: min, max_score: max, sort: field, order });
+  (min, max) => ({ score_field: field, min_score: min, max_score_lt: max, sort: field, order });
 
 const mkMp: FB = (min, max) => ({ mp_min: min, mp_max: max });
 
+// File size has no exclusive param, and needs none: a byte count is a whole
+// number, so the server's half-open `bytes / 1 MiB < edge` is exactly
+// `bytes <= ceil(edge × 1 MiB) - 1`, and its lower bound `>= edge` is
+// `bytes >= ceil(edge × 1 MiB)`. Both use `ceil`: `round` is off by one byte
+// under any edge whose byte count has a fraction below .5 (0.7 MB is 734003.2).
+// Scaling by 2^20 is exact in floating point, so this matches the server exactly.
+const mbEdgeBytes = (mb: number) => Math.ceil(mb * 1_048_576);
+
 const mkFs: FB = (min, max) => ({
-  file_size_min: min !== undefined ? Math.round(min * 1_048_576) : undefined,
-  file_size_max: max !== undefined ? Math.round(max * 1_048_576) : undefined,
+  file_size_min: min !== undefined ? mbEdgeBytes(min) : undefined,
+  file_size_max: max !== undefined ? mbEdgeBytes(max) - 1 : undefined,
   sort: "file_size_bytes",
   order: "asc",
 });

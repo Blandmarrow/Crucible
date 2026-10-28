@@ -7,6 +7,8 @@ TMP="$(mktemp -d)"
 export DATABASE_URL="sqlite+aiosqlite:///${TMP}/e2e.db"   # abs path ⇒ 4 slashes total
 export DATA_DIR="${TMP}/data"
 export DATASETS_DIR="${TMP}/data/datasets"                # does NOT derive from DATA_DIR
+# stats.spec.ts finds the DB from a dataset's folder_path (three levels up), to
+# seed scores no route writes; moving either path breaks it loudly, not silently.
 # Works both locally (venv) and in CI (system pip); the guard makes the source optional.
 [ -f "${ROOT}/venv/bin/activate" ] && source "${ROOT}/venv/bin/activate"
 [ -f "${ROOT}/frontend/dist/index.html" ] || { echo "frontend/dist missing — run npm run build" >&2; exit 1; }

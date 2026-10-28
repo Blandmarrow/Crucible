@@ -95,6 +95,27 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      # manage.ps1 has no other check anywhere: Linux CI has no PowerShell. Parse it
+      # under both hosts users launch it with — Windows PowerShell 5.1 (what
+      # Crucible.bat starts) and PowerShell 7.
+      - name: Parse-check manage.ps1 (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $tokens = $null; $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\manage.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count) {
+            $errors | ForEach-Object { "::error file=manage.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)" }
+            exit 1
+          }
+      - name: Parse-check manage.ps1 (PowerShell 7)
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\manage.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count) {
+            $errors | ForEach-Object { "::error file=manage.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)" }
+            exit 1
+          }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

@@ -1,94 +1,47 @@
-# External review (GPT_Findings) — verified findings awaiting remediation
+# External review (GPT_Findings): one deferred item left
 
 An external review of commit `c685ab5` (run on native Windows, report `GPT_Findings.md`, not
 checked in) claimed 34 defects. Every claim was independently re-verified on 2026-10-17 in the
-Linux dev container, using throwaway databases only. **All 34 hold**: 29 were reproduced at
-runtime, 5 were confirmed by reading the code, and none were refuted. Fixed so far, on branch `fix/gpt-review`: 021, 027 and 015; then 025, 022, 023, 024 and the restore half of 016 (grouping (a), PM-026); then 012, 013, 014 and 030 (grouping (b), PM-027); then 009, 008, 011, 010 and the resize/crop half of 016 (grouping (d), PM-013's fourth amendment); then 003 and 005 (PM-028); then 017, 018, 019, 020, 028, 029, 031 and 035 (grouping (e)); then 032, 033 and 034 (grouping (g), PM-030).
-This folder is the handoff for the remediation sessions.
+Linux dev container, using throwaway databases only. **All 34 held**: 29 were reproduced at
+runtime, 5 were confirmed by reading the code, and none were refuted.
 
-**Lifecycle**: this folder is transient, like `docs/dev/roadmap/`. When a finding is fixed:
-1. Move any durable rationale into the owning `docs/dev/` topic file, and add a postmortem if
-   the bug merits one (`docs/dev/postmortems.md`).
-2. Turn its probe into a real regression test with **inverted** assertions (see below).
-3. Delete its entry here.
+**All 34 are fixed on branch `fix/gpt-review`**, except one deferred half of 007. The fixes, in
+the order they landed:
+- 021, 027 and 015.
+- 025, 022, 023, 024, and the restore half of 016 (grouping (a), PM-026).
+- 012, 013, 014 and 030 (grouping (b), PM-027).
+- 009, 008, 011, 010, and the resize/crop half of 016 (grouping (d), PM-013's fourth amendment).
+- 003 and 005 (PM-028).
+- 017, 018, 019, 020, 028, 029, 031 and 035 (grouping (e)).
+- 032, 033 and 034 (grouping (g), PM-030).
+- The final group:
+  - 007's request guard and its default to localhost-only binding (PM-031).
+  - 026: snapshots now mirror detections (PM-032).
+  - 001: the Node floor is 20.19 / 22.12.
+  - 002: `api_env` enforces foreign keys by default.
+  - 004: the test harnesses are portable, and a Windows backend job runs in CI.
 
-Delete the folder when every entry is gone. It sits in a subfolder deliberately: like
-`docs/dev/postmortems/`, `scripts/check_docs.py` globs `docs/dev/*.md` non-recursively, so files
-here carry no Documentation Map row and no word budget.
+**Lifecycle.** This folder is transient. What remains is a single deferred item:
 
-## Files
-
-| File | Findings |
+| File | Item |
 |---|---|
-| `docs/dev/gpt-review/versioning.md` | 026 |
-| `docs/dev/gpt-review/infra.md` | 001, 002, 004, 007 |
+| `docs/dev/gpt-review/infra.md` | 007 step 3: a shared token for LAN mode. Deferred by decision. |
 
-Each entry gives:
-- the claim
-- **our** verdict and severity, which differ from GPT's in places
-- what was observed
-- current code locations
-- the probe that reproduces it
-- known docs or decisions that bear on it
-- fix notes
+Delete the folder once that item is either built or explicitly dropped. Any durable rationale
+goes into `docs/dev/backend-infrastructure.md` first. The folder sits in a subfolder deliberately:
+like `docs/dev/postmortems/`, `scripts/check_docs.py` globs `docs/dev/*.md` non-recursively, so
+files here carry no Documentation Map row and no word budget.
 
-Fix notes give a direction, not a design; plan each fix against the code at the time.
-
-## Priority (our severity, not GPT's)
-
-| Pri | IDs |
-|---|---|
-| **P1** | None open. 021 and 027 are fixed on `fix/gpt-review`. |
-| P2 | 001 |
-| P3 | 026, 002, 004 |
-| Decision | 007: unauthenticated API on `0.0.0.0`. This is a deliberate LAN-access choice, so revisit it as policy rather than as a bug. |
-
-Suggested grouping for remediation branches:
-- **(a) Versioning integrity:** done — 025, 022, 023, 024 and the restore half of 016 (PM-026). 026 is left, pending a contract decision.
-- **(b) Job queue:** done — 012, 013, 014 and 030 (PM-027).
-- **(d) File-mutation ordering:** done — 009, 008, 011, 010 and the resize/crop half of 016 (PM-013's fourth amendment).
-- **(e) Small correctness items:** done — 017, 018, 019, 020, 028, 029, 031 and 035. Five new gaps
-  surfaced and were fixed alongside: the same zero-size 500 on crop (GPT-020's sibling), a
-  cross-dataset subfolder move that renamed files into the wrong dataset's folder, the File
-  size histogram showing only its first bar (client labels lacked the server's " MB"), an
-  invalid regex *replacement template* (the other half of GPT-031), and stale docs claiming
-  GalleryPage has a page-level Escape handler.
-- **(f) CI and tooling:** 001, 002, 004. 003+005 are done (PM-028).
-- **(g) ML lifetime:** done — 032, 034 and 033 (PM-030). One new gap surfaced and was fixed alongside:
-  detection's *Overwrite* deleted an image's existing detections even when inference failed.
-
-## Already known before the review
-
-Already known before the review:
-- **007**: deliberate, and recorded in project memory.
-- **026**: `docs/dev/bulk-image-jobs.md`, "Known limitation: a version-restore … does not remap detections".
-
-## Probes
-
-`docs/dev/gpt-review/probes/` holds the verification probes. **Every probe asserts the buggy
-behaviour**, so today they pass, and after a fix the matching probe *fails*. When fixing, port it
-into `backend/tests/` or `frontend/e2e/` with the assertions inverted, then delete the probe.
-
-Backend probes are named `probe_*.py`, so a default pytest run never collects them. Run them from
-the repo root with the venv active, in one shell:
-
-```bash
-source venv/bin/activate && python -m pytest docs/dev/gpt-review/probes/backend \
-  -o python_files='probe_*.py' -q -p no:cacheprovider     # 1 passes (probe_versioning, 026); 4 before grouping (g), 12 before (e), 23 before (d), 31 before (b), 38 before (a), 42 on 2026-10-17
-```
-
-They use `api_env(tmp_path, foreign_keys=True)` via `probes/backend/conftest.py`. Windows file locks
-are simulated with `PermissionError(winerror=32)`, which proves the code path, not the OS behaviour.
-
-No browser probes remain: grouping (e) ported the last five (018, 028, 029 ×2, 031) into
-`frontend/e2e/`, and `probes/frontend/` is gone.
+The verification probes are all gone. Each one was ported into `backend/tests/` or
+`frontend/e2e/` with its assertions inverted, then deleted.
 
 ## Not verified
 
-- Windows launch and path failures (004).
-- Real GPU, model and ComfyUI behaviour: the 032–034 fixes are tested mock-level only.
-- That upstream `SAM2ImagePredictor.model` is the network the `sam2_model` tenant assumes (`sam2` is
-  not installed in the container; the loader reads it with `getattr`, so a miss frees nothing but
-  breaks nothing).
-- GPT's own "blocked" gaps, which are outside this verification: import/rescan/move/copy failure
-  recovery, crash and power-loss interleavings, capacity, and dependency advisories.
+- **Windows launch behaviour of `manage.ps1`.** The Windows CI job runs only the backend suite,
+  plus a parse check of the script.
+- **Real GPU, model and ComfyUI behaviour.** The 032–034 fixes are tested at mock level only.
+- **The `sam2_model` tenant's assumption** that upstream `SAM2ImagePredictor.model` is the
+  network. `sam2` is not installed in the container. The loader reads the attribute with
+  `getattr`, so a miss frees nothing but breaks nothing.
+- **GPT's own "blocked" gaps,** which were outside this verification: import, rescan, move and
+  copy failure recovery; crash and power-loss interleavings; capacity; and dependency advisories.

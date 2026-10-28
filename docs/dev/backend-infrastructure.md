@@ -82,7 +82,10 @@ check (`docs/dev/styling.md`), only when a file it compares changes.
 mirrors `backend-tests`' installs under `shell: bash` and is **`continue-on-error: true` until
 it has run green once**; then that line comes out and it blocks like the Linux job. The
 workflow also carries `workflow_dispatch`, so it can be run on a branch from the Actions tab
-before a PR exists. Tests that need a real symlink carry `conftest.needs_symlinks`
+before a PR exists. Its first two steps parse `manage.ps1` under Windows PowerShell 5.1 and
+PowerShell 7 (`Parser::ParseFile`, failing on any error); nothing else in CI can, since the Linux
+runners have no PowerShell. Those two steps sit under the same `continue-on-error` and do not
+run the script. Tests that need a real symlink carry `conftest.needs_symlinks`
 (`docs/dev/video-tests.md` § cv2 in CI, and the skip convention).
 
 ### SSE progress

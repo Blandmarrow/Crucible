@@ -509,7 +509,7 @@ utilities → `docs/dev/shared-utilities.md`.
 - **Why here:** the file is two subsystems: what wraps every request (middleware, the SPA
   catch-all, the exception handlers, the shutdown/restart routes) and the job queue
   (shutdown grace, cancellation, SSE, retention, `GET /jobs`). It tripped the budget when the
-  request guard landed (GPT-007). The seam leaves ~1,650 words in the new file and ~1,890
+  request guard landed (GPT-007). The seam leaves ~1,650 words in the new file and ~1,940
   behind, both under the ~2,100 target. § CI workflows stays; it is the odd one out either way.
 - **Watch for:** § Server control endpoints and § Shutdown: stopping the job queue point at
   each other — the restart loop calls `JobQueue.stop()` — so both need a cross-file pointer.

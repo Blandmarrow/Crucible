@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { captionsApi, type BulkEditRequest } from "../../api/captions";
 import { FLAG_OPTIONS } from "../../constants/flags";
+import { apiErrorDetail } from "../../utils/apiError";
 
 type Operation = BulkEditRequest["operation"];
 
@@ -68,7 +69,12 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
         toast.success(`Updated ${data.affected} caption${data.affected !== 1 ? "s" : ""}`);
       }
     },
-    onError: () => toast.error("Bulk edit failed"),
+    // The server's reason, not a fixed string: an invalid regex is a 400 reading
+    // "Invalid regex: …" (it used to be a 200 toasted as "No captions matched"),
+    // and a runaway one a 408. Nothing here closes or clears — the toolbar's
+    // close-and-clear runs only from `onSuccess` — so the pattern and the
+    // selection both survive for the user to fix the typo (GPT-031).
+    onError: (err) => toast.error(apiErrorDetail(err, "Bulk edit failed")),
   });
 
   const canSubmit = !disabled && !mutation.isPending && text.trim().length > 0;

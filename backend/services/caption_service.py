@@ -106,10 +106,10 @@ async def bulk_edit_captions(
     # Regex remove/find_replace: `regex` bounds a catastrophic pattern from inside the
     # engine and releases the GIL, so the thread offload is real concurrency.
     if use_regex and operation in ("remove", "find_replace"):
-        try:
-            compiled = compile_user_regex(text)
-        except regex_error:
-            return {"affected": 0, "skipped": len(images)}
+        # An invalid pattern raises `regex_error` to the router, which answers 400.
+        # Swallowing it here reported "nothing matched" for a pattern that never
+        # ran (GPT-031), indistinguishable from a valid one that matched nothing.
+        compiled = compile_user_regex(text)
 
         repl = "" if operation == "remove" else replacement
         items = [(img.id, img.caption_text or "") for img in images]
@@ -203,10 +203,8 @@ async def find_replace_captions(
     updated = 0
 
     if use_regex:
-        try:
-            compiled = compile_user_regex(find)
-        except regex_error:
-            return 0
+        # Raises `regex_error` on an invalid pattern; the router answers 400.
+        compiled = compile_user_regex(find)
 
         items = [(img.id, img.caption_text or "") for img in images]
 

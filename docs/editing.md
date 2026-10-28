@@ -18,7 +18,7 @@ Bulk score, upscale, LUT, detect, detection-crop, watermark-removal, thumbnail r
 - **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM 2.1 / SAM 3 text-prompt segmentation on the selection
 - **Crop to detected subject** — batch-crop selected images to their detection boxes with padding and aspect-ratio snap → [details](detection.md#crop-to-detected-subject)
 - **Remove watermark** (the **Remove WM** button) — paint the selection's detected regions out of the images entirely, instead of cropping them off → [details](#watermark-removal)
-- **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection
+- **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection. A pattern that is not a valid regular expression is reported as **Invalid regex: …** and changes nothing; the dialog stays open with your pattern and selection so you can fix it. "No captions matched" only ever means a valid pattern found nothing
 - **Merge tags** — drop redundant tags within each selected caption (e.g. `tail` when `long tail` is present) and collapse exact duplicates; also available per-image from the detail view → [details](tag-consolidation.md)
 - **Set source/license** — write source name, source URL, license, and attribution across the selection. Each field has its own mode: **Keep** (leave it alone), **Set** (write this value), or **Inherit** (clear it so the image follows its dataset default) → [details](provenance.md)
 - **Re-extract frames** — re-cut selected video frames from their source at full resolution, replacing the triage-sized files in place → [details](video.md)

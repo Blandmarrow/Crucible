@@ -4,9 +4,11 @@ Pure service layer: no DB access, no HTTP routing. The job worker in
 routers/comfy.py drives ComfyClient per row; patch_workflow applies a row's
 pinned-parameter values onto a deep copy of the plan's API-format workflow.
 """
+import asyncio
 import copy
 import logging
 import random
+from dataclasses import dataclass
 
 import httpx
 
@@ -21,27 +23,69 @@ PER_ROW_TIMEOUT_S = 1800.0
 # Consecutive connection failures before the whole run is aborted (server down).
 MAX_CONSECUTIVE_CONNECT_ERRORS = 3
 
+# How long cancel_prompt keeps re-reading /queue to confirm our prompt is gone,
+# and how often. Module constants, read at call time, so tests can shrink them.
+CANCEL_CONFIRM_WINDOW_S = 5.0
+CANCEL_CONFIRM_INTERVAL_S = 0.5
+
+# Per-request timeout for the queue-cleanup calls (GET/POST /queue, /interrupt).
+_CLEANUP_TIMEOUT = 5.0
+
 
 class ComfyRowError(Exception):
     """Per-row failure (bad workflow patch, ComfyUI rejection, no outputs, timeout)."""
 
 
-class ComfyClient:
-    """Thin async client for ComfyUI's native HTTP API."""
+@dataclass(frozen=True)
+class QueueItem:
+    """One entry of ComfyUI's GET /queue: the prompt id and the submitting client_id."""
 
-    def __init__(self, base_url: str):
+    prompt_id: str
+    client_id: str | None
+
+
+@dataclass(frozen=True)
+class QueueState:
+    running: list[QueueItem]
+    pending: list[QueueItem]
+
+
+def _parse_queue_items(items) -> list[QueueItem]:
+    """Queue items are [number, prompt_id, prompt, extra_data, outputs]; extra_data
+    carries the submitting client_id. Malformed entries are skipped."""
+    out: list[QueueItem] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) < 2 or not item[1]:
+            continue
+        extra = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
+        cid = extra.get("client_id")
+        out.append(QueueItem(prompt_id=str(item[1]), client_id=str(cid) if cid else None))
+    return out
+
+
+class ComfyClient:
+    """Thin async client for ComfyUI's native HTTP API.
+
+    `transport` is handed to every httpx.AsyncClient the methods open (tests pass
+    an httpx.MockTransport); None means httpx's default network transport.
+    """
+
+    def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
+        self._transport = transport
 
     async def ping(self) -> dict:
         """GET /system_stats — raises httpx errors on failure."""
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, transport=self._transport) as client:
             resp = await client.get(f"{self.base_url}/system_stats")
             resp.raise_for_status()
             return resp.json()
 
     async def submit(self, workflow: dict, client_id: str) -> str:
         """POST /prompt — returns the ComfyUI prompt_id, or raises ComfyRowError."""
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
             resp = await client.post(
                 f"{self.base_url}/prompt",
                 json={"prompt": workflow, "client_id": client_id},
@@ -57,7 +101,7 @@ class ComfyClient:
 
     async def poll_history(self, prompt_id: str) -> dict | None:
         """GET /history/{prompt_id} — the entry dict once execution finished, else None."""
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
             resp = await client.get(f"{self.base_url}/history/{prompt_id}")
             resp.raise_for_status()
             data = resp.json()
@@ -69,7 +113,7 @@ class ComfyClient:
         Returns the parsed snapshot body, or None when the bridge is not
         installed (route 404). Other HTTP errors raise.
         """
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, transport=self._transport) as client:
             resp = await client.get(f"{self.base_url}/crucible/active_workflow")
             if resp.status_code == 404:
                 return None
@@ -78,7 +122,7 @@ class ComfyClient:
 
     async def last_history_entry(self) -> dict | None:
         """GET /history?max_items=1 — the newest queued entry, or None if empty."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, transport=self._transport) as client:
             resp = await client.get(f"{self.base_url}/history", params={"max_items": 1})
             resp.raise_for_status()
             data = resp.json()
@@ -88,7 +132,7 @@ class ComfyClient:
 
     async def fetch_image(self, filename: str, subfolder: str = "", type: str = "output") -> bytes:
         """GET /view — raw bytes of a generated image."""
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
             resp = await client.get(
                 f"{self.base_url}/view",
                 params={"filename": filename, "subfolder": subfolder, "type": type},
@@ -99,10 +143,107 @@ class ComfyClient:
     async def interrupt(self) -> None:
         """POST /interrupt — best effort, only affects the currently executing prompt."""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, transport=self._transport) as client:
                 await client.post(f"{self.base_url}/interrupt")
         except Exception:
             pass
+
+    async def _get_queue(self, client: httpx.AsyncClient) -> QueueState:
+        resp = await client.get(f"{self.base_url}/queue")
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError(f"unexpected /queue body: {data!r}"[:200])
+        return QueueState(
+            running=_parse_queue_items(data.get("queue_running")),
+            pending=_parse_queue_items(data.get("queue_pending")),
+        )
+
+    async def queue_state(self) -> QueueState:
+        """GET /queue — the running and pending prompts. Raises httpx errors."""
+        async with httpx.AsyncClient(timeout=_CLEANUP_TIMEOUT, transport=self._transport) as client:
+            return await self._get_queue(client)
+
+    async def cancel_prompt(self, prompt_id: str | None, client_id: str | None) -> str:
+        """Take *our* prompt out of ComfyUI — never anybody else's.
+
+        "Ours" is `prompt_id` plus every queue item whose extra_data client_id is
+        `client_id` (the job id we submit with), which also covers a cancel that
+        landed during submit, before we learned the prompt id:
+
+        1. GET /queue, then POST /queue {"delete": [...]} for `prompt_id` (always —
+           deleting an id that is not pending is a no-op) plus every pending item
+           of ours. Pending-only; never {"clear": true}.
+        2. Re-read /queue; for each of ours in queue_running, POST /interrupt
+           {"prompt_id": id}. Never a body-less interrupt: that is global and
+           kills whatever is executing, e.g. the user's own canvas prompt.
+        3. Keep re-reading /queue every CANCEL_CONFIRM_INTERVAL_S, for at most
+           CANCEL_CONFIRM_WINDOW_S, until none of ours is left (re-deleting, or
+           interrupting, anything of ours that moved in the meantime).
+
+        Returns, never raising for any of them:
+        "not_found"     — nothing of ours was queued or running;
+        "removed"       — ours was pending and has been deleted;
+        "interrupted"   — ours was running and stopped after a targeted interrupt;
+        "still_running" — ours could not be confirmed gone within the window
+                          (including a /queue that errors or returns garbage);
+        "unreachable"   — an httpx transport error (connect refused, timeout, ...).
+
+        Residual risk: a ComfyUI old enough to ignore the /interrupt body treats
+        it as a global interrupt. If our prompt finishes in the milliseconds
+        between the GET /queue that saw it running and the interrupt POST, that
+        interrupt lands on whatever ComfyUI runs next.
+        """
+        if not prompt_id and not client_id:
+            return "not_found"
+
+        def ours(item: QueueItem) -> bool:
+            return bool(
+                (prompt_id and item.prompt_id == prompt_id)
+                or (client_id and item.client_id == client_id)
+            )
+
+        loop = asyncio.get_running_loop()
+        try:
+            async with httpx.AsyncClient(timeout=_CLEANUP_TIMEOUT, transport=self._transport) as client:
+                state = await self._get_queue(client)
+                pending = [it.prompt_id for it in state.pending if ours(it)]
+                to_delete = list(dict.fromkeys(([prompt_id] if prompt_id else []) + pending))
+                if to_delete:
+                    await client.post(f"{self.base_url}/queue", json={"delete": to_delete})
+                removed = bool(pending)
+                interrupted: set[str] = set()
+                deadline = loop.time() + CANCEL_CONFIRM_WINDOW_S
+                while True:
+                    state = await self._get_queue(client)
+                    running = [it.prompt_id for it in state.running if ours(it)]
+                    pending = [it.prompt_id for it in state.pending if ours(it)]
+                    if not running and not pending:
+                        if interrupted:
+                            return "interrupted"
+                        return "removed" if removed else "not_found"
+                    if loop.time() >= deadline:
+                        logger.warning(
+                            "ComfyUI cleanup: still queued after %.1fs (running=%s pending=%s)",
+                            CANCEL_CONFIRM_WINDOW_S, running, pending,
+                        )
+                        return "still_running"
+                    if pending:
+                        await client.post(f"{self.base_url}/queue", json={"delete": pending})
+                        removed = True
+                    for pid in running:
+                        if pid not in interrupted:
+                            await client.post(f"{self.base_url}/interrupt", json={"prompt_id": pid})
+                            interrupted.add(pid)
+                    await asyncio.sleep(CANCEL_CONFIRM_INTERVAL_S)
+        except httpx.TransportError:
+            logger.warning("ComfyUI cleanup: unreachable at %s", self.base_url, exc_info=True)
+            return "unreachable"
+        except (httpx.HTTPStatusError, ValueError):
+            # /queue answered, but not with anything we can read: our prompt cannot
+            # be confirmed gone, so report the conservative outcome.
+            logger.warning("ComfyUI cleanup: could not read /queue at %s", self.base_url, exc_info=True)
+            return "still_running"
 
 
 def _format_node_errors(resp: httpx.Response) -> str:

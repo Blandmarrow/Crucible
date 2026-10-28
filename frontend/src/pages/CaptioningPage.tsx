@@ -529,6 +529,13 @@ export default function CaptioningPage() {
   const unloadMutation = useMutation({
     mutationFn: (modelId: string) => captioningApi.unloadModel(modelId),
     onSuccess: () => toast.success("Model unloaded"),
+    // A model a running caption job holds answers 409 naming it — surface that
+    // verbatim, since the button is reachable with a stale `isRunning` (a
+    // reload, or a second pane that never saw the run start).
+    onError: (e) => toast.error(apiErrorDetail(e, "Failed to unload model")),
+    // Re-read residency either way: the `loaded` flag gating the button is
+    // stale after a success, and a refused unload means it was stale before.
+    onSettled: () => qc.invalidateQueries({ queryKey: ["captioning-models"] }),
   });
 
   function buildStep1(): PipelineStep {
@@ -901,9 +908,13 @@ export default function CaptioningPage() {
                     <button
                       className="btn ghost sm"
                       style={{ fontSize: 10.5, alignSelf: "flex-start" }}
+                      // The job holds a lease on its model, so an unload mid-run
+                      // is refused with a 409 rather than failing the run; this
+                      // just stops offering a click that cannot succeed.
+                      disabled={isRunning || unloadMutation.isPending}
                       onClick={() => unloadMutation.mutate(selectedModel)}
                     >
-                      Unload model
+                      {unloadMutation.isPending ? "Unloading…" : "Unload model"}
                     </button>
                   )}
                 </div>

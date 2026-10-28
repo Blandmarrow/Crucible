@@ -165,6 +165,15 @@ and in `test_http_smoke_crud.py` / `test_conflict_paths_http.py` it would drop w
 unrelated sweeps. `test_video_frames.py` is guarded by **neither** — it is pure numpy
 against `video_frames.py`, which has no cv2 import at all.
 
+**The same convention covers the other platform gaps.** `conftest.py` defines `needs_cv2`,
+`needs_torch` and `needs_symlinks` side by side; the last skips a test that creates a real
+symlink where the account cannot (Windows without Developer Mode or elevation raises
+`OSError`). It probes by making a link once at collection, since no platform check predicts
+the answer. A test that only monkeypatches `is_symlink`/`is_junction` and creates no link
+does not take it. The `backend-tests-windows` job (`docs/dev/backend-infrastructure.md`
+§ CI workflows) installs the same opencv/scenedetect set as the Linux job, so the cv2 gate
+behaves identically there.
+
 Verify both worlds after touching this:
 `python -c "import sys; sys.modules['cv2']=None; import pytest; pytest.main(['backend/tests/','-q'])"`
 must report skips and zero failures or errors.

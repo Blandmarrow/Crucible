@@ -65,7 +65,11 @@ convention) before adding a test or a CI dependency there. **CI installs
 suite's collection path goes there, not into a workflow's install line. Torch is the one
 dependency that will never arrive, so a test importing anything under `backend/ml/` past the
 pure-numpy modules carries `conftest.needs_torch` (the sibling of `needs_cv2`) — without it
-the module *errors* on the runner rather than skipping. Coverage is opt-in:
+the module *errors* on the runner rather than skipping; a test that creates a real symlink
+likewise carries `conftest.needs_symlinks` (Windows refuses one without privilege, and
+`backend-tests-windows` runs the suite there). `api_env` enforces foreign keys by default,
+as production does — pass `foreign_keys=False` only to plant a state the app cannot reach,
+with a comment saying why. Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
 CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
@@ -166,7 +170,7 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
 | `docs/dev/video.md` | **Start here for anything video** — its § Where things live table routes from a code path to whichever of the eleven sibling docs owns it. Also covers the `Video` model and `videos/` layout, poster stems and collisions, the three ingest paths, the two `Dataset` columns | ~2610 |
 | `docs/dev/video-endpoints.md` | Working on the `/videos` router, video rename/delete, or range serving — the twelve routes, `GET /capabilities`' declaration order, `frames-summary`, the delete ordering and the containment gates | ~1330 |
-| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the arc's test index, the four `mp4_*` fixtures and their constraints, branches no fixture reaches, cv2/scenedetect in CI, the skip convention | ~1720 |
+| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the arc's test index, the four `mp4_*` fixtures and their constraints, branches no fixture reaches, cv2/scenedetect in CI, the skip convention | ~1810 |
 | `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~2835 |
 | `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, the touched-flag guards, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2700 |
 | `docs/dev/video-extract-controls.md` | Working on the crop/trim controls or any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract | ~1590 |
@@ -190,7 +194,7 @@ words), and again if a row loses the cell, so refresh it after a substantial edi
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~1435 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2250 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — CSS tokens, `@layer components`, `CrucibleMark` drift, `ConfirmDialog`, `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, SSE, the job queue or job cancellation — production frontend serving, app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the CI workflows, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~2880 |
+| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, SSE, the job queue or job cancellation — production frontend serving, app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the CI workflows, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~3135 |
 | `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — WAL and per-connection pragmas, the FK inventory, virtual subfolders, the images/videos index inventories, UTC datetime serialization, the orphan-folder sweep, the drift check's `ACCEPTED_DRIFT`, `db_maintenance` rotation | ~1885 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~2685 |
 | `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |

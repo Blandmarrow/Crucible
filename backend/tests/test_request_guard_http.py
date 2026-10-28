@@ -1,7 +1,8 @@
 """The Host/Origin guard refuses other websites and rebound names (GPT-007).
 
 Driven through `backend.main.app`, so what is proven is the registered middleware
-stack — guard outside CORS — not the class in isolation. Requests the guard should
+stack, not the class in isolation (bar the WebSocket case, which the app has no route
+to reach). Requests the guard should
 *let through* are checked by their normal answer (200/201), which also shows the
 guard did not swallow them; requests it should refuse must 403 before any route runs.
 
@@ -18,7 +19,7 @@ import pytest
 
 import backend.main as main_mod
 from backend.config import settings
-from backend.request_guard import split_host_header
+from backend.request_guard import RequestGuardMiddleware, split_host_header
 from backend.tests.conftest import API, api_env, run
 
 DEV_ORIGIN = "http://localhost:5173"
@@ -137,11 +138,18 @@ def test_cross_site_and_same_origin_posts(tmp_path):
             )
             assert r.status_code == 403
 
-            # The Vite dev server: proxied with Host localhost:8000, Origin :5173.
+            # The Vite dev server: its proxy forwards the browser's own Host
+            # (changeOrigin: false), so Host and Origin agree and it is same-origin.
             r = await env.client.post(
-                url, json={"name": "g"}, headers={"Host": "localhost:8000", "Origin": DEV_ORIGIN},
+                url, json={"name": "g"}, headers={"Host": "localhost:5173", "Origin": DEV_ORIGIN},
             )
             assert r.status_code == 201, r.text
+            # ...and :5173 earns nothing beyond that. Whatever else listens there (any
+            # other project's Vite server, by default) is a foreign origin to :8000.
+            r = await env.client.post(
+                url, json={"name": "x"}, headers={"Host": "localhost:8000", "Origin": DEV_ORIGIN},
+            )
+            assert r.status_code == 403
 
             # No browser headers at all (curl, scripts, Playwright's request fixture).
             r = await env.client.post(url, json={"name": "h"})
@@ -149,7 +157,8 @@ def test_cross_site_and_same_origin_posts(tmp_path):
             r = await env.client.post(url, json={"name": "i"}, headers={"Sec-Fetch-Site": "same-origin"})
             assert r.status_code == 201, r.text
 
-            # Reads are not guarded by Origin: CORS already stops a foreign page reading them.
+            # Reads are not guarded by Origin: with no CORS headers, the browser's
+            # same-origin policy already stops a foreign page reading them.
             r = await env.client.get(url, headers={"Origin": "https://evil.example"})
             assert r.status_code == 200
 
@@ -158,18 +167,65 @@ def test_cross_site_and_same_origin_posts(tmp_path):
     run(scenario())
 
 
-def test_cors_preflight_from_the_dev_origin_is_still_answered():
+def test_no_origin_is_granted_cross_origin_reads():
+    """No CORS: no origin, the old dev allowlist included, may read a response."""
     async def scenario():
         async with _client() as c:
-            r = await c.options(f"{API}/datasets/", headers={
-                "Host": "localhost:8000",
-                "Origin": DEV_ORIGIN,
-                "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": "content-type",
-            })
-        assert r.status_code == 200
-        assert r.headers["access-control-allow-origin"] == DEV_ORIGIN
+            for origin in (DEV_ORIGIN, "https://evil.example"):
+                r = await c.get(f"{API}/health", headers={"Host": "localhost:8000", "Origin": origin})
+                assert r.status_code == 200
+                assert "access-control-allow-origin" not in r.headers
+                r = await c.options(f"{API}/datasets/", headers={
+                    "Host": "localhost:8000",
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                })
+                assert "access-control-allow-origin" not in r.headers
     run(scenario())
+
+
+def _ws_handshake(headers: dict[str, str]):
+    """Run one WebSocket handshake through the guard; -> (reached_app, messages sent)."""
+    reached: list[bool] = []
+    sent: list[dict] = []
+
+    async def inner(scope, receive, send):
+        reached.append(True)
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "websocket",
+        "path": "/ws",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+    }
+    run(RequestGuardMiddleware(inner)(scope, receive, send))
+    return bool(reached), sent
+
+
+def test_websocket_handshakes_get_both_checks():
+    """CORS never covered WebSockets, so the guard must: a refused handshake is closed
+    before accept (the server turns that into a 403), never handed to the app."""
+    for headers in (
+        {"Host": "evil.example"},
+        {"Host": "localhost:8000", "Origin": "https://evil.example"},
+        {"Host": "localhost:8000", "Origin": DEV_ORIGIN},
+        {"Host": "localhost:8000", "Origin": "null"},
+    ):
+        reached, sent = _ws_handshake(headers)
+        assert not reached, headers
+        assert sent and sent[0]["type"] == "websocket.close" and sent[0]["code"] == 1008, headers
+
+    for headers in (
+        {"Host": "localhost:8000", "Origin": "http://localhost:8000"},
+        {"Host": "localhost:8000"},                     # a non-browser client
+    ):
+        reached, sent = _ws_handshake(headers)
+        assert reached and not sent, headers
 
 
 def test_shutdown_and_restart_from_a_foreign_origin_do_nothing(_no_real_shutdown, tmp_path):

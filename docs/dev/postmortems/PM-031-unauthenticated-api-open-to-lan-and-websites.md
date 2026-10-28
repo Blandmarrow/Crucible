@@ -26,7 +26,10 @@ exposure must be an explicit, warned opt-in; (2) flag any state-changing route r
 without an Origin check, and do not accept CORS configuration as the answer to CSRF; (3) flag
 the absence of a Host allowlist, because loopback binding does not stop DNS rebinding. New
 middleware that must see every request has to be pure ASGI and outermost, or SSE and the SPA
-catch-all slip past it.
+catch-all slip past it. (4) Flag an origin allowlist that names a `localhost` port: it trusts
+whatever happens to listen there. The first version of this fix trusted `localhost:5173`, which
+by default is any project's Vite dev server; the review caught it and the guard became strictly
+same-origin, with CORS removed.
 
 ### Why it wasn't caught the first time
 

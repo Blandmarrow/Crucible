@@ -23,6 +23,17 @@ interfere with streaming responses — and the job progress bar is an SSE stream
 lives for the whole session. This class only inspects headers and either forwards the
 untouched `receive`/`send` or answers 403 itself.
 
+**Same-origin only — there is no origin allowlist, and no CORS.** Every page Crucible
+runs is served from the origin it calls: the built app from `:8000`, and the Vite dev
+server's pages from `:5173`, whose `/api` proxy forwards the browser's own `Host`
+(`changeOrigin: false`), so Host and Origin agree there too. An allowlisted
+`http://localhost:5173` would trust whatever else listens on that port — any other
+project's Vite dev server, by default — so it is deliberately absent.
+
+WebSocket handshakes get both checks as well (the Origin one regardless of method):
+CORS never applied to WebSockets, so the first WS route would otherwise be open to
+every website. There is none today; the guard is ahead of it.
+
 No DNS lookups, ever: the hostname set is `socket.gethostname()` plus string
 derivations of it, so a slow resolver cannot stall a request.
 """
@@ -34,11 +45,6 @@ import socket
 from urllib.parse import urlsplit
 
 from backend.config import settings
-
-# The browser origins the frontend is served from: the Vite dev server and the built
-# app. One list, shared by `CORSMiddleware` (which may let these *read* responses) and
-# this guard (which lets them *send* unsafe requests) — the two must never disagree.
-CORS_ALLOWED_ORIGINS: tuple[str, ...] = ("http://localhost:5173", "http://localhost:8000")
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # `same-site` too: ports are not part of a site, so any other localhost port — another
@@ -97,16 +103,11 @@ def _norm_port(port: int | None) -> int | None:
     return None if port in _DEFAULT_PORTS else port
 
 
-def _norm_origin(origin: str) -> str:
-    return origin.strip().lower().rstrip("/")
-
-
 class RequestGuardMiddleware:
     """Reject requests whose Host is not this machine, or whose Origin is foreign."""
 
-    def __init__(self, app, cors_origins: tuple[str, ...] = CORS_ALLOWED_ORIGINS) -> None:
+    def __init__(self, app) -> None:
         self.app = app
-        self._cors_origins = frozenset(_norm_origin(o) for o in cors_origins)
         own = _norm_host(socket.gethostname() or "")
         names = {"localhost"}
         if own:
@@ -140,7 +141,8 @@ class RequestGuardMiddleware:
         )
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] != "http":
+        kind = scope["type"]
+        if kind not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
 
@@ -154,7 +156,7 @@ class RequestGuardMiddleware:
         if host_header is not None and host_header.strip():
             parsed_host = split_host_header(host_header)
             if parsed_host is None or not self.host_allowed(parsed_host[0]):
-                await _forbid(send, (
+                await _forbid(kind, receive, send, (
                     f"Host '{host_header.strip()}' is not allowed. Crucible only answers to "
                     "this machine's IP addresses, localhost and its own hostname; to reach "
                     "it under another name, add that name to CRUCIBLE_ALLOWED_HOSTS in .env "
@@ -162,10 +164,10 @@ class RequestGuardMiddleware:
                 ))
                 return
 
-        if scope.get("method", "GET").upper() in _UNSAFE_METHODS:
+        if kind == "websocket" or scope.get("method", "GET").upper() in _UNSAFE_METHODS:
             reason = self._origin_rejection(headers, parsed_host)
             if reason is not None:
-                await _forbid(send, reason)
+                await _forbid(kind, receive, send, reason)
                 return
 
         await self.app(scope, receive, send)
@@ -185,8 +187,6 @@ class RequestGuardMiddleware:
         origin = origin.strip()
         if origin.lower() == "null":
             return "Request from an opaque origin (Origin: null) refused."
-        if _norm_origin(origin) in self._cors_origins:
-            return None
         try:
             parts = urlsplit(origin)
             o_host, o_port = parts.hostname, parts.port
@@ -201,7 +201,13 @@ class RequestGuardMiddleware:
         )
 
 
-async def _forbid(send, detail: str) -> None:
+async def _forbid(kind: str, receive, send, detail: str) -> None:
+    if kind == "websocket":
+        # Closing before `websocket.accept` makes the server answer the handshake with
+        # 403 (ASGI spec); the close must follow the client's `websocket.connect`.
+        await receive()
+        await send({"type": "websocket.close", "code": 1008, "reason": "forbidden"})
+        return
     body = json.dumps({"detail": detail}).encode("utf-8")
     await send({
         "type": "http.response.start",

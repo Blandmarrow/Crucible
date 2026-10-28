@@ -164,7 +164,7 @@ async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
     await job_queue.start()
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield ApiEnv(client=client, Session=Session, datasets_dir=datasets_dir)
     finally:
         # `stop()` is bounded (GPT-012): a job still in flight is asked to stop

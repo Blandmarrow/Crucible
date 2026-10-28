@@ -185,7 +185,7 @@ stripped on input (`.replace(/[\\/]/g, "")`) rather than rejected on submit, so 
 `a/b` yields `ab` and the control structurally cannot *move* a folder. Enter composes
 `parent ? parent + "/" + name : name`; empty, unchanged, `.` and `..` are ignored, which
 makes the endpoint's 400 branches unreachable from the UI. Escape cancels and
-`stopPropagation()`s (GalleryPage has a document-level Escape handler); blur cancels rather
+`stopPropagation()`s (defensive: GalleryPage has no Escape handler of its own); blur cancels rather
 than commits; there are no Cancel/Confirm buttons. `FileBrowserPage`'s `RenameInput` is
 **not** reused — the two contracts genuinely diverge on separator stripping, Escape
 propagation and blur-cancel.

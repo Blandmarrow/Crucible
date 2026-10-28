@@ -1515,7 +1515,7 @@ export default function GalleryPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRename(node);
                 if (e.key === "Escape") {
-                  // GalleryPage has a document-level Escape handler of its own.
+                  // Defensive: GalleryPage has no Escape handler of its own today.
                   e.stopPropagation();
                   setRenamingPath(null);
                 }

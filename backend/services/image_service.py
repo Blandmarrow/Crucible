@@ -413,6 +413,11 @@ def resize_image(
         new_w = int(orig_w * (height / orig_h)) if maintain_ar else orig_w
     else:
         raise ValueError("Provide width, height, or scale")
+    # Every branch above floors, so a positive request can still round a side
+    # to 0 (a 100x1 image at scale 0.5) and Pillow would raise. Keep a 1 px
+    # floor instead: the caller asked for a smaller image, and this is the
+    # smallest one there is (GPT-020).
+    new_w, new_h = max(1, new_w), max(1, new_h)
 
     resized = img.resize((new_w, new_h), resampler)
     img.close()

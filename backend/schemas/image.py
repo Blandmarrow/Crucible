@@ -212,9 +212,11 @@ class RenameImageRequest(BaseModel):
 
 
 class ImageResizeRequest(BaseModel):
-    width: int | None = None
-    height: int | None = None
-    scale: float | None = None
+    # gt=0: a zero or negative size is a 422 before the route's versioning hook
+    # runs, not a 500 from Pillow after it (GPT-020).
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    scale: float | None = Field(None, gt=0)
     maintain_ar: bool = True
     resample: str = "LANCZOS"
 
@@ -234,9 +236,10 @@ class ImageCropRequest(BaseModel):
 
 class BatchResizeRequest(BaseModel):
     image_ids: list[str]
-    width: int | None = None
-    height: int | None = None
-    scale: float | None = None
+    # gt=0, as on ImageResizeRequest (GPT-020).
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    scale: float | None = Field(None, gt=0)
     maintain_ar: bool = True
     label: str | None = None
 

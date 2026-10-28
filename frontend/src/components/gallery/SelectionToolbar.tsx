@@ -226,6 +226,19 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     return [...out];
   }, [selectedIds, datasetByImageId, datasetId]);
 
+  // The selection split by dataset, for the one endpoint that takes a single
+  // dataset's ids per request (move to subfolder). An id with no recorded dataset
+  // is attributed to this pane, the same fallback `selectionDatasetIds` uses.
+  const idsByDataset = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const id of selectedIds) {
+      const dsId = datasetByImageId.get(id) ?? datasetId;
+      const group = groups.get(dsId);
+      if (group) group.push(id); else groups.set(dsId, [id]);
+    }
+    return [...groups.entries()];
+  }, [selectedIds, datasetByImageId, datasetId]);
+
   const datasetBreakdown = datasetGroups.length > 0 ? (
     <div className="flex flex-wrap gap-1 mt-1.5">
       {datasetGroups.map(({ id, name, count: cnt, isCurrent }) => (
@@ -282,15 +295,27 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
     onError: (err) => toast.error(apiErrorDetail(err, "Delete failed")),
   });
 
+  // One request per dataset: the endpoint refuses a selection spanning several,
+  // because a subfolder is a per-dataset label and it used to rename every file
+  // into the first row's dataset folder. Sequential, so a failure stops before
+  // the next dataset rather than racing it; each dataset is refreshed either way.
   const moveSubfolderMutation = useMutation({
-    mutationFn: () => imagesApi.batchMoveSubfolder(
-      ids,
-      moveSubfolderTarget,
-      localStorage.getItem(SUBFOLDER_RENAME_KEY) !== "off",
-    ),
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    mutationFn: async (vars: { byDataset: [string, string[]][]; target: string }) => {
+      const rename = localStorage.getItem(SUBFOLDER_RENAME_KEY) !== "off";
+      const total = { moved: 0, failed: 0, subfolder: vars.target };
+      for (const [, groupIds] of vars.byDataset) {
+        const r = await imagesApi.batchMoveSubfolder(groupIds, vars.target, rename);
+        total.moved += r.moved;
+        total.failed += r.failed;
+        total.subfolder = r.subfolder;
+      }
+      return total;
+    },
+    onSuccess: (data, vars) => {
+      for (const [dsId] of vars.byDataset) {
+        qc.invalidateQueries({ queryKey: ["images", dsId] });
+        qc.invalidateQueries({ queryKey: ["subfolders", dsId] });
+      }
       setShowMoveSubfolder(false);
       clear();
       if (data.moved > 0) {
@@ -301,10 +326,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       }
     },
     // The server commits per image, so a request that failed partway (a DB error
-    // mid-loop) still moved the images before it: refresh on error too.
-    onError: (err) => {
-      qc.invalidateQueries({ queryKey: ["images", datasetId] });
-      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+    // mid-loop) still moved the images before it — and an earlier dataset's
+    // request may have completed: refresh on error too.
+    onError: (err, vars) => {
+      for (const [dsId] of vars.byDataset) {
+        qc.invalidateQueries({ queryKey: ["images", dsId] });
+        qc.invalidateQueries({ queryKey: ["subfolders", dsId] });
+      }
       toast.error(apiErrorDetail(err, "Move failed"));
     },
   });
@@ -1386,7 +1414,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <button className="btn-ghost" onClick={() => setShowMoveSubfolder(false)}>Cancel</button>
               <button
                 className="btn-primary"
-                onClick={() => moveSubfolderMutation.mutate()}
+                onClick={() => moveSubfolderMutation.mutate({ byDataset: idsByDataset, target: moveSubfolderTarget })}
                 disabled={moveSubfolderMutation.isPending}
               >
                 Move

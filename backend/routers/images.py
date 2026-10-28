@@ -2048,6 +2048,16 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
     rows = result.all()
     if not rows:
         raise HTTPException(404, "No matching images found")
+    # Everything below takes one dataset from rows[0]: its images folder, its
+    # filename set and its busy guard. A gallery selection can span split-view
+    # panes, and with rename_on_move a second dataset's files were renamed into
+    # the first one's folder while their rows kept their own dataset_id. A
+    # subfolder is a per-dataset label, so a mixed request has no single meaning:
+    # refuse it before touching anything. The toolbar sends one request per dataset.
+    if len({row.dataset_id for row in rows}) > 1:
+        raise HTTPException(
+            400, "These images belong to more than one dataset — move each dataset's images separately",
+        )
 
     dataset_id = rows[0].dataset_id
     ensure_not_busy(dataset_id)

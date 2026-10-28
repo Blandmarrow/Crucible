@@ -71,3 +71,27 @@ test('a cross-dataset move to a third dataset empties both source panes', async 
   await expect(left.getByTestId('gallery-tile')).toHaveCount(0)
   await expect(right.getByTestId('gallery-tile')).toHaveCount(0)
 })
+
+// `POST /images/batch/move-subfolder` used to take rows[0]'s dataset for every
+// row, renaming the other dataset's files into the first one's folder. It now
+// refuses a mixed request, so the toolbar sends one per dataset.
+test('a cross-dataset move to a subfolder moves each image within its own dataset', async ({ page, request }) => {
+  const stamp = Date.now()
+  const a = await createDatasetViaApi(request, `split-sf-A-${stamp}`)
+  const b = await createDatasetViaApi(request, `split-sf-B-${stamp}`)
+  await uploadViaApi(request, a.id, 'a1.png')
+  await uploadViaApi(request, b.id, 'b1.png')
+
+  const { left } = await splitWithBothSelected(page, a.id, b.id)
+  await left.getByRole('button', { name: 'Move to', exact: true }).click()
+  await page.getByPlaceholder(/characters\/poses/).fill('sorted')
+  await page.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect(page.getByText('Moved 2 images to "sorted"')).toBeVisible()
+
+  for (const ds of [a, b]) {
+    const rows = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].subfolder).toBe('sorted')
+    expect(rows[0].dataset_id).toBe(ds.id)
+  }
+})

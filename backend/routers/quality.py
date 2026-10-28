@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.ml.model_manager import model_manager
+from backend.ml.model_manager import ModelInUseError, model_manager
 from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
 from backend.models.style_run import REFERENCE_IDS_STORED_MAX
 from backend.services.image_delete import unlink_files_for_rows
@@ -226,9 +226,14 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     )
                     loaded_ids.add("aesthetic")
                     handle = entry.model  # the three-tenant {"clip","mlp","preprocess"} dict
-                aesthetic_scores = await score_images_batch(
-                    paths, handle, job_id=job_id, model=aesthetic_marker
-                )
+                # One lease per stage, taken with no `await` after the load and
+                # released when the stage ends — never one for the whole job, which
+                # would stop `_evict_lru` freeing this model while `dino` loads
+                # (GPT-032). Every lease is gone before the `finally` unloads.
+                with model_manager.lease(entry):
+                    aesthetic_scores = await score_images_batch(
+                        paths, handle, job_id=job_id, model=aesthetic_marker
+                    )
 
             technical_results = []
             if body.run_technical:
@@ -243,10 +248,11 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             if body.run_watermark:
                 entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("aesthetic")
-                watermark_results = await score_images_watermark(
-                    paths, entry.model, job_id=job_id,
-                    watermark_threshold=thresholds.watermark_threshold,
-                )
+                with model_manager.lease(entry):
+                    watermark_results = await score_images_watermark(
+                        paths, entry.model, job_id=job_id,
+                        watermark_threshold=thresholds.watermark_threshold,
+                    )
 
             clip_embeddings: list[bytes | None] = []
             dino_embeddings: list[bytes | None] = []
@@ -254,23 +260,26 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             if body.run_embeddings:
                 entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("aesthetic")
-                clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
+                with model_manager.lease(entry):
+                    clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
             if body.run_dino:
                 from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
                 dino_entry = await model_manager.load_dino(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("dino")
-                dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
-                if body.run_dino_layers:
-                    dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
+                with model_manager.lease(dino_entry):
+                    dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
+                    if body.run_dino_layers:
+                        dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
 
             nsfw_results: list[dict] = []
             if body.run_nsfw:
                 from backend.ml.nsfw_scorer import score_images_nsfw_batch
                 nsfw_entry = await model_manager.load_nsfw(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("nsfw")
-                nsfw_results = await score_images_nsfw_batch(
-                    paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
-                )
+                with model_manager.lease(nsfw_entry):
+                    nsfw_results = await score_images_nsfw_batch(
+                        paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
+                    )
 
             # Any of the *_results lists may be shorter than `ids` if the job was cancelled
             # mid-batch (scorers return partial results). Guard every indexed access with
@@ -389,23 +398,34 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             # Scoped to `loaded_ids`, never `evict_all()`: a Florence-2 or SAM2
             # someone loaded for other work is not this job's to evict.
             if thresholds.auto_unload_after_scoring and loaded_ids:
-                try:
-                    # Drop this frame's own references *first*. `unload` moves the
-                    # weights to CPU and then flushes the allocator, but the flush
-                    # only returns what nothing still holds — and these four names
-                    # are live locals right here in the `finally`, one of them
-                    # (`handle`) a second reference to `aesthetic`'s three-tenant
-                    # dict. Left bound, they kept ~3.5 GB resident past
-                    # `empty_cache()`; the frame then died with no second flush to
-                    # follow, so the process held the VRAM until it exited.
-                    # `_release_to_cpu` alone would fix the residency, but the
-                    # allocator still cannot hand back a live buffer, so both ends
-                    # are needed.
-                    entry = handle = dino_entry = nsfw_entry = None
-                    for mid in sorted(loaded_ids):
+                # Drop this frame's own references *first*. `unload` moves the
+                # weights to CPU and then flushes the allocator, but the flush
+                # only returns what nothing still holds — and these four names
+                # are live locals right here in the `finally`, one of them
+                # (`handle`) a second reference to `aesthetic`'s three-tenant
+                # dict. Left bound, they kept ~3.5 GB resident past
+                # `empty_cache()`; the frame then died with no second flush to
+                # follow, so the process held the VRAM until it exited.
+                # `_release_to_cpu` alone would fix the residency, but the
+                # allocator still cannot hand back a live buffer, so both ends
+                # are needed.
+                entry = handle = dino_entry = nsfw_entry = None
+                # Caught per id: this job's own leases are all released by now,
+                # but a concurrent holder (an embed-references request, another
+                # job) can still lease one of these, and a refusal for that id
+                # must not strand the others in VRAM.
+                for mid in sorted(loaded_ids):
+                    try:
                         await model_manager.unload(mid)
-                except Exception:
-                    logger.exception("Auto-unload after scoring failed for job %s", job_id)
+                    except ModelInUseError:
+                        logger.info(
+                            "Auto-unload after scoring: %s is leased elsewhere; "
+                            "leaving it resident (job %s)", mid, job_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Auto-unload of %s after scoring failed for job %s", mid, job_id
+                        )
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(images)}
@@ -440,12 +460,18 @@ async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
     and takes the per-model lock, so calling it for all four is safe; no id comes
     from the client, so there is nothing to validate.
 
-    **Refused while a scoring run is in flight.** `unload` calls `entry.model.cpu()`,
-    so pulling `dino` or an aesthetic model out from under a scorer running in the
-    executor thread is a device-mismatch `RuntimeError` and a failed job —
-    `ModelEntry.in_use` is never set, so nothing else stands in the way. The page's
-    own `isRunning` is not that guard: it knows only about a job *it* started, and
-    goes stale on a reload or in a second pane.
+    **Refused while a scoring run is in flight.** The scoring job leases each model
+    only for the stage that uses it (`ModelManager.lease`), so between stages a
+    model it loaded — and will auto-unload, or reload in a later stage — is
+    unleased; the job-level 409 keeps a run's models out of reach for its whole
+    life rather than only mid-stage. The page's own `isRunning` is not that guard:
+    it knows only about a job *it* started, and goes stale on a reload or in a
+    second pane.
+
+    **A leased model is skipped, not an error.** A concurrent embed-references
+    request or another job's lease makes `unload` raise `ModelInUseError`; that id
+    stays resident, is left out of `unloaded` and `freed_mb`, and is reported under
+    `in_use`, while every other id still unloads.
 
     `quality_score` is the exact scope, not a blunt any-job check: it is the only
     job type that loads anything in `SCORING_MODEL_IDS`. Style similarity reads
@@ -472,11 +498,17 @@ async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
         m for m in model_manager.list_models()
         if m["id"] in SCORING_MODEL_IDS and m["loaded"]
     ]
+    in_use: list[str] = []
     for mid in SCORING_MODEL_IDS:
-        await model_manager.unload(mid)
+        try:
+            await model_manager.unload(mid)
+        except ModelInUseError:
+            in_use.append(mid)
+    freed = [m for m in resident if m["id"] not in in_use]
     return {
-        "unloaded": [m["id"] for m in resident],
-        "freed_mb": sum(int(m["vram_mb"]) for m in resident),
+        "unloaded": [m["id"] for m in freed],
+        "freed_mb": sum(int(m["vram_mb"]) for m in freed),
+        "in_use": in_use,
     }
 
 
@@ -571,11 +603,14 @@ async def embed_references(files: list[UploadFile] = File(...)):
     entry = await model_manager.load_aesthetic()
     loop = asyncio.get_running_loop()
     embeddings = []
-    for f in files:
-        img_bytes = await f.read()
-        fn = functools.partial(extract_clip_embedding_from_bytes_sync, img_bytes, entry.model)
-        emb_bytes = await loop.run_in_executor(None, fn)
-        embeddings.append(base64.b64encode(emb_bytes).decode())
+    # Held for every file: a scoring job's auto-unload (or the Unload button)
+    # between two files would otherwise `del` the weights under the next one.
+    with model_manager.lease(entry):
+        for f in files:
+            img_bytes = await f.read()
+            fn = functools.partial(extract_clip_embedding_from_bytes_sync, img_bytes, entry.model)
+            emb_bytes = await loop.run_in_executor(None, fn)
+            embeddings.append(base64.b64encode(emb_bytes).decode())
     return {"embeddings": embeddings}
 
 

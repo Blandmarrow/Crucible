@@ -60,7 +60,8 @@ class ModelEntry:
         self.last_used = time.time()
         # Counted, not a flag: two holders (a job and an HTTP request, or two
         # nested scopes) must not have the first release clear the second's hold.
-        # Written only through `ModelManager.lease`, under `_sync_lock`.
+        # Written only through `ModelManager.lease` (or its two halves,
+        # `_acquire_locked`/`_release_lease`), under `_sync_lock`.
         self.leases = 0
         # Set once the entry leaves the registry (unload or LRU eviction). An
         # entry handed out by a loader can be evicted by an executor thread before
@@ -133,17 +134,32 @@ class ModelManager:
         under one.
         """
         with self._sync_lock:
-            if entry.released:
-                raise RuntimeError(
-                    "The model was unloaded before it could be used; run it again."
-                )
-            entry.leases += 1
+            self._acquire_locked(entry)
         try:
             yield entry
         finally:
-            with self._sync_lock:
-                entry.leases -= 1
-                entry.last_used = time.time()
+            self._release_lease(entry)
+
+    def _acquire_locked(self, entry: ModelEntry) -> None:
+        """Take a lease on `entry`; the caller must already hold `_sync_lock`.
+
+        For an executor-thread loader that looks an entry up (or inserts it) under
+        `_sync_lock` and has to lease it before the lock drops — `lease` takes the
+        lock itself, and a `threading.Lock` is not reentrant. Pair every call with
+        `_release_lease` in a `finally`; `upscaler._ensure_upscaler_loaded` is the
+        one user.
+        """
+        if entry.released:
+            raise RuntimeError(
+                "The model was unloaded before it could be used; run it again."
+            )
+        entry.leases += 1
+
+    def _release_lease(self, entry: ModelEntry) -> None:
+        """Release one lease taken by `lease` or `_acquire_locked`."""
+        with self._sync_lock:
+            entry.leases -= 1
+            entry.last_used = time.time()
 
     def leased_ids(self) -> list[str]:
         """Registry ids that something currently holds a lease on."""

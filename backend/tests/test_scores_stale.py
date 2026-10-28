@@ -523,14 +523,12 @@ def _patch_scorers(monkeypatch, *, technical=True, aesthetic=True, watermark=Tru
     monkeypatch.setitem(sys.modules, "backend.ml.technical_scorer", technical_mod)
 
     # The job asks the model manager for a loaded model before every scorer call;
-    # the stubs above ignore what it hands back.
-    from backend.ml.model_manager import model_manager
-
-    class _Entry:
-        model = object()
+    # the stubs above ignore what it hands back. A real `ModelEntry`, because the
+    # job leases it for each stage.
+    from backend.ml.model_manager import ModelEntry, model_manager
 
     async def _load(*a, **kw):
-        return _Entry()
+        return ModelEntry(object(), None, vram_mb=0)
 
     monkeypatch.setattr(model_manager, "load_aesthetic", _load)
 

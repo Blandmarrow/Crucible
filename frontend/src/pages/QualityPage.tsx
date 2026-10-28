@@ -464,11 +464,17 @@ export default function QualityPage() {
   const unloadMutation = useMutation({
     mutationFn: qualityApi.unloadModels,
     onSuccess: (data) => {
-      toast.success(
-        data.unloaded.length
-          ? `Freed ${formatVram(data.freed_mb)} of VRAM`
-          : "No scoring models were loaded",
-      );
+      const kept = data.in_use?.length ?? 0;
+      if (kept && !data.unloaded.length) {
+        toast.error(`Still in use, not unloaded: ${data.in_use.join(", ")}`);
+      } else {
+        toast.success(
+          data.unloaded.length
+            ? `Freed ${formatVram(data.freed_mb)} of VRAM` +
+                (kept ? ` · still in use: ${data.in_use.join(", ")}` : "")
+            : "No scoring models were loaded",
+        );
+      }
       qc.invalidateQueries({ queryKey: ["quality", "models"] });
     },
     // The server's 409 names the run holding the models — surface it verbatim,
@@ -758,9 +764,9 @@ export default function QualityPage() {
           {loadedModels.length > 0 && (
             <button
               className="btn ghost sm"
-              // Disabled while a run is in flight: nothing but the single-worker
-              // job queue stands between an unload and a scorer mid-batch
-              // (`ModelEntry.in_use` is never set).
+              // Disabled while a run is in flight, as a courtesy: the server
+              // refuses with 409 during a scoring run, and a model something
+              // else holds a lease on is skipped and reported in `in_use`.
               disabled={isRunning || unloadMutation.isPending}
               onClick={() => unloadMutation.mutate()}
               title={`Free VRAM held by: ${loadedModels.map((m) => m.name).join(", ")}`}

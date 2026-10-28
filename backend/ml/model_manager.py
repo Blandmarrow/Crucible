@@ -14,9 +14,11 @@ logger = logging.getLogger(__name__)
 def _release_to_cpu(model: Any) -> None:
     """Move a registry entry's weights off the accelerator before it is dropped.
 
-    Two loaders store `ModelEntry.model` as a **dict** of tenants — `aesthetic`'s
-    `{"clip", "mlp", "preprocess"}` and `nsfw`'s `{"model", "processor",
-    "nsfw_idx"}` — so a bare `entry.model.cpu()` raises `AttributeError` on the
+    Several loaders store `ModelEntry.model` as a **dict** of tenants —
+    `aesthetic`'s `{"clip", "mlp", "preprocess"}`, `nsfw`'s `{"model",
+    "processor", "nsfw_idx"}`, and `sam2`'s, whose `sam2_model` tenant is the
+    network inside the (non-module) predictor and which Grounding DINO joins on
+    first use — so a bare `entry.model.cpu()` raises `AttributeError` on the
     dict, and under the surrounding `except Exception: pass` leaves several GB
     resident. Freeing then rests entirely on the last reference dying before
     `_device.empty_cache()` runs, which no unload can guarantee: the scoring job

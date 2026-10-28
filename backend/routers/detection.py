@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import datetime
@@ -131,6 +132,13 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
     image_data = [(r.id, r.file_path, r.caption_text or "") for r in rows]
 
     async def _run(job_id: str) -> None:
+        # Each branch leases the model it loads into `held` (GPT-032), so the
+        # lease lasts the whole per-image loop and is released however the job
+        # ends — completed, failed, or cancelled between images.
+        with contextlib.ExitStack() as held:
+            await _detect(job_id, held)
+
+    async def _detect(job_id: str, held: contextlib.ExitStack) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
 
@@ -156,13 +164,17 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
                     detections: list[dict] = []
+                    inference_ok = False
                     try:
                         fn = functools.partial(detect_sync, file_path, body.min_prob)
                         detections = await loop.run_in_executor(None, fn)
+                        inference_ok = True
                     except Exception:
                         logger.error("NudeNet detection failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -212,6 +224,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             gdino_threshold = _thresholds.gdino_threshold
 
             sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+            held.enter_context(model_manager.lease(sam2_entry))
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
                 job_queue.raise_if_cancelled(job_id)
@@ -234,7 +247,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     except Exception:
                         logger.error("SAM2 prediction failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -293,6 +308,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             sam3_threshold = _thresholds.sam3_threshold
 
             sam3_entry = await model_manager.load_sam3(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+            held.enter_context(model_manager.lease(sam3_entry))
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
                 job_queue.raise_if_cancelled(job_id)
@@ -312,7 +328,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     except Exception:
                         logger.error("SAM3 prediction failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -365,6 +383,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
         variant = "promptgen" if "promptgen" in body.model else "large"
         model_entry = await model_manager.load_florence2(variant)
+        held.enter_context(model_manager.lease(model_entry))
 
         for i, (img_id, file_path, caption_text) in enumerate(image_data):
             job_queue.raise_if_cancelled(job_id)
@@ -380,7 +399,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 except Exception:
                     logger.error("Detection failed for %s", file_path, exc_info=True)
 
-                if body.overwrite:
+                # Overwrite replaces this model's rows with a *result*; a failed
+                # inference has none, so the existing rows stay.
+                if body.overwrite and inference_ok:
                     await session.execute(
                         delete(Detection).where(
                             Detection.image_id == img_id,
@@ -776,11 +797,16 @@ async def create_manual_detection(
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         detections: list[dict] = []
+        # Leased only around inference: the DB write below never reads the model.
+        # The lease sits *inside* the try, so a refused lease (the entry was
+        # evicted before it could be taken) falls back to the plain box like any
+        # other SAM failure — the drawing is never lost.
         try:
-            fn = functools.partial(
-                predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
-            )
-            detections = await loop.run_in_executor(None, fn)
+            with model_manager.lease(sam2_entry):
+                fn = functools.partial(
+                    predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
+                )
+                detections = await loop.run_in_executor(None, fn)
         except Exception:
             logger.error("Manual-box SAM2 prediction failed for %s", file_path, exc_info=True)
 
@@ -1224,12 +1250,16 @@ async def refine_detection(
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         result: dict | None = None
+        # Leased only around inference: the DB write below never reads the model.
+        # Inside the try, so a refused lease leaves the mask unchanged like any
+        # other refine failure.
         try:
-            fn = functools.partial(
-                refine_sync, file_path, sam2_entry.model, mask_json, bbox,
-                point_prompts, point_labels,
-            )
-            result = await loop.run_in_executor(None, fn)
+            with model_manager.lease(sam2_entry):
+                fn = functools.partial(
+                    refine_sync, file_path, sam2_entry.model, mask_json, bbox,
+                    point_prompts, point_labels,
+                )
+                result = await loop.run_in_executor(None, fn)
         except Exception:
             logger.error("Mask refine failed for %s", file_path, exc_info=True)
 

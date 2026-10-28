@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi, mp4Buffer } from './helpers'
 
 // The frame-extraction surface, GPU-free: the video strip and its selection, the
@@ -608,7 +610,7 @@ test('the import modal sends include_videos when the box is ticked', async ({ pa
   // The explanatory paragraph is the only visible consequence of ticking it.
   await expect(dialog.getByText(/land flat/)).toBeVisible()
 
-  await dialog.getByRole('textbox').first().fill('/tmp/e2e-import-source')
+  await dialog.getByRole('textbox').first().fill(path.join(os.tmpdir(), 'e2e-import-source'))
   await dialog.getByRole('button', { name: 'Import' }).click()
 
   await expect.poll(() => body).not.toBeNull()

@@ -30,13 +30,20 @@ import asyncio
 import importlib.util
 import io
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 import backend.database as database
 import backend.models  # noqa: F401 — register every model on Base
@@ -74,9 +81,44 @@ needs_torch = pytest.mark.skipif(
 )
 
 
+def _can_symlink() -> bool:
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            os.symlink(d, os.path.join(d, "probe"), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+# The same guard for a test that creates a real symlink. POSIX always can; Windows
+# refuses (`OSError`, WinError 1314) unless Developer Mode is on or the process is
+# elevated, which is the normal state of a dev box and not one CI can assume.
+# Probed once, at collection, by actually making a link — no platform check
+# predicts it. A test that only monkeypatches `is_symlink`/`is_junction` without
+# creating a link does not need it.
+needs_symlinks = pytest.mark.skipif(
+    not _can_symlink(), reason="this platform/account cannot create symlinks"
+)
+
+
 def run(coro):
     """Run one async scenario. Mirrors the helper the other test modules use."""
     return asyncio.run(coro)
+
+
+def enforce_foreign_keys(engine: AsyncEngine) -> None:
+    """Install the `PRAGMA foreign_keys=ON` backend/database.py puts on the app engine.
+
+    For any test that builds its own engine: the pragma is per connection and not
+    persisted in the file, so an engine without this listener runs every FK in the
+    schema unenforced — `ondelete` cascades included.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
 
 
 @dataclass
@@ -94,7 +136,7 @@ class ApiEnv:
 
 
 @asynccontextmanager
-async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
+async def api_env(tmp_path: Path, *, foreign_keys: bool = True):
     # Snapshotted *before* the import below, not beside the module globals further down:
     # `backend.main` calls `secrets_service.sync_env(None)` at import, so the very first
     # api_env in a session projects `settings.hf_token` — the developer's real .env value,
@@ -110,21 +152,16 @@ async def api_env(tmp_path: Path, *, foreign_keys: bool = False):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
 
     if foreign_keys:
-        # SQLite defaults `foreign_keys` OFF *per connection*, and this harness
-        # builds its schema with `create_all` on its own engine, so it never gets
-        # the `PRAGMA foreign_keys=ON` that backend/database.py installs on the
-        # app engine. Every FK in the schema is therefore unenforced here by
-        # default — a blind spot that has hidden at least one real IntegrityError
-        # (see test_duplicate_video_fk_enforced.py). Opt in per test rather than
-        # globally: turning it on for the whole suite is a behaviour change to
-        # every existing scenario, which belongs in its own piece of work.
-        from sqlalchemy import event
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
-            cur = dbapi_conn.cursor()
-            cur.execute("PRAGMA foreign_keys=ON")
-            cur.close()
+        # On by default, because production is: SQLite defaults `foreign_keys`
+        # OFF *per connection*, and this harness builds its own engine, so it
+        # would never get the `PRAGMA foreign_keys=ON` backend/database.py
+        # installs on the app engine. Run without it and every FK is
+        # unenforced — a blind spot that once hid a real IntegrityError
+        # (test_duplicate_video_fk_enforced.py) and lets a fixture insert rows
+        # production would refuse. Pass `foreign_keys=False` only for a
+        # scenario that must plant a state the app cannot reach (a dangling
+        # reference left by an older build, say), and say why at the call site.
+        enforce_foreign_keys(engine)
 
     Session = async_sessionmaker(engine, expire_on_commit=False)
 

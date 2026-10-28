@@ -165,7 +165,7 @@ def test_poster_is_backfilled_on_demand_for_a_row_that_has_none(tmp_path):
 
             async with env.Session() as db:
                 row = (await db.execute(select(Video))).scalar_one()
-            assert row.poster_path.endswith("/videos/thumbnails/clip.webp")
+            assert Path(row.poster_path).as_posix().endswith("/videos/thumbnails/clip.webp")
             assert Path(row.poster_path).exists()
 
     run(scenario())

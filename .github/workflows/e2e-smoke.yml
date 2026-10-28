@@ -1,15 +1,15 @@
 name: e2e-smoke
 
 # Playwright end-to-end smoke suite (frontend/e2e/). Runs the real SPA against a
-# real backend on :8199 over a throwaway SQLite DB (frontend/e2e/serve.sh), so it
+# real backend on :8199 over a throwaway SQLite DB (frontend/e2e/serve.mjs), so it
 # is the ONLY CI check that catches an API change breaking the UI — hence it
 # triggers on BOTH frontend/** and backend/**.
 #
 # The pip install is backend/requirements-ci.txt — the same pinned base file the
 # two backend-tests.yml jobs install (see its header for why each package is
-# needed to import backend.main) PLUS `uvicorn` and `alembic`, which serve.sh
+# needed to import backend.main) PLUS `uvicorn` and `alembic`, which serve.mjs
 # needs to migrate and serve the app. A missing backend dep does NOT fail loudly
-# here — it surfaces as a Playwright "webServer timeout", which is why serve.sh's
+# here — it surfaces as a Playwright "webServer timeout", which is why serve.mjs's
 # output is piped (stdout/stderr: "pipe" in playwright.config.ts) so the
 # traceback is visible in the logs.
 

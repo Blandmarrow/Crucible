@@ -496,3 +496,19 @@ utilities → `docs/dev/shared-utilities.md`.
   `POST /detection/crop` as living here. CLAUDE.md's Map row for this file names
   `CropToDetectionForm`, `batch_inpaint` and the LaMa paint mask in its trigger, so those
   words move to the two new rows.
+
+## docs/dev/backend-infrastructure.md
+
+- **Moves:** § Request guard: Host and Origin, § Frontend serving (production), § App-level
+  exception handlers and § Server control endpoints → docs/dev/http-edge.md.
+- **New file:** docs/dev/http-edge.md (no user doc of its own; the user side of the LAN
+  opt-in is README.md and docs/workspace.md).
+- **Why here:** the file is two subsystems: what wraps every request (middleware, the SPA
+  catch-all, the exception handlers, the shutdown/restart routes) and the job queue
+  (shutdown grace, cancellation, SSE, retention, `GET /jobs`). It tripped the budget when the
+  request guard landed (GPT-007). The seam leaves ~1,650 words in the new file and ~1,890
+  behind, both under the ~2,100 target. § CI workflows stays; it is the odd one out either way.
+- **Watch for:** § Server control endpoints and § Shutdown: stopping the job queue point at
+  each other — the restart loop calls `JobQueue.stop()` — so both need a cross-file pointer.
+  PM-015 and PM-031 cite § Frontend serving and § Request guard; CLAUDE.md's Path traversal
+  bullet names the SPA catch-all; the Map row's trigger words split across the two rows.

@@ -45,7 +45,7 @@ export default defineConfig([
   // Playwright specs and config run in Node, not the browser — without node
   // globals here `npm run lint` fails on `process`, `console`, etc.
   {
-    files: ['e2e/**/*.ts', 'playwright.config.ts'],
+    files: ['e2e/**/*.{ts,mjs}', 'playwright.config.ts'],
     languageOptions: {
       globals: globals.node,
     },

@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
+import * as os from 'node:os'
 import { createDatasetViaApi, uploadViaApi } from './helpers'
 
 // Keyboard behavior added by hooks/useModalBehavior: Escape closes, focus lands
@@ -18,7 +19,7 @@ test('Escape closes a modal and a stacked picker closes only itself', async ({ p
 
   // The folder picker stacks over it. Escape closes the picker only, and focus
   // goes back to the button that opened it.
-  await importDialog.getByPlaceholder('/home/user/images', { exact: false }).fill('/tmp')
+  await importDialog.getByPlaceholder('/home/user/images', { exact: false }).fill(os.tmpdir())
   const browse = importDialog.getByRole('button', { name: 'Browse…' }).first()
   await browse.click()
   const picker = page.getByRole('dialog', { name: 'Select a folder to import' })

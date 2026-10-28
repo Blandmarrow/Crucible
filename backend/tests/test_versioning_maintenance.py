@@ -21,6 +21,7 @@ from backend.models.threshold_settings import ThresholdSettings
 from backend.models.versioning import DatasetVersion, VersionImageState
 from backend.services import version_service
 from backend.services.dataset_busy import busy, ensure_not_busy
+from backend.tests.conftest import needs_symlinks
 
 
 def run(coro):
@@ -176,6 +177,7 @@ def test_backup_refuses_out_of_tree_path(tmp_path):
     run(scenario())
 
 
+@needs_symlinks
 def test_backup_refuses_symlink_escaping_the_dataset(tmp_path):
     """The one live vector: rescan registers a symlink under its in-tree path
     (`file_path=str(f)`) and `open()` follows it out of tree. The guard resolves,
@@ -209,6 +211,7 @@ def test_backup_refuses_symlink_escaping_the_dataset(tmp_path):
     run(scenario())
 
 
+@needs_symlinks
 def test_manual_snapshot_refuses_symlink_escaping_the_dataset(tmp_path):
     """The eager Manual copy is the second way bytes enter the object store, and
     it went ungated: the same symlink copied the secret in on every Manual

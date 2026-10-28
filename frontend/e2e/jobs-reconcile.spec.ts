@@ -147,7 +147,7 @@ test('a terminal status from both SSE and the reconcile toasts exactly once', as
   })
 
   await page.goto(`/datasets/${ds.id}/gallery`)
-  await importViaGalleryModal(page, '/tmp/e2e-stubbed-import-source')
+  await importViaGalleryModal(page, path.join(os.tmpdir(), 'e2e-stubbed-import-source'))
 
   await expect(page.getByText('Imported 7 images')).toBeVisible()
   // Two more deliveries after the first toast: neither may add another.
@@ -160,7 +160,7 @@ test('an import of a folder that does not exist reports the server error', async
   await recordToasts(page)
 
   await page.goto(`/datasets/${ds.id}/gallery`)
-  await importViaGalleryModal(page, '/tmp/definitely/not/a/real/folder-e2e')
+  await importViaGalleryModal(page, path.join(os.tmpdir(), 'definitely', 'not', 'a', 'real', 'folder-e2e'))
 
   await expect(page.getByText('Import submitted')).toBeVisible()
   await expect(page.getByText(/Import failed: Folder not found/)).toBeVisible({ timeout: 20_000 })

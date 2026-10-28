@@ -284,8 +284,9 @@ def test_an_attach_between_snapshots_diffs_by_name(tmp_path):
     run(scenario())
 
 
-# The three cross-dataset round-trips run with `foreign_keys=True`. The harness
-# defaults them OFF per connection, and `image_labels` has two real FKs — PM-016's
+# The three cross-dataset round-trips run with `foreign_keys=True` (the harness
+# default since GPT-002, spelled out here). SQLite defaults the pragma OFF per
+# connection, and `image_labels` has two real FKs — PM-016's
 # exact blind spot: a copy writing a join row for an image id that does not exist
 # would pass silently with the pragma off.
 def test_copy_to_dataset_carries_labels(tmp_path):

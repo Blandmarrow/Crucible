@@ -70,8 +70,20 @@ and the `migration-drift` job (`docs/dev/database.md` § Migration drift check);
 status check, kept separate so `backend-tests.yml`'s carefully curated dependency list stays
 intact; `frontend-build.yml` runs `npm run build` then `npm run typecheck:e2e` (both blocking)
 and then `npm run lint` with `continue-on-error: true`, so lint is reported and can never fail
-the check while the pre-existing react-hooks backlog stands; `e2e-smoke.yml` runs Playwright;
-and `check-docs.yml` runs `scripts/check_docs.py`, where only its three FAIL checks block.
+the check while the pre-existing react-hooks backlog stands; `e2e-smoke.yml` runs Playwright,
+whose webServer is the Node launcher `frontend/e2e/serve.mjs` (Node rather than bash so it
+also starts on Windows); `check-docs.yml` runs `scripts/check_docs.py`, where only its three
+FAIL checks block; and `check-mark.yml` runs `scripts/check_mark.py`, the brand-mark drift
+check (`docs/dev/styling.md`), only when a file it compares changes.
+
+**The Windows job.** `backend-tests.yml` also runs the same suite on `windows-latest` as
+`backend-tests-windows` — the platform most users run, and the one whose filesystem rules
+(PM-021's open-file unlink, privileged symlinks, `\` separators) the Linux job cannot see. It
+mirrors `backend-tests`' installs under `shell: bash` and is **`continue-on-error: true` until
+it has run green once**; then that line comes out and it blocks like the Linux job. The
+workflow also carries `workflow_dispatch`, so it can be run on a branch from the Actions tab
+before a PR exists. Tests that need a real symlink carry `conftest.needs_symlinks`
+(`docs/dev/video-tests.md` § cv2 in CI, and the skip convention).
 
 ### SSE progress
 

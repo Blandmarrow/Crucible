@@ -22,6 +22,7 @@ from backend.services.caption_service import (
 )
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import refresh_stats
+from backend.utils import regex_error
 
 router = APIRouter(prefix="/captions", tags=["captions"])
 
@@ -60,6 +61,9 @@ async def find_replace(dataset_id: str, body: FindReplaceRequest, db: AsyncSessi
         count = await find_replace_captions(
             db, dataset_id, body.find, body.replace, body.use_regex, body.image_ids
         )
+    except regex_error as e:
+        # Nothing was written: the pattern is compiled before any caption changes.
+        raise HTTPException(400, f"Invalid regex: {e}")
     except TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
     await refresh_stats(db, dataset_id)
@@ -81,6 +85,9 @@ async def bulk_edit(dataset_id: str, body: BulkEditRequest, db: AsyncSession = D
             quality_flags=body.quality_flags,
             subfolder=body.subfolder,
         )
+    except regex_error as e:
+        # Nothing was written: the pattern is compiled before any caption changes.
+        raise HTTPException(400, f"Invalid regex: {e}")
     except TimeoutError:
         raise HTTPException(408, "Regex timed out — pattern may be catastrophically slow")
     await refresh_stats(db, dataset_id)

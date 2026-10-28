@@ -1018,8 +1018,9 @@ export default function GalleryPage() {
   // dragged card is part of it, otherwise just that card.
   const dragIdsFor = useCallback((draggedId: string) => {
     // The selection store is module-global, so in a split-pane setup it can hold ids
-    // from another dataset — the backend derives dataset_id from the first row and
-    // would silently move them into this dataset's folder.
+    // from another dataset. A drop lands in *this* dataset's subfolder, and the
+    // endpoint refuses a mixed-dataset request outright (it once renamed the other
+    // dataset's files into this dataset's folder), so only this pane's ids go.
     return selectedIds.has(draggedId)
       ? [...selectedIds].filter(id => datasetByImageId.get(id) === datasetId)
       : [draggedId];

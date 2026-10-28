@@ -82,6 +82,8 @@ text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on
 column: base = effective prompt (row → default → template), result written into row values
 (changed completed/failed rows reset to pending), regex bounded like caption bulk-edit — one
 30 s batch deadline enforced inside the `regex` engine via `regex_sub_deadline` (408 on timeout).
+An invalid pattern is a 400 `Invalid regex: …` here and on both caption routes alike
+(`backend/tests/test_comfy_bulk_edit_regex_http.py`; GPT-031 brought the caption side into line).
 
 Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
 prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no

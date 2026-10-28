@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { createDatasetViaApi, uploadViaApi } from './helpers'
 
 // Keyboard behavior added by hooks/useModalBehavior: Escape closes, focus lands
@@ -79,4 +79,97 @@ test('Escape closes the bulk labels modal', async ({ page, request }) => {
 
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
+})
+
+/** Press `key` `presses` times and assert focus never leaves `dialog`. */
+async function expectTabTrapped(page: Page, dialog: Locator, presses = 30, key = 'Tab') {
+  for (let i = 0; i < presses; i++) {
+    await page.keyboard.press(key)
+    const inside = await dialog.evaluate((el) => el.contains(document.activeElement))
+    expect(inside, `focus left the dialog after ${i + 1} × ${key}`).toBe(true)
+  }
+}
+
+// The five DatasetsPage dialogs were bare `.dialog-bg` overlays with no hook: no
+// dialog role, Escape did nothing, Tab walked out into the page behind, and
+// Cancel dropped focus on <body> (GPT-029). They now render through ModalShell.
+test('New Dataset is a named dialog that traps focus, closes on Escape and restores focus', async ({ page, request }) => {
+  await createDatasetViaApi(request, `e2e-modal-new-${Date.now()}`)
+  await page.goto('/datasets')
+  const opener = page.getByRole('button', { name: 'New dataset', exact: true })
+  await opener.click()
+
+  const dialog = page.getByRole('dialog', { name: 'New Dataset' })
+  await expect(dialog).toBeVisible()
+  // Labels are bound to their inputs, so the fields are reachable by name.
+  await expect(dialog.getByLabel('Name', { exact: true })).toBeFocused()
+  await expect(dialog.getByLabel('Description')).toBeVisible()
+  await expect(dialog.getByLabel('Category')).toBeVisible()
+
+  await expectTabTrapped(page, dialog)
+  await expectTabTrapped(page, dialog, 10, 'Shift+Tab')
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+
+  // Cancel restores focus too, and Escape and Cancel both discard the draft.
+  await opener.click()
+  await dialog.getByLabel('Name', { exact: true }).fill('draft')
+  await page.keyboard.press('Escape')
+  await opener.click()
+  await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('')
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})
+
+// The one DatasetsPage dialog that always closed on a backdrop click keeps doing so.
+test('New Category closes on Escape and on a backdrop click', async ({ page, request }) => {
+  // The category rail (which holds the opener) needs two sections to render.
+  const stamp = Date.now()
+  for (const category of [`e2e-cat-a-${stamp}`, `e2e-cat-b-${stamp}`]) {
+    const r = await request.post('/api/v1/datasets/', { data: { name: `${category}-ds`, category } })
+    expect(r.status(), await r.text()).toBe(201)
+  }
+  await page.goto('/datasets')
+  const opener = page.getByTitle('New category')
+  await opener.click()
+  const dialog = page.getByRole('dialog', { name: 'New Category' })
+  await expect(dialog.getByLabel('Category name')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+
+  await opener.click()
+  await expect(dialog).toBeVisible()
+  await page.mouse.click(5, 5)
+  await expect(dialog).toHaveCount(0)
+})
+
+// The ten SelectionToolbar overlays were bare too. Edit Captions stands for them.
+test('Edit Captions is a named dialog that traps focus, closes on Escape and restores focus', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-modal-edit-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'x.png')
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-all-btn').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const opener = page.getByRole('button', { name: 'Edit', exact: true })
+  await opener.click()
+  const dialog = page.getByRole('dialog', { name: 'Edit Captions — 1 Image' })
+  await expect(dialog).toBeVisible()
+
+  await expectTabTrapped(page, dialog)
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  // Dismissing the dialog is not a reason to drop the selection it acted on.
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  await opener.click()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
 })

@@ -30,6 +30,7 @@ from sqlalchemy import select, update
 
 from backend.models.detection import Detection
 from backend.models.image import Image
+from backend.models.label import ImageLabel, Label
 from backend.models.versioning import VersionImageState
 from backend.services import version_service
 from backend.services.detection_service import (
@@ -233,7 +234,7 @@ def test_a_failed_re_creation_leaves_no_detections(tmp_path, monkeypatch):
     """Foreign keys OFF on purpose: with them on, the `images` cascade would hide
     a missing explicit delete, and the explicit delete is what this pins."""
     async def scenario():
-        async with api_env(tmp_path) as env:
+        async with api_env(tmp_path, foreign_keys=False) as env:
             await _mode(env, "manual")
             ds = await env.create_dataset("d")
             img = await upload_image(env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80)))
@@ -247,6 +248,35 @@ def test_a_failed_re_creation_leaves_no_detections(tmp_path, monkeypatch):
             async with env.Session() as db:
                 assert await db.get(Image, img["id"]) is None
             assert await _dets(env, img["id"]) == []
+    run(scenario())
+
+
+def test_remove_mode_extras_take_their_detections_with_them(tmp_path):
+    """An extra deleted by a remove-mode restore leaves no detection or label rows.
+    Foreign keys OFF on purpose, as above: the cascade would hide a missing delete."""
+    async def scenario():
+        async with api_env(tmp_path, foreign_keys=False) as env:
+            await _mode(env, "manual")
+            ds = await env.create_dataset("d")
+            await upload_image(env, ds["id"], "kept.png")
+            vid = await _snapshot(env, ds["id"], "v1")
+            extra = (await upload_image(env, ds["id"], "extra.png"))["id"]
+            await _add(env, extra)
+            async with env.Session() as db:
+                label = Label(name="tagged")
+                db.add(label)
+                await db.flush()
+                db.add(ImageLabel(image_id=extra, label_id=label.id))
+                await db.commit()
+
+            res = await _restore(env, ds["id"], vid, handle_extra_images="remove")
+            assert res["images_removed"] == 1
+            assert await _dets(env, extra) == []
+            async with env.Session() as db:
+                left = (await db.execute(
+                    select(ImageLabel).where(ImageLabel.image_id == extra)
+                )).scalars().all()
+            assert left == []
     run(scenario())
 
 

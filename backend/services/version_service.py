@@ -1354,6 +1354,14 @@ async def restore_snapshot(
         # wholesale from `VersionImageState`, so what this pass leaves behind is
         # snapshot-defined rather than delete-defined and a prune here would fight
         # the snapshot. A Technical re-scan is the repair.
+        # Child rows go explicitly, as Pass 3b's reconcile does for a re-created
+        # row, rather than trusting the FK cascade: a connection without
+        # `PRAGMA foreign_keys` would orphan them, and orphaned detections still
+        # count in the detection rollups.
+        extra_ids = [e.id for e in extra_imgs]
+        for chunk in chunked(extra_ids):
+            await db.execute(delete(ImageLabel).where(ImageLabel.image_id.in_(chunk)))
+            await db.execute(delete(Detection).where(Detection.image_id.in_(chunk)))
         for extra_img in extra_imgs:
             await db.delete(extra_img)
             images_removed += 1

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ml.mask_utils import remap_detection_geometry
 from backend.models.detection import Detection
-from backend.services.label_service import ROWS_PER_STATEMENT
+from backend.utils import chunked
 
 
 async def remap_detections_for_crop(
@@ -153,8 +153,7 @@ async def detections_by_image(db: AsyncSession, image_ids) -> dict[str, list[dic
     if not ids:
         return {}
     out: dict[str, list[dict]] = {}
-    for start in range(0, len(ids), ROWS_PER_STATEMENT):
-        chunk = ids[start:start + ROWS_PER_STATEMENT]
+    for chunk in chunked(ids):
         rows = (await db.execute(
             select(*_SERIALIZED_COLUMNS).where(Detection.image_id.in_(chunk))
         )).all()
@@ -174,8 +173,7 @@ async def set_detections(db: AsyncSession, wanted: dict[str, list[dict]]) -> int
     image_ids = list(wanted.keys())
     if not image_ids:
         return 0
-    for start in range(0, len(image_ids), ROWS_PER_STATEMENT):
-        chunk = image_ids[start:start + ROWS_PER_STATEMENT]
+    for chunk in chunked(image_ids):
         await db.execute(delete(Detection).where(Detection.image_id.in_(chunk)))
     rows = [
         deserialize_detection(iid, d)

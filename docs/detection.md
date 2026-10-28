@@ -57,7 +57,7 @@ Results are shown in the **DETECTIONS** panel on the Image Detail page:
 - Click any label chip to toggle its boxes/masks on/off
 - Eye icon in the toolbar hides/shows all detections at once
 
-The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run.
+The detection modal includes an **Overwrite existing detections** toggle (on by default) — uncheck to add new detections without clearing prior results. Re-running a model now only replaces **that model's** detections, so results from other models — and any hand-made detections — survive a re-run. If detection fails on an image (an unreadable file, running out of VRAM), that image's existing detections are kept rather than cleared.
 
 > **Note on rotated images:** detections are now computed in the same EXIF-corrected frame the rest of the app uses, so overlays line up with the subject on photos that carry an EXIF orientation tag. Detections produced *before* this fix on such rotated images may be misaligned — re-run detection on those images to correct them.
 

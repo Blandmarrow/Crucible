@@ -376,6 +376,34 @@ utilities → `docs/dev/shared-utilities.md`.
   SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
   import) with the inpainter — they are the reason the section is long, and they are about
   this model rather than about the manager.
+- **Second seam (recorded 2026-10-28, GPT-032/034):** the LaMa move alone no longer gets the
+  file under budget — it is 4,442 words after § Leases (440) arrived, so ~3,650 once LaMa
+  leaves. Move § Leases and § Releasing an entry's weights (765) together into a new
+  docs/dev/model-residency.md: *what keeps a model resident and how its weights leave*. They
+  are one subject — the lease is what decides whether a release may happen, and
+  `_release_to_cpu`'s tenant walk is what makes it free anything — and both are read by
+  someone touching a consumer's hold or an unload path, not by someone adding a model ID.
+  Leaves ~2,450 here. **Watch for:** `§ Leases` is cited by name from
+  `docs/dev/scoring.md`, `docs/dev/detection.md`, `docs/dev/image-processing-models.md`,
+  `docs/dev/backend-infrastructure.md` and PM-030; `§ Releasing an entry's weights` from
+  `docs/dev/detection-inference.md` and this file's own sam2 table row. Grep both headings.
+
+
+## docs/dev/scoring.md
+
+- **Moves:** § The aesthetic model picker (1,006 words) with its three subsections — the
+  marker as a safety device, the two destructive consumers, per-model coverage and the
+  re-score offer
+- **New file:** docs/dev/aesthetic-model.md (mirrors docs/scoring.md § Choosing the
+  aesthetic model)
+- **Why here:** the file went over (3,559) when § The model lifecycle gained the lease
+  rules (GPT-032). The picker is the one section that is about a *choice* the user makes
+  and the bookkeeping that keeps it honest (`aesthetic_model`, its two consumer guards,
+  coverage), where everything else is about the scorers themselves and the columns they
+  write. Leaves ~2,550; the lifecycle section stays, since it is about this job's models.
+- **Watch for:** the picker is referenced from `docs/dev/scores-stale.md`,
+  `docs/dev/export.md` and `docs/dev/statistics.md` (`aesthetic_model` and its guards) —
+  grep `aesthetic model picker` and `aesthetic_model` across `docs/` before and after.
 
 
 ## docs/dev/captioning.md

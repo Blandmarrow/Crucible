@@ -3,7 +3,7 @@
 An external review of commit `c685ab5` (run on native Windows, report `GPT_Findings.md`, not
 checked in) claimed 34 defects. Every claim was independently re-verified on 2026-10-17 in the
 Linux dev container, using throwaway databases only. **All 34 hold**: 29 were reproduced at
-runtime, 5 were confirmed by reading the code, and none were refuted. Fixed so far, on branch `fix/gpt-review`: 021, 027 and 015; then 025, 022, 023, 024 and the restore half of 016 (grouping (a), PM-026); then 012, 013, 014 and 030 (grouping (b), PM-027); then 009, 008, 011, 010 and the resize/crop half of 016 (grouping (d), PM-013's fourth amendment); then 003 and 005 (PM-028); then 017, 018, 019, 020, 028, 029, 031 and 035 (grouping (e)).
+runtime, 5 were confirmed by reading the code, and none were refuted. Fixed so far, on branch `fix/gpt-review`: 021, 027 and 015; then 025, 022, 023, 024 and the restore half of 016 (grouping (a), PM-026); then 012, 013, 014 and 030 (grouping (b), PM-027); then 009, 008, 011, 010 and the resize/crop half of 016 (grouping (d), PM-013's fourth amendment); then 003 and 005 (PM-028); then 017, 018, 019, 020, 028, 029, 031 and 035 (grouping (e)); then 032, 033 and 034 (grouping (g), PM-030).
 This folder is the handoff for the remediation sessions.
 
 **Lifecycle**: this folder is transient, like `docs/dev/roadmap/`. When a finding is fixed:
@@ -21,7 +21,6 @@ here carry no Documentation Map row and no word budget.
 | File | Findings |
 |---|---|
 | `docs/dev/gpt-review/versioning.md` | 026 |
-| `docs/dev/gpt-review/jobs-ml.md` | 032, 033, 034 |
 | `docs/dev/gpt-review/infra.md` | 001, 002, 004, 007 |
 
 Each entry gives:
@@ -40,8 +39,8 @@ Fix notes give a direction, not a design; plan each fix against the code at the 
 | Pri | IDs |
 |---|---|
 | **P1** | None open. 021 and 027 are fixed on `fix/gpt-review`. |
-| P2 | 032, 033, 001 |
-| P3 | 026, 034, 002, 004 |
+| P2 | 001 |
+| P3 | 026, 002, 004 |
 | Decision | 007: unauthenticated API on `0.0.0.0`. This is a deliberate LAN-access choice, so revisit it as policy rather than as a bug. |
 
 Suggested grouping for remediation branches:
@@ -55,17 +54,14 @@ Suggested grouping for remediation branches:
   invalid regex *replacement template* (the other half of GPT-031), and stale docs claiming
   GalleryPage has a page-level Escape handler.
 - **(f) CI and tooling:** 001, 002, 004. 003+005 are done (PM-028).
-- **(g) ML lifetime:** 032, 034, 033.
+- **(g) ML lifetime:** done — 032, 034 and 033 (PM-030). One new gap surfaced and was fixed alongside:
+  detection's *Overwrite* deleted an image's existing detections even when inference failed.
 
 ## Already known before the review
 
 Already known before the review:
 - **007**: deliberate, and recorded in project memory.
 - **026**: `docs/dev/bulk-image-jobs.md`, "Known limitation: a version-restore … does not remap detections".
-- **034**: `docs/dev/detection-inference.md`, process-lifetime cache.
-
-Docs whose text these findings **prove wrong**. Fix them alongside the bug:
-- `docs/dev/comfyui.md` claims that the ComfyUI queue is "never stacked" and that nothing of ours waits in it (033).
 
 ## Probes
 
@@ -78,7 +74,7 @@ the repo root with the venv active, in one shell:
 
 ```bash
 source venv/bin/activate && python -m pytest docs/dev/gpt-review/probes/backend \
-  -o python_files='probe_*.py' -q -p no:cacheprovider     # 4 collect without torch (probe_caption_unload needs it to collect, probe_gdino to run); 3 pass (12 before grouping (e), 23 before (d), 31 before (b), 38 before (a), 42 on 2026-10-17)
+  -o python_files='probe_*.py' -q -p no:cacheprovider     # 1 passes (probe_versioning, 026); 4 before grouping (g), 12 before (e), 23 before (d), 31 before (b), 38 before (a), 42 on 2026-10-17
 ```
 
 They use `api_env(tmp_path, foreign_keys=True)` via `probes/backend/conftest.py`. Windows file locks
@@ -90,7 +86,9 @@ No browser probes remain: grouping (e) ported the last five (018, 028, 029 ×2, 
 ## Not verified
 
 - Windows launch and path failures (004).
-- Real GPU, model and ComfyUI behaviour (032–034 are mock-level).
-- Whether `_release_to_cpu` frees SAM2's own weights (`sam2` is not installed in the container).
+- Real GPU, model and ComfyUI behaviour: the 032–034 fixes are tested mock-level only.
+- That upstream `SAM2ImagePredictor.model` is the network the `sam2_model` tenant assumes (`sam2` is
+  not installed in the container; the loader reads it with `getattr`, so a miss frees nothing but
+  breaks nothing).
 - GPT's own "blocked" gaps, which are outside this verification: import/rescan/move/copy failure
   recovery, crash and power-loss interleavings, capacity, and dependency advisories.

@@ -90,7 +90,7 @@ The **Run** bar takes a target **Subfolder** for the generated images and a **Pr
 
 Rows run one at a time, submitted to ComfyUI as ordinary prompts, with live progress on the page and in the top bar. The gallery fills in as images import — you do not have to wait for the run to finish. Each plan runs one job at a time, but different plans can run concurrently.
 
-Anything that goes wrong stops at the row: it is marked failed with the error attached, the run continues, and nothing half-imported is left behind. Cancel from the progress bar to interrupt ComfyUI and return the in-flight row to pending. A run gives up if the server becomes unreachable, leaving untouched rows pending, so fixing the server and re-running costs nothing.
+Anything that goes wrong stops at the row: it is marked failed with the error attached, the run continues, and nothing half-imported is left behind. Cancel from the progress bar to stop the run and return the in-flight row to pending; only Crucible's own prompt is removed from ComfyUI, so anything you queued from the ComfyUI canvas keeps running. If a row times out, its prompt is removed from ComfyUI before the next row is sent, and if ComfyUI will not let go of it the run stops rather than pile prompts up. A run gives up if the server becomes unreachable, leaving untouched rows pending, so fixing the server and re-running costs nothing.
 
 ## Common problems
 

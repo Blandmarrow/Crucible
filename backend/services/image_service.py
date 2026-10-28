@@ -440,10 +440,12 @@ def crop_image_to_dest(
     if output_width is not None and output_height is not None:
         cropped = cropped.resize((output_width, output_height), Image.Resampling.LANCZOS)
     elif output_width is not None:
-        oh = round(cropped.height * (output_width / cropped.width))
+        # A 1 px floor on the derived side, like resize_image's: a 100x1 crop
+        # scaled to width 10 rounds its height to 0, and Pillow raises.
+        oh = max(1, round(cropped.height * (output_width / cropped.width)))
         cropped = cropped.resize((output_width, oh), Image.Resampling.LANCZOS)
     elif output_height is not None:
-        ow = round(cropped.width * (output_height / cropped.height))
+        ow = max(1, round(cropped.width * (output_height / cropped.height)))
         cropped = cropped.resize((ow, output_height), Image.Resampling.LANCZOS)
     return _save_measured(cropped, dest_path)
 
@@ -464,12 +466,14 @@ def aspect_crop_rect(
     img.close()
     current_ar = orig_w / orig_h
 
+    # A 1 px floor, like resize_image's: a ratio far from the image's own (a
+    # 100x2 image cropped to 1:1000) floors the short side to 0.
     if current_ar > target_ar:
-        new_w = int(orig_h * target_ar)
+        new_w = max(1, int(orig_h * target_ar))
         new_h = orig_h
     else:
         new_w = orig_w
-        new_h = int(orig_w / target_ar)
+        new_h = max(1, int(orig_w / target_ar))
 
     if strategy == "center":
         x = (orig_w - new_w) // 2

@@ -45,6 +45,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import init_db
+from backend.ml.model_manager import ModelInUseError
 from backend.utils import FileInUseError
 
 # Project the .env/OS-env HF_TOKEN into the process environment, where the ten HuggingFace-hub
@@ -151,6 +152,17 @@ async def file_in_use_handler(request: Request, exc: FileInUseError):
     `utils.unlink_retrying`/`rename_retrying` inherits the translation — the
     `filesystem.py` routes have the same exposure and are not converted yet.
     409 (not 500): the request was well-formed and retrying later can work.
+    """
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(ModelInUseError)
+async def model_in_use_handler(request: Request, exc: ModelInUseError):
+    """An unload refused because a running job holds a lease on the model.
+
+    App-level for the same reason as `FileInUseError`: `model_manager.unload` is
+    reachable from several routes, and each one should answer 409 (retry when the
+    job finishes) rather than 500 — or, before leases, break the job (GPT-032).
     """
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 

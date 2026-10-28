@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 from backend.ml import device as _device
@@ -35,13 +37,39 @@ def _release_to_cpu(model: Any) -> None:
             pass
 
 
+class ModelInUseError(RuntimeError):
+    """An unload refused because something holds a lease on the model.
+
+    `main.py` maps it to a 409: the request was well-formed, and the same unload
+    succeeds once the job holding the model finishes."""
+
+    def __init__(self, model_id: str) -> None:
+        super().__init__(
+            f"{model_id} is in use by a running job; try again when it finishes."
+        )
+        self.model_id = model_id
+
+
 class ModelEntry:
     def __init__(self, model: Any, processor: Any, vram_mb: int) -> None:
         self.model = model
         self.processor = processor
         self.vram_mb = vram_mb
         self.last_used = time.time()
-        self.in_use = False
+        # Counted, not a flag: two holders (a job and an HTTP request, or two
+        # nested scopes) must not have the first release clear the second's hold.
+        # Written only through `ModelManager.lease`, under `_sync_lock`.
+        self.leases = 0
+        # Set once the entry leaves the registry (unload or LRU eviction). An
+        # entry handed out by a loader can be evicted by an executor thread before
+        # its caller leases it; `lease` refuses a released entry so that race
+        # fails once, loudly, instead of every later image failing on missing
+        # weights.
+        self.released = False
+
+    @property
+    def in_use(self) -> bool:
+        return self.leases > 0
 
 
 class ModelManager:
@@ -73,12 +101,52 @@ class ModelManager:
             while self._used_vram() + needed_mb > self.max_vram_mb and candidates:
                 mid, entry = candidates.pop(0)
                 logger.info("Evicting model %s from VRAM", mid)
+                entry.released = True
                 _release_to_cpu(entry.model)
                 del entry.model
                 del entry.processor
                 del self._registry[mid]
                 self._locks.pop(mid, None)
                 _device.empty_cache()
+
+    @contextlib.contextmanager
+    def lease(self, entry: ModelEntry) -> Iterator[ModelEntry]:
+        """Hold `entry` resident for the duration of the block.
+
+        While any lease is held, `unload` raises `ModelInUseError`, `evict_all`
+        skips the entry and `_evict_lru` never picks it. Take it immediately after
+        the `load_*` call that returned the entry — with no `await` in between —
+        and hold it for as long as anything reads `entry.model`: a job that loads
+        once and loops holds it for the whole loop.
+
+        Raises `RuntimeError` for an entry that has already left the registry (an
+        executor thread's `_evict_lru` can evict between a loader's return and
+        this call); the caller fails once, up front, rather than on every image.
+
+        A hard `task.cancel()` (only `JobQueue.stop()` issues one) can end an
+        `await run_in_executor` while its thread is still running inference, so
+        the lease exits before the thread does. That is harmless: `.cpu()` swaps
+        `param.data`, so the thread's own references stay valid, and the process
+        is exiting. A user cancel is cooperative and lands between awaits, never
+        under one.
+        """
+        with self._sync_lock:
+            if entry.released:
+                raise RuntimeError(
+                    "The model was unloaded before it could be used; run it again."
+                )
+            entry.leases += 1
+        try:
+            yield entry
+        finally:
+            with self._sync_lock:
+                entry.leases -= 1
+                entry.last_used = time.time()
+
+    def leased_ids(self) -> list[str]:
+        """Registry ids that something currently holds a lease on."""
+        with self._sync_lock:
+            return sorted(mid for mid, e in self._registry.items() if e.in_use)
 
     async def get(self, model_id: str) -> ModelEntry:
         if model_id in self._registry:
@@ -758,23 +826,43 @@ class ModelManager:
             return entry
 
     async def unload(self, model_id: str) -> None:
+        """Release `model_id`'s weights. A no-op for an id that is not resident.
+
+        Raises `ModelInUseError` while a lease is held: `del entry.model` under a
+        running job fails every image it has left (GPT-032). The check and the
+        pop share `_sync_lock` with `lease`, so no lease can be taken in between.
+        """
         async with self._get_lock(model_id):
             with self._sync_lock:
                 if model_id not in self._registry:
                     return
+                if self._registry[model_id].in_use:
+                    raise ModelInUseError(model_id)
                 entry = self._registry.pop(model_id)
+                entry.released = True
             _release_to_cpu(entry.model)
             del entry.model
             del entry.processor
             _device.empty_cache()
 
     async def evict_all(self) -> list[str]:
-        """Unload every registered ML model from VRAM and return their IDs."""
-        model_ids = list(self._registry.keys())
-        for model_id in model_ids:
-            await self.unload(model_id)
+        """Unload every registered model nothing holds; return the ids unloaded.
+
+        A leased model is skipped, not an error: the callers (unload-all, the
+        caption pipeline between steps) want everything *idle* gone, and a model a
+        concurrent request holds is not theirs to fail over. `leased_ids()` names
+        what stayed.
+        """
+        unloaded: list[str] = []
+        for model_id in list(self._registry.keys()):
+            try:
+                await self.unload(model_id)
+            except ModelInUseError:
+                logger.info("evict_all: %s is leased; leaving it resident", model_id)
+                continue
+            unloaded.append(model_id)
         _device.empty_cache()
-        return model_ids
+        return unloaded
 
     async def load_tag_embedder(
         self,

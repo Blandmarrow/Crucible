@@ -1,4 +1,4 @@
-"""Batch B probes (GPT-008/009/010/011/016/017/020). Report-only; never touches repo files."""
+"""Batch B probes, remaining: GPT-017/020 (grouping (e)). Report-only; never touches repo files."""
 import json
 from pathlib import Path
 

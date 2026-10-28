@@ -73,6 +73,14 @@ gains a corollary: *where the mutation can be prepared aside (a temp file), the 
 the swap, and everything — DB work included — belongs before it, flushed.* Pinned by
 `backend/tests/test_in_place_edit_ordering_http.py`.
 
+Two corollaries the same review surfaced. **The rule holds inside a helper, not only at its
+call sites (GPT-009).** `rename_with_sidecar` was two irreversible renames behind one call, so
+every caller's assign → rename → commit looked PM-013-clean while a failed sidecar rename
+landed after the image had moved; the helper now makes only the image rename able to raise.
+**A temp file is part of the mutation.** The swap's temp names were fixed
+(`{stem}_croptmp{suffix}`) in a folder the user owns, so a registered image with that name
+was written over and swapped away; `image_service.temp_sibling` adds a random token.
+
 Also unfixed and pre-existing: `workers/job_queue.py` marks a raising job failed from a
 separate session and never writes the `result_data` the job had accumulated, so a job that
 dies mid-run reports nothing about what it did before it died.

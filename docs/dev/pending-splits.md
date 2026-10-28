@@ -457,7 +457,8 @@ utilities → `docs/dev/shared-utilities.md`.
 
 ## docs/workspace.md
 
-- **Moves:** § Starting up (353 words), § Restarting & shutting down (336) and § Database
+- **Moves:** § Starting up (435 words, now including the LAN opt-in bullet that links
+  README's § Access from other devices), § Restarting & shutting down (336) and § Database
   backups (246)
 - **New file:** docs/server.md (the user half of docs/dev/backend-infrastructure.md and
   docs/dev/database.md)

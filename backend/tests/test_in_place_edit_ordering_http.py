@@ -49,7 +49,7 @@ def _patterned_png(w: int = 64, h: int = 48) -> bytes:
 def _client():
     from backend.main import app
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://localhost"
     )
 
 

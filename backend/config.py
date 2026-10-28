@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # Thumbnail settings
     thumbnail_size: int = 256
 
+    # Network exposure (GPT-007). CRUCIBLE_HOST is read by the *launchers*, through
+    # scripts/bind_host.py, before this process exists — it is declared here only so
+    # the unrecognised-key check below does not flag it. CRUCIBLE_ALLOWED_HOSTS is read
+    # by backend/request_guard.py: comma-separated extra hostnames the server answers
+    # to, on top of IP literals, localhost and this machine's own hostname.
+    crucible_host: str = "127.0.0.1"
+    crucible_allowed_hosts: str = ""
+
     @model_validator(mode="after")
     def _validate(self) -> "Settings":
         if self.max_vram_mb < 1000:

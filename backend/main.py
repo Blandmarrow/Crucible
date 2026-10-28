@@ -46,6 +46,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import settings
 from backend.database import init_db
 from backend.ml.model_manager import ModelInUseError
+from backend.request_guard import CORS_ALLOWED_ORIGINS, RequestGuardMiddleware
 from backend.utils import FileInUseError
 
 # Project the .env/OS-env HF_TOKEN into the process environment, where the ten HuggingFace-hub
@@ -137,11 +138,17 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8000"],
+    allow_origins=list(CORS_ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last, so it wraps CORS and is the first thing every request meets — the API,
+# the SSE streams and the SPA catch-all alike (GPT-007; see backend/request_guard.py).
+# A CORS preflight still works: OPTIONS is not a guarded method, so for a good Host the
+# guard forwards it to CORSMiddleware untouched. A 403 from the guard carries no CORS
+# headers, which is correct — every origin it refuses is one CORS would refuse too.
+app.add_middleware(RequestGuardMiddleware)
 
 
 @app.exception_handler(FileInUseError)

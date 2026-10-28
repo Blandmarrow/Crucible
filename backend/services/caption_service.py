@@ -261,8 +261,11 @@ async def get_tag_stats(db: AsyncSession, dataset_id: str, subfolder: str | None
     result = await db.stream(q)
     freq: dict[str, int] = {}
     async for (caption_text,) in result:
-        for tag in caption_text.split(","):
-            tag = tag.strip()
+        # The count is the number of images carrying the tag, so a tag repeated
+        # within one caption counts once (GPT-035). dict.fromkeys, not a set: a
+        # set's order varies per process, and first-seen order is what breaks
+        # ties in the sort below. Case-sensitive, like get_tag_cooccurrence.
+        for tag in dict.fromkeys(t.strip() for t in caption_text.split(",")):
             if tag:
                 freq[tag] = freq.get(tag, 0) + 1
     return [

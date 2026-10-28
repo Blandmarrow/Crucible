@@ -13,6 +13,7 @@ path goes through `contained_path` before it is read or written.
 """
 
 import asyncio
+import contextlib
 import io
 import logging
 from pathlib import Path
@@ -209,7 +210,9 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
 
-        async with AsyncSessionLocal() as session:
+        # `held` owns the LaMa lease taken below, so it is released however the
+        # job ends — after the loop and its epilogue, never between images.
+        async with AsyncSessionLocal() as session, contextlib.AsyncExitStack() as held:
             replace = cfg["replace"]
             dest_subfolder = cfg["dest_subfolder"]  # None = inherit source subfolder
             dilate_px = cfg["dilate_px"]
@@ -271,7 +274,13 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                 # Load once, before the loop: this is where eviction and the
                 # first-run 196 MB weight download happen, and both want the async
                 # side. `inpaint_image_sync` then reads the resident entry.
-                await model_manager.load_lama(job_id, loop, cfg["dataset_id"])
+                #
+                # Leased for the WHOLE job, straight after the load with no await
+                # between: `inpaint_image_sync` re-reads the registry per image, so
+                # an unload between two images — a lease per image would allow one
+                # — would fail every image left (GPT-032). An unload now gets 409.
+                lama_entry = await model_manager.load_lama(job_id, loop, cfg["dataset_id"])
+                held.enter_context(model_manager.lease(lama_entry))
 
             for i, img in enumerate(images):
                 # The non-raising check, so the counts written below survive.

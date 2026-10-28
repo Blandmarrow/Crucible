@@ -268,7 +268,10 @@ def inpaint_image_sync(
     # The resident entry, read under the registry's threading lock — this runs in
     # an executor thread, where `ModelManager.get` (a coroutine) is unusable. The
     # caller awaits `model_manager.load_lama()` once before the loop, which is
-    # where eviction and the first-run download happen.
+    # where eviction and the first-run download happen, and holds a
+    # `model_manager.lease` on the entry for the whole job: that lease is what
+    # keeps it registered here across images, since `unload` refuses a leased
+    # entry and LRU eviction skips it. Without one, this lookup is a race.
     with model_manager._sync_lock:
         entry = model_manager._registry.get("lama")
     if entry is None:

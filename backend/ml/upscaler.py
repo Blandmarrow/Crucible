@@ -69,36 +69,44 @@ def upscale_image_sync(
     import numpy as np
     from PIL import Image, ImageOps
 
+    from backend.ml.model_manager import model_manager
+
     model_id = f"upscale:{model_path}"
     device = _device.get_device()
 
-    # Load or reuse cached model
+    # Load or reuse cached model — handed back already leased, so an unload or an
+    # LRU eviction (another load's `_evict_lru`) cannot `del` the weights under
+    # this image (GPT-032). Per image, not per job: a miss simply reloads, and the
+    # HTTP crop+upscale routes call this concurrently with the job worker.
     entry = _ensure_upscaler_loaded(model_id, model_path, device)
-    upscale_model = entry.model
-    scale = entry.processor  # we store detected scale in processor slot
+    try:
+        upscale_model = entry.model
+        scale = entry.processor  # we store detected scale in processor slot
 
-    with torch.no_grad():
-        img = Image.open(src)
-        img = ImageOps.exif_transpose(img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
+        with torch.no_grad():
+            img = Image.open(src)
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
 
-        arr = np.array(img, dtype=np.float32) / 255.0  # HWC [0,1]
-        tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(device)  # NCHW
+            arr = np.array(img, dtype=np.float32) / 255.0  # HWC [0,1]
+            tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(device)  # NCHW
 
-        h, w = tensor.shape[2], tensor.shape[3]
-        TILE = 512
-        OVERLAP = 64
+            h, w = tensor.shape[2], tensor.shape[3]
+            TILE = 512
+            OVERLAP = 64
 
-        if h <= TILE and w <= TILE:
-            out_tensor = upscale_model(tensor).clamp(0, 1)
-        else:
-            out_tensor = _tile_upscale(upscale_model, tensor, scale or 4, TILE, OVERLAP, device)
+            if h <= TILE and w <= TILE:
+                out_tensor = upscale_model(tensor).clamp(0, 1)
+            else:
+                out_tensor = _tile_upscale(upscale_model, tensor, scale or 4, TILE, OVERLAP, device)
 
-        img.close()
-        out_arr = out_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        out_arr = (out_arr * 255).clip(0, 255).astype(np.uint8)
-        result_img = Image.fromarray(out_arr)
+            img.close()
+            out_arr = out_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
+            out_arr = (out_arr * 255).clip(0, 255).astype(np.uint8)
+            result_img = Image.fromarray(out_arr)
+    finally:
+        model_manager._release_lease(entry)
 
     # Optional post-resize
     if target_width or target_height:
@@ -123,7 +131,13 @@ def upscale_image_sync(
 
 
 def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
-    """Synchronous load — must be called from an executor thread."""
+    """Synchronous load — must be called from an executor thread.
+
+    Returns the entry **already leased**, the lease taken inside the same
+    `_sync_lock` block that found or inserted it, so no unload or eviction fits
+    between the lookup and the caller's use. The caller must release it with
+    `model_manager._release_lease(entry)` in a `finally`.
+    """
     global _extra_arches_installed
     from backend.ml.model_manager import model_manager, ModelEntry
 
@@ -131,6 +145,7 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
         if model_id in model_manager._registry:
             entry = model_manager._registry[model_id]
             entry.last_used = __import__("time").time()
+            model_manager._acquire_locked(entry)
             return entry
 
     # Estimate VRAM: 3 GB for 4x models, 2 GB for 2x — conservative
@@ -177,8 +192,11 @@ def _ensure_upscaler_loaded(model_id: str, model_path: str, device: str):
             except Exception:
                 pass
             _device.empty_cache()
-            return model_manager._registry[model_id]
+            winner = model_manager._registry[model_id]
+            model_manager._acquire_locked(winner)
+            return winner
         model_manager._registry[model_id] = entry
+        model_manager._acquire_locked(entry)
 
     logger.info("Loaded upscaler %s (scale=%s, vram=%d MB)", model_path, detected_scale, vram_used)
     return entry

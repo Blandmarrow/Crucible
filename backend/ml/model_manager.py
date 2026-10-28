@@ -94,6 +94,12 @@ class ModelManager:
         return sum(e.vram_mb for e in self._registry.values())
 
     def _evict_lru(self, needed_mb: int) -> None:
+        # Choose and detach the victims under the lock; move their weights after
+        # it drops, as `unload` does. Moving several GB to the CPU takes seconds,
+        # and `lease`/`_release_lease` take this lock on the event-loop thread, so
+        # holding it through the move would freeze every request and SSE stream.
+        # Detached and `released` first, an entry can no longer be leased.
+        victims: list[ModelEntry] = []
         with self._sync_lock:
             candidates = [
                 (mid, entry) for mid, entry in self._registry.items()
@@ -105,12 +111,15 @@ class ModelManager:
                 mid, entry = candidates.pop(0)
                 logger.info("Evicting model %s from VRAM", mid)
                 entry.released = True
-                _release_to_cpu(entry.model)
-                del entry.model
-                del entry.processor
                 del self._registry[mid]
                 self._locks.pop(mid, None)
-                _device.empty_cache()
+                victims.append(entry)
+        for entry in victims:
+            _release_to_cpu(entry.model)
+            del entry.model
+            del entry.processor
+        if victims:
+            _device.empty_cache()
 
     @contextlib.contextmanager
     def lease(self, entry: ModelEntry) -> Iterator[ModelEntry]:

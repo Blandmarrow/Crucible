@@ -169,17 +169,25 @@ class ComfyClient:
         2. Re-read /queue; for each of ours in queue_running, POST /interrupt
            {"prompt_id": id}. Never a body-less interrupt: that is global and
            kills whatever is executing, e.g. the user's own canvas prompt.
-        3. Keep re-reading /queue every CANCEL_CONFIRM_INTERVAL_S, for at most
-           CANCEL_CONFIRM_WINDOW_S, until none of ours is left (re-deleting, or
-           interrupting, anything of ours that moved in the meantime).
+        3. Keep re-reading /queue every CANCEL_CONFIRM_INTERVAL_S until none of
+           ours is left (re-deleting, or interrupting, anything of ours that moved
+           in the meantime).
+
+        The **whole** call, every request included, is bounded by
+        CANCEL_CONFIRM_WINDOW_S, so a caller's own budget set just above it is a
+        backstop rather than the thing that decides.
 
         Returns, never raising for any of them:
         "not_found"     — nothing of ours was queued or running;
         "removed"       — ours was pending and has been deleted;
         "interrupted"   — ours was running and stopped after a targeted interrupt;
         "still_running" — ours could not be confirmed gone within the window
-                          (including a /queue that errors or returns garbage);
-        "unreachable"   — an httpx transport error (connect refused, timeout, ...).
+                          (including a /queue that errors, returns garbage, or
+                          stops answering mid-call — a server that is up but slow
+                          is not gone, and calling it unreachable would let the
+                          next row stack on a prompt still sitting there);
+        "unreachable"   — the connection itself failed (refused, connect timeout):
+                          ComfyUI is down, the router's connect breaker decides.
 
         Residual risk: a ComfyUI old enough to ignore the /interrupt body treats
         it as a global interrupt. If our prompt finishes in the milliseconds
@@ -196,8 +204,14 @@ class ComfyClient:
             )
 
         loop = asyncio.get_running_loop()
+        deadline = loop.time() + CANCEL_CONFIRM_WINDOW_S
         try:
-            async with httpx.AsyncClient(timeout=_CLEANUP_TIMEOUT, transport=self._transport) as client:
+            # One interval of slack past the window, so the in-loop deadline check —
+            # which reports still_running with what it saw — normally fires first.
+            async with (
+                asyncio.timeout_at(deadline + CANCEL_CONFIRM_INTERVAL_S),
+                httpx.AsyncClient(timeout=_CLEANUP_TIMEOUT, transport=self._transport) as client,
+            ):
                 state = await self._get_queue(client)
                 pending = [it.prompt_id for it in state.pending if ours(it)]
                 to_delete = list(dict.fromkeys(([prompt_id] if prompt_id else []) + pending))
@@ -205,7 +219,6 @@ class ComfyClient:
                     await client.post(f"{self.base_url}/queue", json={"delete": to_delete})
                 removed = bool(pending)
                 interrupted: set[str] = set()
-                deadline = loop.time() + CANCEL_CONFIRM_WINDOW_S
                 while True:
                     state = await self._get_queue(client)
                     running = [it.prompt_id for it in state.running if ours(it)]
@@ -228,9 +241,14 @@ class ComfyClient:
                             await client.post(f"{self.base_url}/interrupt", json={"prompt_id": pid})
                             interrupted.add(pid)
                     await asyncio.sleep(CANCEL_CONFIRM_INTERVAL_S)
-        except httpx.TransportError:
+        except (httpx.ConnectError, httpx.ConnectTimeout):
             logger.warning("ComfyUI cleanup: unreachable at %s", self.base_url, exc_info=True)
             return "unreachable"
+        except (httpx.TransportError, TimeoutError):
+            # Connected, then a request stalled or broke (ReadTimeout, a dropped
+            # connection), or the whole call ran past the window: unconfirmed.
+            logger.warning("ComfyUI cleanup: /queue at %s did not answer in time", self.base_url, exc_info=True)
+            return "still_running"
         except (httpx.HTTPStatusError, ValueError):
             # /queue answered, but not with anything we can read: our prompt cannot
             # be confirmed gone, so report the conservative outcome.

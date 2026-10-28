@@ -205,6 +205,48 @@ def test_cancel_prompt_unreachable(monkeypatch):
     assert run(_client(fake).cancel_prompt("OURS-1", "job-1")) == "unreachable"
 
 
+def test_cancel_prompt_read_timeout_is_still_running_not_unreachable(monkeypatch):
+    """A ComfyUI that is up but slow is not gone. Reporting a ReadTimeout as
+    "unreachable" let the run carry on and stack the next row on a prompt still
+    sitting in the queue; only a failed *connection* means the server is down."""
+    _shrink_confirm_window(monkeypatch)
+    fake = FakeComfy()
+    fake.pending = [["OURS-1", "job-1"]]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/queue":
+            raise httpx.ReadTimeout("timed out", request=request)
+        return fake.handler(request)
+
+    client = ComfyClient("http://fakecomfy:8188", transport=httpx.MockTransport(handler))
+    assert run(client.cancel_prompt("OURS-1", "job-1")) == "still_running"
+
+
+def test_cancel_prompt_whole_call_is_bounded_by_the_window(monkeypatch):
+    """Every request counts against the window, not only the confirm loop, so the
+    router's budget just above it stays a backstop: a slow /queue must not run the
+    call past the window (it would trip the router's timeout and abort the run)."""
+    _shrink_confirm_window(monkeypatch, window=0.3, interval=0.05)
+    fake = FakeComfy(canvas_running=False, honour_cleanup=False)
+    fake.running = [["OURS-1", "job-1"]]
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.2)
+        return fake.handler(request)
+
+    client = ComfyClient("http://fakecomfy:8188", transport=httpx.MockTransport(slow))
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        outcome = await client.cancel_prompt("OURS-1", "job-1")
+        return outcome, loop.time() - t0
+
+    outcome, elapsed = run(scenario())
+    assert outcome == "still_running"
+    assert elapsed < 0.3 + 0.05 + 0.15, elapsed  # window + one interval of slack
+
+
 def test_cancel_prompt_sweeps_by_client_id_without_a_prompt_id(monkeypatch):
     """A cancel during submit has no prompt id yet: our client_id finds the prompt."""
     _shrink_confirm_window(monkeypatch)

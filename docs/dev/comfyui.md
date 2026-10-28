@@ -186,9 +186,12 @@ interrupt. `ComfyClient.cancel_prompt(prompt_id, client_id)` reads `GET /queue` 
 passed at submit), deletes ours from the pending queue (`POST /queue {"delete": [...]}`, by
 id **and** by client_id — the second catches a cancel that landed mid-submit, before we
 learned the id), sends `POST /interrupt {"prompt_id": ours}` only if ours is the one
-running, and re-reads for up to `CANCEL_CONFIRM_WINDOW_S` (5 s) to confirm. It never raises;
-it returns `not_found | removed | interrupted | still_running | unreachable`, and an
-unreadable `/queue` counts as `still_running` (unconfirmed is not gone).
+running, and re-reads to confirm — the **whole** call, every request included, bounded by
+`CANCEL_CONFIRM_WINDOW_S` (5 s). It never raises; it returns `not_found | removed |
+interrupted | still_running | unreachable`. Only a failed *connection* is `unreachable`;
+an unreadable `/queue`, a `ReadTimeout` or any other stall after connecting is
+`still_running` — unconfirmed is not gone, and a slow server reported as down let the next
+row stack on a prompt still sitting there.
 
 The router runs it only while ComfyUI may still hold the row's prompt — from submit until
 `/history` reports it finished (`maybe_queued and not history_seen`); a 400-rejected or

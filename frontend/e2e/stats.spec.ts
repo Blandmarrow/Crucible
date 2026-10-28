@@ -16,17 +16,19 @@ test('stats page renders its summary panels', async ({ page, request }) => {
   await expect(page.getByText('Total images', { exact: true })).toBeVisible()
 })
 
-// The throwaway DB `serve.sh` created for this run. Scores are written by the
+// The throwaway DB `serve.mjs` created for this run. Scores are written by the
 // scorers alone (cv2/torch, which CI does not have) and no route sets one, so the
 // only way to stage "a score exactly on a bucket edge" is to write the column.
-// `serve.sh` puts the DB at `${TMP}/e2e.db` and every dataset under
+// `serve.mjs` puts the DB at `${TMP}/e2e.db` and every dataset under
 // `${TMP}/data/datasets/`, so a dataset's own `folder_path` locates it — and the
 // tmpdir check refuses anything that is not that throwaway DB.
 function e2eDbPath(datasetFolder: string): string {
   const db = path.resolve(datasetFolder, '..', '..', '..', 'e2e.db')
-  if (!fs.existsSync(db)) throw new Error(`no e2e DB where serve.sh puts it: ${db}`)
-  const tmp = fs.realpathSync(os.tmpdir())
-  if (!fs.realpathSync(db).startsWith(tmp + path.sep)) {
+  if (!fs.existsSync(db)) throw new Error(`no e2e DB where serve.mjs puts it: ${db}`)
+  // `.native` on both sides: it expands a Windows 8.3 temp path (`RUNNER~1`),
+  // which the backend's own `resolve()` has already expanded in folder_path.
+  const tmp = fs.realpathSync.native(os.tmpdir())
+  if (!fs.realpathSync.native(db).startsWith(tmp + path.sep)) {
     throw new Error(`refusing to write a DB outside the temp dir: ${db}`)
   }
   return db
@@ -40,7 +42,9 @@ for iid, cols in json.loads(sys.argv[2]).items():
     for col, v in cols.items():
         c.execute(f'update images set "{col}" = ? where id = ?', (v, iid))
 c.commit()`
-  execFileSync('python3', ['-I', '-c', py, db, JSON.stringify(rows)])
+  // Any Python will do (sqlite3 is stdlib); Windows installs name it `python`.
+  const python = process.platform === 'win32' ? 'python' : 'python3'
+  execFileSync(python, ['-I', '-c', py, db, JSON.stringify(rows)])
 }
 
 /** Click the bar titled `bar` and return the panel's "N images" line. */

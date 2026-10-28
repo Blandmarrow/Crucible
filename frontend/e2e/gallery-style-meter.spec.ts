@@ -5,7 +5,7 @@ import { createDatasetViaApi, uploadViaApi } from './helpers'
 // reach without a GPU.
 //
 // **No scoring journey here, deliberately.** Writing `style_similarity_score`
-// needs CLIP or DINOv2 embeddings, and `frontend/e2e/serve.sh` has torch on a dev
+// needs CLIP or DINOv2 embeddings, and `frontend/e2e/serve.mjs` has torch on a dev
 // machine and not in CI — a spec that scored for real would pass locally and fail
 // on the runner. The scoring half is pinned from the backend instead
 // (`backend/tests/test_style_similarity_run_http.py`,

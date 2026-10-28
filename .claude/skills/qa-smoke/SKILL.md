@@ -41,7 +41,7 @@ npx playwright test
 ```
 
 The config starts its own backend on **:8199** against a throwaway DB
-(`e2e/serve.sh`) — it never touches the live repo-root DB. On failure, the HTML
+(`e2e/serve.mjs`, a Node launcher, so it runs on Windows too) — it never touches the live repo-root DB. On failure, the HTML
 report is written to `frontend/playwright-report/`; open it to triage.
 
 ## Report

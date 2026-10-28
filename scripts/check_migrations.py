@@ -16,7 +16,7 @@ Why a throwaway DB and an env override: the app's default `database_url` points 
 the live `dataset_manager.db` at the repo root, and this check must never touch it.
 `backend/config.py` reads `DATABASE_URL` from the environment and `alembic/env.py`
 resolves the URL lazily inside `get_url()`, so setting it before the first import is
-enough — the same override `frontend/e2e/serve.sh` uses.
+enough — the same override `frontend/e2e/serve.mjs` uses.
 
 Why the chdir: revision d9f4a1c7b2e8 imports `backend.utils` at module scope, which
 only resolves once `env.py` has put the repo root on `sys.path`. Running alembic from

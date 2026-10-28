@@ -57,8 +57,9 @@ export DATASETS_DIR="/tmp/scratch/data/datasets"
 python -m uvicorn backend.main:app --port 8000
 ```
 
-`frontend/e2e/serve.sh` is the canned, self-contained version of exactly this
-(temp dir, three exports, alembic, uvicorn) — read it before hand-rolling one.
+`frontend/e2e/serve.mjs` is the canned, self-contained version of exactly this
+(temp dir, three env vars, alembic, uvicorn), in Node so it also runs on
+Windows — read it before hand-rolling one.
 
 ## Dev-container specifics
 

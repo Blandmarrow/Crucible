@@ -84,6 +84,8 @@ column: base = effective prompt (row → default → template), result written i
 30 s batch deadline enforced inside the `regex` engine via `regex_sub_deadline` (408 on timeout).
 An invalid pattern is a 400 `Invalid regex: …` here and on both caption routes alike
 (`backend/tests/test_comfy_bulk_edit_regex_http.py`; GPT-031 brought the caption side into line).
+So is an invalid replacement template (`\9`), which only fails on a match, inside the executor:
+that `regex_error` used to escape the route as a 500.
 
 Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
 prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no

@@ -9,9 +9,11 @@ sidecar alongside the DB caption. The failure classes pinned here:
 - an **invalid** regex is a 400 naming the compile error, with nothing written —
   it used to be swallowed into a 200 "nothing matched", indistinguishable from a
   valid pattern that matched nothing (GPT-031);
-- a regex **timeout** raises builtin `TimeoutError`, which the per-item
-  `except regex_error` does NOT catch, so it escapes before any sidecar write →
-  408 with every caption and sidecar byte-identical.
+- an invalid **replacement template** (`\\9`) compiles with the pattern and only
+  fails on a match; it is the same 400, raised before anything is written, where
+  a per-item `except regex_error: continue` used to report "nothing matched";
+- a regex **timeout** raises builtin `TimeoutError`, which escapes before any
+  sidecar write → 408 with every caption and sidecar byte-identical.
 
 The timeout tests set `_REGEX_TIMEOUT = 0.0`, which makes `regex_sub_deadline`
 raise on its pre-check deadline before touching the engine — deterministic and
@@ -131,6 +133,37 @@ def test_bulk_edit_invalid_regex_is_a_400(tmp_path, operation):
             assert r.json()["detail"].startswith("Invalid regex: ")
 
             assert await _db_caption(env, a["id"]) == "a red square"
+            assert _sidecar(env, a, ds).read_text(encoding="utf-8") == "a red square"
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("route", ["find-replace", "bulk-edit"])
+def test_invalid_replacement_template_is_a_400(tmp_path, route):
+    """`\\9` names a group the pattern lacks. It compiles with the pattern and fails
+    only on a match, so the per-item loop used to skip that caption and answer 200
+    "nothing matched" — GPT-031's symptom for the replacement half. One caption
+    matches and one does not: neither may change."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((1, 1, 1)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes((2, 2, 2)))
+            await _caption(env, a["id"], "a red square")
+            await _caption(env, b["id"], "green shoes")
+
+            body = (
+                {"find": "(red)", "replace": r"\9", "use_regex": True}
+                if route == "find-replace"
+                else {"operation": "find_replace", "text": "(red)", "replacement": r"\9",
+                      "use_regex": True, "image_ids": [a["id"], b["id"]]}
+            )
+            r = await env.client.post(f"{API}/captions/dataset/{ds['id']}/{route}", json=body)
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"].startswith("Invalid regex: ")
+
+            assert await _db_caption(env, a["id"]) == "a red square"
+            assert await _db_caption(env, b["id"]) == "green shoes"
             assert _sidecar(env, a, ds).read_text(encoding="utf-8") == "a red square"
 
     run(scenario())

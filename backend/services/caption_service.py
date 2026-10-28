@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime
 
-from backend.utils import compile_user_regex, regex_error, regex_sub_deadline
+from backend.utils import compile_user_regex, regex_sub_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +120,12 @@ async def bulk_edit_captions(
             for img_id, old_text in batch:
                 if not old_text:
                     continue
-                try:
-                    subbed = regex_sub_deadline(compiled, repl, old_text, deadline)
-                except regex_error:
-                    continue
+                # A bad replacement template (`\9`, an unknown group name) raises
+                # `regex_error` here, on the first caption the pattern matches. It
+                # propagates rather than skipping the caption: every substitution
+                # runs before anything is written, so the router's 400 leaves the
+                # batch untouched. Swallowing it reported "nothing matched".
+                subbed = regex_sub_deadline(compiled, repl, old_text, deadline)
                 new_text = " ".join(subbed.split())
                 if new_text != old_text:
                     updates[img_id] = new_text
@@ -212,10 +214,8 @@ async def find_replace_captions(
             deadline = time.monotonic() + _REGEX_TIMEOUT
             updates: dict[str, str] = {}
             for img_id, old_text in batch:
-                try:
-                    new_text = regex_sub_deadline(compiled, replace, old_text, deadline)
-                except regex_error:
-                    continue
+                # A bad replacement template raises here; see bulk_edit_captions.
+                new_text = regex_sub_deadline(compiled, replace, old_text, deadline)
                 if new_text != old_text:
                     updates[img_id] = new_text
             return updates

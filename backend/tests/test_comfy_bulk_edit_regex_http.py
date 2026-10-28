@@ -60,3 +60,21 @@ def test_invalid_regex_is_a_400_and_leaves_the_rows_alone(tmp_path):
             assert r.json() == {"affected": 0, "skipped": 1}
 
     run(scenario())
+
+
+def test_invalid_replacement_template_is_a_400_not_a_500(tmp_path):
+    """`\\9` compiles with the pattern and fails only on a match, inside the
+    executor. That `regex_error` used to escape the route as a 500."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            plan_id, row_id = await _plan_with_row(env, "a red square")
+
+            r = await env.client.post(
+                f"{API}/comfy/plans/{plan_id}/rows/bulk-edit",
+                json={"operation": "find_replace", "text": "(red)", "replacement": r"\9", "use_regex": True},
+            )
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"].startswith("Invalid regex: ")
+            assert await _prompt(env, plan_id, row_id) == "a red square"
+
+    run(scenario())

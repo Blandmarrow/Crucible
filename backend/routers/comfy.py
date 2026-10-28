@@ -1197,6 +1197,10 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
     # during matching, so this genuinely runs concurrently and the deadline is real.
     try:
         transformed = await asyncio.get_running_loop().run_in_executor(None, _transform)
+    except regex_error as e:
+        # A bad replacement template (`\9`) compiles with the pattern but fails on
+        # the first match. _transform writes nothing, so a 400 leaves every row as is.
+        raise HTTPException(400, f"Invalid regex: {e}")
     except TimeoutError:
         raise HTTPException(408, "Regex evaluation timed out")
 

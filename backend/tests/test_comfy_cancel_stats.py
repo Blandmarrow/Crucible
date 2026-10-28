@@ -18,11 +18,12 @@ class _CancellingComfyClient:
 
     `run_plan` passes the job id as `client_id=` to `submit`, which is how a stub with
     no other handle on the job can reach `job_queue.request_cancel`. Cancelling from
-    `poll_history` exercises the cooperative in-poll path (interrupt → revert the row
-    to "pending" → raise), i.e. what a user clicking Cancel mid-generation triggers.
+    `poll_history` exercises the cooperative in-poll path (revert the row to "pending"
+    → raise → take our prompt out of ComfyUI's queue), i.e. what a user clicking
+    Cancel mid-generation triggers.
     """
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, transport=None):
         self.url = url
         self._job_id: str | None = None
         self._row = 0
@@ -43,8 +44,8 @@ class _CancellingComfyClient:
     async def fetch_image(self, filename, subfolder="", type="output"):
         return png_bytes()
 
-    async def interrupt(self):
-        return None
+    async def cancel_prompt(self, prompt_id, client_id):
+        return "removed"
 
 
 def test_cancelled_comfy_run_leaves_image_count_correct(tmp_path, monkeypatch):

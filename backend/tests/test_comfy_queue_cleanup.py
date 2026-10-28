@@ -12,13 +12,15 @@ body-aware `POST /interrupt` that stops only the named prompt — and records a
 body-less (global) interrupt as a violation, mimicking an old server by killing
 whatever runs.
 """
+import asyncio
+import functools
 import json
 
 import httpx
 
 import backend.services.comfy_service as comfy_service
 from backend.services.comfy_service import ComfyClient
-from backend.tests.conftest import png_bytes, run
+from backend.tests.conftest import API, api_env, png_bytes, run, wait_for_job
 
 CANVAS_CLIENT = "canvas-browser-tab"
 CANVAS_PROMPT = "CANVAS-1"
@@ -35,7 +37,12 @@ class FakeComfy:
         honour_cleanup: bool = True,
         unreachable: bool = False,
         queue_status: int = 200,
+        complete: bool = False,
+        down_after_submits: int | None = None,
     ):
+        self.complete = complete
+        # Goes unreachable for every request once this many prompts were accepted.
+        self.down_after_submits = down_after_submits
         self.running: list[list] = [[CANVAS_PROMPT, CANVAS_CLIENT]] if canvas_running else []
         self.pending: list[list] = []
         self.history: dict[str, dict] = {}
@@ -68,10 +75,16 @@ class FakeComfy:
             self.ours_outstanding_at_submit.append(len(self.queue_ids(cid)))
             pid = f"OURS-{len(self.submitted) + 1}"
             self.submitted.append(pid)
-            if self.ours_start_running and not self.running:
+            if self.complete:  # finished instantly: straight into history
+                self.history[pid] = {"outputs": {"9": {"images": [
+                    {"filename": "out.png", "subfolder": "", "type": "output"}
+                ]}}}
+            elif self.ours_start_running and not self.running:
                 self.running.append([pid, cid])
             else:
                 self.pending.append([pid, cid])
+            if self.down_after_submits is not None and len(self.submitted) >= self.down_after_submits:
+                self.unreachable = True
             return httpx.Response(200, json={"prompt_id": pid, "number": len(self.submitted)})
 
         if method == "GET" and path.startswith("/history/"):
@@ -235,3 +248,227 @@ def test_cancel_prompt_reinterrupts_a_prompt_that_started_meanwhile(monkeypatch)
     assert run(client.cancel_prompt("OURS-1", "job-1")) == "interrupted"
     assert fake.interrupts == ["OURS-1"]
     assert fake.violations == []
+
+
+# ── The run, request-level ────────────────────────────────────────────────────
+
+
+async def _setup_run(env, monkeypatch, fake: FakeComfy, n_rows: int) -> str:
+    """A plan with `n_rows` rows, the router's ComfyClient wired to `fake`."""
+    import backend.routers.comfy as comfy_router
+
+    monkeypatch.setattr(
+        comfy_router, "ComfyClient",
+        functools.partial(ComfyClient, transport=httpx.MockTransport(fake.handler)),
+    )
+    r = await env.client.patch(f"{API}/settings/thresholds", json={"comfyui_url": "http://fakecomfy:8188"})
+    assert r.status_code == 200, r.text
+    ds = await env.create_dataset("comfy-queue-ds")
+    workflow = {
+        "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "x.safetensors"}},
+        "9": {"class_type": "SaveImage", "inputs": {}},
+    }
+    r = await env.client.post(f"{API}/comfy/plans", json={
+        "dataset_id": ds["id"], "name": "p", "workflow_json": workflow, "output_node_ids": ["9"],
+    })
+    assert r.status_code == 200, r.text
+    plan_id = r.json()["id"]
+    for _ in range(n_rows):
+        r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {}})
+        assert r.status_code == 200, r.text
+    return plan_id
+
+
+async def _start(env, plan_id: str) -> str:
+    r = await env.client.post(f"{API}/comfy/run", json={"plan_id": plan_id})
+    assert r.status_code == 200, r.text
+    return r.json()["job_id"]
+
+
+async def _rows(env, plan_id: str) -> list[dict]:
+    r = await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def _wait_for_submit(fake: FakeComfy, n: int = 1) -> None:
+    for _ in range(200):
+        if len(fake.submitted) >= n:
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"only {len(fake.submitted)} prompt(s) submitted")
+
+
+def test_cancel_spares_the_canvas_prompt_and_deletes_ours(tmp_path, monkeypatch):
+    """The canvas prompt runs, ours waits behind it: cancel must delete ours, not
+    interrupt theirs (the old body-less /interrupt did exactly the opposite)."""
+    _shrink_confirm_window(monkeypatch)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy()
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=2)
+            jid = await _start(env, plan_id)
+            await _wait_for_submit(fake)
+            r = await env.client.delete(f"{API}/jobs/{jid}")
+            assert r.status_code == 204, r.text
+            job = await wait_for_job(env, jid)
+
+            assert job["status"] == "cancelled", job
+            assert fake.running == [[CANVAS_PROMPT, CANVAS_CLIENT]]
+            assert fake.interrupts == []
+            assert fake.violations == []
+            assert fake.deleted == ["OURS-1"]
+            assert fake.queue_ids(jid) == []
+            assert [row["status"] for row in await _rows(env, plan_id)] == ["pending", "pending"]
+
+    run(go())
+
+
+def test_cancel_interrupts_our_running_prompt_by_id(tmp_path, monkeypatch):
+    _shrink_confirm_window(monkeypatch)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(canvas_running=False, ours_start_running=True)
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=2)
+            jid = await _start(env, plan_id)
+            await _wait_for_submit(fake)
+            await env.client.delete(f"{API}/jobs/{jid}")
+            job = await wait_for_job(env, jid)
+
+            assert job["status"] == "cancelled", job
+            assert fake.interrupts == ["OURS-1"]
+            assert fake.violations == []
+            assert fake.queue_ids() == []
+            assert [row["status"] for row in await _rows(env, plan_id)] == ["pending", "pending"]
+
+    run(go())
+
+
+def test_timeout_removes_our_prompt_before_the_next_submit(tmp_path, monkeypatch):
+    """A timed-out row's prompt used to stay in ComfyUI's queue and the next row was
+    stacked on top of it. Now no submit ever finds a prompt of ours outstanding."""
+    import backend.routers.comfy as comfy_router
+
+    monkeypatch.setattr(comfy_router, "PER_ROW_TIMEOUT_S", 0.3)
+    _shrink_confirm_window(monkeypatch)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy()
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=2)
+            jid = await _start(env, plan_id)
+            job = await wait_for_job(env, jid, timeout=30)
+
+            assert job["status"] == "completed", job
+            assert fake.submitted == ["OURS-1", "OURS-2"]
+            assert fake.ours_outstanding_at_submit == [0, 0]
+            assert fake.deleted == ["OURS-1", "OURS-2"]
+            assert fake.queue_ids(jid) == []
+            assert fake.running == [[CANVAS_PROMPT, CANVAS_CLIENT]]
+            assert fake.interrupts == [] and fake.violations == []
+            rows = await _rows(env, plan_id)
+            assert [row["status"] for row in rows] == ["failed", "failed"]
+            for row in rows:
+                assert "timed out" in row["error_msg"]
+                assert "cleanup" not in row["error_msg"]  # a clean removal adds no note
+
+    run(go())
+
+
+def test_unremovable_prompt_aborts_the_run(tmp_path, monkeypatch):
+    """If our timed-out prompt cannot be confirmed gone, the next row must not be
+    stacked on it: the run aborts and the remaining rows stay pending."""
+    import backend.routers.comfy as comfy_router
+
+    monkeypatch.setattr(comfy_router, "PER_ROW_TIMEOUT_S", 0.3)
+    _shrink_confirm_window(monkeypatch)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(honour_cleanup=False)
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=3)
+            jid = await _start(env, plan_id)
+            job = await wait_for_job(env, jid, timeout=30)
+
+            assert job["status"] == "failed", job
+            assert "Could not remove ComfyUI prompt OURS-1" in job["error_msg"]
+            assert fake.submitted == ["OURS-1"]
+            assert fake.violations == []
+            rows = await _rows(env, plan_id)
+            assert [row["status"] for row in rows] == ["failed", "pending", "pending"]
+            assert "timed out" in rows[0]["error_msg"]
+            assert "could not be removed" in rows[0]["error_msg"]
+
+    run(go())
+
+
+def test_connect_errors_keep_the_three_strike_breaker(tmp_path, monkeypatch):
+    """ComfyUI goes away after accepting row 1's prompt. That prompt cannot be cleaned
+    up ("unreachable") — which must not abort the run on its own; the
+    consecutive-connect-error breaker still decides, three strikes as before."""
+    _shrink_confirm_window(monkeypatch)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(down_after_submits=1)
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=4)
+            jid = await _start(env, plan_id)
+            job = await wait_for_job(env, jid, timeout=30)
+
+            assert job["status"] == "failed", job
+            assert "consecutive connection failures" in job["error_msg"]
+            assert fake.calls.count(("POST", "/prompt")) == comfy_service.MAX_CONSECUTIVE_CONNECT_ERRORS
+            rows = await _rows(env, plan_id)
+            assert [row["status"] for row in rows] == ["failed", "failed", "failed", "pending"]
+            # Row 1's prompt was accepted, then its poll failed: the cleanup was
+            # tried and its outcome recorded. Rows 2-3 never reached ComfyUI, so
+            # there was nothing to clean and no note.
+            assert "ComfyUI unreachable" in rows[0]["error_msg"]
+            assert all("cleanup" not in row["error_msg"] for row in rows[1:3])
+
+    run(go())
+
+
+def test_rejected_workflow_does_no_cleanup(tmp_path, monkeypatch):
+    """A 400 from /prompt queued nothing, so a broken /queue cannot abort the run."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(queue_status=500)
+            orig = fake.handler
+
+            def rejecting(request: httpx.Request) -> httpx.Response:
+                if request.url.path == "/prompt":
+                    fake.calls.append((request.method, request.url.path))
+                    return httpx.Response(400, json={"error": {"message": "bad graph"}, "node_errors": {}})
+                return orig(request)
+
+            fake.handler = rejecting
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=2)
+            jid = await _start(env, plan_id)
+            job = await wait_for_job(env, jid)
+
+            assert job["status"] == "completed", job
+            rows = await _rows(env, plan_id)
+            assert [row["status"] for row in rows] == ["failed", "failed"]
+            assert all("bad graph" in row["error_msg"] for row in rows)
+            assert not any(path in ("/queue", "/interrupt") for _, path in fake.calls)
+
+    run(go())
+
+
+def test_completed_rows_never_touch_the_queue(tmp_path, monkeypatch):
+    """A row whose prompt reached /history has nothing left in ComfyUI to clean."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(complete=True)
+            plan_id = await _setup_run(env, monkeypatch, fake, n_rows=2)
+            jid = await _start(env, plan_id)
+            job = await wait_for_job(env, jid)
+
+            assert job["status"] == "completed", job
+            assert [row["status"] for row in await _rows(env, plan_id)] == ["completed", "completed"]
+            assert not any(path in ("/queue", "/interrupt") for _, path in fake.calls)
+
+    run(go())

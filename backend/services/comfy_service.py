@@ -140,14 +140,6 @@ class ComfyClient:
             resp.raise_for_status()
             return resp.content
 
-    async def interrupt(self) -> None:
-        """POST /interrupt — best effort, only affects the currently executing prompt."""
-        try:
-            async with httpx.AsyncClient(timeout=5.0, transport=self._transport) as client:
-                await client.post(f"{self.base_url}/interrupt")
-        except Exception:
-            pass
-
     async def _get_queue(self, client: httpx.AsyncClient) -> QueueState:
         resp = await client.get(f"{self.base_url}/queue")
         resp.raise_for_status()

@@ -284,7 +284,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         toast.error(`${data.failed} image${data.failed !== 1 ? "s" : ""} could not be renamed and stayed where they were`);
       }
     },
-    onError: () => toast.error("Move failed"),
+    // The server commits per image, so a request that failed partway (a DB error
+    // mid-loop) still moved the images before it: refresh on error too.
+    onError: (err) => {
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
+      toast.error(apiErrorDetail(err, "Move failed"));
+    },
   });
 
   const provenanceMutation = useMutation({

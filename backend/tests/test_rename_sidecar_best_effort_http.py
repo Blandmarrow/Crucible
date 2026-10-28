@@ -151,3 +151,65 @@ def test_a_failed_subfolder_move_rename_keeps_every_row_on_its_file(tmp_path, mo
             assert rows[ids[0]].subfolder == "sub" and rows[ids[2]].subfolder == "sub"
 
     run(scenario())
+
+
+def test_a_failed_cross_dataset_move_still_recounts_both_datasets(tmp_path, monkeypatch):
+    """The rows are committed before the renames, so a raise mid-loop used to skip
+    the stats refresh and leave both datasets counting the pre-move state."""
+    import backend.routers.images as images_router
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            dst = await env.create_dataset("dst")
+            ids = [(await upload_image(env, src["id"], f"{n}.png"))["id"] for n in "ab"]
+            real = images_router.rename_with_sidecar
+            calls = {"n": 0}
+
+            def second_raises(old, new):
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise OSError("simulated rename failure")
+                return real(old, new)
+
+            monkeypatch.setattr(images_router, "rename_with_sidecar", second_raises)
+            async with _client() as c:
+                r = await c.post(
+                    f"{API}/images/batch/move-dataset",
+                    json={"image_ids": ids, "target_dataset_id": dst["id"]},
+                )
+            assert r.status_code == 500
+            src_out = (await env.client.get(f"{API}/datasets/{src['id']}")).json()
+            dst_out = (await env.client.get(f"{API}/datasets/{dst['id']}")).json()
+            assert (src_out["image_count"], dst_out["image_count"]) == (0, 2)  # what the rows say
+
+    run(scenario())
+
+
+def test_a_failed_thumbnail_move_does_not_abort_a_cross_dataset_move(tmp_path, monkeypatch):
+    """The thumbnail is derived; its failure must not leave the later images'
+    committed rows naming paths their files never reached."""
+    import backend.routers.images as images_router
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            src = await env.create_dataset("src")
+            dst = await env.create_dataset("dst")
+            ids = [(await upload_image(env, src["id"], f"{n}.png"))["id"] for n in "ab"]
+            real_copy = images_router.shutil.copy2
+
+            def copy2(a, b, *args, **kw):
+                if str(b).endswith(".webp"):
+                    raise OSError("thumbnails/ is read-only")
+                return real_copy(a, b, *args, **kw)
+
+            monkeypatch.setattr(images_router.shutil, "copy2", copy2)
+            r = await env.client.post(
+                f"{API}/images/batch/move-dataset",
+                json={"image_ids": ids, "target_dataset_id": dst["id"]},
+            )
+            assert r.status_code == 200, r.text
+            for iid in ids:
+                assert Path((await _row(env, iid)).file_path).exists()
+
+    run(scenario())

@@ -1088,7 +1088,7 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         # `contained_path` — the versioning hook copies the bytes into
         # `{ds}/.versions/objects/`, so an out-of-tree `file_path` is a read
         # primitive even with the unlink skipped. A row whose file is locked is
-        # kept (PM-021, GPT-008); it stays a flagged duplicate of its root.
+        # kept (PM-021, GPT-008), and so is its group — see `live_groups` below.
         deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="resolve_duplicates")
         for chunk in chunked(deletable):
             await db.execute(delete(Image).where(Image.id.in_(chunk)))
@@ -1096,6 +1096,19 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
 
         for did in dataset_ids:
             await refresh_stats(db, did)
+
+    # A group that kept a copy (its file was locked, or would not delete) still
+    # has a live duplicate. Clearing its kept image's flags would dissolve it —
+    # and the backstop prune below would then clear the lone kept copy as an
+    # orphan of a dead root — leaving two identical, unflagged images and nothing
+    # for the "close it and try again" the client shows to find. Keyed like
+    # `get_duplicates`: a member's `duplicate_of`, or the root's own id.
+    gone = set(deletable)
+    live_groups: set[str] = set()
+    for chunk in chunked([i for i in body.delete_ids if i not in gone]):
+        res = await db.execute(select(Image.id, Image.quality_flags).where(Image.id.in_(chunk)))
+        for rid, flags in res.all():
+            live_groups.add((flags or {}).get("duplicate_of") or rid)
 
     # One batched load per chunk rather than a `db.get` per id — a bulk resolve
     # keeps one survivor per group, so this loop is as long as the group count.
@@ -1106,6 +1119,8 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     for chunk in chunked(body.keep_ids):
         res = await db.execute(select(Image).where(Image.id.in_(chunk)))
         for img in res.scalars().all():
+            if ((img.quality_flags or {}).get("duplicate_of") or img.id) in live_groups:
+                continue
             flags = dict(img.quality_flags or {})
             flags.pop("is_duplicate", None)
             flags.pop("duplicate_of", None)

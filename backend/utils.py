@@ -146,12 +146,21 @@ def canonical_abs_path(path: str, root: Path) -> Path:
     link, not its target.
     Full resolution also gives Windows' on-disk case, so a case variant matches
     the stored string too.
+
+    One shape resolves *out* of `root` while being spelled inside it: a link
+    inside the tree — a dataset folder kept on another drive. Its stored paths
+    run through the link (`str(root / slug / ...)`), so the resolved target
+    would match no row while `rmtree` deleted the bytes behind it. Such a path,
+    when it carries no `..`, comes back as spelled — that spelling *is* the
+    stored form.
     """
     p = sanitize_abs_path(path)
     canonical = p.parent.resolve() / p.name if _is_link(p) else p.resolve()
     real_root = root.resolve()
     if canonical.is_relative_to(real_root):
         return root / canonical.relative_to(real_root)
+    if ".." not in p.parts and p.is_relative_to(root):
+        return p
     return canonical
 
 

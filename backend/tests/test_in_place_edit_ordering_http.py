@@ -365,3 +365,48 @@ def test_a_detection_crop_refreshes_dataset_totals(tmp_path):
             assert total == row.file_size_bytes
 
     run(scenario())
+
+
+def test_crop_upscale_refreshes_the_phash(tmp_path, monkeypatch):
+    """`upscale_image_sync` reports no phash, so the row kept the pre-crop one."""
+    from backend.tests.test_upscale_png_fallback_http import MODEL, _install_fake
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            r = await env.client.post(f"{API}/images/{img['id']}/crop", json={
+                "x": 0, "y": 0, "width": 16, "height": 16, "replace": True, "upscale_model": MODEL,
+            })
+            assert r.status_code == 200, r.text
+            assert (await wait_for_job(env, r.json()["job_id"], timeout=60))["status"] == "completed"
+            row = await _row(env, img["id"])
+            _assert_row_describes_its_file(row)
+            _no_temp_files(row)
+
+    run(scenario())
+
+
+def test_a_rewrite_never_writes_over_an_image_named_like_its_temp_file(tmp_path):
+    """The temp names were fixed (`{stem}_croptmp{suffix}`), and the images folder
+    is the user's: a registered `a_croptmp.png` — a stray a rescan adopted — was
+    overwritten by the crop and then swapped away onto `a.png`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            other = await upload_image(env, ds["id"], "a_croptmp.png", _patterned_png(40, 40))
+            other_path = Path((await _row(env, other["id"])).file_path)
+            assert other_path.name == "a_croptmp.png"
+            before = other_path.read_bytes()
+
+            r = await env.client.post(f"{API}/images/{img['id']}/crop", json={
+                "x": 0, "y": 0, "width": 16, "height": 16, "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            assert other_path.read_bytes() == before
+            _assert_row_describes_its_file(await _row(env, img["id"]))
+            _assert_row_describes_its_file(await _row(env, other["id"]))
+
+    run(scenario())

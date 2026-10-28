@@ -518,7 +518,9 @@ export default function QualityPage() {
     },
     onSuccess: ({ groups, totals }) => {
       const kept = keptImagesMessage(totals);
-      if (!kept || totals.deleted > 0) {
+      // A single group that kept a copy is not "resolved" — it is still a group
+      // (the server leaves its flags alone), so only the kept message shows.
+      if (!kept || (groups > 1 && totals.deleted > 0)) {
         toast.success(
           groups === 1
             ? "Duplicates resolved"

@@ -959,6 +959,9 @@ export default function GalleryPage() {
       }
     },
     onError: (err) => {
+      // Per-image commits: a request that failed partway still moved some.
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       toast.error(apiErrorDetail(err, "Move failed"));
     },
   });

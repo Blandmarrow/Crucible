@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from PIL import Image, ImageOps
 
@@ -317,6 +318,18 @@ def read_provenance_sidecar(image_path: Path | str) -> dict | None:
             del out["license"]
     out["source_meta"] = payload
     return out
+
+
+def temp_sibling(path: Path, tag: str) -> Path:
+    """A temp file beside `path` for a write that is swapped or renamed in later.
+
+    Keeps the suffix, because the encoders key on it (`_save_kwargs`,
+    `normalize_image_format`). Carries a random token because the images folder
+    is the user's: a fixed `{stem}_croptmp{suffix}` can be another registered
+    image's name — a stray from an earlier crash that a rescan adopted — which
+    the write would overwrite and then swap away, or a failure would unlink.
+    """
+    return path.with_name(f"{path.stem}_{tag}_{uuid4().hex[:8]}{path.suffix}")
 
 
 def get_image_info(path: str) -> dict:

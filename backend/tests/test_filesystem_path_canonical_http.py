@@ -189,3 +189,38 @@ def test_canonical_abs_path_keeps_a_final_windows_junction(tmp_path, monkeypatch
     monkeypatch.setattr(pathlib.Path, "is_symlink", lambda self: False if self == junction else real_is_symlink(self))
     monkeypatch.setattr(pathlib.Path, "is_junction", lambda self: self == junction, raising=False)
     assert canonical_abs_path(str(junction), root) == junction
+
+
+def test_canonical_abs_path_keeps_the_spelling_through_a_symlinked_dataset_folder(tmp_path):
+    """A dataset folder kept on another drive is a link *inside* the tree. Its
+    stored paths run through the link, so resolving it out of `root` would match
+    no row while `rmtree` deleted the bytes behind it."""
+    root = tmp_path / "datasets"
+    root.mkdir()
+    drive = tmp_path / "other_drive" / "d"
+    (drive / "images").mkdir(parents=True)
+    (root / "d").symlink_to(drive, target_is_directory=True)
+    assert canonical_abs_path(str(root / "d" / "images"), root) == root / "d" / "images"
+    assert canonical_abs_path(str(root / "d" / "images" / "a.png"), root) == root / "d" / "images" / "a.png"
+
+
+def test_deleting_inside_a_symlinked_dataset_folder_removes_the_rows(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("linked")
+            folder = Path(ds["folder_path"])
+            drive = tmp_path / "other_drive" / folder.name
+            drive.parent.mkdir()
+            folder.rename(drive)
+            folder.symlink_to(drive, target_is_directory=True)
+
+            img = await upload_image(env, ds["id"], "a.png", png_bytes())
+            fp = Path((await _row(env, img["id"])).file_path)
+            assert str(fp).startswith(str(folder))  # stored through the link
+
+            r = await env.client.post(f"{API}/filesystem/delete", json={"path": str(fp.parent)})
+            assert r.status_code == 200, r.text
+            assert not (drive / "images" / fp.name).exists()
+            assert await _row(env, img["id"]) is None
+
+    run(scenario())

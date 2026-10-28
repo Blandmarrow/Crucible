@@ -27,7 +27,7 @@ from backend.schemas.detection import (
 )
 from backend.services import version_service
 from backend.services.detection_service import remap_detections_for_crop
-from backend.services.image_service import crop_image_to_dest, generate_thumbnail
+from backend.services.image_service import crop_image_to_dest, generate_thumbnail, temp_sibling
 from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
@@ -971,7 +971,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                 if replace:
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
-                    tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+                    tmp_path = temp_sibling(src_path, "croptmp")
                     filename = img.filename
                     # Stage, flush, swap, commit (GPT-010). Every row field and the
                     # detection remap — DB work that can fail: a locked database, a

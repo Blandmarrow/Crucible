@@ -625,12 +625,17 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                     new_thumb = Path(thumbnail_path_for(str(new_path)))
                                     db_values: dict = dict(filename=new_filename, file_path=str(new_path))
                                     if new_path != old_path:
-                                        rename_with_sidecar(old_path, new_path)
                                         db_values["is_auto_named"] = True
                                         db_values["thumbnail_path"] = str(new_thumb)
+                                    # UPDATE staged *before* the rename: renamed
+                                    # first, a failing UPDATE left the image at its
+                                    # new name behind a row naming the old one. Now
+                                    # only the commit follows the rename (PM-013).
                                     await session.execute(
                                         sa_update(Image).where(Image.id == img_id).values(**db_values)
                                     )
+                                    if new_path != old_path:
+                                        rename_with_sidecar(old_path, new_path)
                                     await session.commit()
                                     # Epilogue, after the commit (PM-013): a failed
                                     # thumbnail move must not roll back the row of a
@@ -645,6 +650,11 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
                                                 new_path.name, exc_info=True,
                                             )
                                 except Exception:
+                                    # The caption itself is already committed by
+                                    # `set_caption`; this discards only the rename's
+                                    # staged UPDATE, so the next image does not start
+                                    # on a session left mid-transaction.
+                                    await session.rollback()
                                     logger.error("Rename failed for %s", file_path, exc_info=True)
                     else:
                         # Reason B — the whole reply was a refusal and Strip refusals

@@ -292,3 +292,32 @@ def test_a_failure_after_the_batch_unlinks_keeps_every_snapshot_backup(tmp_path,
                 assert hashes and all(h is not None for h in hashes), (image_id, hashes)
 
     run(scenario())
+
+
+def test_resolving_around_a_locked_copy_keeps_its_group(tmp_path):
+    """Keep member M1, delete root R and member M2, M2's file locked. M2 survives,
+    so M1 is still its duplicate: clearing M1's flags (and the backstop prune then
+    clearing M2 as an orphan of a dead root) left two identical, unflagged images
+    and nothing for "close it and try again" to resolve."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, (root, m1, m2), _ = await _three(env)
+            locked = Path((await _row(env, m2)).file_path)
+            async with env.Session() as db:
+                for iid in (m1, m2):
+                    (await db.get(Image, iid)).quality_flags = {"is_duplicate": True, "duplicate_of": root}
+                await db.commit()
+            with _PatchedUnlink({locked}):
+                r = await env.client.post(
+                    f"{API}/quality/duplicates/resolve",
+                    json={"keep_ids": [m1], "delete_ids": [root, m2]},
+                )
+            assert r.status_code == 200, r.text
+            assert r.json() == {"deleted": 1, "in_use": 1, "failed": 0}
+            for iid in (m1, m2):
+                flags = (await _row(env, iid)).quality_flags
+                assert flags.get("is_duplicate") is True, iid
+            groups = (await env.client.get(f"{API}/quality/duplicates/{ds['id']}")).json()["groups"]
+            assert len(groups) == 1 and {g["id"] for g in groups[0]} == {m1, m2}
+
+    run(scenario())

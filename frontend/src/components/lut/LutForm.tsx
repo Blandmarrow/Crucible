@@ -19,6 +19,10 @@ interface Props {
   qualityFlags?: string[];
   onSuccess?: () => void;
   onCancel?: () => void;
+  /** Told whenever a started job begins or stops running — the same moment Cancel
+   *  is disabled and re-enabled. A host dialog uses it to refuse Escape while the
+   *  job runs, since closing unmounts the watcher that reports the result. */
+  onRunningChange?: (running: boolean) => void;
 }
 
 // Deliberately silent about `thumbnails_stale`: TopBar owns that warning, for
@@ -36,7 +40,7 @@ function resultToast(result: Record<string, unknown>) {
   else toast.success(msg);
 }
 
-export default function LutForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, onSuccess, onCancel }: Props) {
+export default function LutForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, onSuccess, onCancel, onRunningChange }: Props) {
   const qc = useQueryClient();
 
   const [lutPath, setLutPath] = useState("");
@@ -97,6 +101,10 @@ export default function LutForm({ datasetId, imageIds, selectionDatasetIds, subf
   });
 
   const running = !!jobId && jobProgress?.status === "running";
+  useEffect(() => {
+    onRunningChange?.(running);
+    return () => onRunningChange?.(false);
+  }, [running, onRunningChange]);
 
   return (
     <div className="space-y-4">

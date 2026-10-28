@@ -31,6 +31,10 @@ interface Props {
   disabled?: boolean;
   onSuccess?: () => void;
   onCancel?: () => void;
+  /** Told whenever a started job begins or stops running — the same moment Cancel
+   *  is disabled and re-enabled. A host dialog uses it to refuse Escape while the
+   *  job runs, since closing unmounts the watcher that reports the result. */
+  onRunningChange?: (running: boolean) => void;
 }
 
 function resultToast(result: Record<string, unknown>) {
@@ -46,7 +50,7 @@ function resultToast(result: Record<string, unknown>) {
   failed > 0 ? toast(msg, { icon: "⚠️" }) : toast.success(msg);
 }
 
-export default function CropToDetectionForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel }: Props) {
+export default function CropToDetectionForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel, onRunningChange }: Props) {
   const qc = useQueryClient();
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set());
@@ -146,6 +150,10 @@ export default function CropToDetectionForm({ datasetId, imageIds, selectionData
   });
 
   const running = !!jobId && jobProgress?.status === "running";
+  useEffect(() => {
+    onRunningChange?.(running);
+    return () => onRunningChange?.(false);
+  }, [running, onRunningChange]);
   const noDetections = !labelsLoading && detectionLabels.length === 0;
 
   return (

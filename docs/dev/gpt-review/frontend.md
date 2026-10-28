@@ -5,28 +5,6 @@ throwaway DB on :8199. The specs are in `docs/dev/gpt-review/probes/frontend/`; 
 Read `docs/dev/image-detail.md`, `docs/dev/gallery.md`, `docs/dev/frontend-jobs.md` and
 `docs/dev/styling.md` as relevant.
 
-## GPT-029 — [P3, GPT said P2] Bare modal overlays lack dialog semantics and keyboard containment
-
-**Verdict:** CONFIRMED, half known. `docs/dev/styling.md` acknowledges that SelectionToolbar's
-bare `fixed inset-0` overlays have no hook. The DatasetsPage modals are **not** documented: there
-are five `.dialog-bg` overlays and no `useModalBehavior` anywhere in `DatasetsPage.tsx`.
-
-**Observed** (`gpt029.spec.ts`, `gpt029_extra.spec.ts`): in New Dataset and in Edit Captions:
-- there is no `role=dialog`;
-- Escape does not close the overlay;
-- Tab escapes to BODY;
-- Cancel returns focus to BODY.
-
-New Dataset's "Name" label is also not associated with its input. The control, the Import-folder
-modal (which uses the hook), passes. `frontend/e2e/modal-a11y.spec.ts` does not cover these
-modals.
-
-**Fix notes.**
-- Move the overlays onto `useModalBehavior` (`docs/dev/styling.md`) and give each an accessible
-  name.
-- Associate labels with their inputs.
-- Extend `modal-a11y.spec.ts`.
-
 ## GPT-031 — [P3] An invalid bulk-caption regex is reported as "No captions matched"
 
 **Verdict:** CONFIRMED. NEW.

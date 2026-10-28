@@ -21,6 +21,7 @@ import DelimiterControls from "../caption/DelimiterControls";
 import { qualityApi } from "../../api/quality";
 import { detectionApi } from "../../api/detection";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ModalShell from "../common/ModalShell";
 import MoveToDatasetModal from "../common/MoveToDatasetModal";
 import LabelsBulkModal from "./LabelsBulkModal";
 import SetProvenanceModal from "./SetProvenanceModal";
@@ -40,6 +41,10 @@ import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import { STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, type StyleMode } from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 
+
+// The overlay every inline toolbar dialog shares. `z-50` is the tier
+// `ConfirmDialog` uses too; the Delete-key guard below keeps the two from stacking.
+const TOOLBAR_OVERLAY = "fixed inset-0 z-50 flex items-center justify-center bg-black/60";
 
 function resolveModelId(base: string, providerModel: string): string {
   if (base.startsWith("openai_compat:") && providerModel) return `${base}:${providerModel}`;
@@ -108,6 +113,11 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const [showInpaint, setShowInpaint] = useState(false);
   const [showReextract, setShowReextract] = useState(false);
   const [showThumbnails, setShowThumbnails] = useState(false);
+  // Set by whichever job form (upscale, LUT, crop, remove-WM, thumbnails) is
+  // watching a running job. Those forms disable Cancel while one runs, because
+  // closing them unmounts the watcher and loses its result toast and refresh;
+  // Escape has to honour the same rule.
+  const [jobFormRunning, setJobFormRunning] = useState(false);
 
   const scoreJobProgress = useJobStore((s) => s.activeJobs.get(scoreJobId ?? ""));
   const captionJobProgress = useJobStore((s) => s.activeJobs.get(captionJobId ?? ""));
@@ -183,6 +193,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   };
 
   const ids = [...selectedIds];
+  const imagesNoun = `${count} Image${count !== 1 ? "s" : ""}`;
 
   const { data: modelsData } = useQuery({
     queryKey: ["captioning-models"],
@@ -657,605 +668,630 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
       {/* Caption modal */}
       {showCaption && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-4 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2">
-              <Sparkles size={16} /> Caption {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
+        <ModalShell
+          label={`Caption ${imagesNoun}`}
+          onClose={() => setShowCaption(false)}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-4 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2">
+            <Sparkles size={16} /> Caption {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
 
-            <div className="space-y-2">
-              <label className="label">Model</label>
-              {!modelsData && (
-                <p className="text-sm text-gray-500">Loading models…</p>
-              )}
-              {localModels.map(m => (
-                <div
-                  key={m.id}
-                  className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                    captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
-                  }`}
-                  onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div>{m.name}</div>
-                    <div className="text-xs text-gray-500">{m.description}</div>
-                  </div>
-                  <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
-                  {m.loaded && <span className="badge-green">Loaded</span>}
+          <div className="space-y-2">
+            <label className="label">Model</label>
+            {!modelsData && (
+              <p className="text-sm text-gray-500">Loading models…</p>
+            )}
+            {localModels.map(m => (
+              <div
+                key={m.id}
+                className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                  captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                }`}
+                onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div>{m.name}</div>
+                  <div className="text-xs text-gray-500">{m.description}</div>
                 </div>
-              ))}
-              {ollamaModels.length > 0 && (
-                <>
-                  <p className="text-xs text-gray-500 pt-1">Ollama</p>
-                  {ollamaModels.map(m => (
-                    <div
-                      key={m.id}
-                      className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                        captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
-                      }`}
-                      onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
-                    >
-                      <div className="flex-1">{m.name}</div>
-                      {m.size_mb > 0 && <span className="text-xs text-gray-500">{(m.size_mb / 1024).toFixed(1)}GB</span>}
-                    </div>
-                  ))}
-                </>
-              )}
-              {wd14Models.length > 0 && (
-                <>
-                  <p className="text-xs text-gray-500 pt-1">Tagger</p>
-                  {wd14Models.map(m => (
-                    <div
-                      key={m.id}
-                      className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                        captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
-                      }`}
-                      onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div>{m.name}</div>
-                        <div className="text-xs text-gray-500">{m.description}</div>
-                      </div>
-                      {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
-                    </div>
-                  ))}
-                </>
-              )}
-              {providers.filter(p => !p.is_remote).length > 0 && (
-                <>
-                  <p className="text-xs text-gray-500 pt-1">Local Providers</p>
-                  {providers.filter(p => !p.is_remote).map(p => {
-                    const baseId = `openai_compat:${p.id}`;
-                    const isSelected = captionModel.startsWith(baseId);
-                    return (
-                      <div key={p.id}>
-                        <div
-                          className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                            isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
-                          }`}
-                          onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
-                        >
-                          <div className="flex-1">{p.name}</div>
-                          <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
-                        </div>
-                        {isSelected && (
-                          <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
-                            <ModelPicker
-                              value={captionProviderModel}
-                              onChange={setCaptionProviderModel}
-                              providerId={p.id}
-                              baseUrl={p.base_url}
-                              placeholder={`Model (default: ${p.default_model || "none"})`}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-              {providers.filter(p => p.is_remote).length > 0 && (
-                <>
-                  <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
-                  {providers.filter(p => p.is_remote).map(p => {
-                    const baseId = `openai_compat:${p.id}`;
-                    const isSelected = captionModel.startsWith(baseId);
-                    return (
-                      <div key={p.id}>
-                        <div
-                          className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                            isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
-                          }`}
-                          onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
-                        >
-                          <div className="flex-1">{p.name}</div>
-                          <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
-                        </div>
-                        {isSelected && (
-                          <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
-                            <ModelPicker
-                              value={captionProviderModel}
-                              onChange={setCaptionProviderModel}
-                              providerId={p.id}
-                              baseUrl={p.base_url}
-                              placeholder={`Model (default: ${p.default_model || "none"})`}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-            </div>
-
-            {captionModel && (
+                <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
+                {m.loaded && <span className="badge-green">Loaded</span>}
+              </div>
+            ))}
+            {ollamaModels.length > 0 && (
               <>
-                {captionModel.startsWith("wd14:") ? (
-                  <div>
-                    <label className="label">Tag Threshold</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range" min={0} max={1} step={0.05}
-                        value={captionWd14Threshold}
-                        onChange={e => setCaptionWd14Threshold(Number(e.target.value))}
-                        className="flex-1"
-                      />
-                      <span className="text-xs text-gray-400 w-8 text-right">{captionWd14Threshold.toFixed(2)}</span>
-                    </div>
+                <p className="text-xs text-gray-500 pt-1">Ollama</p>
+                {ollamaModels.map(m => (
+                  <div
+                    key={m.id}
+                    className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                    }`}
+                    onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
+                  >
+                    <div className="flex-1">{m.name}</div>
+                    {m.size_mb > 0 && <span className="text-xs text-gray-500">{(m.size_mb / 1024).toFixed(1)}GB</span>}
                   </div>
-                ) : (
-                  <>
-                    {availableStyles.length > 0 && (
-                      <div>
-                        <label className="label">Style</label>
-                        <div className="flex flex-wrap gap-2">
-                          {availableStyles.map(s => (
-                            <button
-                              key={s}
-                              className={`btn btn-sm ${captionStyle === s ? "btn-primary" : "btn-secondary"}`}
-                              onClick={() => setCaptionStyle(s)}
-                            >
-                              {s}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="label">Custom Prompt (optional)</label>
-                      <textarea
-                        className="input h-16 resize-none"
-                        value={captionCustomPrompt}
-                        onChange={e => setCaptionCustomPrompt(e.target.value)}
-                        placeholder={
-                          captionModel.startsWith("ollama:") || captionModel.startsWith("openai_compat:")
-                            ? "Leave blank for style preset…"
-                            : "Override the default prompt for this style…"
-                        }
-                      />
-                    </div>
-
-                    <PromptPresetManager
-                      currentModel={captionModel}
-                      currentStyle={captionStyle}
-                      currentPrompt={captionCustomPrompt}
-                      onLoad={(p) => {
-                        setCaptionModel(p.model);
-                        setCaptionStyle(p.style);
-                        setCaptionCustomPrompt(p.prompt);
-                      }}
-                    />
-
-                    <ResolutionPicker
-                      targetWidth={captionTargetWidth}
-                      targetHeight={captionTargetHeight}
-                      onChange={(w, h) => { setCaptionTargetWidth(w); setCaptionTargetHeight(h); }}
-                    />
-                  </>
-                )}
-
-                <DelimiterControls
-                  mode={captionDelimiterMode}
-                  delimiterParts={captionDelimiterParts}
-                  onChange={(m, parts) => { setCaptionDelimiterMode(m); setCaptionDelimiterParts(parts); }}
-                />
+                ))}
               </>
             )}
-
-            {captionBlocked && (
-              <p className="text-xs text-red-400">
-                “{captionModel}” is not a captioning model — captioning cannot run while it is selected.
-                A saved preset can carry one in; pick a model above.
-              </p>
-            )}
-            {captionUnlisted && (
-              <p className="text-xs text-yellow-400">
-                “{captionModel}” is not in the current model list — the service may be offline, or the
-                model may have been removed.
-              </p>
-            )}
-
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowCaption(false)}>Cancel</button>
-              <button
-                className="btn-primary flex items-center gap-2"
-                onClick={() => captionMutation.mutate()}
-                disabled={!captionModel || captionBlocked || captionMutation.isPending}
-              >
-                <Sparkles size={14} /> Start Captioning
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Score modal */}
-      {showScore && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-lg space-y-4" style={{ maxHeight: "90vh", overflowY: "auto" }}>
-            <h4 className="font-medium flex items-center gap-2">
-              <Star size={16} /> Score {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={runAesthetic} onChange={e => setRunAesthetic(e.target.checked)} />
-                Aesthetic Score (LAION predictor)
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={runTechnical} onChange={e => setRunTechnical(e.target.checked)} />
-                Technical (blur, noise, brightness, duplicates)
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={runWatermark} onChange={e => setRunWatermark(e.target.checked)} />
-                Watermark detection (CLIP zero-shot)
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={runEmbeddings} onChange={e => setRunEmbeddings(e.target.checked)} />
-                Style embeddings · CLIP
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={runDino} onChange={e => setRunDino(e.target.checked)} />
-                DINOv2 embeddings
-              </label>
-              {runDino && (
-                <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ paddingLeft: 20 }}>
-                  <input type="checkbox" checked={runDinoLayers} onChange={e => setRunDinoLayers(e.target.checked)} />
-                  DINOv2 per-layer embeds
-                </label>
-              )}
-            </div>
-            <input
-              className="input w-full"
-              type="text"
-              placeholder="Job label (optional)"
-              value={scoreJobLabel}
-              onChange={(e) => setScoreJobLabel(e.target.value)}
-              style={{ fontSize: 12 }}
-              title="Optional name shown in the job queue"
-            />
-
-            {/* Style similarity section */}
-            <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
-              <button
-                className="flex items-center gap-2 w-full text-sm font-medium"
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg)", padding: 0, textAlign: "left" }}
-                onClick={() => setShowStyleSection((v) => !v)}
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-                  <path d={showStyleSection ? "M3 10l5-5 5 5" : "M3 6l5 5 5-5"}/>
-                </svg>
-                Style similarity
-                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--fg-dim)", fontWeight: 400 }}>Cosine similarity to reference embeddings</span>
-              </button>
-
-              {showStyleSection && (
-                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>
-                      {STYLE_MODES.find((m) => m.value === embeddingType)?.desc} {STYLE_MODE_NOTE}
+            {wd14Models.length > 0 && (
+              <>
+                <p className="text-xs text-gray-500 pt-1">Tagger</p>
+                {wd14Models.map(m => (
+                  <div
+                    key={m.id}
+                    className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                    }`}
+                    onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div>{m.name}</div>
+                      <div className="text-xs text-gray-500">{m.description}</div>
                     </div>
-                    <div className="row-flex">
-                      {STYLE_MODES.map((m) => (
-                        <button
-                          key={m.value}
-                          className={`btn sm${embeddingType === m.value ? " primary" : ""}`}
-                          onClick={() => setEmbeddingType(m.value)}
-                          disabled={m.value !== "clip" && externalRefFiles.length > 0}
-                          title={m.desc}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
+                    {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
                   </div>
-
-                  {(embeddingType === "dino" || embeddingType === "combined") && externalRefFiles.length === 0 && (
-                    <div>
-                      <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }} title={DINO_LAYER_NOTE}>DINOv2 layer</div>
-                      <select
-                        className="select w-full"
-                        value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "all") setDinoLayer("all");
-                          else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
-                        }}
-                        style={{ fontSize: 12 }}
+                ))}
+              </>
+            )}
+            {providers.filter(p => !p.is_remote).length > 0 && (
+              <>
+                <p className="text-xs text-gray-500 pt-1">Local Providers</p>
+                {providers.filter(p => !p.is_remote).map(p => {
+                  const baseId = `openai_compat:${p.id}`;
+                  const isSelected = captionModel.startsWith(baseId);
+                  return (
+                    <div key={p.id}>
+                      <div
+                        className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                          isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                        }`}
+                        onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
                       >
-                        {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
-                          <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
+                        <div className="flex-1">{p.name}</div>
+                        <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                      </div>
+                      {isSelected && (
+                        <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                          <ModelPicker
+                            value={captionProviderModel}
+                            onChange={setCaptionProviderModel}
+                            providerId={p.id}
+                            baseUrl={p.base_url}
+                            placeholder={`Model (default: ${p.default_model || "none"})`}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            {providers.filter(p => p.is_remote).length > 0 && (
+              <>
+                <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
+                {providers.filter(p => p.is_remote).map(p => {
+                  const baseId = `openai_compat:${p.id}`;
+                  const isSelected = captionModel.startsWith(baseId);
+                  return (
+                    <div key={p.id}>
+                      <div
+                        className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
+                          isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                        }`}
+                        onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
+                      >
+                        <div className="flex-1">{p.name}</div>
+                        <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                      </div>
+                      {isSelected && (
+                        <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
+                          <ModelPicker
+                            value={captionProviderModel}
+                            onChange={setCaptionProviderModel}
+                            providerId={p.id}
+                            baseUrl={p.base_url}
+                            placeholder={`Model (default: ${p.default_model || "none"})`}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {captionModel && (
+            <>
+              {captionModel.startsWith("wd14:") ? (
+                <div>
+                  <label className="label">Tag Threshold</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range" min={0} max={1} step={0.05}
+                      value={captionWd14Threshold}
+                      onChange={e => setCaptionWd14Threshold(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-400 w-8 text-right">{captionWd14Threshold.toFixed(2)}</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {availableStyles.length > 0 && (
+                    <div>
+                      <label className="label">Style</label>
+                      <div className="flex flex-wrap gap-2">
+                        {availableStyles.map(s => (
+                          <button
+                            key={s}
+                            className={`btn btn-sm ${captionStyle === s ? "btn-primary" : "btn-secondary"}`}
+                            onClick={() => setCaptionStyle(s)}
+                          >
+                            {s}
+                          </button>
                         ))}
-                        <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
-                      </select>
+                      </div>
                     </div>
                   )}
 
                   <div>
-                    <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>Reference images — pick from the dataset, or drag in local files (always embedded with CLIP).</div>
-                    <StyleReferencePicker
-                      datasetId={datasetId}
-                      selectedIds={selectedRefIds}
-                      onToggle={toggleRef}
-                      externalFiles={externalRefFiles}
-                      onExternalFilesChange={setExternalRefFiles}
+                    <label className="label">Custom Prompt (optional)</label>
+                    <textarea
+                      className="input h-16 resize-none"
+                      value={captionCustomPrompt}
+                      onChange={e => setCaptionCustomPrompt(e.target.value)}
+                      placeholder={
+                        captionModel.startsWith("ollama:") || captionModel.startsWith("openai_compat:")
+                          ? "Leave blank for style preset…"
+                          : "Override the default prompt for this style…"
+                      }
                     />
                   </div>
 
-                  <div className="flex justify-end">
-                    <button
-                      className="btn primary"
-                      onClick={() => similarityMutation.mutate()}
-                      disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-                        <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
-                      </svg>
-                      Score similarity{(selectedRefIds.size + externalRefFiles.length) > 0 ? ` · ${selectedRefIds.size + externalRefFiles.length} refs` : ""}
-                    </button>
+                  <PromptPresetManager
+                    currentModel={captionModel}
+                    currentStyle={captionStyle}
+                    currentPrompt={captionCustomPrompt}
+                    onLoad={(p) => {
+                      setCaptionModel(p.model);
+                      setCaptionStyle(p.style);
+                      setCaptionCustomPrompt(p.prompt);
+                    }}
+                  />
+
+                  <ResolutionPicker
+                    targetWidth={captionTargetWidth}
+                    targetHeight={captionTargetHeight}
+                    onChange={(w, h) => { setCaptionTargetWidth(w); setCaptionTargetHeight(h); }}
+                  />
+                </>
+              )}
+
+              <DelimiterControls
+                mode={captionDelimiterMode}
+                delimiterParts={captionDelimiterParts}
+                onChange={(m, parts) => { setCaptionDelimiterMode(m); setCaptionDelimiterParts(parts); }}
+              />
+            </>
+          )}
+
+          {captionBlocked && (
+            <p className="text-xs text-red-400">
+              “{captionModel}” is not a captioning model — captioning cannot run while it is selected.
+              A saved preset can carry one in; pick a model above.
+            </p>
+          )}
+          {captionUnlisted && (
+            <p className="text-xs text-yellow-400">
+              “{captionModel}” is not in the current model list — the service may be offline, or the
+              model may have been removed.
+            </p>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <button className="btn-ghost" onClick={() => setShowCaption(false)}>Cancel</button>
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={() => captionMutation.mutate()}
+              disabled={!captionModel || captionBlocked || captionMutation.isPending}
+            >
+              <Sparkles size={14} /> Start Captioning
+            </button>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Score modal */}
+      {showScore && (
+        <ModalShell
+          label={`Score ${imagesNoun}`}
+          onClose={() => setShowScore(false)}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-lg space-y-4"
+          style={{ maxHeight: "90vh", overflowY: "auto" }}
+        >
+          <h4 className="font-medium flex items-center gap-2">
+            <Star size={16} /> Score {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={runAesthetic} onChange={e => setRunAesthetic(e.target.checked)} />
+              Aesthetic Score (LAION predictor)
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={runTechnical} onChange={e => setRunTechnical(e.target.checked)} />
+              Technical (blur, noise, brightness, duplicates)
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={runWatermark} onChange={e => setRunWatermark(e.target.checked)} />
+              Watermark detection (CLIP zero-shot)
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={runEmbeddings} onChange={e => setRunEmbeddings(e.target.checked)} />
+              Style embeddings · CLIP
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={runDino} onChange={e => setRunDino(e.target.checked)} />
+              DINOv2 embeddings
+            </label>
+            {runDino && (
+              <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ paddingLeft: 20 }}>
+                <input type="checkbox" checked={runDinoLayers} onChange={e => setRunDinoLayers(e.target.checked)} />
+                DINOv2 per-layer embeds
+              </label>
+            )}
+          </div>
+          <input
+            className="input w-full"
+            type="text"
+            placeholder="Job label (optional)"
+            value={scoreJobLabel}
+            onChange={(e) => setScoreJobLabel(e.target.value)}
+            style={{ fontSize: 12 }}
+            title="Optional name shown in the job queue"
+          />
+
+          {/* Style similarity section */}
+          <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+            <button
+              className="flex items-center gap-2 w-full text-sm font-medium"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--fg)", padding: 0, textAlign: "left" }}
+              onClick={() => setShowStyleSection((v) => !v)}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d={showStyleSection ? "M3 10l5-5 5 5" : "M3 6l5 5 5-5"}/>
+              </svg>
+              Style similarity
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--fg-dim)", fontWeight: 400 }}>Cosine similarity to reference embeddings</span>
+            </button>
+
+            {showStyleSection && (
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>
+                    {STYLE_MODES.find((m) => m.value === embeddingType)?.desc} {STYLE_MODE_NOTE}
+                  </div>
+                  <div className="row-flex">
+                    {STYLE_MODES.map((m) => (
+                      <button
+                        key={m.value}
+                        className={`btn sm${embeddingType === m.value ? " primary" : ""}`}
+                        onClick={() => setEmbeddingType(m.value)}
+                        disabled={m.value !== "clip" && externalRefFiles.length > 0}
+                        title={m.desc}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              )}
-            </div>
 
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowScore(false)}>Cancel</button>
-              <button
-                className="btn-primary flex items-center gap-2"
-                onClick={() => scoreMutation.mutate()}
-                disabled={(!runAesthetic && !runTechnical && !runWatermark && !runEmbeddings && !runDino) || scoreMutation.isPending}
-              >
-                <Star size={14} /> Run Scoring
-              </button>
-            </div>
+                {(embeddingType === "dino" || embeddingType === "combined") && externalRefFiles.length === 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }} title={DINO_LAYER_NOTE}>DINOv2 layer</div>
+                    <select
+                      className="select w-full"
+                      value={dinoLayer === "all" ? "all" : (dinoLayer ?? 12)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "all") setDinoLayer("all");
+                        else { const n = Number(v); setDinoLayer(n === 12 ? null : n); }
+                      }}
+                      style={{ fontSize: 12 }}
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>Layer {n} — {DINO_LAYER_LABELS[String(n)]}</option>
+                      ))}
+                      <option value="all">{embeddingType === "combined" ? "All layers — Score CLIP + each DINOv2 layer individually" : "All layers — Score each layer individually"}</option>
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>Reference images — pick from the dataset, or drag in local files (always embedded with CLIP).</div>
+                  <StyleReferencePicker
+                    datasetId={datasetId}
+                    selectedIds={selectedRefIds}
+                    onToggle={toggleRef}
+                    externalFiles={externalRefFiles}
+                    onExternalFilesChange={setExternalRefFiles}
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    className="btn primary"
+                    onClick={() => similarityMutation.mutate()}
+                    disabled={(selectedRefIds.size === 0 && externalRefFiles.length === 0) || similarityMutation.isPending}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>
+                    </svg>
+                    Score similarity{(selectedRefIds.size + externalRefFiles.length) > 0 ? ` · ${selectedRefIds.size + externalRefFiles.length} refs` : ""}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+
+          <div className="flex gap-2 justify-end">
+            <button className="btn-ghost" onClick={() => setShowScore(false)}>Cancel</button>
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={() => scoreMutation.mutate()}
+              disabled={(!runAesthetic && !runTechnical && !runWatermark && !runEmbeddings && !runDino) || scoreMutation.isPending}
+            >
+              <Star size={14} /> Run Scoring
+            </button>
+          </div>
+        </ModalShell>
       )}
 
       {/* Detection modal */}
       {showDetect && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-4">
-            <h4 className="font-medium flex items-center gap-2">
-              <ScanSearch size={16} /> Detect Objects in {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
+        <ModalShell
+          label={`Detect Objects in ${imagesNoun}`}
+          onClose={() => setShowDetect(false)}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-sm space-y-4"
+        >
+          <h4 className="font-medium flex items-center gap-2">
+            <ScanSearch size={16} /> Detect Objects in {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
 
+          <div>
+            <label className="label">Model</label>
+            <select
+              className="select w-full"
+              value={detectModel}
+              onChange={(e) => {
+                const m = e.target.value;
+                const familyChanged = detectionModelFamily(m) !== detectionModelFamily(detectModel);
+                setDetectModel(m);
+                // Only reset task/prompt/use-captions when the model family changes;
+                // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
+                if (familyChanged) {
+                  // NudeNet is the one model with a fixed task the backend
+                  // enforces (`task='nudenet'`), so the family switch picks it.
+                  const family = detectionModelFamily(m);
+                  setDetectTask(family === "nudenet" ? "nudenet" : family === "sam" ? "text_prompt" : "<OD>");
+                  setDetectPrompt("");
+                  setDetectUseCaptions(false);
+                }
+              }}
+            >
+              {DETECTION_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {detectModel === "nudenet" && (
             <div>
-              <label className="label">Model</label>
+              <label className="label">Min confidence: {detectMinProb.toFixed(2)}</label>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={detectMinProb}
+                onChange={(e) => setDetectMinProb(Number(e.target.value))}
+                className="w-full"
+              />
+              <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
+            </div>
+          )}
+
+          {detectionModelFamily(detectModel) === "florence" && (
+            <div>
+              <label className="label">Task</label>
               <select
                 className="select w-full"
-                value={detectModel}
-                onChange={(e) => {
-                  const m = e.target.value;
-                  const familyChanged = detectionModelFamily(m) !== detectionModelFamily(detectModel);
-                  setDetectModel(m);
-                  // Only reset task/prompt/use-captions when the model family changes;
-                  // switching within a family (e.g. Florence Large ↔ PromptGen) keeps them.
-                  if (familyChanged) {
-                    // NudeNet is the one model with a fixed task the backend
-                    // enforces (`task='nudenet'`), so the family switch picks it.
-                    const family = detectionModelFamily(m);
-                    setDetectTask(family === "nudenet" ? "nudenet" : family === "sam" ? "text_prompt" : "<OD>");
-                    setDetectPrompt("");
-                    setDetectUseCaptions(false);
-                  }
-                }}
+                value={detectTask}
+                onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
               >
-                {DETECTION_MODELS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
+                <option value="<OD>">Object Detection (auto-detect everything)</option>
+                <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
               </select>
             </div>
+          )}
 
-            {detectModel === "nudenet" && (
-              <div>
-                <label className="label">Min confidence: {detectMinProb.toFixed(2)}</label>
-                <input
-                  type="range"
-                  min={0.1}
-                  max={1}
-                  step={0.05}
-                  value={detectMinProb}
-                  onChange={(e) => setDetectMinProb(Number(e.target.value))}
-                  className="w-full"
-                />
-                <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
-              </div>
-            )}
-
-            {detectionModelFamily(detectModel) === "florence" && (
-              <div>
-                <label className="label">Task</label>
-                <select
-                  className="select w-full"
-                  value={detectTask}
-                  onChange={(e) => { setDetectTask(e.target.value); setDetectPrompt(""); setDetectUseCaptions(false); }}
-                >
-                  <option value="<OD>">Object Detection (auto-detect everything)</option>
-                  <option value="<CAPTION_TO_PHRASE_GROUNDING>">Grounded Caption (draw boxes around phrases)</option>
-                </select>
-              </div>
-            )}
-
-            {(detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" || detectModel === "sam2" || detectModel === "sam3") && (
-              <div className="space-y-2">
-                {detectModel !== "sam2" && detectModel !== "sam3" && (
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={detectUseCaptions}
-                      onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
-                    />
-                    Use each image's existing caption as prompt
+          {(detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" || detectModel === "sam2" || detectModel === "sam3") && (
+            <div className="space-y-2">
+              {detectModel !== "sam2" && detectModel !== "sam3" && (
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={detectUseCaptions}
+                    onChange={(e) => { setDetectUseCaptions(e.target.checked); setDetectPrompt(""); }}
+                  />
+                  Use each image's existing caption as prompt
+                </label>
+              )}
+              {!detectUseCaptions && (
+                <>
+                  <label className="label">
+                    {detectModel === "sam2" || detectModel === "sam3" ? "Text prompt" : "Caption to ground"}
                   </label>
-                )}
-                {!detectUseCaptions && (
-                  <>
-                    <label className="label">
-                      {detectModel === "sam2" || detectModel === "sam3" ? "Text prompt" : "Caption to ground"}
-                    </label>
-                    <input
-                      className="input"
-                      placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. face, hand, watermark" : "e.g. a cat sitting on a dog"}
-                      value={detectPrompt}
-                      onChange={(e) => setDetectPrompt(e.target.value)}
-                      autoFocus
-                    />
-                    <p className="text-xs text-gray-500">
-                      {detectModel === "sam2" || detectModel === "sam3"
-                        ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
-                        : "Florence-2 will draw boxes around the phrases from this caption."}
-                    </p>
-                  </>
-                )}
-                {detectUseCaptions && (
+                  <input
+                    className="input"
+                    placeholder={detectModel === "sam2" || detectModel === "sam3" ? "e.g. face, hand, watermark" : "e.g. a cat sitting on a dog"}
+                    value={detectPrompt}
+                    onChange={(e) => setDetectPrompt(e.target.value)}
+                    autoFocus
+                  />
                   <p className="text-xs text-gray-500">
-                    Images without a caption will be skipped.
+                    {detectModel === "sam2" || detectModel === "sam3"
+                      ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
+                      : "Florence-2 will draw boxes around the phrases from this caption."}
                   </p>
-                )}
-              </div>
-            )}
-
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
-              Overwrite this model's existing detections
-            </label>
-
-            {detectSyncEligible && (
-              <label
-                className="flex items-center gap-2 cursor-pointer text-sm"
-                title="After the run, set the watermark flag on images where a region was found and clear it on images scanned clean. Only images actually scanned are updated."
-              >
-                <input type="checkbox" checked={detectSyncWatermark} onChange={e => setDetectSyncWatermark(e.target.checked)} />
-                Sync watermark flag from results
-              </label>
-            )}
-
-            <input
-              className="input w-full"
-              type="text"
-              placeholder="Job label (optional)"
-              value={detectJobLabel}
-              onChange={(e) => setDetectJobLabel(e.target.value)}
-              style={{ fontSize: 12 }}
-              title="Optional name shown in the job queue"
-            />
-
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowDetect(false)}>Cancel</button>
-              <button
-                className="btn-primary flex items-center gap-2"
-                onClick={() => detectMutation.mutate()}
-                disabled={
-                  detectMutation.isPending ||
-                  (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim()) ||
-                  ((detectModel === "sam2" || detectModel === "sam3") && !detectPrompt.trim())
-                }
-              >
-                <ScanSearch size={14} /> Run Detection
-              </button>
+                </>
+              )}
+              {detectUseCaptions && (
+                <p className="text-xs text-gray-500">
+                  Images without a caption will be skipped.
+                </p>
+              )}
             </div>
+          )}
+
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input type="checkbox" checked={detectOverwrite} onChange={e => setDetectOverwrite(e.target.checked)} />
+            Overwrite this model's existing detections
+          </label>
+
+          {detectSyncEligible && (
+            <label
+              className="flex items-center gap-2 cursor-pointer text-sm"
+              title="After the run, set the watermark flag on images where a region was found and clear it on images scanned clean. Only images actually scanned are updated."
+            >
+              <input type="checkbox" checked={detectSyncWatermark} onChange={e => setDetectSyncWatermark(e.target.checked)} />
+              Sync watermark flag from results
+            </label>
+          )}
+
+          <input
+            className="input w-full"
+            type="text"
+            placeholder="Job label (optional)"
+            value={detectJobLabel}
+            onChange={(e) => setDetectJobLabel(e.target.value)}
+            style={{ fontSize: 12 }}
+            title="Optional name shown in the job queue"
+          />
+
+          <div className="flex gap-2 justify-end">
+            <button className="btn-ghost" onClick={() => setShowDetect(false)}>Cancel</button>
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={() => detectMutation.mutate()}
+              disabled={
+                detectMutation.isPending ||
+                (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim()) ||
+                ((detectModel === "sam2" || detectModel === "sam3") && !detectPrompt.trim())
+              }
+            >
+              <ScanSearch size={14} /> Run Detection
+            </button>
           </div>
-        </div>
+        </ModalShell>
       )}
 
       {/* Bulk edit caption modal */}
       {showBulkEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Pencil size={15} /> Edit Captions — {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <BulkEditForm
-              datasetId={datasetId}
-              imageIds={ids}
-              onSuccess={() => { setShowBulkEdit(false); clear(); }}
-              onCancel={() => setShowBulkEdit(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Edit Captions — ${imagesNoun}`}
+          onClose={() => setShowBulkEdit(false)}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <Pencil size={15} /> Edit Captions — {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <BulkEditForm
+            datasetId={datasetId}
+            imageIds={ids}
+            onSuccess={() => { setShowBulkEdit(false); clear(); }}
+            onCancel={() => setShowBulkEdit(false)}
+          />
+        </ModalShell>
       )}
 
       {/* Upscale modal */}
       {showUpscale && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Maximize2 size={15} /> Upscale {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <UpscaleForm
-              datasetId={datasetId}
-              imageIds={ids}
-              selectionDatasetIds={selectionDatasetIds}
-              onSuccess={() => setShowUpscale(false)}
-              onCancel={() => setShowUpscale(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Upscale ${imagesNoun}`}
+          onClose={() => { if (!jobFormRunning) setShowUpscale(false); }}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <Maximize2 size={15} /> Upscale {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <UpscaleForm
+            onRunningChange={setJobFormRunning}
+            datasetId={datasetId}
+            imageIds={ids}
+            selectionDatasetIds={selectionDatasetIds}
+            onSuccess={() => setShowUpscale(false)}
+            onCancel={() => setShowUpscale(false)}
+          />
+        </ModalShell>
       )}
 
       {/* Crop-to-detection modal */}
       {showCropDetect && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Crop size={15} /> Crop to Detection — {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <CropToDetectionForm
-              datasetId={datasetId}
-              imageIds={ids}
-              selectionDatasetIds={selectionDatasetIds}
-              onSuccess={() => setShowCropDetect(false)}
-              onCancel={() => setShowCropDetect(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Crop to Detection — ${imagesNoun}`}
+          onClose={() => { if (!jobFormRunning) setShowCropDetect(false); }}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <Crop size={15} /> Crop to Detection — {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <CropToDetectionForm
+            onRunningChange={setJobFormRunning}
+            datasetId={datasetId}
+            imageIds={ids}
+            selectionDatasetIds={selectionDatasetIds}
+            onSuccess={() => setShowCropDetect(false)}
+            onCancel={() => setShowCropDetect(false)}
+          />
+        </ModalShell>
       )}
 
       {/* Remove-watermark (inpaint) modal */}
       {showInpaint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Eraser size={15} /> Remove Watermark — {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <InpaintForm
-              datasetId={datasetId}
-              imageIds={ids}
-              selectionDatasetIds={selectionDatasetIds}
-              onSuccess={() => setShowInpaint(false)}
-              onCancel={() => setShowInpaint(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Remove Watermark — ${imagesNoun}`}
+          onClose={() => { if (!jobFormRunning) setShowInpaint(false); }}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <Eraser size={15} /> Remove Watermark — {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <InpaintForm
+            onRunningChange={setJobFormRunning}
+            datasetId={datasetId}
+            imageIds={ids}
+            selectionDatasetIds={selectionDatasetIds}
+            onSuccess={() => setShowInpaint(false)}
+            onCancel={() => setShowInpaint(false)}
+          />
+        </ModalShell>
       )}
 
       {/* Re-extract at full res modal */}
@@ -1272,39 +1308,47 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
       {/* Rebuild thumbnails modal */}
       {showThumbnails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <RefreshCw size={15} /> Rebuild Thumbnails — {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <RegenerateThumbnailsForm
-              datasetId={datasetId}
-              imageIds={ids}
-              onSuccess={() => setShowThumbnails(false)}
-              onCancel={() => setShowThumbnails(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Rebuild Thumbnails — ${imagesNoun}`}
+          onClose={() => { if (!jobFormRunning) setShowThumbnails(false); }}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <RefreshCw size={15} /> Rebuild Thumbnails — {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <RegenerateThumbnailsForm
+            onRunningChange={setJobFormRunning}
+            datasetId={datasetId}
+            imageIds={ids}
+            onSuccess={() => setShowThumbnails(false)}
+            onCancel={() => setShowThumbnails(false)}
+          />
+        </ModalShell>
       )}
 
       {/* LUT modal */}
       {showLut && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto">
-            <h4 className="font-medium flex items-center gap-2 mb-1">
-              <Palette size={15} /> Apply LUT — {count} Image{count !== 1 ? "s" : ""}
-            </h4>
-            {datasetBreakdown}
-            <LutForm
-              datasetId={datasetId}
-              imageIds={ids}
-              selectionDatasetIds={selectionDatasetIds}
-              onSuccess={() => setShowLut(false)}
-              onCancel={() => setShowLut(false)}
-            />
-          </div>
-        </div>
+        <ModalShell
+          label={`Apply LUT — ${imagesNoun}`}
+          onClose={() => { if (!jobFormRunning) setShowLut(false); }}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-md space-y-1 max-h-[80vh] overflow-y-auto"
+        >
+          <h4 className="font-medium flex items-center gap-2 mb-1">
+            <Palette size={15} /> Apply LUT — {count} Image{count !== 1 ? "s" : ""}
+          </h4>
+          {datasetBreakdown}
+          <LutForm
+            onRunningChange={setJobFormRunning}
+            datasetId={datasetId}
+            imageIds={ids}
+            selectionDatasetIds={selectionDatasetIds}
+            onSuccess={() => setShowLut(false)}
+            onCancel={() => setShowLut(false)}
+          />
+        </ModalShell>
       )}
 
       {showDeleteConfirm && (
@@ -1370,58 +1414,62 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
 
       {/* Move to subfolder modal */}
       {showMoveSubfolder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="card p-5 w-full max-w-sm space-y-3" style={{ maxHeight: "85vh", overflowY: "auto" }}>
-            <h4 className="font-medium flex items-center gap-2">
-              <FolderInput size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Subfolder
-            </h4>
-            {datasetBreakdown}
-            {subfolders.length > 0 && (
-              /* A chip is a `.btn` — inline-flex + white-space: nowrap, and as a flex item it
-                 inherits min-width: auto — so a long path can neither wrap nor shrink and runs
-                 past the card. maxWidth/minWidth on the chip plus the ellipsis span inside are
-                 all three load-bearing; see MoveToDatasetModal, which uses the same pattern. */
-              <div className="flex flex-wrap gap-1.5" style={{ maxHeight: 180, overflowY: "auto" }}>
-                <button
-                  className={`btn btn-sm ${moveSubfolderTarget === "" ? "btn-primary" : "btn-secondary"}`}
-                  style={{ maxWidth: "100%", minWidth: 0 }}
-                  title="(root)"
-                  onClick={() => setMoveSubfolderTarget("")}
-                >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>(root)</span>
-                </button>
-                {subfolders.filter(sf => sf.path !== "").map(sf => (
-                  <button
-                    key={sf.path}
-                    className={`btn btn-sm ${moveSubfolderTarget === sf.path ? "btn-primary" : "btn-secondary"}`}
-                    style={{ maxWidth: "100%", minWidth: 0 }}
-                    title={sf.path}
-                    onClick={() => setMoveSubfolderTarget(sf.path)}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sf.path}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <input
-              className="input"
-              placeholder={subfolders.length > 0 ? "Or type a new path: characters/poses" : "Subfolder path: characters/poses"}
-              value={moveSubfolderTarget}
-              onChange={e => setMoveSubfolderTarget(e.target.value)}
-              autoFocus={subfolders.length === 0}
-            />
-            <div className="flex gap-2 justify-end">
-              <button className="btn-ghost" onClick={() => setShowMoveSubfolder(false)}>Cancel</button>
+        <ModalShell
+          label={`Move ${imagesNoun} to Subfolder`}
+          onClose={() => setShowMoveSubfolder(false)}
+          overlayClassName={TOOLBAR_OVERLAY}
+          className="card p-5 w-full max-w-sm space-y-3"
+          style={{ maxHeight: "85vh", overflowY: "auto" }}
+        >
+          <h4 className="font-medium flex items-center gap-2">
+            <FolderInput size={15} /> Move {count} Image{count !== 1 ? "s" : ""} to Subfolder
+          </h4>
+          {datasetBreakdown}
+          {subfolders.length > 0 && (
+            /* A chip is a `.btn` — inline-flex + white-space: nowrap, and as a flex item it
+               inherits min-width: auto — so a long path can neither wrap nor shrink and runs
+               past the card. maxWidth/minWidth on the chip plus the ellipsis span inside are
+               all three load-bearing; see MoveToDatasetModal, which uses the same pattern. */
+            <div className="flex flex-wrap gap-1.5" style={{ maxHeight: 180, overflowY: "auto" }}>
               <button
-                className="btn-primary"
-                onClick={() => moveSubfolderMutation.mutate({ byDataset: idsByDataset, target: moveSubfolderTarget })}
-                disabled={moveSubfolderMutation.isPending}
+                className={`btn btn-sm ${moveSubfolderTarget === "" ? "btn-primary" : "btn-secondary"}`}
+                style={{ maxWidth: "100%", minWidth: 0 }}
+                title="(root)"
+                onClick={() => setMoveSubfolderTarget("")}
               >
-                Move
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>(root)</span>
               </button>
+              {subfolders.filter(sf => sf.path !== "").map(sf => (
+                <button
+                  key={sf.path}
+                  className={`btn btn-sm ${moveSubfolderTarget === sf.path ? "btn-primary" : "btn-secondary"}`}
+                  style={{ maxWidth: "100%", minWidth: 0 }}
+                  title={sf.path}
+                  onClick={() => setMoveSubfolderTarget(sf.path)}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sf.path}</span>
+                </button>
+              ))}
             </div>
+          )}
+          <input
+            className="input"
+            placeholder={subfolders.length > 0 ? "Or type a new path: characters/poses" : "Subfolder path: characters/poses"}
+            value={moveSubfolderTarget}
+            onChange={e => setMoveSubfolderTarget(e.target.value)}
+            autoFocus={subfolders.length === 0}
+          />
+          <div className="flex gap-2 justify-end">
+            <button className="btn-ghost" onClick={() => setShowMoveSubfolder(false)}>Cancel</button>
+            <button
+              className="btn-primary"
+              onClick={() => moveSubfolderMutation.mutate({ byDataset: idsByDataset, target: moveSubfolderTarget })}
+              disabled={moveSubfolderMutation.isPending}
+            >
+              Move
+            </button>
           </div>
-        </div>
+        </ModalShell>
       )}
     </>
   );

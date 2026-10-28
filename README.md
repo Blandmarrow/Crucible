@@ -10,7 +10,7 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
-![Node](https://img.shields.io/badge/node-18%2B-green)
+![Node](https://img.shields.io/badge/node-20.19%2B%20or%2022.12%2B-green)
 
 ![Crucible main interface](docs/images/CrucibleMainImage.PNG)
 
@@ -91,7 +91,7 @@ All long-running operations run in a background job queue and stream real-time p
 | Requirement | Version / Notes |
 |---|---|
 | Python | 3.12+ |
-| Node.js | 18+ |
+| Node.js | 20.19+ or 22.12+ (the build tooling refuses 21.x and older 20.x/22.x releases) |
 | GPU (ML features) | NVIDIA CUDA 12.6+ · AMD ROCm 6.3+ (Linux only) · Apple Silicon |
 
 Python and Node.js will be installed by `setup` if missing — you will be prompted before each download. GPU inference requires ~6 GB VRAM for most models; JoyCaption requires ~17 GB. The technical scorer and duplicate detector run on CPU only.
@@ -268,6 +268,23 @@ See [docs/settings.md](docs/settings.md).
 > **If `update` stops at "git pull failed"** with *"Your local changes to the following files would be overwritten by merge"*, you have edited a tracked file. Run `git stash` (to keep the changes) or `git checkout -- <file>` (to discard them), then re-run `update`. `frontend/package-lock.json` is handled automatically — `update` discards npm's rewrites of it, since it is regenerated from the repo copy anyway.
 
 To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/workspace.md#restarting--shutting-down).
+
+### Access from other devices (LAN)
+
+By default Crucible listens on this machine only (`127.0.0.1`). To open it from a phone, tablet or another computer on your network, opt in:
+
+| | Windows | Linux / macOS |
+|---|---|---|
+| One run | `.\manage.ps1 start -Lan` | `./manage.sh start --lan` |
+| Every run | `CRUCIBLE_HOST=0.0.0.0` in `.env` | same |
+
+`dev` takes the same flag. The launcher then prints the address to open on the other device (e.g. `http://192.168.1.20:8000`); on Windows, allow Python through the firewall on *private* networks when asked.
+
+> **Crucible has no login.** With LAN access on, anyone who can reach that address can browse, edit and delete your datasets, and shut the server down. Only turn it on at home or on another network you trust — never on public Wi-Fi.
+
+Browsing by IP address or by this computer's own name (`mypc`, `mypc.local`) works as-is. Any other name — a DNS entry, a reverse proxy — must be listed in `.env` as `CRUCIBLE_ALLOWED_HOSTS=crucible.home.lan` (comma-separated); requests naming an unknown host are refused, which is what stops a malicious website from reaching your local server through DNS tricks.
+
+**Upgrading from an earlier version?** Crucible used to listen on every network interface without asking. If you opened it from other devices, add `CRUCIBLE_HOST=0.0.0.0` to `.env` (or start with `--lan`) to keep doing so.
 
 ---
 

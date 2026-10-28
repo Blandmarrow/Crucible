@@ -15,8 +15,8 @@ It makes seven queries:
 |---|---|---|
 | `["subfolders", datasetId]` | `GET /datasets/{id}/subfolders` | Subfolder list for the dropdown |
 | `["dataset-stats", datasetId, activeSubfolder]` | `GET /datasets/{id}/stats?subfolder=` | All distributions (see schema below) |
-| `["tag-stats", datasetId, activeSubfolder]` | `GET /captions/dataset/{id}/tag-stats?subfolder=` | Top 500 tags with counts (computed on the fly by splitting `caption_text` on commas at query time — there is no longer a `tags` table; `TagStatItem` carries only `tag` + `count`, no category) |
-| `["tag-cooccurrence", datasetId, activeSubfolder]` | `GET /datasets/{id}/tag-cooccurrence?limit=15&subfolder=` | Top-15 tag co-occurrence matrix |
+| `["tag-stats", datasetId, activeSubfolder]` | `GET /captions/dataset/{id}/tag-stats?subfolder=` | Top 500 tags with counts (computed on the fly by splitting `caption_text` on commas at query time, each tag counted once per caption so a count is a number of images (GPT-035) — there is no longer a `tags` table; `TagStatItem` carries only `tag` + `count`, no category) |
+| `["tag-cooccurrence", datasetId, activeSubfolder]` | `GET /datasets/{id}/tag-cooccurrence?limit=15&subfolder=` | Top-15 tag co-occurrence matrix; each cell counts images, with a tag repeated in one caption counted once, as in `tag-stats` |
 | `["score-values", datasetId, activeSubfolder]` | `GET /datasets/{id}/score-values?subfolder=` | Raw float arrays for all 9 score fields + `megapixels`, `file_size_mb`, `caption_words`, `caption_tokens` — used for client-side histogram rebucketing |
 | `["detection-stats", datasetId, activeSubfolder]` | `GET /detection/stats/{dataset_id}?subfolder=` | Aggregates for the "Detections & Masks" section; see `docs/dev/detection.md` |
 | `["settings", "thresholds"]` | `GET /api/v1/settings/thresholds` | Live flag threshold values for the quality flag hint text; `staleTime: 60_000` |

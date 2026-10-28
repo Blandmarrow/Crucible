@@ -2264,7 +2264,13 @@ async def get_tag_cooccurrence(db: AsyncSession, dataset_id: str, limit: int = 1
     result = await db.stream(q)
     all_tag_lists = []
     async for (caption_text,) in result:
-        all_tag_lists.append([t.strip() for t in caption_text.split(",") if t.strip()])
+        # Each tag once per caption, in first-seen order: the cells are read as
+        # "N images", and a repeated tag used to add k^2 to its diagonal and k to
+        # each pairing (GPT-035). Exact strings — merging case variants is
+        # subsume_tags' job, not this count's.
+        all_tag_lists.append(list(dict.fromkeys(
+            t.strip() for t in caption_text.split(",") if t.strip()
+        )))
 
     # Count tag frequencies, pick top N
     freq: dict[str, int] = {}

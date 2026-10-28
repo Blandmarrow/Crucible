@@ -149,6 +149,25 @@ class VersionImageState(Base):
         JSON, nullable=False, default=list, server_default=text("'[]'")
     )
 
+    # Detection mirror (GPT-026) — the second join-shaped attachment, `detections`
+    # rows rather than a column. Their geometry is normalized to the pixels it was
+    # measured on, so it qualifies the pixels exactly as the scores do: a restore
+    # that brought back older pixels and left a later crop's boxes framed the
+    # wrong picture.
+    #
+    # One canonical dict per row (`detection_service.serialize_detection`:
+    # label/bbox/score/model/task/mask/detected_at — no ids, no derived
+    # `mask_area`), stored **sorted** because the diff compares with `!=`.
+    #
+    # **Nullable with no server default, unlike `label_ids`, on purpose.** NULL
+    # means "not recorded" — a row that predates this column — and a restore
+    # leaves that image's detections alone. A `'[]'` default would read as
+    # "recorded: none" and wipe every detection on restoring an old snapshot; a
+    # backfill from today's rows would multiply storage across every snapshot
+    # and record geometry in a pixel frame the snapshot may never have had.
+    # Every snapshot written since records a list (`[]` for none).
+    detections: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     is_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     version: Mapped["DatasetVersion"] = relationship("DatasetVersion", back_populates="image_states")

@@ -14,6 +14,34 @@ $ROOT = $PSScriptRoot
 # Helpers
 # ---------------------------------------------------------------------------
 
+# The locked Vite and @vitejs/plugin-react declare engines ^20.19.0 || >=22.12.0
+# (frontend\package.json mirrors it). Major alone is not enough: Node 20.0-20.18
+# and 22.0-22.11 install fine and then fail the build.
+$script:NodeRequirement = "20.19+ or 22.12+"
+
+function Test-NodeVersion {
+    param([string]$Version)
+    if ($Version -notmatch "^v?(\d+)\.(\d+)") { return $false }
+    $maj = [int]$Matches[1]; $min = [int]$Matches[2]
+    return (($maj -eq 20 -and $min -ge 19) -or ($maj -eq 22 -and $min -ge 12) -or $maj -ge 23)
+}
+
+function Assert-NodeVersion {
+    # For the paths that run npm without going through setup's installer (update,
+    # dev, start's rebuild): stop with the fix rather than let npm/Vite fail opaquely.
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "ERROR: Node.js $($script:NodeRequirement) is required, but node was not found." -ForegroundColor Red
+        Write-Host "  Run .\manage.ps1 setup to install it, or get it from https://nodejs.org/" -ForegroundColor Cyan
+        exit 1
+    }
+    $nodeVer = "$(node --version)".Trim()
+    if (-not (Test-NodeVersion $nodeVer)) {
+        Write-Host "ERROR: Node.js $($script:NodeRequirement) is required, but found $nodeVer." -ForegroundColor Red
+        Write-Host "  Run .\manage.ps1 setup to install it, or get it from https://nodejs.org/" -ForegroundColor Cyan
+        exit 1
+    }
+}
+
 function Install-Deps {
     # --- Python ---
     Write-Host "[1/2] Checking Python..." -ForegroundColor Yellow
@@ -108,25 +136,25 @@ function Install-Deps {
 
     if (Get-Command node -ErrorAction SilentlyContinue) {
         $nodeVer = node --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and "$nodeVer" -match "v(\d+)") {
-            if ([int]$Matches[1] -ge 18) {
+        if ($LASTEXITCODE -eq 0 -and "$nodeVer" -match "v\d+\.\d+") {
+            if (Test-NodeVersion ("$nodeVer".Trim())) {
                 Write-Host "  Found: Node $nodeVer" -ForegroundColor Green
                 $nodeOk = $true
             } else {
-                Write-Host "  Found Node $nodeVer - 18+ is required." -ForegroundColor Yellow
+                Write-Host "  Found Node $nodeVer - $($script:NodeRequirement) is required." -ForegroundColor Yellow
             }
         }
     }
 
     if (-not $nodeOk) {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
-            Write-Host "  Node.js 18+ is required but not found." -ForegroundColor Yellow
+            Write-Host "  Node.js $($script:NodeRequirement) is required but not found." -ForegroundColor Yellow
             Write-Host "  Source: https://nodejs.org/ (via winget - Node.js LTS)" -ForegroundColor DarkGray
             if ([System.Console]::IsInputRedirected) { $reply = "" } else {
                 $reply = Read-Host "  Install Node.js LTS? [Y/n]"
             }
             if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
-                Write-Host "  Install Node.js 18+ manually from: https://nodejs.org/" -ForegroundColor Cyan
+                Write-Host "  Install Node.js $($script:NodeRequirement) manually from: https://nodejs.org/" -ForegroundColor Cyan
                 exit 1
             }
             Write-Host "  Installing Node.js LTS via winget (user scope, no admin needed)..." -ForegroundColor Yellow
@@ -134,20 +162,25 @@ function Install-Deps {
             if ($LASTEXITCODE -eq 0) {
                 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
                 $nodeVer = & node --version 2>&1
-                if ($LASTEXITCODE -eq 0) {
+                if ($LASTEXITCODE -eq 0 -and (Test-NodeVersion ("$nodeVer".Trim()))) {
                     Write-Host "  Installed: Node $nodeVer" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -eq 0) {
+                    # winget succeeded, but an older node.exe earlier on PATH still wins.
+                    Write-Host "ERROR: Node.js LTS was installed, but $nodeVer is still first on PATH." -ForegroundColor Red
+                    Write-Host "  Remove or upgrade that Node.js to $($script:NodeRequirement), then re-run setup." -ForegroundColor Cyan
+                    exit 1
                 } else {
                     Write-Host "  Node.js installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
                     exit 1
                 }
             } else {
-                Write-Host "ERROR: winget install failed. Install Node.js 18+ from:" -ForegroundColor Red
+                Write-Host "ERROR: winget install failed. Install Node.js $($script:NodeRequirement) from:" -ForegroundColor Red
                 Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
                 exit 1
             }
         } else {
-            Write-Host "ERROR: Node.js 18+ not found and winget is unavailable." -ForegroundColor Red
-            Write-Host "  Install Node.js 18+ from: https://nodejs.org/" -ForegroundColor Cyan
+            Write-Host "ERROR: Node.js $($script:NodeRequirement) not found and winget is unavailable." -ForegroundColor Red
+            Write-Host "  Install Node.js $($script:NodeRequirement) from: https://nodejs.org/" -ForegroundColor Cyan
             exit 1
         }
     }
@@ -341,6 +374,7 @@ function Install-TorchIfNeeded {
 }
 
 function Build-Frontend {
+    Assert-NodeVersion
     Write-Host "Building frontend..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm run build
@@ -840,6 +874,7 @@ function Cmd-Update {
     Write-Host "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models\sam3\" -ForegroundColor DarkGray
 
     Write-Host "[5/6] Updating frontend dependencies..." -ForegroundColor Yellow
+    Assert-NodeVersion
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -871,6 +906,7 @@ function Cmd-Dev {
     }
 
     Activate-Venv
+    Assert-NodeVersion
 
     Push-Location "$ROOT\backend"
     python -m alembic upgrade head

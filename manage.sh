@@ -23,11 +23,35 @@ _python_version_ok() {
     [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 12 ]; }
 }
 
+# The locked Vite and @vitejs/plugin-react declare engines ^20.19.0 || >=22.12.0
+# (frontend/package.json mirrors it). Major alone is not enough: Node 20.0-20.18
+# and 22.0-22.11 install fine and then fail the build.
+NODE_REQUIREMENT="20.19+ or 22.12+"
+
 _node_version_ok() {
     command -v node &>/dev/null || return 1
-    local maj
-    maj=$(node --version 2>&1 | grep -oE "^v[0-9]+" | grep -oE "[0-9]+" || true)
-    [ -n "$maj" ] && [ "$maj" -ge 18 ]
+    local ver maj min
+    ver=$(node --version 2>&1 | grep -oE "^v[0-9]+\.[0-9]+" || true)
+    [ -n "$ver" ] || return 1
+    ver="${ver#v}"
+    maj="${ver%%.*}"
+    min="${ver#*.}"
+    { [ "$maj" -eq 20 ] && [ "$min" -ge 19 ]; } \
+        || { [ "$maj" -eq 22 ] && [ "$min" -ge 12 ]; } \
+        || [ "$maj" -ge 23 ]
+}
+
+# For the paths that run npm without going through setup's installer (update,
+# dev, start's rebuild): stop with the fix rather than let npm/Vite fail opaquely.
+_require_node() {
+    _node_version_ok && return 0
+    if command -v node &>/dev/null; then
+        echo "ERROR: Node.js $NODE_REQUIREMENT is required, but found $(node --version)." >&2
+    else
+        echo "ERROR: Node.js $NODE_REQUIREMENT is required, but node was not found." >&2
+    fi
+    echo "  Run ./manage.sh setup to install it, or get it from https://nodejs.org/" >&2
+    exit 1
 }
 
 _install_node_nvm() {
@@ -37,7 +61,7 @@ _install_node_nvm() {
         curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || true
     fi
     if [ ! -s "$nvm_dir/nvm.sh" ]; then
-        echo "ERROR: nvm install failed. Install Node.js 18+ from https://nodejs.org/" >&2
+        echo "ERROR: nvm install failed. Install Node.js $NODE_REQUIREMENT from https://nodejs.org/" >&2
         exit 1
     fi
     export NVM_DIR="$nvm_dir"
@@ -61,7 +85,8 @@ _install_node_linux() {
     elif command -v pacman &>/dev/null; then
         sudo pacman -Sy --noconfirm nodejs npm || true
     fi
-    # Fall back to nvm if the package manager did not give us 18+
+    # Fall back to nvm if the package manager did not give us a new enough Node
+    # (distro repos often carry an older 20.x or 22.x); nvm's --lts is current.
     if ! _node_version_ok; then
         _install_node_nvm
     fi
@@ -147,16 +172,16 @@ _install_deps() {
         echo "  Found: Node $(node --version)"
     else
         if command -v node &>/dev/null; then
-            echo "  Found Node $(node --version) - 18+ is required."
+            echo "  Found Node $(node --version) - $NODE_REQUIREMENT is required."
         fi
-        echo "  Node.js 18+ is required but not found."
+        echo "  Node.js $NODE_REQUIREMENT is required but not found."
         echo "  Source: https://nodejs.org/ (via package manager)"
         printf "  Install now? [Y/n] "
         read -r _reply || true
         case "$_reply" in
-            [Nn]*) echo "  Install Node.js 18+ from: https://nodejs.org/"; exit 1 ;;
+            [Nn]*) echo "  Install Node.js $NODE_REQUIREMENT from: https://nodejs.org/"; exit 1 ;;
         esac
-        echo "  Installing Node.js 18+..."
+        echo "  Installing Node.js LTS..."
         if [ "$os" = "Darwin" ]; then
             if command -v brew &>/dev/null; then
                 brew install node
@@ -168,11 +193,11 @@ _install_deps() {
             _install_node_linux
         else
             echo "ERROR: Unsupported OS." >&2
-            echo "  Install Node.js 18+ from https://nodejs.org/" >&2
+            echo "  Install Node.js $NODE_REQUIREMENT from https://nodejs.org/" >&2
             exit 1
         fi
         if ! _node_version_ok; then
-            echo "ERROR: Node.js 18+ install failed. Install manually from https://nodejs.org/" >&2
+            echo "ERROR: Node.js $NODE_REQUIREMENT install failed. Install manually from https://nodejs.org/" >&2
             exit 1
         fi
         echo "  Installed: Node $(node --version)"
@@ -185,6 +210,7 @@ _activate() {
 }
 
 _build_frontend() {
+    _require_node
     echo "Building frontend..."
     cd "$ROOT/frontend"
     npm run build
@@ -787,6 +813,7 @@ cmd_update() {
     echo "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models/sam3/"
 
     echo "[5/6] Updating frontend dependencies..."
+    _require_node
     cd "$ROOT/frontend"
     npm install
     cd "$ROOT"
@@ -812,6 +839,7 @@ cmd_dev() {
     fi
 
     _activate
+    _require_node
     _migrate
 
     echo "Starting backend on :8000 and frontend dev server on :5173..."

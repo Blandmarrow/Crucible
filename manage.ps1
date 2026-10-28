@@ -478,6 +478,10 @@ function Run-Migrations {
 # this side only passes --lan through and acts on the answer (GPT-007).
 # Never name a variable $host here: it is PowerShell's read-only automatic $Host.
 $script:BindHost = "127.0.0.1"
+# Where a browser on this machine - and the Vite /api proxy - reaches uvicorn:
+# localhost for a loopback or wildcard bind, the address itself otherwise.
+$script:BrowseHost = "localhost"
+$script:BindMode = "loopback"
 
 function Invoke-BindHostScript {
     # Runs scripts\bind_host.py with the given extra arguments and returns its
@@ -502,25 +506,22 @@ function Invoke-BindHostScript {
 }
 
 function Resolve-BindHost {
-    $out = @(Invoke-BindHostScript)
-    $resolved = ""
-    if ($out.Count -gt 0) { $resolved = ([string]$out[0]).Trim() }
-    if (-not $resolved) {
+    # One --describe call answers everything the launcher needs, so no loopback
+    # test or browse-host rule is copied here.
+    $out = @(Invoke-BindHostScript -ExtraArgs @("--describe") | ForEach-Object { ([string]$_).Trim() })
+    if ($out.Count -lt 3 -or -not $out[0] -or -not $out[1] -or -not $out[2]) {
         Write-Host "ERROR: could not resolve the bind address (scripts\bind_host.py failed)." -ForegroundColor Red
         exit 1
     }
-    $script:BindHost = $resolved
-}
-
-function Test-LoopbackHost {
-    param([string]$Name)
-    return ($Name -eq "localhost" -or $Name -eq "::1" -or $Name -eq "[::1]" -or $Name -like "127.*")
+    $script:BindHost = $out[0]
+    $script:BrowseHost = $out[1]
+    $script:BindMode = $out[2]
 }
 
 function Write-AccessInfo {
     # $Port = the port people browse to, $CommandName = the command to suggest -Lan for.
     param([int]$Port, [string]$CommandName)
-    if (Test-LoopbackHost $script:BindHost) {
+    if ($script:BindMode -eq "loopback") {
         Write-Host "LAN access is off (this machine only). For other devices: .\manage.ps1 $CommandName -Lan, or set CRUCIBLE_HOST=0.0.0.0 in .env." -ForegroundColor DarkGray
         return
     }
@@ -591,8 +592,8 @@ function Start-Splash {
         return
     }
 
-    try { Start-Process "http://localhost:8000" | Out-Null } catch {
-        Write-Host "  (could not open a browser - open http://localhost:8000 yourself)" -ForegroundColor DarkGray
+    try { Start-Process "http://$($script:BrowseHost):8000" | Out-Null } catch {
+        Write-Host "  (could not open a browser - open http://$($script:BrowseHost):8000 yourself)" -ForegroundColor DarkGray
     }
 }
 
@@ -786,7 +787,7 @@ function Cmd-Start {
     }
 
     Write-Host ""
-    Write-Host "Starting server at http://localhost:8000" -ForegroundColor Green
+    Write-Host "Starting server at http://$($script:BrowseHost):8000" -ForegroundColor Green
     Write-AccessInfo -Port 8000 -CommandName "start"
     Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
     Write-Host ""
@@ -1001,7 +1002,7 @@ function Cmd-Dev {
     Pop-Location
 
     Write-Host "Starting backend on :8000 and frontend dev server on :5173..." -ForegroundColor Cyan
-    Write-Host "Open http://localhost:5173 in your browser." -ForegroundColor Green
+    Write-Host "Open http://$($script:BrowseHost):5173 in your browser." -ForegroundColor Green
     Write-AccessInfo -Port 5173 -CommandName "dev"
     Write-Host ""
 
@@ -1025,15 +1026,19 @@ function Cmd-Dev {
     } -ArgumentList $ROOT, $script:BindHost
 
     Push-Location "$ROOT\frontend"
-    if (Test-LoopbackHost $script:BindHost) {
+    # vite.config.ts proxies /api here. A server bound to one LAN address does
+    # not answer on localhost, so the proxy must follow the bind.
+    $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):8000"
+    if ($script:BindMode -eq "loopback") {
         npm run dev
     } else {
-        # Vite's own --host; its /api proxy still reaches uvicorn on localhost:8000.
         # node + vite.js directly rather than `npm run dev -- --host`: when npm
         # resolves to npm.ps1, PowerShell consumes the bare `--` itself.
         node "$ROOT\frontend\node_modules\vite\bin\vite.js" --host $script:BindHost
     }
     Pop-Location
+    # $env: is the caller's session, not a child scope: do not leave it behind.
+    Remove-Item Env:CRUCIBLE_API_TARGET -ErrorAction SilentlyContinue
 
     Stop-Job $backendJob -ErrorAction SilentlyContinue
     Remove-Job $backendJob -ErrorAction SilentlyContinue
@@ -1060,6 +1065,12 @@ if ($Command -eq "") {
             Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev> [-Lan]" -ForegroundColor Red
             exit 1
         }
+    }
+    # The same refusal the command-line form gets above: -Lan means nothing to
+    # setup or update, and silently ignoring it would hide that.
+    if ($script:LanRequested -and $Command -ne "start") {
+        Write-Host "-Lan applies to start and dev only." -ForegroundColor Red
+        exit 1
     }
 }
 

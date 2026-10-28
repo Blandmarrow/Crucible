@@ -263,6 +263,10 @@ _migrate() {
 # this side only passes --lan through and acts on the answer (GPT-007).
 CRUCIBLE_LAN_ARG=""
 BIND_HOST="127.0.0.1"
+# Where a browser on this machine - and the Vite /api proxy - reaches uvicorn:
+# localhost for a loopback or wildcard bind, the address itself otherwise.
+BROWSE_HOST="localhost"
+BIND_MODE="loopback"
 
 _parse_run_args() {
     # $1 = command name, the rest = its arguments. Only `start` and `dev` take any.
@@ -282,26 +286,24 @@ _parse_run_args() {
 }
 
 _resolve_bind_host() {
-    # Unquoted on purpose: empty or "--lan". Needs the venv's python (or any
-    # python 3) - the script is stdlib only.
+    # One --describe call answers everything the launcher needs, so no loopback
+    # test or browse-host rule is copied here. Unquoted on purpose: empty or
+    # "--lan". Needs the venv's python (or any python 3) - the script is stdlib only.
+    local desc
     # shellcheck disable=SC2086
-    BIND_HOST="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG)" || BIND_HOST=""
-    if [ -z "$BIND_HOST" ]; then
+    desc="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG --describe)" || desc=""
+    BIND_HOST="$(printf '%s\n' "$desc" | sed -n 1p)"
+    BROWSE_HOST="$(printf '%s\n' "$desc" | sed -n 2p)"
+    BIND_MODE="$(printf '%s\n' "$desc" | sed -n 3p)"
+    if [ -z "$BIND_HOST" ] || [ -z "$BROWSE_HOST" ] || [ -z "$BIND_MODE" ]; then
         echo "ERROR: could not resolve the bind address (scripts/bind_host.py failed)." >&2
         exit 1
     fi
 }
 
-_is_loopback_host() {
-    case "$1" in
-        localhost|::1|"[::1]"|127.*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 _print_access() {
     # $1 = the port people browse to, $2 = the command to suggest --lan for.
-    if _is_loopback_host "$BIND_HOST"; then
+    if [ "$BIND_MODE" = "loopback" ]; then
         echo "LAN access is off (this machine only). For other devices: $0 $2 --lan, or set CRUCIBLE_HOST=0.0.0.0 in .env."
         return 0
     fi
@@ -388,8 +390,8 @@ _start_splash() {
         return 0
     fi
 
-    if ! _open_browser "http://localhost:8000"; then
-        echo "  (no browser opener found - open http://localhost:8000 yourself)"
+    if ! _open_browser "http://$BROWSE_HOST:8000"; then
+        echo "  (no browser opener found - open http://$BROWSE_HOST:8000 yourself)"
     fi
     return 0
 }
@@ -725,7 +727,7 @@ cmd_start() {
     fi
 
     echo ""
-    echo "Starting server at http://localhost:8000"
+    echo "Starting server at http://$BROWSE_HOST:8000"
     _print_access 8000 start
     echo "Press Ctrl+C to stop."
     echo ""
@@ -911,7 +913,7 @@ cmd_dev() {
     _migrate
 
     echo "Starting backend on :8000 and frontend dev server on :5173..."
-    echo "Open http://localhost:5173 in your browser."
+    echo "Open http://$BROWSE_HOST:5173 in your browser."
     _print_access 5173 dev
     echo ""
 
@@ -942,10 +944,12 @@ cmd_dev() {
     trap 'kill "$BACKEND_PID" 2>/dev/null' EXIT INT TERM
 
     cd "$ROOT/frontend"
-    if _is_loopback_host "$BIND_HOST"; then
+    # vite.config.ts proxies /api here. A server bound to one LAN address does
+    # not answer on localhost, so the proxy must follow the bind.
+    export CRUCIBLE_API_TARGET="http://$BROWSE_HOST:8000"
+    if [ "$BIND_MODE" = "loopback" ]; then
         npm run dev
     else
-        # Vite's own --host; its /api proxy still reaches uvicorn on localhost:8000.
         npm run dev -- --host "$BIND_HOST"
     fi
 }

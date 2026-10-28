@@ -69,3 +69,31 @@ def test_cli():
     assert _run("--lan", CRUCIBLE_HOST="127.0.0.1") == "0.0.0.0"
     assert _run("--urls", "8000", CRUCIBLE_HOST="127.0.0.1") == ""
     assert _run("--urls", "8000", CRUCIBLE_HOST="10.1.2.3") == "http://10.1.2.3:8000"
+
+
+def test_a_quoted_value_ends_at_its_closing_quote(tmp_path):
+    # python-dotenv reads this as 0.0.0.0; keeping the quotes made uvicorn's bind fail.
+    f = _env_file(tmp_path, 'CRUCIBLE_HOST="0.0.0.0" # lan\n')
+    assert bind_host.resolve_host(False, {}, f) == "0.0.0.0"
+    f = _env_file(tmp_path, "CRUCIBLE_HOST='10.0.0.7'   # this NIC\n")
+    assert bind_host.resolve_host(False, {}, f) == "10.0.0.7"
+
+
+def test_browse_host_follows_the_bind():
+    """A wildcard or loopback bind answers on localhost; one LAN address does not."""
+    for host in ("127.0.0.1", "0.0.0.0", "::", "::1", "0:0:0:0:0:0:0:1", "localhost", "localhost."):
+        assert bind_host.browse_host(host) == "localhost", host
+    assert bind_host.browse_host("192.168.1.5") == "192.168.1.5"
+    assert bind_host.browse_host("fe80::1") == "[fe80::1]"
+    assert bind_host.browse_host("mybox") == "mybox"
+
+
+def test_describe_is_the_launchers_one_answer():
+    """The shells read these three lines and keep no loopback test of their own."""
+    assert _run("--describe", CRUCIBLE_HOST="127.0.0.1").splitlines() == ["127.0.0.1", "localhost", "loopback"]
+    assert _run("--describe", "--lan").splitlines() == ["0.0.0.0", "localhost", "lan"]
+    assert _run("--describe", CRUCIBLE_HOST="192.168.1.5").splitlines() == [
+        "192.168.1.5", "192.168.1.5", "lan",
+    ]
+    # A loopback spelling the old shell patterns missed.
+    assert _run("--describe", CRUCIBLE_HOST="0:0:0:0:0:0:0:1").splitlines()[2] == "loopback"

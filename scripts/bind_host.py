@@ -8,6 +8,16 @@ opts in to LAN access. The launchers call this before starting anything:
     python scripts/bind_host.py [--lan] --urls PORT -> prints the http:// URL(s) other
                                                        devices can use, one per line;
                                                        nothing for a loopback host
+    python scripts/bind_host.py [--lan] --describe  -> three lines: the bind host; the
+                                                       host a browser on this machine
+                                                       (and the Vite proxy) must use;
+                                                       `loopback` or `lan`
+
+The launchers read `--describe` and decide nothing themselves: every loopback test and
+"where do I point the browser" rule lives here, so the two shells cannot drift from it
+or from each other. The browse host is `localhost` for a loopback or wildcard bind, and
+the bind address itself otherwise — a server bound to one LAN address does not answer on
+localhost at all.
 
 Precedence, first match wins:
     1. --lan                                  -> 0.0.0.0
@@ -42,9 +52,13 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 def _clean(value: str) -> str:
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1].strip()
-    # An unquoted value ends at an inline comment, as python-dotenv reads it.
+    if value[:1] in ("'", '"'):
+        # A quoted value ends at its closing quote; anything after it (an inline
+        # `# comment`) is not part of the value, as python-dotenv reads it.
+        end = value.find(value[0], 1)
+        if end != -1:
+            return value[1:end].strip()
+    # An unquoted value ends at an inline comment.
     return value.split(" #", 1)[0].split("\t#", 1)[0].strip()
 
 
@@ -85,6 +99,25 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+def _is_unspecified(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_unspecified
+    except ValueError:
+        return False  # a hostname
+
+
+def _url_host(host: str) -> str:
+    bare = host.strip("[]")
+    return f"[{bare}]" if ":" in bare else bare
+
+
+def browse_host(host: str) -> str:
+    """Where a browser on this machine reaches a server bound to `host`."""
+    if is_loopback(host) or _is_unspecified(host):
+        return "localhost"
+    return _url_host(host)
+
+
 def _primary_ip() -> str | None:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -101,14 +134,8 @@ def _primary_ip() -> str | None:
 def lan_urls(host: str, port: int) -> list[str]:
     if is_loopback(host):
         return []
-    bare = host.strip("[]")
-    try:
-        unspecified = ipaddress.ip_address(bare).is_unspecified
-    except ValueError:
-        unspecified = False  # a hostname: it is its own URL
-    if not unspecified:
-        shown = f"[{bare}]" if ":" in bare else bare
-        return [f"http://{shown}:{port}"]
+    if not _is_unspecified(host):
+        return [f"http://{_url_host(host)}:{port}"]   # a specific address or hostname
     ip = _primary_ip()
     return [f"http://{ip}:{port}"] if ip else []
 
@@ -116,15 +143,22 @@ def lan_urls(host: str, port: int) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--lan", action="store_true", help="bind every interface (0.0.0.0)")
-    ap.add_argument("--urls", type=int, metavar="PORT",
-                    help="print the LAN URL(s) for PORT instead of the host")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--urls", type=int, metavar="PORT",
+                      help="print the LAN URL(s) for PORT instead of the host")
+    mode.add_argument("--describe", action="store_true",
+                      help="print the bind host, the browse host and loopback|lan")
     args = ap.parse_args(argv)
     host = resolve_host(args.lan)
-    if args.urls is None:
+    if args.describe:
         print(host)
-    else:
+        print(browse_host(host))
+        print("loopback" if is_loopback(host) else "lan")
+    elif args.urls is not None:
         for url in lan_urls(host, args.urls):
             print(url)
+    else:
+        print(host)
     return 0
 
 

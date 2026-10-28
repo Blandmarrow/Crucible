@@ -338,6 +338,55 @@ def merge_detection_geometry(
     return mask_out, union_bbox
 
 
+def _clip_polygon_unit(poly: list[list[float]]) -> list[list[float]]:
+    """Clip a polygon to the unit square [0, 1] x [0, 1] (Sutherland-Hodgman).
+
+    Pure Python on purpose: the crop remap runs on paths CI exercises without
+    cv2 or shapely. Each of the square's four half-planes is applied in turn,
+    keeping a vertex that lies inside and inserting the edge's intersection
+    with the boundary wherever an edge crosses it. A vertex exactly on the
+    boundary counts as inside, so the output can repeat a point; the caller
+    drops repeats. The result is empty when the polygon misses the square.
+
+    On a concave polygon that leaves and re-enters the square, the output stays
+    one ring joined by zero-width "bridges" along the boundary rather than being
+    split into separate pieces. The bridges enclose no area, so the shoelace
+    area (``detection_mask_area``) and the filled raster are unchanged.
+    """
+    pts = poly
+    # (axis, bound, keep_greater): x >= 0, x <= 1, y >= 0, y <= 1.
+    for axis, bound, keep_greater in ((0, 0.0, True), (0, 1.0, False), (1, 0.0, True), (1, 1.0, False)):
+        if not pts:
+            break
+
+        def inside(p: list[float]) -> bool:
+            return p[axis] >= bound if keep_greater else p[axis] <= bound
+
+        def cross(p: list[float], q: list[float]) -> list[float]:
+            # p and q lie on opposite sides, so p[axis] != q[axis].
+            t = (bound - p[axis]) / (q[axis] - p[axis])
+            other = 1 - axis
+            pt = [0.0, 0.0]
+            pt[axis] = bound
+            pt[other] = p[other] + t * (q[other] - p[other])
+            return pt
+
+        out: list[list[float]] = []
+        prev = pts[-1]
+        prev_in = inside(prev)
+        for cur in pts:
+            cur_in = inside(cur)
+            if cur_in:
+                if not prev_in:
+                    out.append(cross(prev, cur))
+                out.append(cur)
+            elif prev_in:
+                out.append(cross(prev, cur))
+            prev, prev_in = cur, cur_in
+        pts = out
+    return pts
+
+
 def remap_detection_geometry(
     mask_json: str | None,
     bbox: list[float] | None,
@@ -351,16 +400,23 @@ def remap_detection_geometry(
     ``open_rgb`` / ``_open_safe``); ``old_size`` is ``(old_w, old_h)`` of that
     frame. A normalized coordinate ``n`` on an axis maps to
     ``(n * old_dim - offset) / extent`` (``offset``/``extent`` = the rect's origin
-    and size on that axis), clamped to [0, 1] — i.e. re-expressed as a fraction of
-    the crop.
+    and size on that axis) — i.e. re-expressed as a fraction of the crop, where
+    the crop itself is the unit square.
 
-    The bbox is the primary, non-nullable geometry: when its remapped extent falls
-    below 0.002 on either axis (mirroring ``_sanitize_bbox``) the detection lies
-    outside the crop and the function returns ``None`` to signal the row should be
-    deleted. Polygon vertices are remapped and clamped (polygons crossing the crop
-    edge flatten against the border — accepted); a remapped polygon whose shoelace
-    area drops below 1e-4 is dropped. When a masked detection loses every polygon
-    this way the mask becomes ``None`` while the still-valid bbox is kept, yielding
+    The bbox is the primary, non-nullable geometry. Its coordinates are clamped
+    to [0, 1], which for an axis-aligned box is the same as clipping it. When the
+    remapped extent falls below 0.002 on either axis (mirroring
+    ``_sanitize_bbox``) the detection lies outside the crop and the function
+    returns ``None`` to signal the row should be deleted.
+
+    Polygons are mapped unclamped and then **clipped** to the unit square
+    (``_clip_polygon_unit``, Sutherland-Hodgman). Clamping each vertex instead
+    is wrong whenever an edge crosses a corner region: a polygon wholly outside
+    the crop, but whose vertices clamp onto different borders, would come back
+    as an invented shape inside it (GPT-017). A clipped polygon with fewer than
+    three distinct vertices, or whose shoelace area drops below 1e-4, is
+    dropped. When a masked detection loses every polygon this way the mask
+    becomes ``None`` while the still-valid bbox is kept, yielding
     ``(None, bbox)``.
 
     Returns ``(new_mask_json_or_None, new_bbox)``, or ``None`` (delete the row).
@@ -371,10 +427,13 @@ def remap_detection_geometry(
         return None
 
     def _mx(n: float) -> float:
-        return min(max((n * old_w - rx) / rw, 0.0), 1.0)
+        return (n * old_w - rx) / rw
 
     def _my(n: float) -> float:
-        return min(max((n * old_h - ry) / rh, 0.0), 1.0)
+        return (n * old_h - ry) / rh
+
+    def _unit(v: float) -> float:
+        return min(max(v, 0.0), 1.0)
 
     # --- bbox (primary geometry, always present) ---
     if not bbox or len(bbox) != 4:
@@ -387,7 +446,8 @@ def remap_detection_geometry(
         bx1, bx2 = bx2, bx1
     if by1 > by2:
         by1, by2 = by2, by1
-    nbx1, nby1, nbx2, nby2 = _mx(bx1), _my(by1), _mx(bx2), _my(by2)
+    nbx1, nby1 = _unit(_mx(bx1)), _unit(_my(by1))
+    nbx2, nby2 = _unit(_mx(bx2)), _unit(_my(by2))
     if (nbx2 - nbx1) < 0.002 or (nby2 - nby1) < 0.002:
         return None
     new_bbox = [round(nbx1, 4), round(nby1, 4), round(nbx2, 4), round(nby2, 4)]
@@ -397,24 +457,35 @@ def remap_detection_geometry(
 
     new_polys: list[list[list[float]]] = []
     for poly in polygons:
-        remapped: list[list[float]] = []
+        mapped: list[list[float]] = []
         for pt in poly:
             try:
                 px, py = float(pt[0]), float(pt[1])
             except (TypeError, ValueError, IndexError):
                 continue
-            remapped.append([round(_mx(px), 4), round(_my(py), 4)])
-        if len(remapped) < 3:
+            mapped.append([_mx(px), _my(py)])
+        if len(mapped) < 3:
+            continue
+        clipped: list[list[float]] = []
+        for x, y in _clip_polygon_unit(mapped):
+            # _unit only absorbs float noise here: clipping already put every
+            # vertex inside the square.
+            pt = [round(_unit(x), 4), round(_unit(y), 4)]
+            if not clipped or pt != clipped[-1]:
+                clipped.append(pt)
+        while len(clipped) > 1 and clipped[0] == clipped[-1]:
+            clipped.pop()
+        if len(clipped) < 3:
             continue
         area = 0.0
-        n = len(remapped)
+        n = len(clipped)
         for i in range(n):
-            x1, y1 = remapped[i]
-            x2, y2 = remapped[(i + 1) % n]
+            x1, y1 = clipped[i]
+            x2, y2 = clipped[(i + 1) % n]
             area += x1 * y2 - x2 * y1
         if abs(area) / 2.0 < 1e-4:
             continue
-        new_polys.append(remapped)
+        new_polys.append(clipped)
 
     mask_out = json.dumps({"polygons": new_polys}) if new_polys else None
     return mask_out, new_bbox

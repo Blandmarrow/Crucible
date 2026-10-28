@@ -36,7 +36,7 @@ class _FakeComfyClient:
     unpacked `_register_file_sync`'s return value is the code under test.
     """
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, transport=None):
         self.url = url
 
     async def submit(self, workflow, client_id=None):
@@ -48,8 +48,8 @@ class _FakeComfyClient:
     async def fetch_image(self, filename, subfolder="", type="output"):
         return png_bytes()
 
-    async def interrupt(self):
-        return None
+    async def cancel_prompt(self, prompt_id, client_id):
+        return "removed"
 
 
 def test_comfy_run_imports_images_through_the_real_router(tmp_path, monkeypatch):

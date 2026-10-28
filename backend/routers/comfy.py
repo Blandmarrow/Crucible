@@ -58,6 +58,16 @@ INT_MODES = ("fixed", "random", "increment")
 ROW_STATUSES = ("pending", "running", "completed", "failed")
 NO_PROMPT_PIN_MSG = "No pinned parameter is marked as the prompt — pin one first"
 
+# Upper bounds on taking a failed/cancelled row's prompt out of ComfyUI's queue
+# (`ComfyClient.cancel_prompt`). The normal budget sits just above the client's
+# own confirm window so that window, not this bound, normally decides. A hard
+# cancel (`JobQueue.stop()` at shutdown) gets a short one: the process is going
+# down and must not wait on a remote server.
+REMOTE_CLEANUP_BUDGET_S = 6.0
+REMOTE_CLEANUP_HARD_CANCEL_BUDGET_S = 1.5
+# cancel_prompt outcomes meaning nothing of ours is left in ComfyUI.
+_REMOTE_CLEANUP_CLEAN = ("removed", "interrupted", "not_found")
+
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -1341,6 +1351,21 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             failed_row_ids: list[str] = []
             consecutive_connect_errors = 0
 
+            async def _remove_remote_prompt(prompt_id: str | None, budget_s: float) -> str:
+                """Take this run's prompt (by id, and by our client_id = job_id) out of
+                ComfyUI's queue. Never raises an Exception: a budget overrun or an
+                unexpected error is reported as "still_running" — unconfirmed is not
+                gone. A CancelledError still propagates (it is not an Exception)."""
+                try:
+                    async with asyncio.timeout(budget_s):
+                        return await client.cancel_prompt(prompt_id, job_id)
+                except Exception:
+                    logger.warning(
+                        "comfy_generate: queue cleanup for prompt %s did not finish", prompt_id,
+                        exc_info=True,
+                    )
+                    return "still_running"
+
             def _write_and_register(data: bytes, dest: Path, thumb: str) -> RegisteredFile:
                 dest.write_bytes(data)
                 # `.provenance` is deliberately ignored: ComfyUI output has no
@@ -1375,13 +1400,30 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 row_files: list[Path] = []
                 row_image_ids: list[str] = []
                 row_id = row.id
+                # What ComfyUI may still hold for this row (GPT-033): from the moment
+                # submit may have reached ComfyUI until /history reports the prompt
+                # finished, a failure or cancel must take *our* prompt out of
+                # ComfyUI's queue, or the next row is stacked on top of it. prompt_id
+                # can still be None then (a hard cancel mid-submit); cancel_prompt's
+                # client_id (= job_id) sweep finds the prompt without it.
+                prompt_id: str | None = None
+                maybe_queued = False
+                history_seen = False
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     # Built from `wf` — the graph actually submitted, with this row's
                     # values patched in — not the plan template, whose model loader may
                     # be overridden by a pin. Computed once per row, not per output image.
                     row_source_meta = _comfy_source_meta(plan_row, row, wf)
-                    prompt_id = await client.submit(wf, client_id=job_id)
+                    maybe_queued = True
+                    try:
+                        prompt_id = await client.submit(wf, client_id=job_id)
+                    except (ComfyRowError, httpx.ConnectError, httpx.ConnectTimeout):
+                        # Rejected (400) or never connected: nothing was queued, so
+                        # there is nothing to clean — and no reason to let a /queue
+                        # hiccup turn a rejected workflow into an aborted run.
+                        maybe_queued = False
+                        raise
                     consecutive_connect_errors = 0
                     row.prompt_id = prompt_id
                     await session.commit()
@@ -1389,12 +1431,14 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     deadline = time.monotonic() + PER_ROW_TIMEOUT_S
                     while True:
                         if job_queue.cancel_requested(job_id):
-                            await client.interrupt()
+                            # Our prompt is taken out of ComfyUI by the
+                            # CancelledError handler below, after the row reset.
                             row.status = "pending"
                             await session.commit()
                             raise asyncio.CancelledError()
                         entry = await client.poll_history(prompt_id)
                         if entry is not None:
+                            history_seen = True
                             break
                         if time.monotonic() > deadline:
                             raise ComfyRowError(
@@ -1490,6 +1534,23 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         await session.commit()
                     except Exception:
                         pass  # best-effort; a second CancelledError propagates below
+                    # Last, after the row is safely back at "pending": take our prompt
+                    # out of ComfyUI (GPT-033) — a targeted delete/interrupt, never the
+                    # global /interrupt that would kill the user's own canvas prompt.
+                    # `cancelling() > 0` means a real task cancel (JobQueue.stop() at
+                    # shutdown), not the cooperative raise above: keep that one short.
+                    if maybe_queued and not history_seen:
+                        task = asyncio.current_task()
+                        hard = task is not None and task.cancelling() > 0
+                        outcome = await _remove_remote_prompt(
+                            prompt_id,
+                            REMOTE_CLEANUP_HARD_CANCEL_BUDGET_S if hard else REMOTE_CLEANUP_BUDGET_S,
+                        )
+                        if outcome not in _REMOTE_CLEANUP_CLEAN:
+                            logger.warning(
+                                "comfy_generate: cancelled row %s — ComfyUI prompt %s cleanup: %s",
+                                row_id, prompt_id, outcome,
+                            )
                     raise
                 except Exception as e:
                     # Deliberately broad: an unexpected error (a refactor breaking a
@@ -1552,7 +1613,43 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                         logger.warning("comfy_generate: reload after rollback failed", exc_info=True)
                     failed_row_ids.append(row_id)
                     logger.warning("comfy_generate: row %s failed", row_id, exc_info=True)
-                    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    is_connect_error = isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout))
+                    # The row is failed; ComfyUI may still hold its prompt (a timeout,
+                    # a poll error). Take it out before the next row is submitted on
+                    # top of it (GPT-033). After the row's own cleanup, so nothing
+                    # here can leave files or the row behind.
+                    cleanup = None
+                    if maybe_queued and not history_seen:
+                        cleanup = await _remove_remote_prompt(prompt_id, REMOTE_CLEANUP_BUDGET_S)
+                    if cleanup is not None and cleanup not in _REMOTE_CLEANUP_CLEAN:
+                        pid_text = prompt_id or "(id unknown)"
+                        note = (
+                            f"ComfyUI queue cleanup: prompt {pid_text} is still queued or running "
+                            "in ComfyUI and could not be removed"
+                            if cleanup == "still_running"
+                            else f"ComfyUI queue cleanup: ComfyUI unreachable — prompt {pid_text} "
+                            "may still be queued there"
+                        )
+                        try:
+                            failed_row = await session.get(ComfyRow, row_id)
+                            if failed_row is not None:
+                                failed_row.error_msg = f"{str(e)[:1700]} — {note}"[:2000]
+                                await session.commit()
+                        except Exception:
+                            logger.warning(
+                                "comfy_generate: could not record cleanup outcome for row %s",
+                                row_id, exc_info=True,
+                            )
+                    if cleanup == "still_running" and not is_connect_error:
+                        # Submitting the next row would stack it on a prompt we could
+                        # not remove — stop instead, like the connect breaker below.
+                        await session.commit()
+                        raise RuntimeError(
+                            f"Could not remove ComfyUI prompt {prompt_id or '(id unknown)'} "
+                            f"from ComfyUI's queue at {comfy_url} — aborting so the next row "
+                            f"is not stacked on top of it; remaining rows left pending"
+                        )
+                    if is_connect_error:
                         consecutive_connect_errors += 1
                         if consecutive_connect_errors >= MAX_CONSECUTIVE_CONNECT_ERRORS:
                             await session.commit()

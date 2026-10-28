@@ -1,11 +1,11 @@
 """`image_labels` rows go when their image or label goes — via the **DB cascade**.
 
-Every scenario here opens `api_env(tmp_path, foreign_keys=True)`. That is not a
-detail: the harness defaults `PRAGMA foreign_keys` **OFF** (conftest builds the
-schema with `create_all` on its own engine, so it never gets the pragma
-`backend/database.py` installs on the app engine), and without the opt-in every
-assertion below would pass *vacuously* — the orphan rows would simply still be
-there and nothing would have proved the cascade exists.
+Every scenario here opens `api_env(tmp_path, foreign_keys=True)` — the harness
+default since GPT-002, spelled out because it is not a detail: SQLite defaults
+`PRAGMA foreign_keys` **OFF** per connection, conftest builds the schema on its
+own engine, and without the pragma every assertion below would pass *vacuously* —
+the orphan rows would simply still be there and nothing would have proved the
+cascade exists.
 
 The cascade is load-bearing rather than a nicety, because three of the four
 deletion paths never load an `ImageLabel`:

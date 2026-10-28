@@ -368,11 +368,10 @@ def test_videos_dataset_fk_cascades_on_delete(tmp_path):
 
     Asserted against the DDL rather than end to end: `delete_dataset` issues a
     plain `db.delete(ds)` and the videos relationship is `passive_deletes=True`,
-    so the DB's ON DELETE CASCADE is what actually removes the rows — and this
-    harness builds its schema with `create_all` on its own engine, which never
-    gets the `PRAGMA foreign_keys=ON` that backend/database.py installs on the
-    app engine. An end-to-end assertion here would pass or fail for reasons
-    unrelated to the schema. What can regress is the ondelete clause itself.
+    so the DB's ON DELETE CASCADE is what actually removes the rows. What can
+    regress is the ondelete clause itself, so that is what is pinned — it holds
+    whatever `PRAGMA foreign_keys` a harness runs with, where an end-to-end
+    check would pass vacuously under `api_env(..., foreign_keys=False)`.
     """
     from sqlalchemy import text
 

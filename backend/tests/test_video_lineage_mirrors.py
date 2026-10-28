@@ -406,9 +406,8 @@ def test_version_image_state_does_not_carry_a_video_foreign_key():
 @needs_cv2
 def test_images_source_video_id_is_set_null_on_delete():
     """Belt-and-braces behind the explicit UPDATE in `DELETE /videos/{id}`.
-    Asserted against the DDL because the test harness builds its schema with
-    `create_all` and never gets the `PRAGMA foreign_keys=ON` that
-    backend/database.py installs on the app engine."""
+    Asserted against the model's DDL so the clause itself is pinned, whatever
+    `PRAGMA foreign_keys` a given harness runs with."""
     fk = next(
         fk for fk in Image.__table__.foreign_keys if fk.parent.key == "source_video_id"
     )

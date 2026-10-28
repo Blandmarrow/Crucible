@@ -41,6 +41,7 @@ from backend.models.threshold_settings import ThresholdSettings
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
 from backend.services import version_service
+from backend.tests.conftest import enforce_foreign_keys
 
 
 def run(coro):
@@ -69,25 +70,21 @@ async def make_env(
     names_contents: dict[str, bytes],
     mode: str = "auto",
     *,
-    foreign_keys: bool = False,
+    foreign_keys: bool = True,
 ):
     """Engine + session factory + one dataset with the given image files.
 
-    `foreign_keys` opts this engine into the `PRAGMA foreign_keys=ON` that
-    `backend/database.py` installs on the app engine. SQLite defaults it OFF per
-    connection, so without it every FK in the schema is unenforced here and a
-    restore that writes a dangling `Image.source_video_id` passes silently —
-    exactly the blind spot `test_duplicate_video_fk_enforced.py` documents.
+    `foreign_keys` installs the `PRAGMA foreign_keys=ON` that
+    `backend/database.py` puts on the app engine — on by default, as in
+    production. SQLite defaults it OFF per connection, so without it every FK in
+    the schema is unenforced and a restore that writes a dangling
+    `Image.source_video_id` passes silently — the blind spot
+    `test_duplicate_video_fk_enforced.py` documents. Pass False only for a
+    scenario that must plant a state the app cannot reach.
     """
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
     if foreign_keys:
-        from sqlalchemy import event
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
-            cur = dbapi_conn.cursor()
-            cur.execute("PRAGMA foreign_keys=ON")
-            cur.close()
+        enforce_foreign_keys(engine)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -534,7 +531,8 @@ def test_restore_after_the_source_video_was_deleted(tmp_path):
     the commit raised `IntegrityError: FOREIGN KEY constraint failed`, the job
     ended `failed`, and every retry failed identically — the snapshot was
     permanently un-restorable while still burning a pre-restore auto-snapshot per
-    attempt. The whole suite missed it because the harness leaves the pragma off.
+    attempt. The whole suite missed it because the harness then left the pragma
+    off (it is on by default since GPT-002).
     """
     async def scenario():
         engine, Session, ds_dir, ds_id = await make_env(

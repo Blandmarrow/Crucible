@@ -49,6 +49,7 @@ from backend.schemas.image import (
 )
 from backend.services import dataset_service, export_service, version_service
 from backend.services.image_service import read_provenance_sidecar
+from backend.tests.conftest import enforce_foreign_keys
 from backend.utils import parse_license_filter_param
 
 
@@ -244,6 +245,7 @@ def test_licenses_in_use_default_keeps_its_real_count_past_the_cap(tmp_path, mon
 
     async def scenario():
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/lic.db")
+        enforce_foreign_keys(engine)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         Session = async_sessionmaker(engine, expire_on_commit=False)
@@ -285,6 +287,7 @@ def test_licenses_in_use_default_keeps_its_real_count_past_the_cap(tmp_path, mon
 
 async def _make_env(tmp_path: Path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    enforce_foreign_keys(engine)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)

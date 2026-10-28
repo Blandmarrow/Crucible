@@ -18,7 +18,14 @@ from pathlib import Path
 
 from backend.models import Image
 from backend.services import version_service
-from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
+from backend.tests.conftest import (
+    API,
+    api_env,
+    needs_symlinks,
+    png_bytes,
+    run,
+    upload_image,
+)
 from backend.utils import canonical_abs_path
 
 
@@ -34,6 +41,7 @@ def test_canonical_abs_path_collapses_dotdot_into_the_stored_form(tmp_path):
     assert canonical_abs_path(str(root), root) == root
 
 
+@needs_symlinks
 def test_canonical_abs_path_rebases_through_a_symlinked_root(tmp_path):
     real = tmp_path / "real"
     (real / "datasets" / "d").mkdir(parents=True)
@@ -45,6 +53,7 @@ def test_canonical_abs_path_rebases_through_a_symlinked_root(tmp_path):
     assert canonical_abs_path(str(real / "datasets" / "d"), root) == root / "d"
 
 
+@needs_symlinks
 def test_canonical_abs_path_keeps_a_final_symlink(tmp_path):
     root = tmp_path / "datasets"
     root.mkdir()
@@ -126,6 +135,7 @@ def test_an_aliased_rename_of_a_structural_folder_is_refused(tmp_path):
     run(scenario())
 
 
+@needs_symlinks
 def test_deleting_a_symlink_removes_the_link_not_its_target(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -144,6 +154,7 @@ def test_deleting_a_symlink_removes_the_link_not_its_target(tmp_path):
     run(scenario())
 
 
+@needs_symlinks
 def test_a_symlinked_datasets_dir_still_matches_rows(tmp_path):
     """Both spellings — the stored one and the resolved one — find the row."""
     real = tmp_path / "real"
@@ -173,6 +184,7 @@ def test_a_symlinked_datasets_dir_still_matches_rows(tmp_path):
     run(scenario())
 
 
+@needs_symlinks
 def test_canonical_abs_path_keeps_a_final_windows_junction(tmp_path, monkeypatch):
     """A junction is not a symlink to `is_symlink()` but `resolve()` follows it,
     so it must be detected on its own or a delete of the link would act on the
@@ -191,6 +203,7 @@ def test_canonical_abs_path_keeps_a_final_windows_junction(tmp_path, monkeypatch
     assert canonical_abs_path(str(junction), root) == junction
 
 
+@needs_symlinks
 def test_canonical_abs_path_keeps_the_spelling_through_a_symlinked_dataset_folder(tmp_path):
     """A dataset folder kept on another drive is a link *inside* the tree. Its
     stored paths run through the link, so resolving it out of `root` would match
@@ -204,6 +217,7 @@ def test_canonical_abs_path_keeps_the_spelling_through_a_symlinked_dataset_folde
     assert canonical_abs_path(str(root / "d" / "images" / "a.png"), root) == root / "d" / "images" / "a.png"
 
 
+@needs_symlinks
 def test_deleting_inside_a_symlinked_dataset_folder_removes_the_rows(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

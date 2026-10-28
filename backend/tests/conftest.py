@@ -30,6 +30,7 @@ import asyncio
 import importlib.util
 import io
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,26 @@ needs_cv2 = pytest.mark.skipif(
 # also hold cases that only touch the ORM, and those must keep running in CI.
 needs_torch = pytest.mark.skipif(
     importlib.util.find_spec("torch") is None, reason="torch is not installed"
+)
+
+
+def _can_symlink() -> bool:
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            os.symlink(d, os.path.join(d, "probe"), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+# The same guard for a test that creates a real symlink. POSIX always can; Windows
+# refuses (`OSError`, WinError 1314) unless Developer Mode is on or the process is
+# elevated, which is the normal state of a dev box and not one CI can assume.
+# Probed once, at collection, by actually making a link — no platform check
+# predicts it. A test that only monkeypatches `is_symlink`/`is_junction` without
+# creating a link does not need it.
+needs_symlinks = pytest.mark.skipif(
+    not _can_symlink(), reason="this platform/account cannot create symlinks"
 )
 
 

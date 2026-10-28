@@ -48,10 +48,10 @@ def test_upload_creates_a_video_row_not_an_image_row(tmp_path):
 
             # Flat in videos/, slugified, never in images/.
             assert video.filename == "episode_01.mp4"
-            assert video.file_path.endswith("/videos/episode_01.mp4")
+            assert Path(video.file_path).as_posix().endswith("/videos/episode_01.mp4")
             assert video.width == 64 and video.height == 48
             assert video.duration_ms == 1000  # 25 frames at 25 fps
-            assert video.poster_path.endswith("/videos/thumbnails/episode_01.webp")
+            assert Path(video.poster_path).as_posix().endswith("/videos/thumbnails/episode_01.webp")
             assert Path(video.poster_path).exists()
 
     run(scenario())
@@ -63,12 +63,11 @@ def test_videos_dir_is_created_lazily(tmp_path):
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             await upload_image(env, ds["id"], "a.png")
-            assert not (tmp_path / "datasets" / ds["folder_path"].split("/")[-1] / "videos").exists()
+            assert not (tmp_path / "datasets" / Path(ds["folder_path"]).name / "videos").exists()
 
             await upload_video(env, ds["id"], "a.mp4")
             async with env.Session() as db:
                 video = (await db.execute(select(Video))).scalar_one()
-            from pathlib import Path
             assert Path(video.file_path).parent.name == "videos"
 
     run(scenario())

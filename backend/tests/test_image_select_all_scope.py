@@ -104,6 +104,8 @@ def filter_shapes(label_ids: list[str]) -> dict[str, dict]:
         "license_missing": {"license_missing": "true"},
         "license_filter": {"license_filter": json.dumps(["CC-BY-4.0"])},
         "score_filters": {"score_filters": json.dumps([{"field": "aesthetic_score", "min": 5}])},
+        # The Statistics click-through's half-open range: 5.0 itself is excluded.
+        "score_range_exclusive": {"min_score": "2", "max_score_lt": "5"},
         "label_any": {"label_filter": json.dumps(label_ids)},
         "label_all": {"label_filter": json.dumps(label_ids), "label_match": "all"},
         "label_missing": {"label_missing": "true"},

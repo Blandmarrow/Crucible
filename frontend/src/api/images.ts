@@ -83,7 +83,12 @@ export interface ImageListParams {
   captioned?: boolean;
   search?: string;
   min_score?: number;
+  /** Inclusive upper bound on `score_field` — the one a person types. */
   max_score?: number;
+  /** Exclusive upper bound (`score < max_score_lt`): what a stats histogram bar
+   *  sends, because the server's buckets are half-open and an inclusive edge
+   *  would also list the values the next bar up counts. */
+  max_score_lt?: number;
   score_field?: string;
   score_is_null?: boolean;
   quality_flag?: string;

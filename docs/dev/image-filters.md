@@ -33,8 +33,9 @@ assuming.
 | `subfolder` | `str` | **Descendant-inclusive**: `Image.subfolder == s OR Image.subfolder LIKE '<escaped s>/%'`, with `%` and `_` escaped, so selecting a parent folder in the sidebar also lists every nested subfolder's images. `is not None`-gated — `""` is the dataset root and a real filter, not "no filter" |
 | `captioned` | `bool` | `true` = `caption_text != ''`, `false` = `caption_text == ''`. The gallery's All / Captioned / Uncaptioned control; `is not None`-gated, so `false` is a filter |
 | `min_score` / `max_score` | `float` | Range on whatever column `score_field` names, **both bounds inclusive**. Skipped entirely when `score_is_null` is true |
+| `max_score_lt` | `float` | **Exclusive** upper bound on the same column (`score < max_score_lt`), also skipped under `score_is_null`. It exists for the Statistics bar click-through: the stats buckets are half-open (`edge <= val < next_edge`), so sending a bar's upper edge as the inclusive `max_score` also listed every value sitting exactly on that edge, which the stats count in the next bar up (GPT-018). `max_score` stays inclusive because people type it. The top bar of the watermark and style-similarity histograms leaves it unset, because the server folds 1.0 into "0.9–1.0" |
 | `quality_flag` | `str` | Filter by JSON flag key in `quality_flags` (e.g. `is_blurry`); validated against `utils.ALLOWED_FLAG_KEYS`, and an unknown key is a **400**, exactly like `score_field` |
-| `file_size_min` / `file_size_max` | `int` | `file_size_bytes` range (bytes), **both bounds inclusive** |
+| `file_size_min` / `file_size_max` | `int` | `file_size_bytes` range (bytes), **both bounds inclusive**. A byte count is a whole number, so the Statistics click-through gets a half-open bar without an exclusive param: it sends `ceil(edge × 1 MiB) - 1` as the max (`mkFs` in `StatsPage.tsx`) |
 | `mp_min` / `mp_max` | `float` | `width × height` megapixel range, min **inclusive** / max **exclusive** |
 | `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range, min **inclusive** / max **exclusive** |
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |

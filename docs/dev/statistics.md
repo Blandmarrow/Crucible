@@ -89,6 +89,8 @@ Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on
 
 **Clickable bars → BucketPanel**: Charts are hand-rolled — `CssHist` renders each bar as a `hist-bar` div (no charting library). Every histogram bar carries a `filter` object in its chart-entry data; the bar's own `onClick={() => e.filter && onBarClick?.(e)}` opens a `BucketPanel` modal. The panel queries `GET /images/` with the filter params and shows up to 200 thumbnails. Quality flag cards are also clickable.
 
+**A bar's filter must be as half-open as its bucket.** Server bucketing (`dataset_service._bucket`, `_watermark_bucket`) and `rebucketValues` both place `edge <= val < next_edge`, so every score bar sends its upper edge as the exclusive `max_score_lt`, never the inclusive `max_score`; file size sends `ceil(edge × 1 MiB) - 1` bytes; and the watermark and style-similarity "0.9–1.0" bar leaves its max open, because the server folds 1.0 into it (the `detScoreEntries` rule). An inclusive edge lists a value sitting on it under two bars while the counts show it under one (GPT-018). `backend/tests/test_stats_click_through_edges.py` and `frontend/e2e/stats.spec.ts` pin it.
+
 **`GET /images/` filter extensions** — the params every clickable bar sends are documented in
 `docs/dev/image-filters.md`; the Statistics-specific ones are the `detection_*`,
 `mask_coverage_*`, `caption_words_*`, `caption_tokens_*` and `license_missing` rows.

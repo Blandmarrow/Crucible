@@ -86,6 +86,13 @@ def test_rename_onto_an_existing_name_is_a_409(tmp_path):
             )
             assert r.status_code == 400, r.text
 
+            # A drive-letter name would make Windows' `parent / new_name` drop
+            # the parent and move the file to that drive's cwd.
+            r = await env.client.post(
+                f"{FS}/rename", json={"path": str(a), "new_name": "C:b.txt"}
+            )
+            assert r.status_code == 400, r.text
+
     run(scenario())
     assert a.read_text() == "A"
     assert b.read_text() == "B"

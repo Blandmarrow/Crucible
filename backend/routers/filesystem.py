@@ -497,8 +497,10 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     outright whenever it touches a dataset, since a rename has no coherent
     prefix rewrite to offer the way `/move` does.
     """
-    if "/" in req.new_name or "\\" in req.new_name or "\x00" in req.new_name:
-        raise HTTPException(400, "new_name must not contain path separators")
+    # ":" too: on Windows `p.parent / "B:x.jpg"` discards `p.parent` (a drive
+    # change replaces the whole path), moving the file to that drive's cwd.
+    if any(c in req.new_name for c in ("/", "\\", ":", "\x00")):
+        raise HTTPException(400, "new_name must not contain path separators or ':'")
 
     p = canonical_abs_path(req.path, settings.datasets_dir)
     if not p.exists():

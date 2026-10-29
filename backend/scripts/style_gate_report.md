@@ -42,7 +42,7 @@ testing.
   from that in-memory set.
 - **Missing embeddings are reported, never scored.** A row lacking a column a mode needs is
   excluded *from that mode only* and counted, per the failure contract in
-  `docs/dev/scoring.md`. A mode with no usable references or candidates is reported as
+  `docs/dev/quality/scoring.md`. A mode with no usable references or candidates is reported as
   skipped with the counts that made it so — never as a run that scored nothing.
 - **Torch-free by default.** `dino_scorer` imports torch at module top, so
   `slice_layer_embedding` is imported lazily inside the `--layers` branch alone; the script
@@ -143,7 +143,7 @@ the correct call rather than an error. Excluding it, DINOv2's worst control rank
 | clip vs combined | 0.8457 | 12/20 | 16/20 |
 | dino vs combined | **0.9844** | 18/20 | 17/20 |
 
-The three modes are **not** the free three-way A/B roadmap §3 assumed. `combined` is DINOv2
+The three modes are **not** the free three-way A/B the rating plan's §3 assumed. `combined` is DINOv2
 with a slight CLIP tilt — ρ 0.98, 18 of 20 top images shared — so there are **two**
 independent signals here, not three. CLIP and DINOv2 do genuinely disagree (ρ 0.75), and
 that is the only axis worth A/B-ing anything on.
@@ -203,9 +203,9 @@ the script's.
 from a foreign one at AUC 0.97, with the top band clean at 20 deep, no training, no labels
 and no new column. Its failure mode is a *choice between two defensible notions of style*,
 not an inability to order. Nothing here suggests a learned head would repay a trainer and a
-labelling UI. Style stays on the centroid baseline; the aesthetic-rating head in roadmap
+labelling UI. Style stays on the centroid baseline; the aesthetic-rating head in the rating plan
 §§1–3 remains about *aesthetic quality*, which this run says nothing about.
 
-Three findings carried into `docs/dev/image-similarity.md`, all cheap to act on: CLIP is the
+Three findings carried into `docs/dev/quality/style-similarity.md`, all cheap to act on: CLIP is the
 default worth recommending for style matching; the three modes are two signals, not three;
 and the DINOv2 per-layer picker offers nine layers that cannot be thresholded.

@@ -1,6 +1,6 @@
 # Quality Scoring
 
-Score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter and curate on the results.
+Score every image across aesthetic, technical, watermark and NSFW metrics, and compute the embeddings [Style Similarity](style-similarity.md) compares, then filter and curate on the results.
 
 Available from: the **Score images** sidebar item on any dataset page, and the **Score** button in the gallery selection toolbar (scoped to the selection).
 
@@ -13,7 +13,7 @@ Tick the scorers you want and start the run — they execute together in one bac
 | **Aesthetic score** — a learned aesthetic predictor (1–10), trained on human ratings; pick which model runs it, see below | GPU · 2.0–2.1 GB |
 | **Technical · OpenCV** — blur, noise, near-uniform, color richness, saturation, brightness, duplicates | CPU only |
 | **Watermark detection** — CLIP zero-shot classification for text overlays and logos | GPU · 2.1 GB |
-| **Style embeddings · CLIP** — required for the style-similarity workflow below | GPU · 2.1 GB |
+| **Style embeddings · CLIP** — required for [style similarity](style-similarity.md) | GPU · 2.1 GB |
 | **DINOv2 embeddings** — object-aware embedding; usable alone or alongside CLIP | GPU · 1.2 GB |
 | **DINOv2 per-layer embeds** — stores all 12 transformer layer CLS tokens; enables per-layer style similarity (only offered when DINOv2 embeddings is ticked) | GPU · 1.2 GB |
 | **NSFW detection · Marqo** — ViT classifier, sets the `is_nsfw` flag | GPU · 1.0 GB |
@@ -33,7 +33,7 @@ When a run finishes, the models it loaded are unloaded and their VRAM is returne
 
 Turn this off in **Settings → Quality Thresholds → Unload scoring models when a run finishes** if you re-score repeatedly and would rather keep the models warm than pay the reload each time. With it off, an **Unload models · N GB** button appears in the Score images panel header whenever a scoring model is resident; it names how much it will free, and disappears once it has. The button is also how you free the models left behind by uploading reference images for style similarity, and how you clean up after a cancelled run. It is disabled while a run is going, and refuses with *A scoring run is in progress* if you reach it anyway — from a second pane, say, or a tab opened after the run started. Pulling a model out from under a running scorer would fail the run. If another part of the app is using one of the scoring models at that moment, that model is left loaded and the toast says so; everything else is still freed.
 
-Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers write vectors that the style-similarity workflow consumes afterwards. Run them first, or nothing will be there to compare against.
+Embeddings are a prerequisite, not a score: CLIP and DINOv2 embedding scorers write vectors that the [style-similarity](style-similarity.md) workflow consumes afterwards. Run them first, or nothing will be there to compare against.
 
 ## What each scorer produces
 
@@ -93,42 +93,6 @@ Nothing forces you to re-score, but a mixed dataset weakens anything that reads 
 - **[Duplicate resolution](duplicates.md)** refuses. A group holding two models' scores has its *Keep best* disabled, naming both models, because ranking across the two scales and then deleting the losers destroys images on a comparison that means nothing. Bulk *Keep best* skips those groups and says how many it skipped; *Keep first* reads no score and is unaffected.
 - **Export** warns. The [Export](export.md) preview reports the split, and — if you are filtering on a minimum aesthetic score — that one threshold is being applied to both scales at once.
 - **Statistics** shows the split under the Aesthetic tile in Score coverage, and the aesthetic histogram there mixes both scales into one distribution.
-
-## Style similarity
-
-A collapsible section at the bottom of the page scores how close each image is to a set of reference images — the tool for keeping a training set stylistically consistent. Because it compares embeddings that already exist, it is CPU-only and runs immediately rather than queueing a job.
-
-- **Embedding model** — see the table below. **Start with CLIP**: measured against a deliberately out-of-style control set, it separated in-style from out-of-style images best of the three and matched the *look* — lighting and palette — most closely, while DINOv2 leaned toward subject and framing. All three require the matching embeddings to have been computed first.
-- **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. Layer 12 uses the standard embedding; the rest require per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view. Layers 1–8 pack every image into 0.90–0.99, so there is no cut point in them however sensible the ordering — usable spread only appears at layers 10–12.
-- **Reference images** — pick them from the dataset, or drag in local files from outside it. Local files are always embedded with CLIP, so choosing them restricts the run to the CLIP model.
-- **Copy reference IDs** — beside *Score similarity*, copies the selected dataset references' image IDs to the clipboard as a comma-separated list, for pasting into a script or an API call. Dragged-in local files have no ID and are not included.
-
-Scoring writes a `style_similarity_score` per image, which the gallery and Statistics page can then filter and chart on. After a run, a **Current scores** line in the panel reports the dataset's median score, the threshold its top 10% sits above, and the full range — the figures that let one run be compared against the last.
-
-### Style similarity modes
-
-| Mode | Description |
-|---|---|
-| `clip` | Cosine similarity of CLIP ViT-L-14 embeddings. Separates in-style from out-of-style best of the three, and matches lighting and palette |
-| `dino` | Cosine similarity of DINOv2 final-layer (or any of 12 layers) embeddings. Spends a wider numeric range but separates less well, and drifts toward subject and framing |
-| `combined` | Weighted blend: 38% CLIP + 62% DINOv2. Tracks `dino` closely rather than giving a genuinely third opinion |
-| `dino_all_layers` / `combined_all_layers` | Score each of the 12 DINOv2 layers independently and store all results |
-
-### Reading the score
-
-**The raw score is a cosine, and its scale depends entirely on which mode produced it.** On the same set of images, CLIP scores span roughly 0.53–0.93 while DINOv2 spans 0.05–0.70, and a per-layer run below layer 10 compresses everything into 0.90–0.99. A bare "0.62" therefore means something different in each mode, and a fixed good/bad threshold would mean five different things at once.
-
-So Crucible reports a **percentile** instead — where an image falls among that dataset's own style scores. That is comparable no matter which mode ran, and it is what the meters below show:
-
-- **On gallery cards** — a thin bar along the bottom edge of each thumbnail. Longer is a closer match to the references. Images with no style score show no bar at all, and the bar dims when the image's pixels have been [edited in place since scoring](#stale-scores). Switch it off in Settings → Gallery.
-- **On the image detail page** — a **Style match** block below the score list, showing the meter, the percentile in words ("Top 12%"), the raw cosine, and a line naming the mode, the layer, how many references were used and when the run happened. Below that, thumbnails of the references themselves; if the image you are looking at was one of them, its tile is ringed — a reference scores close to 1.0 against its own set, so its high match is expected rather than meaningful.
-
-Two caveats the page states rather than hides:
-
-- **A run scored from a selection can leave older scores in place.** The rest of the dataset keeps its scores from an earlier run, so the percentile mixes two runs. The Style match block says so in amber — but only when scores from an earlier run really do survive, not merely because the run started from a selection. Selecting everything in the gallery and scoring it covers the whole dataset, and gets no note.
-- **A dataset scored before Crucible recorded run details, or duplicated from another dataset, has no run to report.** The meter and the raw score still work — the percentile comes from the dataset's own scores either way — but the block says the mode and references are unknown.
-
-A dataset with only one scored image, or with every score identical, gets no meter: there is nothing to rank against, so only the raw number is shown.
 
 ## Quality flags
 

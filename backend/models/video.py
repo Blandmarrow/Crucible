@@ -69,7 +69,7 @@ class Video(Base):
     # a job cannot 400. A later full-res pass replays them verbatim so its frames
     # match the triage frames' geometry exactly. Four plain columns rather than a
     # JSON rect: a JSON column would need the copy-before-mutate dance for no
-    # gain. All four NULL means no crop. See docs/dev/video-extract.md.
+    # gain. All four NULL means no crop. See docs/dev/video/extract.md.
     crop_x: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crop_y: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crop_w: Mapped[int | None] = mapped_column(Integer, nullable=True)

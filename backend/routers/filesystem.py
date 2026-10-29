@@ -70,17 +70,19 @@ repo-wide layout-constant refactor rides along with this guard.
 async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
     """Refuse a directory rename that would strand rows, a `Dataset` or the object store.
 
-    Renaming is a same-parent move, so — unlike `/move` — there is no prefix
-    rewrite to be had: the only directories that can hold registered media are
+    Renaming is a same-parent move, so there is no prefix rewrite to be had —
+    the conclusion `/move` reached too when V-21 deleted its own: the only
+    directories that can hold registered media are
     structural ones, and rewriting their paths leaves the DB agreeing with disk
     while the *dataset* stays broken (a renamed `images/` makes `rescan_dataset`
     take its no-`images_dir` early return and the next upload recreate the
     folder; a renamed `videos/` makes `_rescan_videos` report every row missing
     forever; a renamed `{ds}` leaves `Dataset.folder_path` stale, which no path
-    rewrite touches). There is also nothing to validate a rewrite against —
-    `/move`'s rewrite is coherent only because `_find_dataset_for_path(db,
-    new_path)` gives it a destination dataset to check containment against, and
-    a rename's new name is arbitrary. So this only ever refuses.
+    rewrite touches). A rename also never had anything to validate a rewrite
+    against — `/move` could at least ask `_find_dataset_for_path(db, new_path)`
+    for a destination dataset, while a rename's new name is arbitrary — but that
+    distinction stopped mattering when `/move` gave up rewriting as well. So
+    this only ever refuses.
 
     Guards run **C → D → A → B**: most specific and most actionable first, each
     next one the more general fallback. `{ds}` holding rows should get C's

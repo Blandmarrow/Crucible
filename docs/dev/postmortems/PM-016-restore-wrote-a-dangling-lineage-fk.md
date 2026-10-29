@@ -77,7 +77,7 @@ Guarded by `backend/tests/test_versioning_restore.py`:
 pragma on) and `test_restore_keeps_lineage_when_the_video_still_exists` (so the guard cannot
 degenerate into a blanket NULL).
 
-### Status
+### Status & date
 
 MITIGATED — the write-back is guarded and both directions are pinned. The underlying
 asymmetry stands by design: `VersionImageState` still carries no FKs, so any *future*

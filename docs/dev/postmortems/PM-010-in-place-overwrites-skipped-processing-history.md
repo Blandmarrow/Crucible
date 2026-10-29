@@ -100,7 +100,7 @@ whose `processing_history` holds any op **other than** `reextract` with the reas
 refuses to run a second time, because its own entry looks like third-party editing. Anything
 that is not a dict counts as an unknown edit and skips.
 
-See `docs/dev/video-reextract.md` § Target resolution.
+See `docs/dev/video/reextract-endpoints.md` § Target resolution — one function, two callers.
 
 **Amended 2026-07-31 — the choke point this entry asked for now exists.** The helper moved to
 `backend/utils.py::record_in_place`, and the four hand-rolled twins (`lut`, `upscaling`,
@@ -112,7 +112,7 @@ block's dict is field-for-field identical to what it built before, which matters
 Two things made the move worth doing beyond tidiness. The helper now also sets
 `Image.scores_stale`, so the two columns that describe an in-place rewrite can never drift
 apart — a site that recorded the edit and left the scores looking trustworthy would be the
-same class of silent gap this entry is about (`docs/dev/scores-stale.md`). And
+same class of silent gap this entry is about (`docs/dev/quality/scores-stale.md`). And
 the enforcement § Generalizable rule called for is real: `backend/tests/test_scores_stale.py`
 walks `backend/routers/*.py` and `backend/services/*.py` for any
 `… .processing_history = … + …` list-concat and fails if one exists outside `utils.py`. It

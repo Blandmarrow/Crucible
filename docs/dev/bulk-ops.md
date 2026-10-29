@@ -5,8 +5,9 @@ This file covers the bulk operations that act across a selection or a whole data
 delete / count / provenance / reorder), and `BulkEditPage`'s tabs. The interesting content
 here is **which rows are selected** — `_apply_bulk_filters` and the scope panel that drives it.
 
-The bulk jobs that rewrite pixels or files — batch resize/crop, the thumbnail rebuild, and
-detection-driven cropping — are in `docs/dev/bulk-image-jobs.md`. Dataset export has its own
+The bulk jobs that rewrite pixels or files — batch resize/crop and the thumbnail rebuild —
+are in `docs/dev/bulk-image-jobs.md`; detection-driven cropping is `docs/dev/detection-crop.md`
+and watermark removal `docs/dev/inpaint.md`. Dataset export has its own
 file — see `docs/dev/export.md`.
 
 ## Bulk caption editing
@@ -27,7 +28,7 @@ file — see `docs/dev/export.md`.
 
 Images with no `caption_text` are skipped for `remove` and `find_replace`. For `prepend`/`append` they receive just the added text. A single `db.commit()` is made after the loop — not per image.
 
-**AI-artifact flag clearing.** Every caption-write site in `bulk_edit_captions` and `find_replace_captions` (both the plain and regex branches) calls `_maybe_clear_ai_artifact(img, new_text)` before writing the sidecar, so a bulk `remove`/`find_replace` that empties a caption also unmarks `has_ai_artifacts` — matching the single-image editor. See `docs/dev/captioning.md` § Captioning job execution (Flag lifecycle) for the helper. The `bulk-edit` and `find-replace` router endpoints (`routers/captions.py`) call `refresh_stats(db, dataset_id)` after the service returns so the Statistics page's AI-artifact count recomputes in the same request.
+**AI-artifact flag clearing.** Every caption-write site in `bulk_edit_captions` and `find_replace_captions` (both the plain and regex branches) calls `_maybe_clear_ai_artifact(img, new_text)` before writing the sidecar, so a bulk `remove`/`find_replace` that empties a caption also unmarks `has_ai_artifacts` — matching the single-image editor. See `docs/dev/captioning.md` § Captioning job execution (the Flag lifecycle bullet) for the helper. The `bulk-edit` and `find-replace` router endpoints (`routers/captions.py`) call `refresh_stats(db, dataset_id)` after the service returns so the Statistics page's AI-artifact count recomputes in the same request.
 
 **Regression tests**: `backend/tests/test_caption_bulk_http.py` drives `/find-replace` and `/bulk-edit` over HTTP — selective literal replace (DB + sidecar), regex `remove` whitespace-normalization and skip counts, an invalid regex or replacement template as a 400 on both endpoints with nothing written (and a valid non-matching one still a 200 no-op), and the 408 regex-timeout path leaving every caption and sidecar byte-identical (both code paths).
 
@@ -73,12 +74,15 @@ This tab behaves like Crop/Upscale for scope (`targetsFlaggedImages` stays `tab 
 
 What pays for the exception is the two-phase filesystem pass. Any row whose target collides with a batch member's *current* files renames to a temp name first and moves to its final name in a second sweep; the rest rename directly. **The collision test covers all three artifacts a rename moves** — the image path, the `{stem}.webp` thumbnail, and the `{stem}.txt` sidecar. Testing only the image path was PM-017: the two derived files are keyed on the stem alone, so a cross-extension collision (`img.jpg` taking the stem `img.png` holds) was invisible, took the direct branch, and destroyed a live sibling's thumbnail and caption while leaving every *filename* correct. Nothing repairs that — `serve_thumbnail` regenerates only a **missing** thumbnail, never a stale one.
 
-Two smaller rules in the same function. Temp names are keyed on the row id (`__renaming__{img_id}`), like the DB half's staging names, so a user typing `__renaming__image` as the new stem cannot collide with a live temp file. And `occupied_thumb_stems` unions in the stems of every non-batch `db_names` entry, not just the `.webp` files present: a row whose thumbnail is missing still owns its stem, since the next view regenerates it there — the same two-term occupancy `docs/dev/file-browser.md` § `POST /rename` defines.
+Two smaller rules in the same function. Temp names are keyed on the row id (`__renaming__{img_id}`), like the DB half's staging names, so a user typing `__renaming__image` as the new stem cannot collide with a live temp file. And `occupied_thumb_stems` unions in the stems of every non-batch `db_names` entry, not just the `.webp` files present: a row whose thumbnail is missing still owns its stem, since the next view regenerates it there — the same two-term occupancy `docs/dev/file-browser-rename-delete.md` § `POST /rename` defines.
 
 ## Bulk jobs that rewrite files
 
-`POST /images/batch/resize`, `POST /images/batch/crop`, `POST /images/bulk-thumbnails` and
-`POST /detection/crop` are documented in `docs/dev/bulk-image-jobs.md` — they share a loop
-shape (PM-013 commit ordering, `contained_path` gating, `thumbnails_stale`,
-`remap_detections_for_crop`) that has nothing to do with the scope filtering above.
+`POST /images/batch/resize`, `POST /images/batch/crop` and `POST /images/bulk-thumbnails` are
+documented in `docs/dev/bulk-image-jobs.md`, `POST /detection/crop` in
+`docs/dev/detection-crop.md` and `POST /inpaint/run` in `docs/dev/inpaint.md`. They share a
+loop shape (PM-013 commit ordering, `thumbnails_stale`) that has nothing to do with the scope
+filtering above. Two parts of it are not shared: only `bulk-thumbnails` and `/inpaint/run`
+gate stored paths through `contained_path`, and only the replace-mode crops run
+`remap_detections_for_crop`.
 

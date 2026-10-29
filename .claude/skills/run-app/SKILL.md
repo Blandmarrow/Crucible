@@ -51,7 +51,7 @@ In `dev` mode open `http://localhost:5173`; otherwise `http://localhost:8000`.
   **403** — add the name to `CRUCIBLE_ALLOWED_HOSTS` if you really need it. A
   POST/PUT/PATCH/DELETE with a foreign `Origin` header (or `Origin: null`) is a
   403 too; plain curl sends no `Origin` and passes. See
-  `docs/dev/backend-infrastructure.md` § Request guard.
+  `docs/dev/http-edge.md` § Request guard.
 
 ## Throwaway instance (never touches the live DB or data)
 

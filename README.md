@@ -22,8 +22,8 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 Every step from raw images to a training-ready export, in order:
 
-1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/gallery.md), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
-2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
+1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/datasets.md#getting-images-in), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
+2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/datasets.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, remove watermarks, and reorder manually → [details](docs/editing.md)
@@ -35,13 +35,13 @@ Every step from raw images to a training-ready export, in order:
 ## Features
 
 ### Dataset management
-- **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/gallery.md)
-- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
-- **Rename and re-nest** a gallery subfolder from its right-click menu or by dragging one row onto another — the whole subtree follows, and the files inside keep their names → [details](docs/gallery.md#renaming-and-re-nesting-a-subfolder)
-- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
+- **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/datasets.md)
+- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/datasets.md#getting-images-in)
+- **Rename and re-nest** a gallery subfolder from its right-click menu or by dragging one row onto another — the whole subtree follows, and the files inside keep their names → [details](docs/subfolders.md#renaming-and-re-nesting-a-subfolder)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/datasets.md#getting-images-in)
 - **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, browsable in a strip above the image grid with poster frames, an inline player, rename, and delete from the strip or the video's own page (experimental). A codec the browser cannot play says so plainly instead of claiming the file is corrupt — extraction reads the file directly and is unaffected → [details](docs/video.md)
-- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export. A **Frames from** gallery filter finds everything one video produced however far curation has since moved it, and the technical scorer's **brightness** metric separates the usable frames from the fades to black → [details](docs/video.md)
-- **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video.md)
+- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export. A **Frames from** gallery filter finds everything one video produced however far curation has since moved it, and the technical scorer's **brightness** metric separates the usable frames from the fades to black → [details](docs/video-extraction.md)
+- **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video-reextract.md)
 
 ### Image generation
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
@@ -51,7 +51,7 @@ Every step from raw images to a training-ready export, in order:
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
 
 ### Quality & curation
-- **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md)
+- **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md) · [style similarity](docs/style-similarity.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels — every filter is remembered per dataset, so leaving the gallery and coming back (or restarting) lands you back on the view you were working in → [details](docs/gallery.md)
 - **Label images** with a small shared vocabulary — a second axis of organisation alongside subfolders, so "usable for FX work" can cut across every subject folder. Apply one at a time, with a single keypress while arrowing through a folder, or in bulk across a whole filtered selection; then filter the gallery, or an export, on it. Labels never touch captions and never appear in an exported `.txt` → [details](docs/labels.md)
 
@@ -76,11 +76,11 @@ Every step from raw images to a training-ready export, in order:
 ### Workspace & tooling
 - **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/workspace.md#split-view)
-- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/workspace.md#file-browser)
+- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/file-browser.md)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
 - **Keyboard-drivable dialogs** — Esc closes, Tab cycles within the dialog, focus returns where it came from, and screen readers announce them as dialogs → [details](docs/workspace.md#dialogs)
-- **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/workspace.md#database-backups)
+- **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/server.md#database-backups)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 
@@ -263,11 +263,11 @@ See [docs/settings.md](docs/settings.md).
 
 **Linux / macOS** — same commands via `./manage.sh start`, `./manage.sh dev`, `./manage.sh update`.
 
-`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/workspace.md#starting-up).
+`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up).
 
 > **If `update` stops at "git pull failed"** with *"Your local changes to the following files would be overwritten by merge"*, you have edited a tracked file. Run `git stash` (to keep the changes) or `git checkout -- <file>` (to discard them), then re-run `update`. `frontend/package-lock.json` is handled automatically — `update` discards npm's rewrites of it, since it is regenerated from the repo copy anyway.
 
-To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/workspace.md#restarting--shutting-down).
+To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/server.md#restarting--shutting-down).
 
 ### Access from other devices (LAN)
 
@@ -303,12 +303,17 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Topic | |
 |---|---|
 | Feature index | [docs/features.md](docs/features.md) |
-| Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
+| Datasets | [docs/datasets.md](docs/datasets.md) |
+| Gallery | [docs/gallery.md](docs/gallery.md) |
+| Subfolders | [docs/subfolders.md](docs/subfolders.md) |
 | Labels | [docs/labels.md](docs/labels.md) |
-| Videos & Frame Extraction | [docs/video.md](docs/video.md) |
+| Videos | [docs/video.md](docs/video.md) |
+| Frame Extraction | [docs/video-extraction.md](docs/video-extraction.md) |
+| Re-extracting Frames | [docs/video-reextract.md](docs/video-reextract.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
+| Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
 | Duplicate Resolution | [docs/duplicates.md](docs/duplicates.md) |
 | Object Detection | [docs/detection.md](docs/detection.md) |
 | Batch Editing & Image Processing | [docs/editing.md](docs/editing.md) |
@@ -318,4 +323,6 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
 | Export | [docs/export.md](docs/export.md) |
 | Settings | [docs/settings.md](docs/settings.md) |
-| Workspace — jobs, server control, split view, logs | [docs/workspace.md](docs/workspace.md) |
+| Workspace — dialogs, jobs, hardware meters, split view, logs, booru lookup | [docs/workspace.md](docs/workspace.md) |
+| Server — starting, restarting, shutting down, database backups | [docs/server.md](docs/server.md) |
+| File Browser | [docs/file-browser.md](docs/file-browser.md) |

@@ -100,7 +100,7 @@ anything fallible before the commit?", never "can this file be locked right now?
   deletes now unlink first through `backend/services/image_delete.py` — `delete_image` 409s,
   and the three batch deletes keep a locked row and count it `in_use` — and the in-place
   crop/resize swaps go through `replace_retrying`. `filesystem.py` is still unconverted.
-- Three sites are deliberately **exempt** and are named in `CLAUDE.md` so a later sweep does
+- Three sites are deliberately **exempt** and are named in `docs/dev/shared-utilities.md` so a later sweep does
   not "finish the conversion": `_delete_previous_frames`, `_rewrite`'s superseded-original
   unlink, and `video_service.generate_poster`'s poster replace. All three already log and
   continue, and a lock costs only a re-derivable artefact.
@@ -120,5 +120,5 @@ anything fallible before the commit?", never "can this file be locked right now?
 MITIGATED — the video routes and pass 2's frame overwrite are converted; `routers/images.py`
 and `routers/filesystem.py` still call `Path.unlink`/`shutil.move` directly and carry the
 same exposure. The client half is unimplemented for re-extraction, where the exposure is
-only the teardown race (see `docs/dev/video-reextract-ui.md`).
+only the teardown race (see `docs/dev/video/reextract-ui.md`).
 Last reviewed for staleness: 2026-08-01.

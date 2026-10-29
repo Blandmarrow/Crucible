@@ -13,7 +13,7 @@ Two leaks, one cause — weights the unload path could not reach:
 Both now sit in the sam2 `ModelEntry.model` dict as tenants, so the stock
 `_release_to_cpu` walk reaches them with no unload hook. Asserted at the entry
 shape, through the real loader and the real unload paths, never at the id — see
-`docs/dev/ml-models.md` § Releasing an entry's weights for why an id-level check
+`docs/dev/model-residency.md` § Releasing an entry's weights for why an id-level check
 cannot see this class of bug.
 
 Torch-free: `transformers` and `sam2.sam2_image_predictor` are stubbed in

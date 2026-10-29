@@ -187,7 +187,7 @@ fix). One case each of the second shape in
 `backend/tests/test_upscale_png_fallback_http.py`, the latter covering both the batch
 upscale and the crop+upscale replace worker.
 
-See `docs/dev/video-reextract.md` § The `video_reextract` job and § The extension change,
+See `docs/dev/video/reextract.md` § The `video_reextract` job and § The extension change,
 and `docs/dev/image-processing-models.md` § Upscaling and § LUT grading.
 
 ### Status & date

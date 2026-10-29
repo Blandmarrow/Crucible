@@ -11,13 +11,13 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `CONFIRM_DEFAULT_KEY` | `localStorage`, `"cancel" \| "confirm"` | `ConfirmDialog` (reads on mount), `SettingsPage` (reads/writes on toggle) | The user's delete-confirmation default-button preference |
 | `BRANCH_SNAPSHOT_KEY` | `localStorage`, `"ask" \| "auto"` | Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage` | Branch/checkout snapshot behavior |
 | `VERSIONS_BRANCH_KEY` | `sessionStorage` prefix (`"versions-branch"`); append `-${datasetId}` | Written by `VersionsPage.handleBranchSelect` and `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount | Last-browsed branch on `VersionsPage` |
-| `VIDEO_STRIP_COLLAPSED_KEY` | `localStorage` prefix (`"gallery-videos-collapsed"`); append `-${datasetId}` via `datasetScopedKey()` | Read and written by `components/gallery/VideoStrip.tsx` | Whether the gallery's video strip is collapsed, per dataset (see `docs/dev/video-ui.md`) |
+| `VIDEO_STRIP_COLLAPSED_KEY` | `localStorage` prefix (`"gallery-videos-collapsed"`); append `-${datasetId}` via `datasetScopedKey()` | Read and written by `components/gallery/VideoStrip.tsx` | Whether the gallery's video strip is collapsed, per dataset (see `docs/dev/video/ui.md`) |
 | `GALLERY_PAGE_SIZE_KEY` | `localStorage`, `25 \| 50 \| 100 \| 200` | `GalleryPage`, `ImageDetailPage` (prefetch limit and end-of-page detection), `SettingsPage` | Images per page; read via `getGalleryPageSize()` (below) |
 | `SUBFOLDER_RENAME_KEY` | `localStorage`, `"on" \| "off"` | Read by `SelectionToolbar` at mutation time; written by `SettingsPage` | Subfolder auto-rename preference |
 | `GALLERY_CHECKBOX_SIZE_KEY` | `localStorage`, px | **Never read or written directly by a component** — owned by `uiPrefsStore`, which hydrates via `getGalleryCheckboxSize()` and writes back on set | Gallery selection-checkbox edge length. `clampGalleryCheckboxSize(v)` bounds it to `GALLERY_CHECKBOX_SIZE_MIN`/`MAX` (14/32) on both read and write, so a hand-edited entry can't produce a checkbox that covers the thumbnail; `GALLERY_CHECKBOX_SIZE_DEFAULT` is 18 |
 | `GALLERY_LICENSE_BADGE_KEY` | `localStorage`, `"true" \| "false"`, **off** by default | Also owned by `uiPrefsStore` (`getGalleryLicenseBadge()`), never read directly by a component | Per-card license badge. Store ownership is what keeps a Settings pane and a gallery pane open side by side in step |
 | `GALLERY_STYLE_METER_KEY` | `localStorage`, `"true" \| "false"`, **on** by default | Also owned by `uiPrefsStore` (`getGalleryStyleMeter()`), never read directly by a component | Per-card style-match percentile meter. On by default, so the getter reads `!== "false"` and not `=== "true"` — the absent key must mean on, the `CAPTION_DEFAULT_STRIP_REFS_KEY` precedent. It also gates `useStyleDistribution`'s `enabled`, so switching it off stops the request, not just the render |
-| `LABEL_HOTKEYS_KEY` | `localStorage`, `"true" \| "false"`, **on** by default | Also owned by `uiPrefsStore` (`getLabelHotkeysEnabled()`), never read directly by a component | Whether single-key label hotkeys are live in the image detail view. On by default, so the getter reads `!== "false"` — the `GALLERY_STYLE_METER_KEY` precedent. In the store rather than read at render time so toggling it in Settings reaches an already-mounted detail pane in split view. See `docs/dev/labels.md` |
+| `LABEL_HOTKEYS_KEY` | `localStorage`, `"true" \| "false"`, **on** by default | Also owned by `uiPrefsStore` (`getLabelHotkeysEnabled()`), never read directly by a component | Whether single-key label hotkeys are live in the image detail view. On by default, so the getter reads `!== "false"` — the `GALLERY_STYLE_METER_KEY` precedent. In the store rather than read at render time so toggling it in Settings reaches an already-mounted detail pane in split view. See `docs/dev/labels-ui.md` § Hotkeys |
 | `DECLARED_CATEGORIES_KEY` | `localStorage`, `string[]` | Read/written by `DatasetsPage` | Frontend-only empty category names — categories with no datasets assigned have no backend record, so this bridges the gap. Parsed with an `Array.isArray` guard; synced back on every `emptyCategories` change via `useEffect`; kept in sync with rename/delete mutations |
 | `GALLERY_DEFAULT_SORT_KEY` | `localStorage`, sort index | Read at `GalleryPage` init time via `getGalleryDefaultSort()` | Gallery default |
 | `GALLERY_DEFAULT_CAPTION_KEY` | `localStorage`, `"all" \| "captioned" \| "uncaptioned"` | Read at `GalleryPage` init time via `getGalleryDefaultCaptionFilter()` | Gallery default |
@@ -48,7 +48,7 @@ because a hand-off needs two ends:
   deleting the video.
   Pass 2's re-extract dialog deliberately has **no** counterpart key: it emits per frame, so it
   re-attaches by adopting live jobs from `jobStore` instead. See
-  `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract-ui.md`.
+  `docs/dev/video/extract-ui.md` and `docs/dev/video/reextract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 - `` `stats-hist-edges-{metric}-${datasetId}` `` (`pages/StatsPage.tsx`) — one per editable
@@ -61,8 +61,8 @@ because a hand-off needs two ends:
   entries long. `GalleryPage` owns both, but `ImageDetailPage` is the other end: it rewrites
   the `page`/`scrollTop` of the first and reads and rewrites the second. A registry row would
   be honest here; they are listed as exceptions rather than promoted because the shapes are
-  documented where they are used, in `docs/dev/gallery-state.md` and
-  `docs/dev/gallery-nav.md`. `gallery-state-*` is still
+  documented where they are used, in `docs/dev/gallery/state.md` and
+  `docs/dev/gallery/nav.md`. `gallery-state-*` is still
   page-private; `gallery-nav-*` no longer is — its shape, its read/write pair and the
   `injectNavId`/`removeNavId` mutators live in `frontend/src/utils/galleryNav.ts`, because
   three independent inline casts of it let the writer drop filters the reader needed.
@@ -97,7 +97,7 @@ The workflow and filters blobs are all loaded via `loadPersisted` (and reset via
 
 Don't "unify" them without reading this. The hook covers every *debounced blob* write (the ten workflow/filters sites). The exceptions:
 - **Synchronous, undebounced**: `TagConsolidatePage` (`{threshold}`) and `GeneratePromptsModal` (`{instructions, providerId, …}`) call `savePersisted` directly in an effect body. With no debounce there is no window in which an unmount can drop a write, so the hook would *add* a `PERSIST_DEBOUNCE_MS` delay rather than fix anything — strictly worse for `GeneratePromptsModal`, which is closed by unmounting. Both carry a comment saying so.
-- **Custom, with its own unmount flush**: `GalleryPage` writes `gallery-state-${datasetId}` via raw `localStorage` on its own `PERSIST_DEBOUNCE_MS` timer plus a separate unmount-only effect that re-reads `scrollTop` from a DOM ref (see `docs/dev/gallery-state.md`). It cannot use the hook because the hook's `value` is computed during render, whereas `scrollTop` must be sampled at flush time. This effect is the prior art `useDebouncedPersist` generalized from — it identified the <350ms navigation gap long before the other ten sites were fixed. The price of staying off the hook is that a new field in that blob is **six** hand edits rather than one (enumerated in `docs/dev/labels.md` § Frontend), and that **neither write site merges with the stored value** — each `JSON.stringify`s a full literal, so a field present in one and missing from the other is silently deleted on whichever path happens to run.
+- **Custom, with its own unmount flush**: `GalleryPage` writes `gallery-state-${datasetId}` via raw `localStorage` on its own `PERSIST_DEBOUNCE_MS` timer plus a separate unmount-only effect that re-reads `scrollTop` from a DOM ref (see `docs/dev/gallery/state.md`). It cannot use the hook because the hook's `value` is computed during render, whereas `scrollTop` must be sampled at flush time. This effect is the prior art `useDebouncedPersist` generalized from — it identified the <350ms navigation gap long before the other ten sites were fixed. The price of staying off the hook is that a new field in that blob is **six** hand edits rather than one (enumerated in `docs/dev/labels-ui.md` § GalleryPage persistence: the six edits), and that **neither write site merges with the stored value** — each `JSON.stringify`s a full literal, so a field present in one and missing from the other is silently deleted on whichever path happens to run.
 
 ### Persistent page state pattern
 

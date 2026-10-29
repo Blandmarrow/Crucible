@@ -101,7 +101,7 @@ Guarded by:
 
 ### Status & date
 
-MITIGATED. Three holes remain, documented in `docs/dev/versioning-service.md`:
+MITIGATED. Three holes remain, documented in `docs/dev/versioning/restore.md`:
 
 - A staging failure is counted but not made safe.
 - A keep-mode extra whose rename-aside fails can be overwritten when no snapshot row covers

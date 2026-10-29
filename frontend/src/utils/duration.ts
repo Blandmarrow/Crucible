@@ -2,9 +2,10 @@
  *
  *  null is *unknown*, never 0:00. A container written to a non-seekable pipe
  *  reports a poisoned frame count and the backend stores NULL rather than a
- *  fabricated number (see docs/dev/video-decode.md § metadata ladder); rendering that
- *  as "0:00" would turn a missing header into a claim about the video. Every
- *  video surface formats through this one helper so they cannot disagree.
+ *  fabricated number (see docs/dev/video/decode.md § Metadata: the ladder and
+ *  its guard); rendering that as "0:00" would turn a missing header into a
+ *  claim about the video. Every video surface formats through this one helper
+ *  so they cannot disagree.
  */
 export function formatDuration(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";

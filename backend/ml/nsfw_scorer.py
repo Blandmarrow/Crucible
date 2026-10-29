@@ -60,7 +60,7 @@ async def score_images_nsfw_batch(
             score = await loop.run_in_executor(None, fn)
         except Exception:
             # NULL, not 0.0 — the technical scorer's failure contract
-            # (docs/dev/scoring.md § The failure contract). A 0.0 asserted the
+            # (docs/dev/quality/scoring.md § The failure contract). A 0.0 asserted the
             # image was confidently safe about a file no decoder ever read, which
             # is the wrong direction to guess in, and it counted toward
             # `score_coverage` so nothing flagged the gap.

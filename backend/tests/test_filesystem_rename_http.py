@@ -17,7 +17,7 @@ Two properties are load-bearing here:
   upload does — a typed name is taken as typed or refused.
 - **The pure extension change still passes.** `a.jpg` → `a.png` leaves the stem
   alone, so the thumbnail and the sidecar stay exactly where they are and no
-  uniquifier is involved. That is CLAUDE.md's explicit carve-out.
+  uniquifier is involved. That is the explicit carve-out in docs/dev/image-import.md.
 
 The `Video` arm deliberately does none of this to its poster: nothing re-derives
 a poster path — every consumer reads `Video.poster_path` — so a poster whose stem
@@ -60,7 +60,7 @@ async def _relocate_out_of_layout(env, src: Path, dst_dir: Path) -> Path:
 
     This is the state `POST /move` produced until V-21 refused it, so the fixture
     is built directly rather than through the endpoint (which now 409s — see
-    `docs/dev/file-browser.md` § `POST /move`). Still worth guarding `/rename`
+    `docs/dev/file-browser-move.md` § `POST /move`). Still worth guarding `/rename`
     against: a user who rearranges a dataset folder in their own file manager, or
     a database written before V-21, arrives in exactly this state with no endpoint
     involved. The app does not support that layout, but it must not corrupt

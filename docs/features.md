@@ -8,15 +8,20 @@ The order images travel through the app:
 
 | Step | Topic | |
 |---|---|---|
-| 1 | Import images, organize datasets, browse and filter the gallery | [Datasets & Gallery](gallery.md) |
+| 1 | Create datasets and group them into categories; upload, import or rescan images into them | [Datasets](datasets.md) |
+| 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
+| 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
-| 1 | Hold videos as sources and extract frames from them, shot by shot | [Videos & Frame Extraction](video.md) |
+| 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
+| 1 | Extract frames from videos, shot by shot | [Frame Extraction](video-extraction.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
 | 2 | Mark images with a shared vocabulary of labels — a second axis alongside subfolders | [Labels](labels.md) |
-| 3 | Score for aesthetics, technical quality, watermarks, NSFW, and style | [Quality Scoring](scoring.md) |
+| 3 | Score for aesthetics, technical quality, watermarks and NSFW | [Quality Scoring](scoring.md) |
+| 3 | Compare images against reference images for style, read as a percentile | [Style Similarity](style-similarity.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
 | 5 | Batch-edit captions, crops, resizes; upscale and LUT color grade | [Batch Editing & Image Processing](editing.md) |
+| 5 | Re-cut curated video frames from their source at full resolution | [Re-extracting Frames](video-reextract.md) |
 | 5 | Merge synonymous and redundant tags across a dataset | [Tag Consolidation](tag-consolidation.md) |
 | 6 | Snapshot, branch, diff, and restore dataset state | [Dataset Versioning](versioning.md) |
 | 7 | Output to Kohya, AI Toolkit, or a plain folder — with loss masks | [Export](export.md) |
@@ -25,10 +30,11 @@ The order images travel through the app:
 
 | Sidebar item | Documented in |
 |---|---|
-| Datasets, Gallery, image detail | [gallery.md](gallery.md) |
-| Videos strip, video detail | [video.md](video.md) |
+| Datasets | [datasets.md](datasets.md) |
+| Gallery, image detail | [gallery.md](gallery.md) · [subfolders.md](subfolders.md) |
+| Videos strip, video detail | [video.md](video.md) · [video-extraction.md](video-extraction.md) · [video-reextract.md](video-reextract.md) |
 | Captioning | [captioning.md](captioning.md) |
-| Score images | [scoring.md](scoring.md) · [duplicates.md](duplicates.md) |
+| Score images | [scoring.md](scoring.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |
 | Stats | [statistics.md](statistics.md) |
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
@@ -36,7 +42,7 @@ The order images travel through the app:
 | ComfyUI | [comfyui.md](comfyui.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
-| File Browser | [workspace.md](workspace.md#file-browser) |
+| File Browser | [file-browser.md](file-browser.md) |
 | Logs | [workspace.md](workspace.md#logs) |
 | Settings | [settings.md](settings.md) · [labels.md](labels.md) |
 
@@ -47,6 +53,7 @@ The order images travel through the app:
 | Source & license provenance — where images came from, what you may do with them, export credits | [provenance.md](provenance.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
 | Settings reference — all seven tabs | [settings.md](settings.md) |
-| Background jobs, restart & shutdown, hardware meters, split view, dialog keyboard behavior, logs, file browser, booru lookup | [workspace.md](workspace.md) |
+| Background jobs, hardware meters, split view, dialog keyboard behavior, logs, booru lookup | [workspace.md](workspace.md) |
+| Starting the server, restart & shutdown, database backups | [server.md](server.md) |
 
 All long-running operations run in a background job queue and stream real-time progress to the UI — see [Background jobs](workspace.md#background-jobs--the-top-bar).

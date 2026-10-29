@@ -66,7 +66,7 @@ consumer in a different language three files away. The only automated coverage t
 have caught it (`video-extract.spec.ts`, `test_video_extract_http.py`) runs against short
 fixtures, where detection emits nothing and the defect cannot manifest.
 
-The invariant also had no written home. `docs/dev/video-extract.md` documented the phase
+The invariant also had no written home. `docs/dev/video/extract.md` documented the phase
 bands and `video_id` in detail but described `done` only as part of a generic payload, and
 `docs/dev/frontend-jobs.md` described the live branch as firing "on each `done` increment"
 without saying what `done` had to mean for that to work.
@@ -85,7 +85,7 @@ without saying what `done` had to mean for that to work.
 - `test_video_extract_http.py::test_every_progress_payload_names_its_video` asserts the
   invariant over a whole real run — no `detecting` payload with a non-zero `done`, `done`
   non-decreasing, `done <= total` during extraction — rather than the field names.
-- Written down in `docs/dev/video-extract.md` § the `video_extract` job and
+- Written down in `docs/dev/video/extract.md` § the `video_extract` job and
   `docs/dev/frontend-jobs.md` beside the live branch.
 
 ### Status & date

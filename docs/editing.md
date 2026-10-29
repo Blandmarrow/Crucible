@@ -12,7 +12,7 @@ Bulk score, upscale, LUT, detect, detection-crop, watermark-removal, thumbnail r
 
 - **Batch caption** — run any captioning model on the selection with all the same options as the full-dataset run
 - **Batch caption pipeline** — run a multi-step captioning pipeline on the selection (same as the full-dataset pipeline, scoped to selected images)
-- **Batch score** (the **Score** button) — run technical, aesthetic, watermark, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection) → [details](scoring.md)
+- **Batch score** (the **Score** button) — run technical, aesthetic, watermark, CLIP embedding, DINOv2 embedding, and/or DINOv2 per-layer embedding scoring on the selection; includes a collapsible style-similarity section to score cosine similarity against reference images (scoped to the selection) → [details](scoring.md) · [style similarity](style-similarity.md)
 - **Batch upscale** — upscale selected images using any installed upscale model
 - **Batch LUT** — apply a LUT to selected images with a chosen intensity
 - **Batch detect** — run Florence-2 object detection or phrase grounding, NudeNet body-part detection, or Grounded SAM 2.1 / SAM 3 text-prompt segmentation on the selection
@@ -21,7 +21,7 @@ Bulk score, upscale, LUT, detect, detection-crop, watermark-removal, thumbnail r
 - **Caption find-replace** — regex-capable search-and-replace across caption text for a whole dataset or a selection. A pattern that is not a valid regular expression is reported as **Invalid regex: …** and changes nothing; the dialog stays open with your pattern and selection so you can fix it. "No captions matched" only ever means a valid pattern found nothing
 - **Merge tags** — drop redundant tags within each selected caption (e.g. `tail` when `long tail` is present) and collapse exact duplicates; also available per-image from the detail view → [details](tag-consolidation.md)
 - **Set source/license** — write source name, source URL, license, and attribution across the selection. Each field has its own mode: **Keep** (leave it alone), **Set** (write this value), or **Inherit** (clear it so the image follows its dataset default) → [details](provenance.md)
-- **Re-extract frames** — re-cut selected video frames from their source at full resolution, replacing the triage-sized files in place → [details](video.md)
+- **Re-extract frames** — re-cut selected video frames from their source at full resolution, replacing the triage-sized files in place → [details](video-reextract.md)
 - **Bulk rename** — rename matching images to a sequential base name pattern (`{slug}_001.ext`, `_002`, …)
 - **Regenerate thumbnails** — re-cut the small preview the gallery draws for every image in the scope. Use it when an upscale, LUT, crop or frame re-extraction reported that some previews are out of date: those images are already correct on disk, only the preview is stale. Available from the **Thumbnails** tab on the Bulk Edit page and the **Thumbnails** button in the selection toolbar. If the disk is too full to write them, the run is refused up front with a message rather than failing image by image
 - **Bulk delete** — remove selected images from the dataset and disk

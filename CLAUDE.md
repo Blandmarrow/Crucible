@@ -1,6 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Agent entry point: what applies across the whole codebase — commands, verification, the data
+flow, the invariants. Subsystem detail lives in `docs/dev/` topic files, routed by the
+Documentation Map near the end; load only the ones a task needs.
+
+## Working here
+
+**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) is done on branch
+`docs/architecture-v3.1`, awaiting merge; next is M4, the rating feature. Order and the
+session handoff are in `docs/dev/roadmap.md`.
 
 ## Commands
 
@@ -15,7 +23,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `update` | `git pull` → update pip deps (GPU PyTorch auto-detect) → optional SAM2 update → `npm install` → rebuild frontend |
 | `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
-To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal. A circular-arrow **Restart** button sits immediately left of the power button — it restarts the server in place without requiring terminal access (see Server control endpoints below).
+Shutdown and Restart are the TopBar's power and circular-arrow buttons (or Ctrl+C): see
+`docs/server.md` § Restarting & shutting down, and `docs/dev/http-edge.md`
+§ Server control endpoints for the routes behind them.
 
 ### Backend (always run from `backend/` with venv active)
 
@@ -36,15 +46,7 @@ npm run typecheck:e2e  # tsc over frontend/e2e/ — outside the build, see below
 npm run lint     # ESLint — CI runs it `continue-on-error`, so it never blocks
 ```
 
-**`npm run build` is the only real typecheck for `src/`.** The root `tsconfig.json` is a
-solution-style config (`"files": []` + project references), so a bare `npx tsc --noEmit`
-type-checks **nothing** and exits 0 on code that does not compile. Verify frontend changes
-with `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
-
-**`frontend/e2e/` is deliberately outside that build** — its specs must never enter
-`vite build` — and Playwright only transpiles, so `npm run typecheck:e2e`
-(`tsc -p e2e/tsconfig.json --noEmit`, ~2 s) is the only thing that checks them. It is a
-blocking CI step and part of the `qa-smoke` skill; run it after touching a spec.
+What actually verifies a frontend change is in § Verification below.
 
 ### Tests
 
@@ -56,24 +58,7 @@ fastapi/sqlalchemy):
 source venv/bin/activate && python -m pytest backend/tests/ -q
 ```
 
-Request-level tests drive `backend.main.app` over httpx (see
-`backend/tests/conftest.py`); everything else is service-level. Anything needing a
-decodable video is gated on cv2 — see `docs/dev/video-tests.md` (§ cv2 in CI, and the skip
-convention) before adding a test or a CI dependency there. **CI installs
-`backend/requirements-ci.txt`** — the floor-pinned, torch-free base set all three CI jobs share
-(each adding only its own alembic/uvicorn/cv2 on top); a new import in the app or the
-suite's collection path goes there, not into a workflow's install line. Torch is the one
-dependency that will never arrive, so a test importing anything under `backend/ml/` past the
-pure-numpy modules carries `conftest.needs_torch` (the sibling of `needs_cv2`) — without it
-the module *errors* on the runner rather than skipping; a test that creates a real symlink
-likewise carries `conftest.needs_symlinks` (Windows refuses one without privilege, and
-`backend-tests-windows` runs the suite there). `api_env` enforces foreign keys by default,
-as production does — pass `foreign_keys=False` only to plant a state the app cannot reach,
-with a comment saying why. Coverage is opt-in:
-add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
-CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
-scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
-after a model/migration change (CI job `migration-drift`; see `docs/dev/database.md` § Migration drift check). To launch the app itself, use the `run-app` skill.
+Conventions for writing a backend test — `requirements-ci.txt`, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage — are in `docs/dev/backend-tests.md`. To launch the app itself, use the `run-app` skill.
 
 Frontend end-to-end (Playwright, GPU-free journeys under `frontend/e2e/`):
 
@@ -88,6 +73,47 @@ npx playwright test               # spins up its own backend on :8199 vs a throw
 The full pre-merge sweep (backend pytest → frontend build + e2e typecheck + lint → e2e) is
 the `qa-smoke` skill.
 
+## Verification
+
+**Report what the run says, not that it built.** Quote the test count, the exit code or the
+`RESULT:` line. "It compiled" is not "it works", and a skipped stage is reported as skipped.
+
+**`npm run build` is the only real typecheck for `src/`.** The root `tsconfig.json` is a
+solution-style config (`"files": []` + project references), so a bare `npx tsc --noEmit`
+type-checks **nothing** and exits 0 on code that does not compile. Verify frontend changes
+with `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
+
+**`frontend/e2e/` is deliberately outside that build** — its specs must never enter
+`vite build` — and Playwright only transpiles, so `npm run typecheck:e2e`
+(`tsc -p e2e/tsconfig.json --noEmit`, ~2 s) is the only thing that checks them. It is a
+blocking CI step and part of the `qa-smoke` skill; run it after touching a spec.
+
+Which gate runs where — the one place this list lives:
+
+| Gate | Command | Locally | CI job | Blocks a PR |
+|---|---|---|---|---|
+| Backend tests | `python -m pytest backend/tests/ -q` | `qa-smoke` | `backend-tests` (Ubuntu) | yes |
+| Backend tests on Windows | the same | — | `backend-tests-windows` | **no** — `continue-on-error` until it runs green |
+| Backend lint | `ruff check backend` | by hand (not in the venv; CI installs it) | `backend-lint` | yes |
+| Migration drift | `python scripts/check_migrations.py` | after a model or migration change | `migration-drift` | yes |
+| `src/` typecheck + build | `npm run build` | `qa-smoke` | `frontend-build` | yes |
+| e2e spec typecheck | `npm run typecheck:e2e` | `qa-smoke` | `frontend-build` | yes |
+| Frontend lint | `npm run lint` | `qa-smoke` | `frontend-build` | **no** — the react-hooks backlog |
+| End-to-end journeys | `npx playwright test` | `qa-smoke` | `e2e-smoke` | yes |
+| Docs drift check | `python scripts/check_docs.py` (CI runs `--self-test` first) | after any doc change | `check-docs`, every PR | its FAILs only |
+| Brand-mark drift | `python scripts/check_mark.py` | after touching the mark | `check-mark` | yes |
+
+**What no gate runs** — stated so it is not discovered later:
+- **Torch, GPU and real model inference.** `requirements-ci.txt` is torch-free, so anything
+  under `backend/ml/` past the pure-numpy modules is tested only where `needs_torch` lets it
+  skip. Verify such a change by running it.
+- **scenedetect and ffmpeg in e2e**, deliberately absent so the `capabilities: false`
+  branches are exercised (`docs/dev/video/tests.md`).
+- **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
+  only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
+- **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
+  out.
+
 ## Architecture
 
 ### Data flow
@@ -98,7 +124,6 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 
 `BackgroundJob` has a nullable `label: str | None` column (max 200 chars). Every router that creates a job sets an auto-generated descriptive label (e.g. `"Florence-2 (large) — 50 images"`, `"Quality: technical, aesthetic — 100 images"`) and accepts an optional `label` field in the request body to override it (`body.label or auto_label`). A `_model_short_label(model: str) -> str` helper in `routers/captioning.py` converts raw model IDs to readable names for the auto-label.
 
-This file covers what applies across the whole codebase: commands, the data flow above, and the invariants below. Subsystem detail lives in topic files under `docs/dev/`, each listed with its trigger in the Documentation Map near the end. Read the relevant one(s) before working on that subsystem; do not read all of them up front.
 
 ### Shared utilities
 
@@ -120,88 +145,82 @@ Three modules carry the helpers every router and service shares: `backend/utils.
   - **Same-dataset derivatives** (crop, upscale, LUT, detection crop) copy raw values instead, via `copy_provenance` (which deep-copies `source_meta`, so parent and derivative never share one mutable JSON dict). `VersionImageState` mirrors all five image columns — adding a provenance column without the mirror makes a snapshot restore wipe it.
   - **`Image.source_meta` is `deferred=True`**: every reader that loads `Image` **as an ORM entity** (those derivative paths, and `create_snapshot`) must `undefer` it, or `getattr(img, "source_meta")` lazy-loads on an async session and raises `MissingGreenlet` — a failure that only appears on the live async path, never in a helper-level unit test. A `select(Image.source_meta, …)` column list already loads it and needs no undefer, and `batch_move_dataset` omits the column on purpose.
   - **Provenance strings are untrusted input in every document they reach** — `source_name`/`source_url`/`attribution`/free-text `license` come from scrapers, sidecars and EXIF, so anything interpolating them into a generated artifact must neutralise them for that syntax: markdown via `export_service._md_inline`/`_md_link`, CSV cells via `_csv_cell` (leading `=`/`+`/`-`/`@`/TAB/CR), any linked URL via `utils.safe_external_url`. `CREDITS.md` is a legal attribution document built by interpolation — a newline in `attribution` forged a `## <license>` section claiming rights the export did not carry.
-- **Videos are sources, not images, and their posters live apart.** A video is a `Video` row in `videos`, flat in `{dataset}/videos/`, never a row in `images`. Poster thumbnails go in `{dataset}/videos/thumbnails/` — a separate directory, *not* the images thumbnail folder with a distinguishing suffix: **ten modules** derive image-thumbnail-stem occupancy from a `thumb_dir.glob("*.webp")` over that folder (enumerated in `docs/dev/video.md`, nine of them building `occupied_thumb_stems` to pick a name and `routers/filesystem.py` to refuse one), and a suffix convention means every one of them must learn to filter it, with any one that forgets being a silent thumbnail clobber. `Dataset.video_count`/`video_size_bytes` are deliberately separate from `image_count`/`total_size_bytes`, and **must be passed explicitly** wherever a `DatasetOut` is hand-built field by field (`list_datasets`): both default to 0, so an omission reports every dataset as video-free instead of failing. A poster is a nicety, never a gate — every *decode* failure in `video_service.generate_poster` is a False, and every caller wraps its encode tail (which can still raise), so a video whose frames will not decode still ingests, lists, plays, renames and deletes. See `docs/dev/video.md`, `docs/dev/video-decode.md` for the decode surface, and `docs/dev/video-extract.md` for frames.
-- **A column added to `Image` must be mirrored on `VersionImageState`, and carried by every path that rebuilds an `Image` field by field.** Every one of those paths fails **silently** — a missing mirror means a snapshot restore blanks the column, a missing constructor entry means a copy quietly drops it — which is why the rule is here rather than in a topic file. `backend/tests/test_video_lineage_mirrors.py` holds the structural guard (an explicit `NOT_MIRRORED` allowlist checked in both directions), so the *next* unmirrored column fails CI rather than a restore; it also enumerates the rebuild paths. Three rules decide what such a path writes. See `docs/dev/video-extract.md` for the lineage columns and `docs/dev/video-reextract.md` for the `processing_history` skip rule that follows from them.
+- **Videos are sources, not images, and their posters live apart** — a video is a `Video` row in `{dataset}/videos/`, its poster in `{dataset}/videos/thumbnails/` (never the image thumbnail folder), and `video_count`/`video_size_bytes` must be passed explicitly to a hand-built `DatasetOut` or every dataset reads as video-free. See `docs/dev/video.md` § Videos are sources, not images, and their posters live apart.
+- **A column added to `Image` must be mirrored on `VersionImageState`, and carried by every path that rebuilds an `Image` field by field.** Every one of those paths fails **silently** — a missing mirror means a snapshot restore blanks the column, a missing constructor entry means a copy quietly drops it — which is why the rule is here rather than in a topic file. `backend/tests/test_video_lineage_mirrors.py` holds the structural guard (an explicit `NOT_MIRRORED` allowlist checked in both directions), so the *next* unmirrored column fails CI rather than a restore; it also enumerates the rebuild paths. Three rules decide what such a path writes. See `docs/dev/video/extract.md` for the lineage columns and `docs/dev/video/reextract-endpoints.md` for the `processing_history` skip rule that follows from them.
   - **Derived-from-elsewhere columns are not copied across a dataset boundary** — `Image.source_video_id` would point at a video the destination does not contain, while `source_timestamp_ms`/`source_shot_index` travel. The one path that *does* carry the videos across — `duplicate_dataset` under `include_videos` — **remaps** `source_video_id` through an old→new id map onto the clone's own video, and falls back to NULL on a miss. Remapped, never copied, and only by the path that carried the videos; every other path still NULLs it. **`quality_flags["duplicate_of"]` is the same shape and takes the same rule** at the same four boundary sites — `batch_copy_dataset`, `batch_move_dataset`, `duplicate_dataset`'s two branches — through `duplicate_service.carry_duplicate_flags`: remapped onto the destination's own copy of the root when that root crossed too, both duplicate keys stripped when it did not. A move maps the ids to *themselves*, which is what lets a whole group travel intact.
   - **Immutable columns are mirrored but not diffed** — lineage is written once by extraction, so it is absent from `_DIFF_COLS` on purpose. That carve-out is for immutability alone: `scores_stale` is **mutable** state and so is mirrored *and* diffed (in `_DIFF_COLS` and `_DIFF_COMPARE_FIELDS` both), because an in-place rewrite between two snapshots flips it and nothing else, and a restore that brought back stale scores without the bit would present them as trustworthy.
   - **A `*_score` column is authored data as far as a snapshot is concerned** — nothing recomputes a technical score, so all ten are mirrored *and* diffed, and `NOT_MIRRORED` holds no score. The immutable carve-out above is not license to skip the diff for one.
-- **A row attached to an `Image` by a join table follows the same rule as a column: mirrored on `VersionImageState`, and carried by every path that rebuilds an `Image` field by field.** `image_labels` is the first such table, and `test_video_lineage_mirrors.py` is structurally blind to it — that guard walks `Image`'s *columns* against `VersionImageState`'s, so an attachment stored as rows is exactly the shape it cannot see. The mirror stores **ids, not names** (a rename is then a spelling change that detaches nothing, while a delete honestly drops the assignment), NOT NULL with a `'[]'` server_default (a NULL/`[]` split makes every pre-migration row differ from every post-migration one), sorted (the diff compares with `!=`), and with no FK (a snapshot must survive the deletion of what it names). The join table deliberately carries **no `dataset_id`** — that absence is *why* `batch_move_dataset` needs no changes, since the move UPDATEs `Image.dataset_id` in place and never touches `Image.id`; denormalizing it would silently break every cross-dataset move. `backend/tests/test_labels_survive_rebuild_paths.py` holds the structural guard over the four rebuild paths. See `docs/dev/labels.md`.
-  - **`detections` is the second such table, with two deliberate differences** (GPT-026). Its mirror `VersionImageState.detections` is **nullable with no server default**: NULL means "not recorded" (a pre-migration row, which a restore leaves alone), where `'[]'` would wipe every detection on restoring an old snapshot. And only snapshot/restore carry it — dataset duplication and cross-dataset copies still drop detections by design. Its geometry is a pixel qualifier, so a restore's failed-content reconcile puts the pre-restore set back. `backend/tests/test_detections_snapshot.py` holds the guard. See `docs/dev/versioning-service.md`.
-- **Every path that rewrites an image's pixels in place goes through `utils.record_in_place(img, op, **params)`.** It is the single writer of `Image.processing_history` — pass 2's re-extraction skip guard — *and* `Image.scores_stale`, the bit saying the ten `*_score` columns and the `quality_flags` derived from them were measured on pixels that no longer exist — written only for a row that carries one of those scores, since an unscored row has no measurement to invalidate, while the history entry is written either way. Two writers drift, and the failure is silent in the worse direction: a site that records the edit by hand leaves the scores looking trustworthy, and `exclude_flags` then drops images at export on flags computed against a deleted image. A structural AST guard in `backend/tests/test_scores_stale.py` fails CI for any `processing_history = … + …` list-concat outside `backend/utils.py`. Ten sites today: batch/single resize, batch/single crop, `crop_upscale`, LUT, upscale, crop-to-detection, re-extraction. The bit is cleared **only** by a `routers/quality.py` run that **actually measured something** and refreshed every score the row carries. See `docs/dev/scores-stale.md` and PM-010.
-- **A stem-keyed derived artifact needs a collision guard at every site that *writes* it — including the ones that adopt a filename rather than pick one.** Thumbnails and posters are `.webp` keyed by stem, so two files differing only in extension share one derived path and the second write clobbers the first, leaving two rows pointing at one picture. Creation paths pick a free name via `unique_filename_with_thumb`; the two rescan paths instead register files found on disk under the names the user gave them, and resolve collisions in **opposite** directions on purpose — `rescan_dataset` renames the *image file* (`a.jpg` → `a_001.jpg`) because eleven sites re-derive an image's thumbnail path from its filename (enumerated in the code comment at that rename branch), so a drifted thumbnail stem would be orphaned by the next rename/move/crop/restore; `_rescan_videos` renames the *poster* (`clip_001.webp`) and leaves the video file alone, because nothing re-derives a poster path — every consumer reads `Video.poster_path`. When reviewing any new path that writes a derived file, ask which of the two it is. A path registering a file already in place must also pass `disk_exclude={f.name}`, or the uniquifier sees each file's own name occupied and renames everything.
-  - An **unregistered** file sitting at a rename's target path has no row to guard it and must be refused, not clobbered. (A *pure extension change* — `a.jpg` → `a.png`, from a re-extraction or a PNG format fallback — is otherwise the one rename that disturbs nothing derived: the stem is unchanged, so the thumbnail and the `.txt` sidecar stay put, and no uniquifier call is needed.) See `docs/dev/video-reextract.md` § The extension change.
+- **A row attached to an `Image` by a join table follows the same rule as a column: mirrored on `VersionImageState`, and carried by every path that rebuilds an `Image` field by field.** `image_labels` is the first such table, and `test_video_lineage_mirrors.py` is structurally blind to it — that guard walks `Image`'s *columns* against `VersionImageState`'s, so an attachment stored as rows is exactly the shape it cannot see. The mirror stores **ids, not names** (a rename is then a spelling change that detaches nothing, while a delete honestly drops the assignment), NOT NULL with a `'[]'` server_default (a NULL/`[]` split makes every pre-migration row differ from every post-migration one), sorted (the diff compares with `!=`), and with no FK (a snapshot must survive the deletion of what it names). The join table deliberately carries **no `dataset_id`** — that absence is *why* `batch_move_dataset` needs no changes, since the move UPDATEs `Image.dataset_id` in place and never touches `Image.id`; denormalizing it would silently break every cross-dataset move. `backend/tests/test_labels_survive_rebuild_paths.py` holds the structural guard over the four rebuild paths. See `docs/dev/label-consumers.md`.
+  - **`detections` is the second such table, with two deliberate differences** (GPT-026). Its mirror `VersionImageState.detections` is **nullable with no server default**: NULL means "not recorded" (a pre-migration row, which a restore leaves alone), where `'[]'` would wipe every detection on restoring an old snapshot. And only snapshot/restore carry it — dataset duplication and cross-dataset copies still drop detections by design. Its geometry is a pixel qualifier, so a restore's failed-content reconcile puts the pre-restore set back. `backend/tests/test_detections_snapshot.py` holds the guard. See `docs/dev/versioning/mirrors.md`; the reconcile is `docs/dev/versioning/restore.md`.
+- **Every path that rewrites an image's pixels in place goes through `utils.record_in_place(img, op, **params)`**, the single writer of `processing_history` and `scores_stale`: a site that records the edit by hand leaves stale scores looking trustworthy, and the AST guard in `backend/tests/test_scores_stale.py` fails CI on one. The ten sites and the clear predicate: `docs/dev/quality/scores-stale.md` § Every in-place pixel rewrite goes through record_in_place (PM-010).
+- **A stem-keyed derived artifact (thumbnail, poster) needs a collision guard at every site that writes it, including the rescans that adopt a filename** — two files differing only in extension otherwise share one derived path, and the second write clobbers the first. The two rescans resolve collisions in opposite directions on purpose; see `docs/dev/image-import.md` § A stem-keyed derived artifact needs a collision guard at every writer.
 - **Nothing fallible between an irreversible filesystem mutation and the `commit()` that describes it.** A transaction rolls back a row; nothing rolls back an `os.replace` or an overwrite. Write the file, assign **every** row field, `commit()`, then run whatever can raise in a `try/except` that logs and cannot change the item's outcome or feed a failure breaker. DB work is fallible too: where the write can go to a temp file, *stage, flush, swap, commit* — every row field and DB write (a detection remap) staged and `flush()`ed while the original is intact, the swap last (GPT-010, `docs/dev/bulk-image-jobs.md`) (those post-commit reads are safe only because `AsyncSessionLocal` sets `expire_on_commit=False`). `Path.unlink` is fallible too, so a superseded original goes in that epilogue — which also leaves the row naming a file that exists if the `commit()` itself fails. See `docs/dev/postmortems/PM-013-fs-mutation-before-the-commit.md`.
 - **A file the app is still serving cannot be deleted or renamed on Windows.** POSIX unlinks an open file happily, so this whole class is invisible to CI, the suite and the dev container — it has to be stated rather than discovered. Starlette's `FileResponse` holds the file open for the whole body send, and a browser under `preload="metadata"` never finishes consuming that body, so the blocking handle is routinely **Crucible's own**; Python's `open()` does not request `FILE_SHARE_DELETE`, and `os.unlink`/`MoveFileEx` then fail with `ERROR_SHARING_VIOLATION`. Both halves are required. Server side: mutate through `utils.unlink_retrying`/`rename_retrying`/`replace_retrying`, so a socket-teardown race clears within the backoff and anything longer becomes the 409 `main.py` maps `FileInUseError` to — never a 500, and never a partial delete, since the raise must sit before the row goes. Client side: **unmount** the element holding the request before firing the mutation; clearing `src` leaves it attached and fires a spurious `error` event, and no server-side retry can outlast a connection still being held; a modal is not the only trigger (`FileBrowserPage`'s rename is inline). See `docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`.
-  - **Which sites are converted is a fact worth stating, because the list is not "all of them".** `filesystem.py` is wholly unconverted. The four image deletes are converted — `images.delete_image` (409), and `images.batch_delete`, `images.bulk_delete_filtered` and `quality.resolve_duplicates`, which keep a locked row and count it `in_use` — all through `services/image_delete.py` (GPT-008) — and the in-place swaps of single/batch resize and crop and `crop_upscale` (`replace_retrying`; a 409 on the single routes, one failed item in a job), as is `detection.crop_to_detection`'s (GPT-010); the rest of `images.py` is not. Three sites in `videos.py` are converted — `delete_video`, `rename_video`, and pass 2's in-place frame overwrite, which is a *job* and so counts the lock as one failed frame instead of answering 409. Three more are deliberately **exempt**, and naming them is what stops the next sweep "finishing the conversion": `_delete_previous_frames`, `_rewrite`'s superseded-original unlink, and `video_service.generate_poster`'s poster replace (which is synchronous anyway). All three already log and continue, and what a lock costs there is re-derivable — a stray file a rescan adopts, or a missing poster. Pick the helper by the call being replaced: `replace_retrying` is the overwriting form and `rename_retrying` is not a substitute for it, since `Path.rename` refuses an existing destination on Windows while clobbering silently on POSIX — a swap that passes CI and breaks only on the platform the rule is about.
-- **`is_duplicate` is a relationship, not a column value, and both directions are maintained.** It is meaningful only alongside `duplicate_of`, which names *another row*, so the flag can be falsified by a delete that never touches the flagged row — and derived relational state maintained additively drifts silently in both directions at once. `backend/services/duplicate_service.py` is the only writer of the pair (bar `resolve_duplicates`' keep-side clear). **The scan is the authority**: `apply_duplicate_groups` flags what it grouped *and clears every other flagged row in the dataset*, so a Technical re-scan repairs any drift — never reinstate a `if not dup_of: return`, since zero groups is precisely the case that must clear the dataset. See `docs/dev/image-similarity.md` and PM-022.
-  - **Every path that deletes `Image` rows prunes**, via `prune_orphaned_duplicate_flags`, between the row DELETEs and the commit (one commit, atomic with the delete), bar the one exception named below. The image deletes unlink **before** that transaction's DELETE (files first, PM-021), so the prune only ever counts rows whose file is already gone. A flagged survivor is orphaned **iff** its root row is gone **and** it is the only surviving flagged member of its group; two survivors of a dead root are still duplicates of each other and keep their flags. The prune takes the **datasets** touched, not the ids deleted — the delete that strands the last survivor usually names a *member*, whose `duplicate_of` is unreadable once its row is gone.
-  - **Six converted sites**: `images.delete_image`, `images.batch_delete`, `images.bulk_delete_filtered`, `filesystem.delete_path`, `videos._delete_previous_frames`, `quality.resolve_duplicates` — the last a backstop after its `keep_ids` loop, and so the one site that prunes in a **second** transaction (those clears are part of what it counts survivors against, and they land after the delete's commit); a failed commit there leaves drift a re-scan repairs. Three deliberate exemptions, each stated in a comment so the next sweep does not "finish the conversion": `comfy.py`'s failure-path cleanup (rows never scanned), `version_service.restore_snapshot`'s extras removal (a restore rewrites `quality_flags` wholesale from `VersionImageState`), `datasets.delete_dataset` (no survivors).
+  - **Not every site is converted, on purpose.** The converted sites, and the three deliberate exemptions that stop the next sweep "finishing the conversion", are listed in `docs/dev/shared-utilities.md` § Locked-file mutation: which sites are converted.
+- **`is_duplicate` is a relationship, not a column value**: `services/duplicate_service.py` is its only writer, the Technical scan is the authority (it clears every flag it did not group), and every path that deletes `Image` rows prunes via `prune_orphaned_duplicate_flags`. Sites and exemptions: `docs/dev/quality/duplicate-detection.md` § The flag is a relationship, and both directions are maintained (PM-022).
 - **Never mutate a loaded JSON column in place.** For JSON columns like `Image.quality_flags`, copy before mutating: `flags = dict(img.quality_flags or {})`, edit `flags`, then reassign `img.quality_flags = flags`. SQLAlchemy's default change detection compares by equality, so mutating and reassigning the *same* dict object looks unchanged and the UPDATE is silently skipped. The correct pattern lives in `services/caption_service.py`.
 
 ## Documentation Map
 
-Each file below covers one subsystem in depth. Read the relevant file(s) with the Read tool when
-your task touches that subsystem — do not read all of them up front. Do NOT use `@`-paths to reference
-these files anywhere — `@path` auto-loads the target into every conversation, defeating this split.
-The `Words` column is hand-written: `check_docs.py` WARNs when it drifts by more than 5% (min 50
-words), and again if a row loses the cell, so refresh it after a substantial edit.
+One subsystem per file. Read a file with the Read tool when your task touches its subsystem,
+never all of them up front, and never reference one with an `@`-path (§ Maintaining this
+documentation). The `Words` column is hand-written and checked; refresh it after a
+substantial edit.
 
 | File | Read this when... | Words |
 |---|---|---|
-| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary, the shared frontend components | ~1795 |
-| `docs/dev/ml-models.md` | Working on captioning models, the LaMa inpainter, `backend/ml/` loading, or a model unload — the model manager (VRAM/unload), model leases and `ModelInUseError`, model ID registry, device abstraction, EXIF-consistent opening, the ambient `HF_TOKEN` every loader relies on, TorchDynamo, the hash-pinned TorchScript weight download | ~4440 |
-| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, or LUT color grading — the two pipelines that rewrite pixels through a loaded model: the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, both replace/new-file surfaces | ~1810 |
-| `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, `DetectionJobRequest` scope, per-model overwrite scoping and its `inference_ok` gate, `mask_area`, watermark flag sync | ~2410 |
-| `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — tasks by model family, multi-phrase prompts, mask refine and merge geometry, the safetensors loader, triton and deferred work | ~1340 |
-| `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, thresholds, or the aesthetic model picker — the scorers and the columns they write, the failure contract when nothing can be measured, `aesthetic_model` and its two consumer guards, per-model coverage, the flag thresholds, e2e coverage, the scoring-model lifecycle | ~3430 |
-| `docs/dev/scores-stale.md` | Working on the `scores_stale` bit, an in-place pixel rewrite, or the re-score clear predicate — `record_in_place` as single writer, `score_columns`, `_JOB_SCORE_COLUMNS`, the badge/chip/export surfaces | ~1540 |
-| `docs/dev/image-similarity.md` | Working on duplicate detection, pHash grouping, bulk duplicate resolution, style similarity, the style-run descriptor or the style-match meter — `find_duplicates_sync`'s two implementations, same-source duplicate groups, the duplicates panel's filter chips/bulk bar/batched resolve, the `embedding_type` modes and what each is measurably worth, all-layers DINOv2 scoring, `StyleSimilarityRun` and `GET /quality/style-similarity/{id}`, the percentile contract, the card meter and the detail block | ~6065 |
-| `docs/dev/gallery.md` | Working on `GalleryPage`, the subfolder sidebar, or a gallery filter — selection and shift-click ranges, select-all-matching-filters, subfolder create/rename/move/delete and the row context menu, expand/collapse and its persistence, filters, pagination, sorting | ~6005 |
-| `docs/dev/gallery-dnd.md` | Working on gallery drag & drop — manual `sort_order` ordering, dragging image cards onto subfolder rows, dragging a subfolder onto another, dnd-kit droppable/draggable id namespaces, collision detection, the drag overlay and reading the drop target | ~2890 |
-| `docs/dev/gallery-state.md` | Working on the `gallery-state-*` blob, persisting a gallery filter, or a debounced filter input — what the blob holds and the `useState`-initializer read, the PM-012 mount-bail and its restore-side seeding rule, the save effect and the unmount flush, Reset filters | ~1075 |
-| `docs/dev/gallery-nav.md` | Working on the detail view's arrows, `gallery-nav-*`, `injectNavId`/`paneGo`, or the live refresh while a job adds rows — the stored context and `navPageParams`/`navIdsParams`, the two boundary prefetch queries, `atEnd` and the post-delete re-derivation, the `injected` marker and `serverPageContext`, the live total | ~2720 |
-| `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — crop and crop+upscale, selection toggle, labels panel and hotkeys, caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
-| `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — naming and collisions, cross-dataset move and copy, folder import, rescan/sync, drag-`.txt`-onto-image | ~3230 |
-| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — the `backend/licenses.py` vocabulary, dataset→image inheritance, ingest capture precedence, cross-dataset materialization | ~3425 |
-| `docs/dev/captioning.md` | Working on `CaptioningPage`, the captioning model picker, LLM provider integration, or a caption sidecar write — the registry's `kind`/`description` and the endpoint filter, `_caption_backend` and the silent no-op, the empty-caption guard, post-processing (delimiter modes, refusal stripping, rename-on-caption), `ModelPicker` | ~3975 |
-| `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — kohya/ai-toolkit/plain, the shared export loop, stem uniquification, the filter table and preview, resize, loss masks, captions-only | ~2435 |
-| `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter — the manifest lifecycle and supersede rule, `_md_inline`/`_csv_cell` neutralisers, `license_filter` encoding, the Export page license panel | ~1325 |
-| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — the scope triple `_apply_bulk_filters`, caption find/replace/regex, bulk rename/delete/provenance/reorder, Renumber's two-phase rename | ~2180 |
-| `docs/dev/bulk-image-jobs.md` | Working on `CropToDetectionForm`, batch resize/crop, or the thumbnail rebuild — the bulk jobs that rewrite files: `detection_crop_rect`, the crop remap, `batch_inpaint` and the LaMa paint mask, `thumbnails_stale`, PM-013 loop ordering | ~3770 |
-| `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
-| `docs/dev/video.md` | **Start here for anything video** — its § Where things live table routes from a code path to whichever of the eleven sibling docs owns it. Also covers the `Video` model and `videos/` layout, poster stems and collisions, the three ingest paths, the two `Dataset` columns | ~2610 |
-| `docs/dev/video-endpoints.md` | Working on the `/videos` router, video rename/delete, or range serving — the twelve routes, `GET /capabilities`' declaration order, `frames-summary`, the delete ordering and the containment gates | ~1330 |
-| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the arc's test index, the four `mp4_*` fixtures and their constraints, branches no fixture reaches, cv2/scenedetect in CI, the skip convention | ~1810 |
-| `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~2835 |
-| `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, the touched-flag guards, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2700 |
-| `docs/dev/video-extract-controls.md` | Working on the crop/trim controls or any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract | ~1590 |
-| `docs/dev/video-decode.md` | Working on video probe/metadata, video duration, or poster frames — the cv2 probe ladder, `measure_duration_ms`, `isOpened()` as ingest gate, the poster fallback ladder | ~2465 |
-| `docs/dev/video-shots.md` | Working on probe sampling, shot detection, or frame rendering — the pass 1 pipeline in `video_extract.py`: the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` | ~2225 |
-| `docs/dev/video-extract.md` | Working on the extract/probe endpoints or the `video_extract` job — Pass 1's router half: crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage | ~3020 |
-| `docs/dev/video-reextract.md` | Working on re-extraction, `POST /videos/reextract`, or a replace-mode extension change — Pass 2 full-res: seek-by-timestamp, the `processing_history` skip rule, `render_at_timestamps` | ~3620 |
-| `docs/dev/video-reextract-ui.md` | Working on the re-extract dialog or what a finished `video_reextract` refreshes — `ReextractFramesForm`/`ReextractFramesModal`, the three entry points, the `jobStore` adoption re-attach, the `TopBar` invalidations | ~1225 |
-| `docs/dev/video-heuristics.md` | Tuning cropdetect, interlace/telecine detection, or which frame a shot yields — the pure-numpy `video_frames.py` judgement calls, sharpness, `pick_index` candidate rejection | ~1435 |
-| `docs/dev/versioning.md` | Working on `VersionsPage`, `dataset_busy`, or the versioning routes — the versioning-mode guard, branches and snapshot tables, the content-addressed object store, prune/GC, the frontend | ~2570 |
-| `docs/dev/versioning-service.md` | Working on `version_service.py` or any path that overwrites or deletes an image file in place — `protect_file_before_overwrite`/`mark_image_deleted_in_versions` and their call sites, `create_snapshot`, restore's four passes, diff | ~3855 |
-| `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, the duplicate toggle, or the folder picker — preview strip, license badge, sort/density/grouping, category rail, `ImportFolderModal`/`DirPickerModal` | ~3265 |
-| `docs/dev/statistics.md` | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` — stats queries and live polling, server-side aggregation, the validator-keyed cache, editable histograms | ~2690 |
-| `docs/dev/labels.md` | Working on the `/labels` router, the label filters, the Settings Labels tab, or the detail-view hotkeys — the global vocabulary and `image_labels` join table, `label_service.py`, `POST /labels/assign`, the EXISTS-only filter block, the `VersionImageState.label_ids` mirror, the frontend surfaces, the per-image assign queue behind the hotkeys | ~4285 |
-| `docs/dev/image-filters.md` | Adding or changing a `GET /images/` filter param — the shared listing contract behind the gallery filter bar, stats click-through, frame lineage and the license filters, plus `GET /images/count` and `/images/ids` and the `ImageFilterParams` model all three share | ~1750 |
-| `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the `ThresholdSettings` singleton row and every tab it backs, the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
-| `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
-| `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the eight endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~3810 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~3255 |
-| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
-| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2250 |
-| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — CSS tokens, `@layer components`, `CrucibleMark` drift, `ConfirmDialog`, `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, middleware, SSE, the job queue or job cancellation — production frontend serving, the Host/Origin request guard (`request_guard.py`, `CRUCIBLE_ALLOWED_HOSTS`), app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the CI workflows, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~3655 |
-| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — WAL and per-connection pragmas, the FK inventory, virtual subfolders, the images/videos index inventories, UTC datetime serialization, the orphan-folder sweep, the drift check's `ACCEPTED_DRIFT`, `db_maintenance` rotation | ~1885 |
-| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, the Node version check, `bind_host.py`/`CRUCIBLE_HOST`, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~3140 |
-| `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |
-| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — the one-shot generate endpoint, the durable `comfy_prompts` job, `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
-| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow`, the `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, ComfyUI API constraints | ~710 |
+| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2100 |
+| `docs/dev/ml-models.md` | Working on `backend/ml/` loading, `model_manager`, `backend/ml/device.py`, or how an inference path opens images — `open_rgb_bytes`, the `test_ml_image_opens` AST guard, why torch is imported per function | ~1250 |
+| `docs/dev/model-residency.md` | Working on a model unload, `evict_all`, `_evict_lru`, or a consumer's lease on a model — `POST /models/unload-all`, the per-consumer lease scopes, the Grounding DINO tenant in sam2's entry, a hard cancel outliving a lease | ~1500 |
+| `docs/dev/model-registry.md` | Adding a model ID or a captioner/scorer module, or changing a registry entry's `kind`/`description` — PaliGemma-2 gating, the WD14 tagger's own cache, where the V2.5 predictor head is cached | ~1300 |
+| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~2750 |
+| `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2550 |
+| `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
+| `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~500 (+ details) |
+| `docs/dev/gallery.md` | **Start here for anything on `GalleryPage`** — selection, select-all-matching-filters and pagination, the subfolder sidebar, its context menu and expand/collapse, subfolder rename/move, a gallery filter or sort, drag & drop, reading the drop target and manual ordering, the `gallery-state-*` blob, persisting a gallery filter and debounced filter inputs (PM-012), the detail view's arrows (`gallery-nav-*`, `injectNavId`/`paneGo`, `serverPageContext`, the live refresh and live total); its § Where things live table routes from a code path to the file in `docs/dev/gallery/` that owns it | ~600 (+ details) |
+| `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
+| `docs/dev/image-files.md` | Working on image upload/move/copy/rename or an image delete — upload toasts, the per-directory occupied-stem set, the files-first delete order | ~1700 |
+| `docs/dev/image-import.md` | Working on folder import, rescan/sync, caption import or a stem-keyed derived artifact (thumbnail, poster) — `disk_exclude`, `occupied_thumb_stems`' two terms, the rescan dedupe, the import/rescan toasts | ~1950 |
+| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
+| `docs/dev/captioning.md` | Working on a caption job, `CaptioningPage`'s progress panel, or a caption sidecar write — delimiter modes, refusal stripping, rename-on-caption, `failure_summary` and `result_data` | ~2500 |
+| `docs/dev/caption-model-picker.md` | Working on a captioning model picker or the registry's `kind`/`description` — the silent no-op, why `modelType` is the wrong gate | ~900 |
+| `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~800 |
+| `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — the filter table and preview | ~2435 |
+| `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter | ~1325 |
+| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2180 |
+| `docs/dev/bulk-image-jobs.md` | Working on batch resize/crop, the thumbnail rebuild, or any replace-mode crop's detection remap — stage/flush/swap/commit, `remap_detection_geometry` and polygon clipping, the repair's `updated_at` bump | ~2000 |
+| `docs/dev/detection-crop.md` | Working on Crop to Subject — `POST /detection/crop`, `CropToDetectionForm` or the `crop_to_detection` job — `detection_crop_rect`, `dest_subfolder` | ~900 |
+| `docs/dev/inpaint.md` | Working on watermark removal — `POST /inpaint/run`, `InpaintForm` or the `batch_inpaint` job — `_dilate`, the stricter `contained_path` gating | ~1250 |
+| `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — analyze/apply jobs, whole-tag (non-substring) rewrite | ~895 |
+| `docs/dev/video.md` | **Start here for anything video** — the `/videos` router, probe/duration/posters, shot detection and frame heuristics, the extract and re-extract jobs and their dialogs, the crop/trim controls and `NumberField` (any bounded numeric input), video rename/delete and range serving, cropdetect and interlace/telecine, seek-by-timestamp re-extraction, the video screens and the frame lineage filter, video tests and the cv2 gate; its § Where things live table routes from a code path to whichever file in `docs/dev/video/` owns it. Also covers the two `Dataset` columns | ~3100 (+ details) |
+| `docs/dev/versioning.md` | **Start here for anything versioning** — `VersionsPage`, `dataset_busy`, the versioning routes, branches and snapshot tables, prune/GC, `version_service.py`, or any path that overwrites or deletes an image file in place (the copy-on-write hooks and their call sites), restore's four passes, what a snapshot mirrors and the diff; its § Where things live table routes from a code path to the file in `docs/dev/versioning/` that owns it | ~500 (+ details) |
+| `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, the duplicate toggle, or the folder picker | ~3265 |
+| `docs/dev/statistics.md` | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` — the validator-keyed cache | ~2690 |
+| `docs/dev/labels.md` | Working on the `/labels` router or the label vocabulary — the `Label`/`image_labels` tables and their migrations, `label_service.py`, `POST /labels/assign`'s chunking, race-safe 409 and busy-dataset guard | ~1700 |
+| `docs/dev/label-consumers.md` | Working on a label filter, label export narrowing, or labels across snapshots, copies and derivatives — the EXISTS-only filter block, the `VersionImageState.label_ids` mirror and restore's Pass 2c, `labelParams()`'s falsy-omit encoding | ~1600 |
+| `docs/dev/labels-ui.md` | Working on the Settings Labels tab, `LabelsPanel`, `LabelsBulkModal` or the detail-view label hotkeys — the per-image assign queue, `invalidateLabelScope`, the six `GalleryPage` persistence edits | ~1200 |
+| `docs/dev/image-filters.md` | Adding or changing a `GET /images/` filter param — plus `GET /images/count` and `/images/ids` and the `ImageFilterParams` model all three share | ~1750 |
+| `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
+| `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
+| `docs/dev/file-browser.md` | Working on `FileBrowserPage`, its preview panel, or any `/filesystem` endpoint's listing side or `/mkdir` — `canonical_abs_path` and stored-path containment, the name-collision 409s, the router's known holes, the `released` prop | ~1300 |
+| `docs/dev/file-browser-move.md` | Working on `POST /filesystem/move` — the file/directory branches, the canonical-media-folder 409, the derived-artifact guard, escaped-LIKE prefix tests | ~1300 |
+| `docs/dev/file-browser-rename-delete.md` | Working on `POST /filesystem/rename` or `/delete` — guards C/D/A/B and `_DATASET_LAYOUT_DIRS`, the thumbnail-stem 409, the delete's hook ordering and `_add_orphan` | ~1500 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
+| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
+| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2250 |
+| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
+| `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
+| `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline | ~1850 |
+| `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage, ruff and the migration drift check | ~320 |
+| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
+| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
+| `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |
+| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
+| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~500 |
+| `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation
 
@@ -216,8 +235,7 @@ When reviewing code (any `/code-review` run or ad-hoc review request) or investi
 
 ## Maintaining this documentation
 
-Documentation is split across this file (always loaded) and the topic files above
-(loaded on demand). Three rules apply to every change; the full workflow — where a
+Three rules apply to every documentation change; the full workflow — where a
 new fact goes, split thresholds, cross-reference conventions, the end-of-branch doc
 audit, and the skill-proposal format — lives in the `doc-maintenance` skill. Invoke
 it before editing any doc.
@@ -234,5 +252,4 @@ it before editing any doc.
   wants a *split*, never compression — finish the task you were asked to do, record the
   seam in `docs/dev/pending-splits.md`, and leave the prose alone. The split itself is
   the **first** action of the next session that appends to that file, never the last
-  action of this one. Budgets count words, not lines, and any paragraph over 250 words
-  warns too — see the script's module docstring for why.
+  action of this one.

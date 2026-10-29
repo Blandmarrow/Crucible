@@ -46,273 +46,78 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## CLAUDE.md
-
-- **Moves:** the § Key invariants bullets that are *about one subsystem each* — the two
-  video bullets (the poster/`video_count` one and the Windows open-file one), the
-  `record_in_place`/`scores_stale` bullet, the stem-keyed-derived-artifact bullet, and the
-  `is_duplicate` bullet
-- **New file:** none — they move **into the topic files that already own them**
-  (`docs/dev/video.md`, `docs/dev/video-endpoints.md`, `docs/dev/scores-stale.md`,
-  `docs/dev/image-files.md`, `docs/dev/image-similarity.md`), each leaving a one-line
-  pointer behind in CLAUDE.md
-- **Why here:** § Architecture is 2,905 words and § Key invariants is nearly all of it,
-  which is a symptom rather than the problem: the section's stated test is "would I want
-  this loaded even for a task in an unrelated subsystem?", and five of those bullets fail
-  it outright. Each has grown a full sub-bullet tree of its own that only a reader already
-  inside that subsystem can use, and each has a topic file that is the natural home —
-  `image-similarity.md` already carries the `is_duplicate` bullet's whole section (§ The
-  flag is a relationship), so that one is a pointer swap rather than a move. That
-  is a *misfiling* fix, not a size fix, and it is why the seam is not "split CLAUDE.md in
-  half" — a second always-loaded file would defeat the point of the split. The three
-  bullets that must stay are the ones every module genuinely touches: the path-traversal
-  guard, the client-supplied-regex rule, and the fallible-work-before-commit ordering.
-- **Watch for:** every moved bullet needs its one-line pointer to name the destination
-  file, or the fact becomes unfindable — the invariants list is the only index of these
-  rules that a fresh conversation sees. The `record_in_place` bullet is cited by
-  `docs/dev/postmortems.md` (PM-010) and by the AST guard's docstring in
-  `backend/tests/test_scores_stale.py`; the stem-collision bullet is cited from
-  `docs/dev/video-reextract.md` § The extension change. The `is_duplicate` bullet has one
-  clause its section does not own — `duplicate_of`'s remap-or-strip sits in the
-  *cross-dataset* sub-bullet beside `source_video_id`, which is where it belongs because it
-  is the same rule; that clause stays behind when the rest moves. The Documentation Map is the other
-  1,808 words and is **not** a split candidate: it is the routing table that makes the
-  on-demand split work at all, and it grows by one row per topic file by design.
-
-
-## docs/dev/gallery.md
-
-- **Moves:** § Gallery subfolder sidebar (544 words), § The subfolder row context menu (190)
-  and § Renaming and moving a subfolder (1,168)
-- **New file:** docs/dev/gallery-subfolders.md (mirrors docs/gallery.md § Organising into
-  subfolders)
-- **Why here:** the file tripped its budget again the same day `gallery-dnd.md` was split
-  out of it, because subfolder *management* arrived — rename, re-nest, the row context
-  menu, the re-path endpoint and its five pieces of path-keyed bookkeeping. Those three
-  sections are one subsystem and a reader arrives for exactly it: the sidebar is the UI,
-  the menu is how the two new operations are reached, and the re-path section is the
-  endpoint plus the client state it invalidates. What stays is *reading* a gallery —
-  selection and the shift-click range model, the filter bar, sorting. The seam leaves
-  ~1,900 and ~2,430 out of 4,335; the staying half is over the ~2,100 target because
-  § Gallery image selection is 1,263 words on its own, and its recorded second seam (the
-  select-all affordance + count key + pagination arithmetic, versus the shift-click range
-  model) is the one to take if it needs a third file.
-- **Watch for:** § Renaming and moving a subfolder is cited from `docs/dev/gallery-dnd.md`
-  § Dragging a subfolder onto another and § Manual image ordering (both in the file that
-  just split off, so they become cross-file pointers a second time), and § The subfolder
-  row context menu from `docs/dev/styling.md` § Context menu and `docs/dev/file-browser.md`.
-  `docs/dev/datasets-page.md` points at the subfolder sidebar — that moves now, so this is
-  the one inbound reference that has to change direction rather than stay put. § Gallery
-  filters and § Gallery image selection are cited from `docs/dev/image-filters.md` and
-  stay behind. The sidebar section's own bullets cross-reference `docs/dev/gallery-dnd.md`
-  in both directions.
-
-## docs/dev/file-browser.md
-
-- **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
-  (395), § Still open (148) and the two short sections that exist only to serve them,
-  § Name collisions (55) and § DB sync (119)
-- **New file:** docs/dev/file-browser-mutations.md
-- **Why here:** the file is a read surface and a write surface bolted together. Everything
-  moving is about *mutating the filesystem and keeping the DB in step* — the structural-folder
-  refusals, the 409s, the orphan bookkeeping, the versioning hook, the collision rules. What
-  stays is *browsing*: the eight endpoints' listing side, path safety, the three-panel page
-  and its preview panel. A reader working on the preview never needs the move/rename
-  semantics and vice versa. § Still open travels **with** the mutations rather than staying:
-  it is a list of open holes in `/move`, `/rename` and `/delete` specifically, and it cites
-  § `POST /move` by name. That lands ~2,800 moving and ~825 staying (§ Endpoints, § Path
-  safety, § Frontend, intro) out of 3,652. The moving half is at 80% of budget rather than
-  the 60% target, recorded honestly as the cost of the only coherent seam: this is one
-  router, and two endpoint sections carry three-quarters of its words. A second seam between
-  move/rename and delete does **not** help — § `POST /delete` is 395 words, so splitting it
-  off leaves the move/rename file at ~2,400 and buys a third file for nothing.
-- **Watch for:** § `POST /rename` carries a `### Directory branch` subsection that travels
-  with it. § Frontend describes the page as a whole and stays, but its two PM-021 paragraphs
-  (the `released` prop and the `<video>` unmount) are about the rename and delete mutations —
-  decide with the file open whether they travel. § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
-  `docs/dev/video-endpoints.md` § Serving bytes; § `POST /delete` is cited from
-  `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
-  from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are
-  `§`-level pointers the checker cannot verify. The user doc it mirrors is
-  `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
-  gives no name for free.
-
-## docs/dev/video-reextract.md
-
-- **Moves:** § Target resolution — one function, two callers (873 words) and § The contract
-  (444), i.e. the whole request-side half
-- **New file:** docs/dev/video-reextract-endpoints.md
-- **Why here:** the file is two subjects wearing one name. *Deciding which frames to
-  re-extract* is `_resolve_reextract_targets` and the two endpoints that share it — pure
-  request/response, no filesystem — and it is what a reader arrives for when they are
-  changing the preview's accounting or a skip reason. *Rewriting a frame in place* is the
-  job: `_rewrite`'s step order, the PM-013 window, the extension change and now the locked-
-  file retry, all of which are about disk. The seam leaves ~1,300 and ~2,300; the second is
-  over the ~2,100 target, so § The extension change (788) is the natural third piece if it
-  needs one — it is about *naming and collisions* rather than about the rewrite order, and
-  the material that pushed the file over budget landed in § The video_reextract job and
-  § The extension change both.
-- **Watch for:** the two halves cross-reference each other constantly — § The video_reextract
-  job cites "§ What gets skipped, and why" and "§ The extension change" by name, and § The
-  contract is what `docs/dev/video-reextract-ui.md` reads against. `docs/dev/video.md`'s
-  § Where things live points `backend/routers/videos.py` and `backend/schemas/video.py` at
-  this file for pass 2; both rows need splitting the same way. PM-021's write-up and
-  CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
-  in the job half.
-
-## docs/dev/image-similarity.md
-
-- **Moves:** § Style similarity in full — its mode table, § What the modes are actually
-  worth, § Making the score readable — the run descriptor and the percentile, and every
-  subsection under it (2,437 words, more than half the file)
-- **New file:** docs/dev/style-similarity.md (mirrors docs/scoring.md § Style similarity,
-  whose own second seam names the same subject)
-- **Why here:** the file has been two subsystems under one title since it was written, and
-  its own `# Title` says so — "duplicates **and** style". They share nothing but the word
-  *similarity*: duplicates are pHash Hamming distance, a grouping pass inside the technical
-  scorer, and a destructive resolution UI; style is CLIP/DINOv2 cosines, a synchronous
-  CPU-only endpoint, a run descriptor table, a percentile contract and three rendered
-  meters. A reader arrives for exactly one. Splitting there leaves ~3,630 and ~2,440 — both
-  over the ~2,100 target, which is the honest cost of a file that is two full subsystems
-  rather than one that grew a tail. (The duplicates half is the one that has since grown:
-  the file went 4,916 → 6,064 words, all of it on that side, so the seam is more overdue
-  than the ~2,300 first recorded here suggested — and the half left behind is the bigger
-  one now.) If the style half needs a second seam it is between the
-  *scoring* (modes, gate findings, all-layers vectorization) and the *reading* (descriptor,
-  endpoint, percentile, surfaces) — the § Making the score readable heading is already that
-  line.
-- **Watch for:** the duplicates half is cited from `docs/dev/scoring.md`,
-  `docs/dev/bulk-ops.md` and `docs/dev/video.md`; the style half from
-  `docs/dev/scores-stale.md` (§ The clear predicate, in both directions),
-  `docs/dev/statistics.md` (the `"style"` cache slot), `docs/dev/gallery.md` (the card
-  meter), `docs/dev/image-detail.md` (the Style match block and the layer breakdown) and
-  `docs/dev/persistence.md` (the meter key). CLAUDE.md's Documentation Map row names both
-  subjects and has to become two rows. `backend/scripts/style_gate_report.md` is the source
-  the gate findings summarise and points back here by name. Several of these are `§`-level
-  pointers the checker cannot verify — grep `image-similarity.md` across `docs/`,
-  `CLAUDE.md` and `backend/scripts/` before and after. The user doc the new file mirrors is
-  a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
-  first and produces a docs/style-similarity.md, the names line up for free.
-
-## docs/dev/labels.md
-
-- **Moves:** § Filters (384 words), § Export (241), § The mirror column (165) and
-  § Versioning and cross-dataset hooks (631, which now also carries the same-dataset
-  derivative table)
-- **New file:** docs/dev/label-consumers.md
-- **Why here:** the file describes a vocabulary and then, separately, every *other*
-  subsystem that reads or carries an assignment. What stays is the thing itself — the two
-  tables, `label_service.py`, the `/labels` router and its five validation rules, and the
-  four frontend surfaces (Settings panel, detail panel, hotkeys, bulk modal); a reader
-  arrives there to change the endpoint or the UI. What moves is where a label *shows up*:
-  the `GET /images/` filter block, the export narrowing and its client encoder, the
-  snapshot mirror and restore's Pass 2c, cross-dataset copy/duplicate/move, and the five
-  same-dataset derivative sites. That reader is working on export or versioning and wants
-  none of the CRUD. The seam leaves ~2,355 and ~1,421 out of 3,776 — the staying half is
-  over the ~2,100 target, and its own second seam is § Frontend (638), which would become
-  docs/dev/labels-ui.md and mirrors nothing in `docs/`. The file tripped its budget when
-  the review fixes landed: the shared filter validator, the derivative table, the assign
-  guard and the render-time bounds check all arrived at once.
-- **Watch for:** § Frontend is cited **by name** from `docs/dev/gallery.md` § Gallery
-  filters ("six edits, see `docs/dev/labels.md` § Frontend") and stays behind — that is
-  the one pointer that keeps working only if § Frontend does not move in a later pass.
-  Everything moving has an inbound pointer of its own: `docs/dev/image-filters.md` (the
-  three label rows), `docs/dev/export.md`, `docs/dev/versioning-service.md` (a full
-  paragraph restating the mirror and Pass 2c), and CLAUDE.md § Key invariants' join-table
-  bullet, which names this file for the mirror rules specifically. `docs/dev/settings.md`,
-  `docs/dev/persistence.md` and `docs/dev/image-detail.md` point at the halves that stay.
-  The user doc is `docs/labels.md` and covers both halves, so the mirror-the-user-doc
-  convention gives no name for free — label-consumers.md is a proposal, not a constraint.
-  Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
-  `docs/labels.md` matches the same grep.
-- **Take both seams at once (noted 2026-10-29).** The file is now ~4,300 words, and the
-  growth since this entry was written landed on the *staying* side: § Frontend is ~1,110
-  words after the hotkey assign-queue paragraphs. The first seam alone would leave
-  ~2,830, so move § Frontend to docs/dev/labels-ui.md in the same pass — that lands
-  roughly 1,770 / 1,470 / 1,160. Doing so breaks the pointer the entry above calls out:
-  `docs/dev/gallery.md` and `docs/dev/persistence.md` both cite "§ Frontend" for the six
-  persistence edits, so give that part its own heading in labels-ui.md and repoint both,
-  and check the bullet at `docs/dev/gallery.md` § Gallery filters against the 250-word
-  paragraph limit afterwards, since a longer pointer can push it over.
-
 ## docs/scoring.md
 
-- **Moves:** § Style similarity (827 words — the largest section by two-thirds) with both
-  its subsections, ### Style similarity modes and ### Reading the score
-- **New file:** docs/style-similarity.md (mirrors docs/dev/image-similarity.md's own
-  recorded seam, whose new half is proposed under the same name)
-- **Why here:** this is the *second* seam the earlier `docs/scoring.md` →
-  `docs/duplicates.md` split left behind, promoted from the epilogue note below into a
-  real entry now that the file is over budget again at 2,698 words. It is the same seam
-  that note named and it has only got more true since: style similarity is a separate
-  CPU-only workflow with its own concepts — cosines against reference images, an embedding
-  mode choice, and a percentile that exists because the raw number is not comparable
-  across models. A user arrives there having already decided to compare *style*, not to
-  score quality. What stays is one workflow end to end: running a scoring run, what each
-  scorer produces, choosing the aesthetic model, the flags those scores set, and when they
-  go stale. The seam leaves ~1,870 and ~830 out of 2,698 — the staying half is over the
-  ~1,500 target, and its own next seam is § Quality flags + § Stale scores together (482
-  words), which are about *reading* scores where everything above them is about producing
-  them.
-- **Watch for:** the section moving owns two anchors that are linked from four places —
-  `scoring.md#reading-the-score` from `docs/gallery.md` (the card meter) and
-  `docs/settings.md` (the meter toggle), and the § Style similarity heading itself from
-  `docs/editing.md`. Those are user-doc markdown links, so they FAIL the checker rather
-  than warning, unlike the `§`-level dev-doc pointers. Anchors that stay behind:
-  `scoring.md#stale-scores` (from `docs/export.md`), `scoring.md#quality-flags` (from
-  `docs/captioning.md`), `scoring.md#vram-after-a-run` (from `docs/settings.md`), and
-  `scoring.md#choosing-the-aesthetic-model`, which has three inbound links —
-  `docs/export.md`, `docs/duplicates.md` and `docs/statistics.md`. A new file needs its own
-  README Docs-table row and a `docs/features.md` row, not prose; README links
-  `docs/scoring.md` three times and all three describe the whole scoring workflow, so
-  check each for whether style deserves its own mention rather than repointing by reflex.
-  `docs/duplicates.md` opens by pointing at this page for duplicate *detection* and stays
-  put. Do **not** take the branch's own `### VRAM after a run` as the seam: it is six lines
-  and belongs exactly where it is, under § Running a scoring run.
+- **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows
+  past budget again; it is under budget now
+- **New file:** none chosen. A ~500-word page is thin, so the likelier home is a
+  "Reading your scores" page if a third scoring-adjacent subject arrives to join them
+- **Why here:** the § Style similarity seam was executed on 2026-10-29 into
+  `docs/style-similarity.md`, leaving 1,940 of 2,500 words, over the ~1,500 target.
+  Everything still here is one workflow end to end: running a scoring run, what each scorer
+  produces and choosing the aesthetic model are about *producing* scores, and the two
+  sections named above are about *reading* them — the flags those scores set, and when they
+  go stale. That is the line if the file trips again.
+- **Watch for:** `scoring.md#stale-scores` is linked from `docs/export.md` and
+  `docs/style-similarity.md` (the dimmed meter), and `scoring.md#quality-flags` from
+  `docs/captioning.md`; both are user-doc markdown links, so a move FAILs the checker
+  until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
+  lines and belongs exactly where it is, under § Running a scoring run.
 
-## docs/gallery.md
+`docs/workspace.md` → `docs/server.md` **and** `docs/file-browser.md` was executed on 2026-10-29
+as an M3 task, the second of the user-docs queue, and was **re-cut on execution**, taking the
+entry's own fallback. Re-measured at 2,696 words, the recorded seam (§ Starting up,
+§ Restarting & shutting down and § Database backups out to `docs/server.md`) would have left
+~1,670 behind, 67% of budget, so § File Browser went to its own page as well, mirroring
+`docs/dev/file-browser.md`. That left ~1,150 (workspace), ~1,110 (server) and ~610 (file
+browser). The entry's Watch-for was right but missed CLAUDE.md's `§ Restarting & shutting
+down` pointer, which the checker cannot see; the re-cut added the `#file-browser` links in
+README, `docs/datasets.md` and `docs/features.md`.
 
-- **Moves:** § Datasets (436 words) and § Getting images in (696)
-- **New file:** docs/datasets.md (mirrors docs/dev/datasets-page.md)
-- **Why here:** the page is two user tasks under one title, and its own name says so —
-  "Datasets **&** Gallery". One is *acquiring*: making a dataset, categories, duplicating,
-  uploading, importing a folder, rescan, caption import, versioning-mode. The other is
-  *curating* what is already in one: browsing and filtering the grid, subfolders and now
-  renaming/re-nesting them, manual ordering, sorting. A reader arrives for exactly one,
-  and the seam leaves ~1,130 and ~1,400 out of 2,580 — both under the ~1,500 target, which
-  is rare enough to take. It tripped the budget when § Organising into subfolders gained
-  rename, move and the no-filename-renames note.
-- **Watch for:** this is a user doc, so the inbound links are markdown links — README has
-  five (three of them pointing at the *acquiring* half: Organize, Import, Sync) plus its
-  Docs-table row, and a new file needs its own row there and in `docs/features.md`, which
-  is an index and takes a row rather than prose. `docs/captioning.md`, `docs/video.md`,
-  `docs/workspace.md` (a `gallery.md#getting-images-in` **anchor**, which moves) and
-  `docs/duplicates.md` all link here too — check each for whether it wants the half that
-  moves. README's `gallery.md#manual-image-ordering` and
-  `gallery.md#renaming-and-re-nesting-a-subfolder` anchors both stay behind.
+`docs/gallery.md` → `docs/datasets.md` **and** `docs/subfolders.md` was executed on 2026-10-29
+as an M3 task, the first of the user-docs queue, and was **re-cut on execution**. Re-measured at
+3,227 words rather than the 2,580 the entry assumed, the recorded seam (§ Datasets and
+§ Getting images in out to `docs/datasets.md`) would have left ~1,980 behind, 79% of budget.
+So § Organising into subfolders, with its rename/re-nest subsection, went to its own page as
+well: its two bold lead-ins became `##` headings and its `###` rename subsection was
+promoted to `##`. It is the
+subfolder sidebar, a subsystem of its own, mirroring `docs/dev/gallery/subfolders.md`.
+§ Sorting and § Manual Image Ordering stayed with the grid, so README's
+`gallery.md#manual-image-ordering` anchor still holds. That left ~1,300 (datasets), ~1,340
+(gallery) and ~740 (subfolders). The entry's Watch-for was right except for
+`docs/duplicates.md`, which no longer linked here.
 
-## docs/video.md
+`docs/dev/bulk-image-jobs.md` → `docs/dev/detection-crop.md` **and** `docs/dev/inpaint.md` was
+executed on 2026-10-29 as an M3 task, with the seam as recorded and the remap bullets promoted
+to their own `##` in the staying half. The entry's word counts were stale: re-measured at
+3,946 words, the split left ~1,970 behind (56%, so little headroom; the next move out is
+§ Rebuilding thumbnails), ~900 and ~1,250.
 
-- **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and
-  § Re-extracting at full resolution (503)
-- **New file:** docs/video-extraction.md
-- **Why here:** two user tasks share one page. *Holding videos* — adding them, the strip,
-  the player, rename and delete, what plays in a browser and what does not — is what a user
-  does before they have decided to extract anything, and § Browsing them grew again when
-  strip delete and the unplayable message landed. *Turning a video into frames* is the
-  two-step dialog, the progress rows, and pass 2, which a user reads once they are committed.
-  The seam leaves ~1,000 and ~1,740; the second is over the ~1,500 target, so consider moving
-  § Re-extracting at full resolution to its own file or leaving it behind with § Browsing them
-  — it is the one section that is about *curated frames* rather than about the dialog.
-- **Watch for:** this is a user doc, so the inbound links are markdown links from
-  `README.md` (three of them, plus the Docs table row), `docs/gallery.md` (five), and
-  `docs/features.md`'s index row — a new file needs its own README Docs-table row and a
-  `docs/features.md` row, not prose. Several of those links point at the *page*, not a
-  section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
-  docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
-  which is where the mirror-the-user-doc naming convention points.
+`docs/video.md` → `docs/video-extraction.md` **and** `docs/video-reextract.md` was executed on
+2026-10-29 as an M3 task, taking the entry's own fallback. Re-measured at 2,723 words, the
+recorded seam would have left ~1,740 in the new file, so § Re-extracting at full resolution
+went to its own page rather than staying behind: pass 2 is about *curated frames*, and README
+already described it in its own bullet. `docs/video.md` kept the intro, § Adding videos and
+§ Browsing them (~900), and § Optional packages went with the dialog into
+`docs/video-extraction.md` (~1,400). No `video.md#…` anchor existed anywhere, so the sweep
+was about which of the page-level links wanted a moved half.
 
-`docs/dev/image-detail.md` → `docs/dev/gallery-state.md` **and** `docs/dev/gallery-nav.md` was
+`docs/dev/gallery.md` → the Gallery hub and its `docs/dev/gallery/` folder was executed on
+2026-10-29 as an M3 task, and was **re-cut on execution**. The recorded seam assumed 4,335
+words and moved the three subfolder sections out; the file had reached 6,017, so taking only
+that seam would have left ~3,100 behind. Every section moved instead: § Gallery image
+selection to `docs/dev/gallery/selection.md`; the recorded seam's three sections, cut once
+more at the UI/endpoint line because together they came to ~2,860, to
+`docs/dev/gallery/subfolders.md` (the sidebar and its context menu) and
+`docs/dev/gallery/subfolder-rename.md` (the re-path endpoint and its client bookkeeping); and
+§ Gallery filters with § Sorting to `docs/dev/gallery/filters.md`. gallery-dnd.md,
+gallery-state.md and gallery-nav.md moved in, with only their intros and pointers edited, as `docs/dev/gallery/drag-drop.md`,
+`docs/dev/gallery/state.md` and `docs/dev/gallery/nav.md`, and `docs/dev/gallery.md` became the
+family hub. Selection's recorded second seam (select-all + count key + pagination, versus the
+shift-click range model) still stands, but at ~1,280 words it is not needed.
+
+`docs/dev/image-detail.md` → `docs/dev/gallery/state.md` **and** `docs/dev/gallery/nav.md`
+(then gallery-state.md and gallery-nav.md, moved into the Gallery family on 2026-10-29) was
 executed on 2026-08-10, at the start of the session that would have appended the live-refresh
 fixes to it. The seam was **re-cut on execution**: the recorded seam moved the persistence half
 out and left the nav half behind, but between recording and execution the file grew 3,781 →
@@ -327,10 +132,13 @@ seam has to be re-chosen rather than executed as written.
 `docs/scoring.md` → `docs/duplicates.md` was executed on 2026-08-02, at the start of the
 session that appended the style-similarity percentile material to § Style similarity — the
 seam held as recorded, and the staying half landed at ~2,100 words. That half is still over
-the 2,500 user budget's 60% target, so its recorded second seam stands: § Style similarity
-is now the largest section and is a separate CPU-only workflow with its own concepts.
+the 2,500 user budget's 60% target, so its recorded second seam stood: § Style similarity
+was the largest section and a separate CPU-only workflow with its own concepts. That seam
+was executed on 2026-10-29 into `docs/style-similarity.md`, together with the dev side's
+Quality hub.
 
-`docs/dev/gallery.md` → `docs/dev/gallery-dnd.md` was executed on 2026-08-03, at the start of
+`docs/dev/gallery.md` → `docs/dev/gallery/drag-drop.md` (then gallery-dnd.md) was executed on
+2026-08-03, at the start of
 the session that added subfolder rename and re-nesting — the seam held as recorded, and
 both § Manual image ordering and § Drag images onto subfolders moved together. The staying
 half landed at ~2,900 words before that session's own additions, above the ~2,100 target
@@ -338,9 +146,9 @@ rather than the ~2,540 the entry predicted, because § Gallery image selection k
 its recorded second seam therefore still stands.
 
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
-`bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
-`export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
-misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
+`bulk-image-jobs.md`, `versioning.md` → `versioning-service.md` (since moved into
+`docs/dev/versioning/`), `export.md` → `export-licensing.md`, `detection.md` →
+`detection-inference.md`, `statistics.md`'s misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
 
 ## README.md
@@ -349,8 +157,9 @@ utilities → `docs/dev/shared-utilities.md`.
   every one of which already ends in a `→ [details](docs/…)` link
 - **New file:** none. The prose does not move to a sibling; it is *deleted* and replaced by
   a short paragraph pointing at the Docs table already sitting further down the file.
-- **Why here:** README is over budget (2,744 against 2,500) and the overflow is a second
-  index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
+- **Why here:** README was over budget (3,027 against 2,500) until the budget was raised
+  to 4,000 on 2026-10-30, deferring this cut rather than dropping it; the overflow is a
+  second index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
   already point at — the deletion rule's "duplicated in a sibling file, replace it with a
   cross-reference" case, not a compression. It grows by a bullet every time a feature ships
   (watermark removal was the latest), so it will trip again on the next one. What must stay
@@ -361,166 +170,3 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
-
-
-## docs/dev/ml-models.md
-
-- **Moves:** § The LaMa inpainter (~910 words after this session's OOM-ladder paragraph)
-- **New file:** none. It moves into the existing `docs/dev/image-processing-models.md`
-  (~1,810 words today, ~2,720 after), whose own intro already frames it as "the two
-  pipelines that rewrite pixels through a loaded model" — upscaling and LUT grading. LaMa
-  is the third, shipped later and filed here only because its *loader* was the novel part.
-- **Why here:** ml-models.md is over budget (3,615 against 3,500) and the seam is a
-  subsystem line, not a size cut. What is left is the lifecycle every model shares — the
-  manager and eviction, the ID registry, the device abstraction, `open_rgb`, `HF_TOKEN`,
-  the weight-download rules — at ~2,700 words, and the destination sits comfortably under
-  budget. The `and` test passes in both directions: "model lifecycle" and "pixel pipelines"
-  are two things, and today's file is the one holding both.
-- **Watch for:** the CLAUDE.md Documentation Map row for `ml-models.md` names "the LaMa
-  inpainter" in its trigger, and `image-processing-models.md`'s row does not — both cells
-  change, plus both `Words` counts. `docs/dev/bulk-image-jobs.md` § Painting detections out
-  points at "`docs/dev/ml-models.md` § The LaMa inpainter" by name, as do
-  `backend/routers/inpaint.py` and `backend/ml/lama_inpainter.py` in prose comments; grep
-  `LaMa` across `docs/` and `backend/` before finishing. Keep the *loader* rules (the
-  SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
-  import) with the inpainter — they are the reason the section is long, and they are about
-  this model rather than about the manager.
-- **Second seam (recorded 2026-10-28, GPT-032/034):** the LaMa move alone no longer gets the
-  file under budget — it is 4,442 words after § Leases (440) arrived, so ~3,650 once LaMa
-  leaves. Move § Leases and § Releasing an entry's weights (765) together into a new
-  docs/dev/model-residency.md: *what keeps a model resident and how its weights leave*. They
-  are one subject — the lease is what decides whether a release may happen, and
-  `_release_to_cpu`'s tenant walk is what makes it free anything — and both are read by
-  someone touching a consumer's hold or an unload path, not by someone adding a model ID.
-  Leaves ~2,450 here. **Watch for:** `§ Leases` is cited by name from
-  `docs/dev/scoring.md`, `docs/dev/detection.md`, `docs/dev/image-processing-models.md`,
-  `docs/dev/backend-infrastructure.md` and PM-030; `§ Releasing an entry's weights` from
-  `docs/dev/detection-inference.md` and this file's own sam2 table row. Grep both headings.
-
-
-## docs/dev/scoring.md
-
-- **Moves:** § The aesthetic model picker (1,006 words) with its three subsections — the
-  marker as a safety device, the two destructive consumers, per-model coverage and the
-  re-score offer
-- **New file:** docs/dev/aesthetic-model.md (mirrors docs/scoring.md § Choosing the
-  aesthetic model)
-- **Why here:** the file went over (3,559) when § The model lifecycle gained the lease
-  rules (GPT-032). The picker is the one section that is about a *choice* the user makes
-  and the bookkeeping that keeps it honest (`aesthetic_model`, its two consumer guards,
-  coverage), where everything else is about the scorers themselves and the columns they
-  write. Leaves ~2,550; the lifecycle section stays, since it is about this job's models.
-- **Watch for:** the picker is referenced from `docs/dev/scores-stale.md`,
-  `docs/dev/export.md` and `docs/dev/statistics.md` (`aesthetic_model` and its guards) —
-  grep `aesthetic model picker` and `aesthetic_model` across `docs/` before and after.
-
-
-## docs/dev/captioning.md
-
-- **Moves:** § OpenAI-compatible providers in full (~720 words) — the `/providers` router
-  table, the `OpenAIProvider` model and schema, `ml/openai_compat_captioner.py`, the
-  `openai_compat:{provider_id}:{model_name}` id format, the Settings LLM Providers tab and
-  the `ModelPicker` component.
-- **New file:** docs/dev/llm-providers.md. There is no user doc of that name to mirror
-  (provider setup is a section of `docs/settings.md`), so the name is taken from the
-  Settings tab users actually see.
-- **Why here:** the file is over budget (3,975 against 3,500) and its title already carries
-  the `and` warning sign — "Captioning post-processing **&** LLM providers". They are two
-  subsystems: a provider row is CRUD plus a client, configured in Settings and consumed by
-  one branch of the caption dispatch chain, while everything else in the file is about what
-  the caption *text* goes through afterwards. The seam is where this session's work stopped:
-  the empty-caption guard belongs entirely to the post-processing half, and the
-  `finish_reason` logging entirely to the provider half. Leaves ~3,255 and ~720 — the
-  destination has room for the growth this arc will keep sending it, and the remaining
-  captioning half is still near budget, so a second seam (§ The captioning model picker,
-  ~820 words, which is really about *pickers* and their two predicates) is the next one to
-  take if ~3,050 proves too tight.
-- **Watch for:** the two halves are cross-linked in both directions — the post-processing
-  half's § Progress and failures names `max_retries=0` and `timeout_s`, both defined in the
-  provider half, and the provider half's § Captioner points back at the empty-caption
-  bullet. Turn each into an explicit `docs/dev/…` pointer rather than leaving a bare
-  `§ Section` reference. `docs/dev/settings.md` and `docs/dev/comfy-prompts.md` both cite
-  `docs/dev/captioning.md` for provider configuration; grep `captioning.md` across `docs/`
-  and `backend/` before finishing, and give both files a Documentation Map row with fresh
-  `Words` cells.
-
-## docs/dev/versioning-service.md
-
-- **Moves:** the `restore_snapshot` bullet with its Pass 0–3 sub-bullets, the five
-  PM-026 bullets after it (complete-or-abort safety snapshot, Pass 1 all-or-nothing,
-  Pass 3's failure contract, the `result_data` outcome, measured phash) and the
-  `duplicate_dataset` read-side-twin bullet
-- **New file:** docs/dev/versioning-restore.md
-- **Why here:** the file is one `## Service` heading over a flat bullet list, and nearly
-  half of it is restore alone — a four-pass algorithm plus its failure contract, read
-  whenever a restore misbehaves. What stays (the two hooks, `_store_row_bytes`, snapshot
-  creation, diff, the mirror bullets, the injection table) is what every *overwrite path
-  elsewhere* needs. Leaves roughly 1,550 (restore) and 2,000 words, both under the 60% target —
-  the latter before GPT-026 added ~330 words of detections-mirror bullets beside the labels
-  one; if the stay half is then over 60%, the labels and detections mirror bullets are the
-  next to move, since each spans snapshot, restore and diff. Give both files `##` headings
-  per subject while splitting; this one has none below `## Service`.
-- **Watch for:** CLAUDE.md's preamble to the invariants says two invariants "point at
-  restore's Pass 2 and Pass 3" in this file, and `docs/dev/versioning.md`,
-  PM-025 and PM-026 cite it for Pass 0c, the safety snapshot and the failure contract —
-  grep `versioning-service.md` across `docs/`, `CLAUDE.md` and `backend/` (an alembic
-  migration docstring cites it too) and repoint whichever ones mean restore. Add a
-  Documentation Map row for the new file.
-
-## docs/workspace.md
-
-- **Moves:** § Starting up (435 words, now including the LAN opt-in bullet that links
-  README's § Access from other devices), § Restarting & shutting down (336) and § Database
-  backups (246)
-- **New file:** docs/server.md (the user half of docs/dev/backend-infrastructure.md and
-  docs/dev/database.md)
-- **Why here:** those three are one subject, the server process's life: launching it,
-  stopping or restarting it, and what it does to the database at startup. The rest of the
-  page is the app's own furniture: dialogs, the top bar, meters, Split View, Logs, the File
-  Browser and Booru. It tripped the budget when § Restarting & shutting down gained the
-  shutdown grace for running jobs (GPT-012). The seam leaves ~935 and ~1,575 words. The
-  remainder sits just over the ~1,500 target, so if it must go lower, § File Browser (557)
-  is the next self-contained move, to docs/file-browser.md, mirroring docs/dev/file-browser.md.
-- **Watch for:** README links three of the moving anchors (`#starting-up`,
-  `#restarting--shutting-down`, `#database-backups`) and needs a Docs-table row for the new
-  file. `docs/features.md` takes a row, not prose. `docs/dev/database.md` and
-  `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
-  horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
-  stays behind, so that link must become `workspace.md#logs`.
-
-## docs/dev/bulk-image-jobs.md
-
-- **Moves:** § Painting detections out (watermark removal) → docs/dev/inpaint.md, and
-  § Detection-driven cropping (crop to detected subject) → docs/dev/detection-crop.md.
-- **New files:** docs/dev/inpaint.md and docs/dev/detection-crop.md (the user-facing side of
-  both is in docs/detection.md, so neither mirrors a user doc of its own name).
-- **Why here:** the file grew around one idea, "bulk jobs that rewrite files", and the two
-  detection-driven jobs became subsystems of their own: each has its own router, request
-  model and scope rules. It tripped the budget when § Batch resize and aspect crop gained the
-  stage, flush, swap, commit order (GPT-010). Moving both leaves ~1,400 words behind and
-  ~1,130 and ~1,210 in the new files, all under the ~2,100 target. One move alone leaves
-  ~2,500, which is still over.
-- **Watch for:** the **Remapping detections through replace-mode crops** bullets sit inside
-  § Detection-driven cropping but serve all four crop sites, batch crop included. Keep them
-  in bulk-image-jobs.md (or give them their own `##`) rather than carrying them out with the
-  detection worker, because § Batch resize and aspect crop and docs/dev/image-detail.md
-  point at them. `docs/dev/bulk-ops.md` § Bulk jobs that rewrite files lists
-  `POST /detection/crop` as living here. CLAUDE.md's Map row for this file names
-  `CropToDetectionForm`, `batch_inpaint` and the LaMa paint mask in its trigger, so those
-  words move to the two new rows.
-
-## docs/dev/backend-infrastructure.md
-
-- **Moves:** § Request guard: Host and Origin, § Frontend serving (production), § App-level
-  exception handlers and § Server control endpoints → docs/dev/http-edge.md.
-- **New file:** docs/dev/http-edge.md (no user doc of its own; the user side of the LAN
-  opt-in is README.md and docs/workspace.md).
-- **Why here:** the file is two subsystems: what wraps every request (middleware, the SPA
-  catch-all, the exception handlers, the shutdown/restart routes) and the job queue
-  (shutdown grace, cancellation, SSE, retention, `GET /jobs`). It tripped the budget when the
-  request guard landed (GPT-007). The seam leaves ~1,720 words in the new file and ~1,940
-  behind, both under the ~2,100 target. § CI workflows stays; it is the odd one out either way.
-- **Watch for:** § Server control endpoints and § Shutdown: stopping the job queue point at
-  each other — the restart loop calls `JobQueue.stop()` — so both need a cross-file pointer.
-  PM-015 and PM-031 cite § Frontend serving and § Request guard; CLAUDE.md's Path traversal
-  bullet names the SPA catch-all; the Map row's trigger words split across the two rows.

@@ -22,8 +22,8 @@ Crucible is a local dataset engineering platform for AI image training. Instead 
 
 Every step from raw images to a training-ready export, in order:
 
-1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/gallery.md), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
-2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/gallery.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
+1. **Import or Generate** — pull images from local folders (with subfolder organization, an optional native "Browse…" picker, and `.txt` caption sidecars), or browse your filesystem and import directly; source and license are captured as you import — typed into the import dialog, or read from scraper sidecars and EXIF → [details](docs/datasets.md#getting-images-in), [provenance](docs/provenance.md) — or generate them from scratch by queueing prompts against your own ComfyUI workflow → [details](docs/comfyui.md) — or add videos as sources and extract frames from them, shot by shot → [details](docs/video.md)
+2. **Organize** — group datasets into named categories; drag onto a category sidebar or section to reassign, and switch between card and compact-row density → [details](docs/datasets.md) — then cut across the subfolder tree with a shared vocabulary of labels → [details](docs/labels.md)
 3. **Caption** — batch-caption with local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API → [details](docs/captioning.md)
 4. **Score & Curate** — score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter by search, quality flags, score ranges, and detected object labels → [details](docs/scoring.md)
 5. **Refine** — consolidate tags, batch-edit captions/crops/resizes, upscale, LUT color grade, detect & segment objects, remove watermarks, and reorder manually → [details](docs/editing.md)
@@ -35,10 +35,10 @@ Every step from raw images to a training-ready export, in order:
 ## Features
 
 ### Dataset management
-- **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/gallery.md)
-- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/gallery.md)
-- **Rename and re-nest** a gallery subfolder from its right-click menu or by dragging one row onto another — the whole subtree follows, and the files inside keep their names → [details](docs/gallery.md#renaming-and-re-nesting-a-subfolder)
-- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
+- **Organize** datasets into named categories, browsed from a category sidebar or collapsible sections, in card or compact-row density → [details](docs/datasets.md)
+- **Import** images from local folders into named datasets with subfolder organization, an optional native "Browse…" folder picker, and optional import of `.txt` caption sidecars → [details](docs/datasets.md#getting-images-in)
+- **Rename and re-nest** a gallery subfolder from its right-click menu or by dragging one row onto another — the whole subtree follows, and the files inside keep their names → [details](docs/subfolders.md#renaming-and-re-nesting-a-subfolder)
+- **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/datasets.md#getting-images-in)
 - **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, browsable in a strip above the image grid with poster frames, an inline player, rename, and delete from the strip or the video's own page (experimental). A codec the browser cannot play says so plainly instead of claiming the file is corrupt — extraction reads the file directly and is unaffected → [details](docs/video.md)
 - **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export. A **Frames from** gallery filter finds everything one video produced however far curation has since moved it, and the technical scorer's **brightness** metric separates the usable frames from the fades to black → [details](docs/video-extraction.md)
 - **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video-reextract.md)
@@ -303,7 +303,9 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Topic | |
 |---|---|
 | Feature index | [docs/features.md](docs/features.md) |
-| Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
+| Datasets | [docs/datasets.md](docs/datasets.md) |
+| Gallery | [docs/gallery.md](docs/gallery.md) |
+| Subfolders | [docs/subfolders.md](docs/subfolders.md) |
 | Labels | [docs/labels.md](docs/labels.md) |
 | Videos | [docs/video.md](docs/video.md) |
 | Frame Extraction | [docs/video-extraction.md](docs/video-extraction.md) |

@@ -32,7 +32,7 @@ leaving you to guess which step was at fault. A model that is merely *missing*
 from the list is different and does not block anything: Ollama may simply not be
 running, so you get a note rather than a refusal.
 
-Captions can also be **imported** rather than generated: from `.txt` sidecars during a folder import, via the per-dataset "Import captions" folder dialog, or by dragging a `.txt` file onto an image — see [Datasets & Gallery](gallery.md).
+Captions can also be **imported** rather than generated: from `.txt` sidecars during a folder import, via the per-dataset "Import captions" folder dialog, or by dragging a `.txt` file onto an image — see [Getting images in](datasets.md#getting-images-in).
 
 ### JoyCaption styles
 

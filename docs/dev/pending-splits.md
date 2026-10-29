@@ -64,26 +64,17 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
-## docs/gallery.md
-
-- **Moves:** § Datasets (436 words) and § Getting images in (696)
-- **New file:** docs/datasets.md (mirrors docs/dev/datasets-page.md)
-- **Why here:** the page is two user tasks under one title, and its own name says so —
-  "Datasets **&** Gallery". One is *acquiring*: making a dataset, categories, duplicating,
-  uploading, importing a folder, rescan, caption import, versioning-mode. The other is
-  *curating* what is already in one: browsing and filtering the grid, subfolders and now
-  renaming/re-nesting them, manual ordering, sorting. A reader arrives for exactly one,
-  and the seam leaves ~1,130 and ~1,400 out of 2,580 — both under the ~1,500 target, which
-  is rare enough to take. It tripped the budget when § Organising into subfolders gained
-  rename, move and the no-filename-renames note.
-- **Watch for:** this is a user doc, so the inbound links are markdown links — README has
-  five (three of them pointing at the *acquiring* half: Organize, Import, Sync) plus its
-  Docs-table row, and a new file needs its own row there and in `docs/features.md`, which
-  is an index and takes a row rather than prose. `docs/captioning.md`, `docs/video.md`,
-  `docs/workspace.md` (a `gallery.md#getting-images-in` **anchor**, which moves) and
-  `docs/duplicates.md` all link here too — check each for whether it wants the half that
-  moves. README's `gallery.md#manual-image-ordering` and
-  `gallery.md#renaming-and-re-nesting-a-subfolder` anchors both stay behind.
+`docs/gallery.md` → `docs/datasets.md` **and** `docs/subfolders.md` was executed on 2026-10-29
+as an M3 task, the first of the user docs, and was **re-cut on execution**. Re-measured at
+3,227 words rather than the 2,580 the entry assumed, the recorded seam (§ Datasets and
+§ Getting images in out to `docs/datasets.md`) would have left ~1,980 behind, 79% of budget.
+So § Organising into subfolders, with its rename/re-nest subsection, went to its own page as
+well, gaining `##` headings where bold lead-ins had marked its three parts. It is the
+subfolder sidebar, a subsystem of its own, mirroring `docs/dev/gallery/subfolders.md`.
+§ Sorting and § Manual Image Ordering stayed with the grid, so README's
+`gallery.md#manual-image-ordering` anchor still holds. That left ~1,300 (datasets), ~1,340
+(gallery) and ~740 (subfolders). The entry's Watch-for was right except for
+`docs/duplicates.md`, which no longer linked here.
 
 `docs/dev/bulk-image-jobs.md` → `docs/dev/detection-crop.md` **and** `docs/dev/inpaint.md` was
 executed on 2026-10-29 as an M3 task, with the seam as recorded and the remap bullets promoted

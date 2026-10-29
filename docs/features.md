@@ -8,7 +8,9 @@ The order images travel through the app:
 
 | Step | Topic | |
 |---|---|---|
-| 1 | Import images, organize datasets, browse and filter the gallery | [Datasets & Gallery](gallery.md) |
+| 1 | Create datasets and group them into categories; upload, import or rescan images into them | [Datasets](datasets.md) |
+| 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
+| 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
 | 1 | Extract frames from videos, shot by shot | [Frame Extraction](video-extraction.md) |
@@ -28,7 +30,8 @@ The order images travel through the app:
 
 | Sidebar item | Documented in |
 |---|---|
-| Datasets, Gallery, image detail | [gallery.md](gallery.md) |
+| Datasets | [datasets.md](datasets.md) |
+| Gallery, image detail | [gallery.md](gallery.md) · [subfolders.md](subfolders.md) |
 | Videos strip, video detail | [video.md](video.md) · [video-extraction.md](video-extraction.md) · [video-reextract.md](video-reextract.md) |
 | Captioning | [captioning.md](captioning.md) |
 | Score images | [scoring.md](scoring.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |

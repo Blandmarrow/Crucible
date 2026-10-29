@@ -1,6 +1,6 @@
 # Videos
 
-**Experimental.** Videos are **sources**, not gallery images. A video you add is stored separately from the dataset's images, in its own `videos/` folder, and is kept out of the counts you see on a dataset card: an image count never includes videos, and a dataset's size never includes them either. The point of holding a video is to extract frames from it; those frames become ordinary images and can be scored, captioned and exported like any others — see [Datasets & Gallery](gallery.md) for everything that then applies to them. This page covers holding videos. Turning them into frames is covered in [Frame extraction](video-extraction.md), and cutting the frames you kept again at full size is covered in [Re-extracting frames at full resolution](video-reextract.md).
+**Experimental.** Videos are **sources**, not gallery images. A video you add is stored separately from the dataset's images, in its own `videos/` folder, and is kept out of the counts you see on a dataset card: an image count never includes videos, and a dataset's size never includes them either. The point of holding a video is to extract frames from it; those frames become ordinary images and can be scored, captioned and exported like any others — see [Gallery](gallery.md) for everything that then applies to them. This page covers holding videos. Turning them into frames is covered in [Frame extraction](video-extraction.md), and cutting the frames you kept again at full size is covered in [Re-extracting frames at full resolution](video-reextract.md).
 
 ## Adding videos
 

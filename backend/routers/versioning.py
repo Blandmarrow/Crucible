@@ -27,11 +27,13 @@ _SNAPSHOT_INLINE_LIMIT = 100
 async def _require_versioning_enabled(db: AsyncSession) -> str:
     """Refuse a versioning *write* when the mode is "off", and return the mode.
 
-    Off mode no-ops both copy-on-write hooks — `protect_file_before_overwrite`
-    fires only in "auto", `mark_image_deleted_in_versions` returns immediately on
-    "off" — so a restore or a version delete run in this mode overwrites and
-    unlinks the current files with nothing kept in the object store. The UI hides
-    the page, which is not a guard: the routes are reachable directly.
+    Off means the user turned the feature off, so nothing here may create,
+    restore, delete or prune versions. The UI hides the page, which is not a
+    guard: the routes are reachable directly. (The guard used to carry a second
+    reason — both copy-on-write hooks no-op'd in Off, so a restore here
+    overwrote files with nothing kept. They now fire in every mode, gated on
+    lazy snapshot rows rather than the mode (GPT-022), so existing snapshots
+    stay protected; the refusal is about the feature being off.)
 
     The four read routes are deliberately *not* gated. `Sidebar` and
     `DatasetsPage` call `listBranches`/`listVersions` whatever the mode is, so
@@ -42,6 +44,20 @@ async def _require_versioning_enabled(db: AsyncSession) -> str:
     if settings.versioning_mode == "off":
         raise HTTPException(400, "Versioning is disabled. Enable it in Settings first.")
     return settings.versioning_mode
+
+
+async def _store_result(session: AsyncSession, job_id: str, result: dict) -> None:
+    """Write a restore/checkout outcome to the job row's `result_data`.
+
+    A restore that could not restore some files still ends `completed`, so the
+    counts and `failure_summary` are the only record of it once the live
+    progress is gone (PM-023's `failed_count` convention, GPT-025). Called
+    inside the `busy` block, before the job queue marks the row completed.
+    """
+    job_row = await session.get(BackgroundJob, job_id)
+    if job_row is not None:
+        job_row.result_data = result
+        await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +102,12 @@ async def create_branch(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
+    # Before the job row, so a foreign or bogus id is a 404 rather than a failed
+    # job; the service checks again (GPT-024).
+    if body.from_version_id is not None:
+        src_ver = await db.get(DatasetVersion, body.from_version_id)
+        if src_ver is None or src_ver.dataset_id != dataset_id:
+            raise HTTPException(404, "Version not found")
     await _require_versioning_enabled(db)
 
     # Count images to decide sync vs async
@@ -174,11 +196,12 @@ async def checkout_branch(
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session, busy(dataset_id, "branch checkout"):
-            await version_service.checkout_branch(
+            result = await version_service.checkout_branch(
                 session, dataset_id, branch_id,
                 pre_restore_snapshot=pre_restore,
                 job_id=job_id,
             )
+            await _store_result(session, job_id, result)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}
@@ -233,6 +256,13 @@ async def create_snapshot(
     dataset = await db.get(Dataset, dataset_id)
     if dataset is None:
         raise HTTPException(404, "Dataset not found")
+    # A foreign branch would take this dataset's version and move *its* head
+    # (GPT-024). Checked before the job row, matching the checkout route; the
+    # service refuses it too.
+    if body.branch_id is not None:
+        branch = await db.get(DatasetBranch, body.branch_id)
+        if branch is None or branch.dataset_id != dataset_id:
+            raise HTTPException(404, "Branch not found")
 
     from sqlalchemy import func
     from backend.models.image import Image
@@ -270,11 +300,14 @@ async def create_snapshot(
         await job_queue.enqueue(job, _run)
         return {"job_id": job.id}
 
-    version = await version_service.create_snapshot(
-        db, dataset_id,
-        name=body.name, description=body.description,
-        branch_id=body.branch_id,
-    )
+    try:
+        version = await version_service.create_snapshot(
+            db, dataset_id,
+            name=body.name, description=body.description,
+            branch_id=body.branch_id,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return VersionOut.model_validate(version)
 
 
@@ -397,12 +430,13 @@ async def restore_version(
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session, busy(dataset_id, "restore"):
-            await version_service.restore_snapshot(
+            result = await version_service.restore_snapshot(
                 session, dataset_id, version_id,
                 handle_extra_images=h_extra,
                 pre_restore_snapshot=pre_restore,
                 job_id=job_id,
             )
+            await _store_result(session, job_id, result)
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id}

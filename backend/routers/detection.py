@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import datetime
@@ -27,13 +28,14 @@ from backend.schemas.detection import (
 )
 from backend.services import version_service
 from backend.services.detection_service import remap_detections_for_crop
-from backend.services.image_service import crop_image_to_dest, generate_thumbnail
+from backend.services.image_service import crop_image_to_dest, generate_thumbnail, temp_sibling
 from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
     chunked,
     normalize_subfolder,
     record_in_place,
+    replace_retrying,
     slugify_filename,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -130,6 +132,13 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
     image_data = [(r.id, r.file_path, r.caption_text or "") for r in rows]
 
     async def _run(job_id: str) -> None:
+        # Each branch leases the model it loads into `held` (GPT-032), so the
+        # lease lasts the whole per-image loop and is released however the job
+        # ends — completed, failed, or cancelled between images.
+        with contextlib.ExitStack() as held:
+            await _detect(job_id, held)
+
+    async def _detect(job_id: str, held: contextlib.ExitStack) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
 
@@ -155,13 +164,17 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 job_queue.raise_if_cancelled(job_id)
                 async with AsyncSessionLocal() as session:
                     detections: list[dict] = []
+                    inference_ok = False
                     try:
                         fn = functools.partial(detect_sync, file_path, body.min_prob)
                         detections = await loop.run_in_executor(None, fn)
+                        inference_ok = True
                     except Exception:
                         logger.error("NudeNet detection failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -211,6 +224,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             gdino_threshold = _thresholds.gdino_threshold
 
             sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+            held.enter_context(model_manager.lease(sam2_entry))
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
                 job_queue.raise_if_cancelled(job_id)
@@ -233,7 +247,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     except Exception:
                         logger.error("SAM2 prediction failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -292,6 +308,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             sam3_threshold = _thresholds.sam3_threshold
 
             sam3_entry = await model_manager.load_sam3(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
+            held.enter_context(model_manager.lease(sam3_entry))
 
             for i, (img_id, file_path, _caption_text) in enumerate(image_data):
                 job_queue.raise_if_cancelled(job_id)
@@ -311,7 +328,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                     except Exception:
                         logger.error("SAM3 prediction failed for %s", file_path, exc_info=True)
 
-                    if body.overwrite:
+                    # Overwrite replaces this model's rows with a *result*; a
+                    # failed inference has none, so the existing rows stay.
+                    if body.overwrite and inference_ok:
                         await session.execute(
                             delete(Detection).where(
                                 Detection.image_id == img_id,
@@ -364,6 +383,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
 
         variant = "promptgen" if "promptgen" in body.model else "large"
         model_entry = await model_manager.load_florence2(variant)
+        held.enter_context(model_manager.lease(model_entry))
 
         for i, (img_id, file_path, caption_text) in enumerate(image_data):
             job_queue.raise_if_cancelled(job_id)
@@ -379,7 +399,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                 except Exception:
                     logger.error("Detection failed for %s", file_path, exc_info=True)
 
-                if body.overwrite:
+                # Overwrite replaces this model's rows with a *result*; a failed
+                # inference has none, so the existing rows stay.
+                if body.overwrite and inference_ok:
                     await session.execute(
                         delete(Detection).where(
                             Detection.image_id == img_id,
@@ -775,11 +797,16 @@ async def create_manual_detection(
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         detections: list[dict] = []
+        # Leased only around inference: the DB write below never reads the model.
+        # The lease sits *inside* the try, so a refused lease (the entry was
+        # evicted before it could be taken) falls back to the plain box like any
+        # other SAM failure — the drawing is never lost.
         try:
-            fn = functools.partial(
-                predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
-            )
-            detections = await loop.run_in_executor(None, fn)
+            with model_manager.lease(sam2_entry):
+                fn = functools.partial(
+                    predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
+                )
+                detections = await loop.run_in_executor(None, fn)
         except Exception:
             logger.error("Manual-box SAM2 prediction failed for %s", file_path, exc_info=True)
 
@@ -922,10 +949,26 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             last_image_id: str | None = None
             cancelled = False
-            for i, img in enumerate(images):
+            image_ids = [im.id for im in images]
+            by_id = {im.id: im for im in images}
+            # A failed replace-mode crop rolls the session back, which expires
+            # every instance in it; from then on each row is re-read (with its
+            # deferred `source_meta`) rather than touched expired, which would
+            # lazy-load on an async session and raise MissingGreenlet.
+            needs_reload = False
+            touched_datasets: set[str] = set()
+            for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                if needs_reload:
+                    img = await session.get(
+                        Image, image_id, options=[undefer(Image.source_meta)], populate_existing=True
+                    )
+                    if img is None:
+                        continue
+                else:
+                    img = by_id[image_id]
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i, "total": len(images),
@@ -954,51 +997,61 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                 if replace:
                     await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                     await session.commit()  # persist the COW hash backfill before the overwrite
-                    tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+                    tmp_path = temp_sibling(src_path, "croptmp")
+                    filename = img.filename
+                    # Stage, flush, swap, commit (GPT-010). Every row field and the
+                    # detection remap — DB work that can fail: a locked database, a
+                    # malformed stored mask — are staged and flushed while the
+                    # original is still intact; the swap over it is the one
+                    # irreversible step, and only the per-image commit follows it
+                    # (PM-013). A failure before the swap rolls back this image
+                    # alone, with its pixels, row and detections untouched.
                     try:
                         info = await loop.run_in_executor(
                             None, crop_image_to_dest, str(src_path), str(tmp_path), *rect,
                         )
-                        tmp_path.replace(src_path)
+                        img.width = info["width"]
+                        img.height = info["height"]
+                        img.file_size_bytes = info["file_size_bytes"]
+                        img.format = info["format"]
+                        img.phash = info["phash"]
+                        # `updated_at` is stamped by `record_in_place`, which also
+                        # writes `processing_history` *and* `scores_stale` — the
+                        # crop changed both the framing and the resolution the
+                        # scores were measured against.
+                        record_in_place(
+                            img,
+                            "crop_to_detection",
+                            mode=cfg["mode"],
+                            labels=cfg["labels"],
+                            padding_pct=cfg["padding_pct"],
+                            target_ar=cfg["target_ar"],
+                        )
+                        # Remap the image's detections into the crop frame (drop
+                        # ones outside), in the transaction of the geometry it
+                        # describes.
+                        await remap_detections_for_crop(session, img.id, rect, old_size)
+                        await session.flush()
+                        await replace_retrying(tmp_path, src_path)
                     except Exception as exc:
-                        logger.error("Detection crop failed for %s: %s", img.filename, exc)
-                        tmp_path.unlink(missing_ok=True)
+                        await session.rollback()
+                        needs_reload = True
+                        try:
+                            tmp_path.unlink(missing_ok=True)
+                        except OSError:
+                            logger.warning("Detection crop: could not remove %s", tmp_path, exc_info=True)
+                        logger.error("Detection crop failed for %s: %s", filename, exc)
                         counts["failed"] += 1
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
                             "percent": round((i + 1) / len(images) * 100, 1),
-                            "current_item": img.filename,
+                            "current_item": filename,
                             "message": f"Failed: {exc}",
                         })
                         continue
-                    img.width = info["width"]
-                    img.height = info["height"]
-                    img.file_size_bytes = info["file_size_bytes"]
-                    img.format = info["format"]
-                    img.phash = info["phash"]
-                    # `updated_at` is stamped by `record_in_place` below.
-                    # Writes `processing_history` *and* `scores_stale` — the crop
-                    # changed both the framing and the resolution the scores were
-                    # measured against. Pure dict building, so it cannot raise
-                    # between the overwrite above and the commit below (PM-013).
-                    record_in_place(
-                        img,
-                        "crop_to_detection",
-                        mode=cfg["mode"],
-                        labels=cfg["labels"],
-                        padding_pct=cfg["padding_pct"],
-                        target_ar=cfg["target_ar"],
-                    )
-                    # Replace-mode crop changed the image geometry: remap the
-                    # image's detections into the crop frame (drop ones outside).
-                    # In the same transaction as the geometry it describes.
-                    await remap_detections_for_crop(session, img.id, rect, old_size)
-                    # Nothing fallible between the (already-done) overwrite and this
-                    # commit — a raise before here would roll back the geometry,
-                    # processing_history and detection remaps of *every* image the
-                    # loop has already overwritten on disk (PM-013). Committing per
-                    # image is what bounds the damage to the one that failed.
+                    # Per image: committing after the loop would let one raise
+                    # roll back the rows of every image already swapped on disk.
                     await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the crop ---
@@ -1081,6 +1134,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     last_image_id = new_img.id
 
                 counts["cropped"] += 1
+                touched_datasets.add(img.dataset_id)
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i + 1, "total": len(images),
@@ -1096,6 +1150,17 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             if job_row:
                 job_row.result_data = counts
             await session.commit()
+
+            # Both modes moved `total_size_bytes` (a replace rewrote the file,
+            # a copy added a row). After the final commit, so a failed refresh
+            # cannot roll back the copy rows, their labels or the counts.
+            from backend.services.dataset_service import refresh_stats
+            for ds_id in touched_datasets:
+                try:
+                    await refresh_stats(session, ds_id)
+                except Exception:
+                    logger.warning("Detection crop: could not refresh stats for %s", ds_id, exc_info=True)
+                    await session.rollback()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
@@ -1185,12 +1250,16 @@ async def refine_detection(
         sam2_entry = await model_manager.load_sam2(job_id=job_id, loop=loop, dataset_id=dataset_id)
 
         result: dict | None = None
+        # Leased only around inference: the DB write below never reads the model.
+        # Inside the try, so a refused lease leaves the mask unchanged like any
+        # other refine failure.
         try:
-            fn = functools.partial(
-                refine_sync, file_path, sam2_entry.model, mask_json, bbox,
-                point_prompts, point_labels,
-            )
-            result = await loop.run_in_executor(None, fn)
+            with model_manager.lease(sam2_entry):
+                fn = functools.partial(
+                    refine_sync, file_path, sam2_entry.model, mask_json, bbox,
+                    point_prompts, point_labels,
+                )
+                result = await loop.run_in_executor(None, fn)
         except Exception:
             logger.error("Mask refine failed for %s", file_path, exc_info=True)
 

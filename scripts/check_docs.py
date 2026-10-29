@@ -394,9 +394,11 @@ def check_pending_splits(files: list[Path]) -> list[str]:
     warnings: list[str] = []
     pending = REPO_ROOT / PENDING_SPLITS
     text = pending.read_text(encoding="utf-8") if pending.exists() else ""
-    over = {str(f.relative_to(REPO_ROOT)) for f, _, _ in oversized(files)}
+    # `as_posix()`: the entries are written with forward slashes, and a bare str()
+    # is backslashed on Windows, where every over-budget file then read as unrecorded.
+    over = {f.relative_to(REPO_ROOT).as_posix() for f, _, _ in oversized(files)}
     settled = {
-        str(f.relative_to(REPO_ROOT))
+        f.relative_to(REPO_ROOT).as_posix()
         for f in files
         if len(f.read_text(encoding="utf-8").split()) < word_limit(f) * SPLIT_TARGET_FRACTION
     }

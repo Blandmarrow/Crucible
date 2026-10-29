@@ -2,8 +2,10 @@ import asyncio
 import errno
 import json
 import logging
+import os
 import re
 import shutil
+import stat
 import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
@@ -107,6 +109,59 @@ def sanitize_abs_path(path: str) -> Path:
     if not p.is_absolute():
         raise HTTPException(400, "Path must be absolute")
     return p
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink or a Windows junction (a mount-point reparse point)."""
+    if p.is_symlink():
+        return True
+    is_junction = getattr(p, "is_junction", None)  # Path.is_junction: Python 3.12+
+    if is_junction is not None:
+        return is_junction()
+    try:
+        return getattr(os.lstat(p), "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", -1)
+    except OSError:
+        return False
+
+
+def canonical_abs_path(path: str, root: Path) -> Path:
+    """`sanitize_abs_path`, then one canonical spelling for the path (GPT-011).
+
+    Use it wherever a client-supplied path is matched against *stored* paths —
+    the file-browser routes, whose row scopes and folder guards compare
+    `Image.file_path`/`Dataset.folder_path` strings. A bare `Path` keeps `..`,
+    so `{ds}/images/../images` matched no row while `rmtree` resolved it and
+    deleted the bytes, skipping the snapshot backup on the way.
+
+    Plain `.resolve()` would be just as wrong in the other direction: stored
+    paths are deliberately **unresolved** (`str(settings.datasets_dir / slug)`),
+    and `datasets_dir` may sit under a symlink, a junction or `subst`, so a
+    resolved string would match nothing. Hence resolve, then rebase anything
+    under `root.resolve()` back onto `root` — the stored form. Paths outside
+    `root` come back resolved; no row names them.
+
+    A path whose *last* component is a symlink — or a Windows directory
+    junction, which `is_symlink()` does not report but `resolve()` follows — keeps
+    it: only its parent is resolved, so deleting or renaming a link acts on the
+    link, not its target.
+    Full resolution also gives Windows' on-disk case, so a case variant matches
+    the stored string too.
+
+    One shape resolves *out* of `root` while being spelled inside it: a link
+    inside the tree — a dataset folder kept on another drive. Its stored paths
+    run through the link (`str(root / slug / ...)`), so the resolved target
+    would match no row while `rmtree` deleted the bytes behind it. Such a path,
+    when it carries no `..`, comes back as spelled — that spelling *is* the
+    stored form.
+    """
+    p = sanitize_abs_path(path)
+    canonical = p.parent.resolve() / p.name if _is_link(p) else p.resolve()
+    real_root = root.resolve()
+    if canonical.is_relative_to(real_root):
+        return root / canonical.relative_to(real_root)
+    if ".." not in p.parts and p.is_relative_to(root):
+        return p
+    return canonical
 
 
 def within_datasets_dir(path_str: str, base_dir: Path) -> Path | None:
@@ -590,10 +645,20 @@ def require_free_space(
     )
 
 
-def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
-    """Rename a file and its .txt sidecar (if it exists) atomically.
+def rename_with_sidecar(old_path: Path, new_path: Path) -> bool:
+    """Rename a file, then move its .txt sidecar (if it exists) after it.
 
     Use this everywhere a file is renamed; never copy the two-step pattern inline.
+
+    **A raise means nothing moved.** Only the image rename can fail the call; the
+    sidecar is best-effort — a failure to move it is logged and reported by
+    returning False, with the image already at `new_path`. The two renames cannot
+    be made atomic, and the image is the half a row names: a raise *after* the
+    image moved would strand a rename-first caller's row on a path that no longer
+    exists (GPT-009), and send a commit-first caller's compensation (`bulk_rename`,
+    `batch_move_dataset`, `version_service.restore_snapshot`) back onto the old
+    path. A stranded `.txt` costs nothing durable — `Image.caption_text` is the
+    authority and the sidecar its mirror.
 
     **The caller must have proved `new_path` free.** `Path.rename` silently
     replaces an existing target on POSIX and raises `FileExistsError` on Windows,
@@ -606,8 +671,16 @@ def rename_with_sidecar(old_path: Path, new_path: Path) -> None:
     """
     old_path.rename(new_path)
     old_txt = old_path.with_suffix(".txt")
-    if old_txt.exists():
-        old_txt.rename(new_path.with_suffix(".txt"))
+    try:
+        if old_txt.exists():
+            old_txt.rename(new_path.with_suffix(".txt"))
+    except OSError:
+        logger.warning(
+            "rename_with_sidecar: moved %s to %s but not its caption sidecar %s",
+            old_path.name, new_path.name, old_txt.name, exc_info=True,
+        )
+        return False
+    return True
 
 
 def copy_with_sidecar(old_path: Path, new_path: Path) -> None:

@@ -8,24 +8,22 @@ from typing import Literal
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import settings
 from backend.database import get_db
-from backend.ml.model_manager import model_manager
+from backend.ml.model_manager import ModelInUseError, model_manager
 from backend.models import BackgroundJob, Image, StyleSimilarityRun, Video
 from backend.models.style_run import REFERENCE_IDS_STORED_MAX
-from backend.services import version_service
+from backend.services.image_delete import unlink_files_for_rows
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import get_style_distribution, refresh_stats
 from backend.services.duplicate_service import (
     apply_duplicate_groups,
     prune_orphaned_duplicate_flags,
 )
-from backend.utils import chunked, contained_path, normalize_subfolder, score_columns
+from backend.utils import chunked, normalize_subfolder, score_columns
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -228,9 +226,14 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
                     )
                     loaded_ids.add("aesthetic")
                     handle = entry.model  # the three-tenant {"clip","mlp","preprocess"} dict
-                aesthetic_scores = await score_images_batch(
-                    paths, handle, job_id=job_id, model=aesthetic_marker
-                )
+                # One lease per stage, taken with no `await` after the load and
+                # released when the stage ends — never one for the whole job, which
+                # would stop `_evict_lru` freeing this model while `dino` loads
+                # (GPT-032). Every lease is gone before the `finally` unloads.
+                with model_manager.lease(entry):
+                    aesthetic_scores = await score_images_batch(
+                        paths, handle, job_id=job_id, model=aesthetic_marker
+                    )
 
             technical_results = []
             if body.run_technical:
@@ -245,10 +248,11 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             if body.run_watermark:
                 entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("aesthetic")
-                watermark_results = await score_images_watermark(
-                    paths, entry.model, job_id=job_id,
-                    watermark_threshold=thresholds.watermark_threshold,
-                )
+                with model_manager.lease(entry):
+                    watermark_results = await score_images_watermark(
+                        paths, entry.model, job_id=job_id,
+                        watermark_threshold=thresholds.watermark_threshold,
+                    )
 
             clip_embeddings: list[bytes | None] = []
             dino_embeddings: list[bytes | None] = []
@@ -256,23 +260,26 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             if body.run_embeddings:
                 entry = await model_manager.load_aesthetic(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("aesthetic")
-                clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
+                with model_manager.lease(entry):
+                    clip_embeddings = await extract_clip_embeddings_batch(paths, entry.model, job_id=job_id)
             if body.run_dino:
                 from backend.ml.dino_scorer import extract_embeddings_dino, extract_layer_embeddings_dino
                 dino_entry = await model_manager.load_dino(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("dino")
-                dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
-                if body.run_dino_layers:
-                    dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
+                with model_manager.lease(dino_entry):
+                    dino_embeddings = await extract_embeddings_dino(paths, dino_entry, job_id=job_id)
+                    if body.run_dino_layers:
+                        dino_layer_embeddings = await extract_layer_embeddings_dino(paths, dino_entry, job_id=job_id)
 
             nsfw_results: list[dict] = []
             if body.run_nsfw:
                 from backend.ml.nsfw_scorer import score_images_nsfw_batch
                 nsfw_entry = await model_manager.load_nsfw(job_id=job_id, loop=loop, dataset_id=body.dataset_id)
                 loaded_ids.add("nsfw")
-                nsfw_results = await score_images_nsfw_batch(
-                    paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
-                )
+                with model_manager.lease(nsfw_entry):
+                    nsfw_results = await score_images_nsfw_batch(
+                        paths, nsfw_entry.model, threshold=thresholds.nsfw_threshold, job_id=job_id
+                    )
 
             # Any of the *_results lists may be shorter than `ids` if the job was cancelled
             # mid-batch (scorers return partial results). Guard every indexed access with
@@ -381,29 +388,44 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
             # that raises should not strand 3.5 GB; and the DB `commit()` above is
             # already past, so this is the PM-013 post-commit epilogue — it logs and
             # can never change the job's outcome. Awaiting here is safe because
-            # cancellation is cooperative (`raise_if_cancelled` raises by hand; the
-            # task is never `.cancel()`ed).
+            # cancellation is cooperative (`raise_if_cancelled` raises by hand). The
+            # one exception is shutdown: `JobQueue.stop()` cancels the worker task
+            # once if the job outlives its grace. Landing earlier, that cancel only
+            # brings us here, where the awaits run normally; landing on one of
+            # them, it cuts the remaining unloads short — which costs nothing in a
+            # process that is exiting.
             #
             # Scoped to `loaded_ids`, never `evict_all()`: a Florence-2 or SAM2
             # someone loaded for other work is not this job's to evict.
             if thresholds.auto_unload_after_scoring and loaded_ids:
-                try:
-                    # Drop this frame's own references *first*. `unload` moves the
-                    # weights to CPU and then flushes the allocator, but the flush
-                    # only returns what nothing still holds — and these four names
-                    # are live locals right here in the `finally`, one of them
-                    # (`handle`) a second reference to `aesthetic`'s three-tenant
-                    # dict. Left bound, they kept ~3.5 GB resident past
-                    # `empty_cache()`; the frame then died with no second flush to
-                    # follow, so the process held the VRAM until it exited.
-                    # `_release_to_cpu` alone would fix the residency, but the
-                    # allocator still cannot hand back a live buffer, so both ends
-                    # are needed.
-                    entry = handle = dino_entry = nsfw_entry = None
-                    for mid in sorted(loaded_ids):
+                # Drop this frame's own references *first*. `unload` moves the
+                # weights to CPU and then flushes the allocator, but the flush
+                # only returns what nothing still holds — and these four names
+                # are live locals right here in the `finally`, one of them
+                # (`handle`) a second reference to `aesthetic`'s three-tenant
+                # dict. Left bound, they kept ~3.5 GB resident past
+                # `empty_cache()`; the frame then died with no second flush to
+                # follow, so the process held the VRAM until it exited.
+                # `_release_to_cpu` alone would fix the residency, but the
+                # allocator still cannot hand back a live buffer, so both ends
+                # are needed.
+                entry = handle = dino_entry = nsfw_entry = None
+                # Caught per id: this job's own leases are all released by now,
+                # but a concurrent holder (an embed-references request, another
+                # job) can still lease one of these, and a refusal for that id
+                # must not strand the others in VRAM.
+                for mid in sorted(loaded_ids):
+                    try:
                         await model_manager.unload(mid)
-                except Exception:
-                    logger.exception("Auto-unload after scoring failed for job %s", job_id)
+                    except ModelInUseError:
+                        logger.info(
+                            "Auto-unload after scoring: %s is leased elsewhere; "
+                            "leaving it resident (job %s)", mid, job_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Auto-unload of %s after scoring failed for job %s", mid, job_id
+                        )
 
     await job_queue.enqueue(job, _run)
     return {"job_id": job.id, "total": len(images)}
@@ -438,12 +460,18 @@ async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
     and takes the per-model lock, so calling it for all four is safe; no id comes
     from the client, so there is nothing to validate.
 
-    **Refused while a scoring run is in flight.** `unload` calls `entry.model.cpu()`,
-    so pulling `dino` or an aesthetic model out from under a scorer running in the
-    executor thread is a device-mismatch `RuntimeError` and a failed job —
-    `ModelEntry.in_use` is never set, so nothing else stands in the way. The page's
-    own `isRunning` is not that guard: it knows only about a job *it* started, and
-    goes stale on a reload or in a second pane.
+    **Refused while a scoring run is in flight.** The scoring job leases each model
+    only for the stage that uses it (`ModelManager.lease`), so between stages a
+    model it loaded — and will auto-unload, or reload in a later stage — is
+    unleased; the job-level 409 keeps a run's models out of reach for its whole
+    life rather than only mid-stage. The page's own `isRunning` is not that guard:
+    it knows only about a job *it* started, and goes stale on a reload or in a
+    second pane.
+
+    **A leased model is skipped, not an error.** A concurrent embed-references
+    request or another job's lease makes `unload` raise `ModelInUseError`; that id
+    stays resident, is left out of `unloaded` and `freed_mb`, and is reported under
+    `in_use`, while every other id still unloads.
 
     `quality_score` is the exact scope, not a blunt any-job check: it is the only
     job type that loads anything in `SCORING_MODEL_IDS`. Style similarity reads
@@ -470,11 +498,17 @@ async def unload_scoring_models(db: AsyncSession = Depends(get_db)):
         m for m in model_manager.list_models()
         if m["id"] in SCORING_MODEL_IDS and m["loaded"]
     ]
+    in_use: list[str] = []
     for mid in SCORING_MODEL_IDS:
-        await model_manager.unload(mid)
+        try:
+            await model_manager.unload(mid)
+        except ModelInUseError:
+            in_use.append(mid)
+    freed = [m for m in resident if m["id"] not in in_use]
     return {
-        "unloaded": [m["id"] for m in resident],
-        "freed_mb": sum(int(m["vram_mb"]) for m in resident),
+        "unloaded": [m["id"] for m in freed],
+        "freed_mb": sum(int(m["vram_mb"]) for m in freed),
+        "in_use": in_use,
     }
 
 
@@ -569,11 +603,14 @@ async def embed_references(files: list[UploadFile] = File(...)):
     entry = await model_manager.load_aesthetic()
     loop = asyncio.get_running_loop()
     embeddings = []
-    for f in files:
-        img_bytes = await f.read()
-        fn = functools.partial(extract_clip_embedding_from_bytes_sync, img_bytes, entry.model)
-        emb_bytes = await loop.run_in_executor(None, fn)
-        embeddings.append(base64.b64encode(emb_bytes).decode())
+    # Held for every file: a scoring job's auto-unload (or the Unload button)
+    # between two files would otherwise `del` the weights under the next one.
+    with model_manager.lease(entry):
+        for f in files:
+            img_bytes = await f.read()
+            fn = functools.partial(extract_clip_embedding_from_bytes_sync, img_bytes, entry.model)
+            emb_bytes = await loop.run_in_executor(None, fn)
+            embeddings.append(base64.b64encode(emb_bytes).decode())
     return {"embeddings": embeddings}
 
 
@@ -1063,12 +1100,14 @@ async def get_duplicates(dataset_id: str, db: AsyncSession = Depends(get_db)):
     return {"groups": list(groups.values())}
 
 
-@router.post("/duplicates/resolve", status_code=204)
+@router.post("/duplicates/resolve")
 async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(get_db)):
     # Every `IN (...)` here is `chunked()`: the Quality page's bulk bar resolves
     # every filtered group in one call, so `delete_ids` is a few thousand rows on
     # a large dataset rather than the handful this endpoint was first written for.
     dataset_ids: set[str] = set()
+    deletable: list[str] = []
+    in_use = failed = 0
     if body.delete_ids:
         rows = []
         for chunk in chunked(body.delete_ids):
@@ -1080,34 +1119,31 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
         dataset_ids = {r.dataset_id for r in rows}
         for did in dataset_ids:
             ensure_not_busy(did)
-        files_to_delete: list[Path] = []
-        for r in rows:
-            # Same shape as `images.batch_delete`: gate per row, unlink the
-            # *resolved* path, and gate the versioning hook with it — it copies the
-            # bytes into `{ds}/.versions/objects/`, so an out-of-tree `file_path`
-            # is a read primitive even with the unlink skipped. The row delete
-            # below is unconditional.
-            p = contained_path(
-                r.file_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
-            )
-            if p is not None:
-                await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-                files_to_delete.extend([p, p.with_suffix(".txt")])
-            t = contained_path(
-                r.thumbnail_path, settings.datasets_dir, context="resolve_duplicates", ident=r.id
-            )
-            if t is not None:
-                files_to_delete.append(t)
-
-        for chunk in chunked(body.delete_ids):
+        # Same shape as `images.batch_delete`: files first, per row, gated by
+        # `contained_path` — the versioning hook copies the bytes into
+        # `{ds}/.versions/objects/`, so an out-of-tree `file_path` is a read
+        # primitive even with the unlink skipped. A row whose file is locked is
+        # kept (PM-021, GPT-008), and so is its group — see `live_groups` below.
+        deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="resolve_duplicates")
+        for chunk in chunked(deletable):
             await db.execute(delete(Image).where(Image.id.in_(chunk)))
         await db.commit()
 
-        for f in files_to_delete:
-            f.unlink(missing_ok=True)
-
         for did in dataset_ids:
             await refresh_stats(db, did)
+
+    # A group that kept a copy (its file was locked, or would not delete) still
+    # has a live duplicate. Clearing its kept image's flags would dissolve it —
+    # and the backstop prune below would then clear the lone kept copy as an
+    # orphan of a dead root — leaving two identical, unflagged images and nothing
+    # for the "close it and try again" the client shows to find. Keyed like
+    # `get_duplicates`: a member's `duplicate_of`, or the root's own id.
+    gone = set(deletable)
+    live_groups: set[str] = set()
+    for chunk in chunked([i for i in body.delete_ids if i not in gone]):
+        res = await db.execute(select(Image.id, Image.quality_flags).where(Image.id.in_(chunk)))
+        for rid, flags in res.all():
+            live_groups.add((flags or {}).get("duplicate_of") or rid)
 
     # One batched load per chunk rather than a `db.get` per id — a bulk resolve
     # keeps one survivor per group, so this loop is as long as the group count.
@@ -1118,6 +1154,8 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     for chunk in chunked(body.keep_ids):
         res = await db.execute(select(Image).where(Image.id.in_(chunk)))
         for img in res.scalars().all():
+            if ((img.quality_flags or {}).get("duplicate_of") or img.id) in live_groups:
+                continue
             flags = dict(img.quality_flags or {})
             flags.pop("is_duplicate", None)
             flags.pop("duplicate_of", None)
@@ -1138,3 +1176,4 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     # group's keep with its own deletes.
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}

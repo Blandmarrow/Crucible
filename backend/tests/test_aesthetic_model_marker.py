@@ -92,10 +92,11 @@ def _no_real_scorers(monkeypatch):
     aesthetic_mod.extract_clip_embeddings_batch = extract_clip_embeddings_batch
     monkeypatch.setitem(sys.modules, "backend.ml.aesthetic_scorer", aesthetic_mod)
 
-    class _Entry:
-        def __init__(self):
-            self.model = object()
-            self.processor = object()
+    from backend.ml.model_manager import ModelEntry
+
+    # Real entries, because the job leases each one for its stage.
+    def _Entry():
+        return ModelEntry(object(), object(), vram_mb=0)
 
     laion_entry, v2_5_entry = _Entry(), _Entry()
 

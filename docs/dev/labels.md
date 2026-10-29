@@ -314,8 +314,8 @@ NULL.
   exactly as a caption edit does. It deletes only for image ids in `wanted`, so
   `handle_extra_images="keep"` images keep theirs.
 
-A restore targeting a *different* dataset needs no id remapping at all — the
-direct payoff of the vocabulary being global.
+A row Pass 0b forks (its image now lives in another dataset) needs no id
+remapping at all — the direct payoff of the vocabulary being global.
 
 The diff triple: `VersionImageState.label_ids` is in `_DIFF_COLS` and
 `_DIFF_COMPARE_FIELDS`, and **not** in `_HEAVY_DIFF_FIELDS`. It is mutable state
@@ -341,7 +341,11 @@ Cross-dataset:
 Labels travel on a copy while **detections do not** (there are no `Detection`
 references in `dataset_service.py`). Not a bug — "this image is a reject" is a
 fact about the image — but surprising enough that someone will otherwise "fix"
-it.
+it. *Snapshots* are the exception: since GPT-026 a snapshot mirrors detections
+too (`VersionImageState.detections`) and a restore writes them back, because a
+restore swaps the pixels their geometry is measured against. Duplicating a
+dataset, from disk or from a snapshot, still leaves them behind. See
+`docs/dev/versioning-service.md`.
 
 **Same-dataset derivatives carry labels too**, for the same reason and by the
 same rule as `copy_provenance`: a crop is the same picture at a different

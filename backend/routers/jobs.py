@@ -14,11 +14,42 @@ from backend.workers.progress import broadcaster
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+JOB_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
+MAX_IDS_FILTER = 500
+
+
+def _csv(value: str | None) -> list[str]:
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
 @router.get("/", response_model=list[JobOut])
-async def list_jobs(limit: int = Query(50, ge=1, le=500), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(BackgroundJob).order_by(BackgroundJob.created_at.desc()).limit(limit)
-    )
+async def list_jobs(
+    limit: int = Query(50, ge=1, le=500),
+    status: str | None = Query(
+        None, description="Comma-separated subset of: " + ", ".join(JOB_STATUSES)
+    ),
+    ids: str | None = Query(None, description=f"Comma-separated job ids, at most {MAX_IDS_FILTER}"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Newest first. `status` and `ids` are ANDed; both feed the client's reconcile
+    (`frontend/src/utils/jobReconcile.ts`), which catches up on terminal events an
+    SSE gap lost."""
+    query = select(BackgroundJob)
+    statuses = _csv(status)
+    if statuses:
+        unknown = sorted(set(statuses) - set(JOB_STATUSES))
+        if unknown:
+            raise HTTPException(422, f"Unknown job status: {', '.join(unknown)}")
+        query = query.where(BackgroundJob.status.in_(statuses))
+    id_list = _csv(ids)
+    if ids is not None:
+        # An `ids` filter naming nothing matches nothing — never "no filter".
+        if not id_list:
+            return []
+        if len(id_list) > MAX_IDS_FILTER:
+            raise HTTPException(422, f"At most {MAX_IDS_FILTER} ids per request")
+        query = query.where(BackgroundJob.id.in_(id_list))
+    result = await db.execute(query.order_by(BackgroundJob.created_at.desc()).limit(limit))
     return result.scalars().all()
 
 

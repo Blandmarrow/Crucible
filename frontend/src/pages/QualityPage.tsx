@@ -9,7 +9,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import { formatFramePosition, formatTimeAgo } from "../utils/duration";
 import { settingsApi, type Thresholds } from "../api/settings";
 import { datasetsApi } from "../api/datasets";
-import { imagesApi } from "../api/images";
+import { imagesApi, keptImagesMessage, type DeleteResult } from "../api/images";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import StyleReferencePicker from "../components/quality/StyleReferencePicker";
@@ -464,11 +464,17 @@ export default function QualityPage() {
   const unloadMutation = useMutation({
     mutationFn: qualityApi.unloadModels,
     onSuccess: (data) => {
-      toast.success(
-        data.unloaded.length
-          ? `Freed ${formatVram(data.freed_mb)} of VRAM`
-          : "No scoring models were loaded",
-      );
+      const kept = data.in_use?.length ?? 0;
+      if (kept && !data.unloaded.length) {
+        toast.error(`Still in use, not unloaded: ${data.in_use.join(", ")}`);
+      } else {
+        toast.success(
+          data.unloaded.length
+            ? `Freed ${formatVram(data.freed_mb)} of VRAM` +
+                (kept ? ` · still in use: ${data.in_use.join(", ")}` : "")
+            : "No scoring models were loaded",
+        );
+      }
       qc.invalidateQueries({ queryKey: ["quality", "models"] });
     },
     // The server's 409 names the run holding the models — surface it verbatim,
@@ -495,27 +501,39 @@ export default function QualityPage() {
     mutationFn: async ({ plans, bulk }: { plans: DuplicateImage[][]; bulk: boolean }) => {
       if (bulk) setBulkProgress({ done: 0, total: plans.length });
       let done = 0;
+      // What the server did, not what was planned: a copy whose file is open in
+      // another program is kept rather than deleted (GPT-008).
+      const totals: DeleteResult = { deleted: 0, in_use: 0, failed: 0 };
       for (let i = 0; i < plans.length; i += RESOLVE_BATCH_GROUPS) {
         const batch = plans.slice(i, i + RESOLVE_BATCH_GROUPS);
         try {
-          await qualityApi.resolveDuplicates(
+          const r = await qualityApi.resolveDuplicates(
             batch.map((g) => g[0].id),
             batch.flatMap((g) => g.slice(1).map((m) => m.id)),
           );
+          totals.deleted += r.deleted;
+          totals.in_use += r.in_use;
+          totals.failed += r.failed;
         } catch (err) {
           throw new PartialResolveError(done, plans.length, err);
         }
         done += batch.length;
         if (bulk) setBulkProgress({ done, total: plans.length });
       }
-      return { groups: plans.length, images: plannedDeletions(plans) };
+      return { groups: plans.length, totals };
     },
-    onSuccess: ({ groups, images }) => {
-      toast.success(
-        groups === 1
-          ? "Duplicates resolved"
-          : `Resolved ${groups} groups · ${images} image${images === 1 ? "" : "s"} deleted`,
-      );
+    onSuccess: ({ groups, totals }) => {
+      const kept = keptImagesMessage(totals);
+      // A single group that kept a copy is not "resolved" — it is still a group
+      // (the server leaves its flags alone), so only the kept message shows.
+      if (!kept || (groups > 1 && totals.deleted > 0)) {
+        toast.success(
+          groups === 1
+            ? "Duplicates resolved"
+            : `Resolved ${groups} groups · ${totals.deleted} image${totals.deleted === 1 ? "" : "s"} deleted`,
+        );
+      }
+      if (kept) toast.error(kept);
     },
     onError: (err: unknown) => {
       if (err instanceof PartialResolveError && err.done > 0) {
@@ -746,9 +764,9 @@ export default function QualityPage() {
           {loadedModels.length > 0 && (
             <button
               className="btn ghost sm"
-              // Disabled while a run is in flight: nothing but the single-worker
-              // job queue stands between an unload and a scorer mid-batch
-              // (`ModelEntry.in_use` is never set).
+              // Disabled while a run is in flight, as a courtesy: the server
+              // refuses with 409 during a scoring run, and a model something
+              // else holds a lease on is skipped and reported in `in_use`.
               disabled={isRunning || unloadMutation.isPending}
               onClick={() => unloadMutation.mutate()}
               title={`Free VRAM held by: ${loadedModels.map((m) => m.name).join(", ")}`}

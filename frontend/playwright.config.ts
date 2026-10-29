@@ -19,7 +19,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'bash e2e/serve.sh',
+    command: 'node e2e/serve.mjs',
     url: `${baseURL}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 60_000,

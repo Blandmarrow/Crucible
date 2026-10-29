@@ -139,6 +139,12 @@ class ImageFilterParams(BaseModel):
     search: str | None = None
     min_score: float | None = None
     max_score: float | None = None
+    # Exclusive twin of `max_score` (`score < max_score_lt`), for histogram
+    # click-through: the stats buckets are half-open, so sending a bucket's upper
+    # edge as the inclusive `max_score` also matched every value sitting exactly
+    # on that edge — which the stats put in the *next* bucket (GPT-018).
+    # `max_score` stays inclusive; users type it by hand.
+    max_score_lt: float | None = None
     score_field: str | None = None
     score_is_null: bool | None = None
     quality_flag: str | None = None
@@ -212,38 +218,47 @@ class RenameImageRequest(BaseModel):
 
 
 class ImageResizeRequest(BaseModel):
-    width: int | None = None
-    height: int | None = None
-    scale: float | None = None
+    # gt=0: a zero or negative size is a 422 before the route's versioning hook
+    # runs, not a 500 from Pillow after it (GPT-020). allow_inf_nan=False: pydantic
+    # takes "inf", and JSON's 1e309 parses to inf, which would overflow int().
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    scale: float | None = Field(None, gt=0, allow_inf_nan=False)
     maintain_ar: bool = True
     resample: str = "LANCZOS"
 
 
 class ImageCropRequest(BaseModel):
+    # x/y are unconstrained: 0 is the common case, and Pillow pads a rect that
+    # starts outside the image, which the detection remap already expects.
     x: int
     y: int
-    width: int
-    height: int
-    output_width: int | None = None
-    output_height: int | None = None
+    # Every size is gt=0, as on ImageResizeRequest: a zero-sized crop or output
+    # is a 422 before the versioning hook, not a 500 from Pillow after it.
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    output_width: int | None = Field(None, gt=0)
+    output_height: int | None = Field(None, gt=0)
     replace: bool = False
     upscale_model: str | None = None
-    upscale_target_width: int | None = None
-    upscale_target_height: int | None = None
+    upscale_target_width: int | None = Field(None, gt=0)
+    upscale_target_height: int | None = Field(None, gt=0)
 
 
 class BatchResizeRequest(BaseModel):
     image_ids: list[str]
-    width: int | None = None
-    height: int | None = None
-    scale: float | None = None
+    # gt=0 and finite, as on ImageResizeRequest (GPT-020).
+    width: int | None = Field(None, gt=0)
+    height: int | None = Field(None, gt=0)
+    scale: float | None = Field(None, gt=0, allow_inf_nan=False)
     maintain_ar: bool = True
     label: str | None = None
 
 
 class BatchCropRequest(BaseModel):
     image_ids: list[str]
-    target_ar: float
+    # A ratio of 0 divides by zero and an infinite one floors a side to 0.
+    target_ar: float = Field(gt=0, allow_inf_nan=False)
     strategy: str = "center"
     label: str | None = None
 

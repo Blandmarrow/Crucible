@@ -12,6 +12,8 @@ import CrucibleMark from "../common/CrucibleMark";
 import { usePaneStore } from "../../store/paneStore";
 import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
+import { showImportSummaryToast } from "../../utils/importToast";
+import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
@@ -27,16 +29,17 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
-// The six jobs that re-cut an image thumbnail as a best-effort post-commit
+// The eight jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
 // the forms that start these jobs (LutForm, UpscaleForm, InpaintForm,
 // BulkEditPage, SelectionToolbar, ImageDetailPage's three handlers,
-// ReextractFramesForm) because TopBar is always mounted — and a 400-frame
-// re-extraction is exactly the job you walk away from.
+// ReextractFramesForm, RestoreConfirmModal, BranchSelector) because TopBar is
+// always mounted — and a 400-frame re-extraction is exactly the job you walk
+// away from. Restore and checkout regenerate thumbnails in Pass 3b.
 const THUMBNAIL_EPILOGUE_JOB_TYPES = new Set([
   "batch_lut", "batch_upscale", "crop_upscale", "crop_to_detection", "batch_inpaint",
-  "video_reextract",
+  "video_reextract", "restore_snapshot", "checkout_branch",
 ]);
 
 const PAGE_LABELS: Record<string, string> = {
@@ -167,7 +170,8 @@ export default function TopBar() {
       // still land between the click and the cooperative cancel, and reacting at
       // click time would consume this job's one invalidation before it does. The
       // backend always emits a terminal SSE event (even for pending jobs, reaped
-      // at dequeue), and useSSE clears the flag, so the real event gets through.
+      // at dequeue), and useSSE clears the flag, so the real event gets through;
+      // one lost to an SSE gap is synthesized by `utils/jobReconcile.ts`.
       if (
         TERMINAL_JOB_STATUSES.has(progress.status) &&
         !progress.optimistic &&
@@ -179,9 +183,9 @@ export default function TopBar() {
         // trace in the UI: the image is correct and committed, but the gallery
         // keeps drawing the old tile. Read after the `processedJobsRef` add, so
         // crop_upscale's two terminal events (its own, then job_queue's) toast
-        // once. Transport is a fetch, not the SSE payload: `broadcaster.emit`
-        // silently drops events when a subscriber's 200-slot queue fills, so a
-        // piggybacked count would under-report.
+        // once. Transport is a fetch, not the SSE payload: a terminal status can
+        // also be synthesized by `utils/jobReconcile.ts` after an SSE gap, and a
+        // count piggybacked on the live event would be missing from that one.
         //
         // `cancelled` is included — every one of these workers commits its
         // counts above `raise_if_cancelled`. `failed` is not: `job_queue` fails a
@@ -229,18 +233,33 @@ export default function TopBar() {
         }
         if (DATASET_MODIFYING_JOB_TYPES.has(progress.job_type)) {
           qc.invalidateQueries({ queryKey: ["datasets"] });
-          if (progress.job_type === "import" && progress.dataset_id) {
-            qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["dataset-stats", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
-            qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
-            // An import under `include_videos` creates Video rows. This is the
-            // always-mounted net, so it is what covers the user who started the
-            // import from DatasetsPage or the file browser and then walked into
-            // the gallery — the page-local handler there never ran.
+        }
+        // Folder import: the one place its outcome is handled, for all three entry
+        // points (the gallery's and DatasetsPage's ImportFolderModal, File
+        // Browser's ImportModal). All of them close on submit and adopt the job, so
+        // no page-local watcher exists to double the toast — and the user who
+        // walked away from the page that started it still hears how it ended
+        // (GPT-030). Every terminal status, since an import commits as it goes.
+        if (progress.job_type === "import") {
+          if (progress.dataset_id) {
+            // Rows were added: the shared content scope (counts, subfolders,
+            // stats, style meter, the detail view's boundary prefetch), plus the
+            // Video rows `include_videos` creates and the `other:` licenses a
+            // scraper sidecar brings in, unpickable until this refetches.
+            invalidateDatasetContentScope(qc, progress.dataset_id);
             qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["licenses-in-use", progress.dataset_id] });
+          }
+          const toastId = `import-${jobId}`;
+          if (progress.status === "completed") {
+            showImportSummaryToast(jobId, { id: toastId });
+          } else if (progress.status === "failed") {
+            toast.error(
+              progress.message ? `Import failed: ${progress.message}` : "Import failed — see Logs",
+              { id: toastId, duration: 8000 },
+            );
+          } else {
+            toast("Import cancelled — images already imported were kept", { id: toastId });
           }
         }
         // Detection jobs (run / manual box+SAM / mask refine) change per-image
@@ -249,11 +268,16 @@ export default function TopBar() {
         // stale otherwise (bulk detect run finishing after navigation).
         // crop_to_detection is included too: replace-mode crops now remap (and can
         // drop) detection geometry, so those rollups must refresh as well — and so
-        // is batch_inpaint, which *deletes* the detections it painted over.
+        // is batch_inpaint, which *deletes* the detections it painted over. So are
+        // restore_snapshot and checkout_branch: a snapshot records each image's
+        // detections and a restore writes them back (GPT-026), replacing the
+        // per-image rows and every dataset rollup over them.
         if (
           progress.job_type === "detection" ||
           progress.job_type === "crop_to_detection" ||
-          progress.job_type === "batch_inpaint"
+          progress.job_type === "batch_inpaint" ||
+          progress.job_type === "restore_snapshot" ||
+          progress.job_type === "checkout_branch"
         ) {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
@@ -267,9 +291,15 @@ export default function TopBar() {
             qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
             qc.invalidateQueries({ queryKey: ["videos", progress.dataset_id] });
           }
+          // `video_id` arrives on the worker's own emits, and a reconciled row
+          // carries it from `config`; an entry with neither (only the queue's
+          // events seen) falls back to every video, rather than to none.
           if (progress.video_id) {
             qc.invalidateQueries({ queryKey: ["video", progress.video_id] });
             qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          } else {
+            qc.invalidateQueries({ queryKey: ["video"] });
+            qc.invalidateQueries({ queryKey: ["video-frames"] });
           }
         }
         // Pass 2 rewrites frames in place, changing width/height/phash and the
@@ -286,6 +316,8 @@ export default function TopBar() {
           }
           if (progress.video_id) {
             qc.invalidateQueries({ queryKey: ["video-frames", progress.video_id] });
+          } else {
+            qc.invalidateQueries({ queryKey: ["video-frames"] });
           }
         }
       }

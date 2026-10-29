@@ -60,6 +60,27 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   holds it. **The other four remain open** — this amendment records a new router built to
   the rule, not a sweep that fixed them.
 
+**Amended a fourth time 2026-10-27 (GPT-010): "DB-only" was not a safe harbour.** Every
+replace-mode crop — single, batch, `crop_upscale` and `crop_to_detection` — ran
+`remap_detections_for_crop` *after* the overwrite, on the reasoning that DB work above the
+commit "may still roll back safely". It rolls the row back; it does not roll the file back.
+The remap is a SELECT plus ORM writes, and a locked database or a malformed stored mask
+raised there, leaving the cropped pixels under the old geometry with the `processing_history`
+entry gone. The four sites, and the single and batch resize, now **stage, flush, swap,
+commit**: write to a temp file, stage every row field and the remap, `flush()` while the
+original is intact, `replace_retrying` the temp over it, then commit. The generalizable rule
+gains a corollary: *where the mutation can be prepared aside (a temp file), the mutation is
+the swap, and everything — DB work included — belongs before it, flushed.* Pinned by
+`backend/tests/test_in_place_edit_ordering_http.py`.
+
+Two corollaries the same review surfaced. **The rule holds inside a helper, not only at its
+call sites (GPT-009).** `rename_with_sidecar` was two irreversible renames behind one call, so
+every caller's assign → rename → commit looked PM-013-clean while a failed sidecar rename
+landed after the image had moved; the helper now makes only the image rename able to raise.
+**A temp file is part of the mutation.** The swap's temp names were fixed
+(`{stem}_croptmp{suffix}`) in a folder the user owns, so a registered image with that name
+was written over and swapped away; `image_service.temp_sibling` adds a random token.
+
 Also unfixed and pre-existing: `workers/job_queue.py` marks a raising job failed from a
 separate session and never writes the `result_data` the job had accumulated, so a job that
 dies mid-run reports nothing about what it did before it died.

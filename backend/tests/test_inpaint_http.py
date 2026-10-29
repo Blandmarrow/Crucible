@@ -70,17 +70,19 @@ def _install_fake(monkeypatch, fake=None):
     """Both bindings: `routers/inpaint.py` imports the name at module import, so
     patching only the `backend.ml.lama_inpainter` attribute would miss it.
 
-    `load_lama` goes too — it would download the weights and import torch."""
+    `load_lama` goes too — it would download the weights and import torch. Its
+    stand-in returns a real (unregistered) `ModelEntry`, because the job leases
+    what the load hands back."""
     import backend.routers.inpaint as inpaint_router
     from backend.ml import lama_inpainter
-    from backend.ml.model_manager import model_manager
+    from backend.ml.model_manager import ModelEntry, model_manager
 
     fn = fake or _fake_inpaint
     monkeypatch.setattr(lama_inpainter, "inpaint_image_sync", fn)
     monkeypatch.setattr(inpaint_router, "inpaint_image_sync", fn)
 
     async def _no_load(*_a, **_kw):
-        return None
+        return ModelEntry(object(), None, vram_mb=0)
 
     monkeypatch.setattr(model_manager, "load_lama", _no_load)
 
@@ -419,6 +421,74 @@ def test_a_failing_image_does_not_fail_the_run(tmp_path, monkeypatch):
             assert dets == 1, "a failed paint must not delete the detection it did not consume"
 
     run(scenario())
+
+
+def test_an_unload_mid_job_is_refused_and_every_image_still_paints(tmp_path, monkeypatch):
+    """GPT-032: the job leases LaMa for its whole run, not per image.
+
+    The fake reads the registry exactly as `inpaint_image_sync` does — once per
+    image — and, while painting the first image, asks the HTTP API to unload
+    `lama`. Without the lease that unload succeeds and the second image fails on
+    a missing model; with it, the unload is a 409 and both images paint."""
+    import asyncio
+
+    from backend.ml import device as _device
+    from backend.ml.model_manager import ModelEntry, model_manager
+
+    monkeypatch.setattr(_device, "empty_cache", lambda: None)
+    statuses: list[int] = []
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            main_loop = asyncio.get_running_loop()
+
+            def painting(src, dest, mask_png_bytes, replace):
+                with model_manager._sync_lock:
+                    entry = model_manager._registry.get("lama")
+                if entry is None:
+                    raise RuntimeError("LaMa model is not loaded")
+                if not statuses:
+                    r = asyncio.run_coroutine_threadsafe(
+                        env.client.delete(f"{API}/captioning/model/lama/unload"), main_loop
+                    ).result(timeout=30)
+                    statuses.append(r.status_code)
+                return _fake_inpaint(src, dest, mask_png_bytes, replace)
+
+            _install_fake(monkeypatch, painting)
+
+            async def registering_load(*_a, **_kw):
+                entry = model_manager._registry.get("lama")
+                if entry is None:
+                    entry = ModelEntry(object(), None, vram_mb=200)
+                    model_manager._registry["lama"] = entry
+                return entry
+
+            monkeypatch.setattr(model_manager, "load_lama", registering_load)
+
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png")
+            b = await upload_image(env, ds["id"], "b.png")
+            for i in (a, b):
+                await _add_detection(env, i["id"])
+
+            job = await wait_for_job(
+                env, (await _run_inpaint(env, ds["id"], [a["id"], b["id"]]))["job_id"], timeout=60,
+            )
+            assert job["status"] == "completed", job
+            assert statuses == [409], statuses
+            assert job["result_data"]["inpainted"] == 2, job["result_data"]
+            assert job["result_data"]["failed"] == 0
+
+            # The lease ends with the job: the same unload now goes through.
+            assert model_manager._registry["lama"].leases == 0
+            r = await env.client.delete(f"{API}/captioning/model/lama/unload")
+            assert r.status_code == 204, r.text
+            assert "lama" not in model_manager._registry
+
+    try:
+        run(scenario())
+    finally:
+        model_manager._registry.pop("lama", None)
 
 
 # ── Copy mode ─────────────────────────────────────────────────────────────────

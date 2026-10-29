@@ -40,6 +40,19 @@ In `dev` mode open `http://localhost:5173`; otherwise `http://localhost:8000`.
   Run `cd backend && python -m alembic upgrade head` first (from the `backend/`
   dir — see the dev-container note below on why).
 
+## Network exposure and the request guard
+
+- The launchers bind `127.0.0.1` unless given `--lan` (`./manage.sh start --lan`,
+  `./manage.sh dev --lan`) or `CRUCIBLE_HOST` in the env/`.env` — resolved by
+  `scripts/bind_host.py`. Bare uvicorn already defaults to `127.0.0.1`; only pass
+  `--host 0.0.0.0` when something outside the container must reach it.
+- Every request goes through `backend/request_guard.py`. A `curl -H 'Host: …'`
+  naming anything other than an IP, `localhost` or this machine's hostname gets a
+  **403** — add the name to `CRUCIBLE_ALLOWED_HOSTS` if you really need it. A
+  POST/PUT/PATCH/DELETE with a foreign `Origin` header (or `Origin: null`) is a
+  403 too; plain curl sends no `Origin` and passes. See
+  `docs/dev/backend-infrastructure.md` § Request guard.
+
 ## Throwaway instance (never touches the live DB or data)
 
 The live SQLite DB is `dataset_manager.db` at the repo root and real datasets
@@ -57,8 +70,9 @@ export DATASETS_DIR="/tmp/scratch/data/datasets"
 python -m uvicorn backend.main:app --port 8000
 ```
 
-`frontend/e2e/serve.sh` is the canned, self-contained version of exactly this
-(temp dir, three exports, alembic, uvicorn) — read it before hand-rolling one.
+`frontend/e2e/serve.mjs` is the canned, self-contained version of exactly this
+(temp dir, three env vars, alembic, uvicorn), in Node so it also runs on
+Windows — read it before hand-rolling one.
 
 ## Dev-container specifics
 

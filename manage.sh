@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # manage.sh - Crucible launcher (Linux / macOS)
-# Usage: ./manage.sh <setup|start|update|dev>
+# Usage: ./manage.sh <setup|start|update|dev> [--lan]
+#   --lan (start, dev): listen on every network interface so other devices can
+#   connect. Off by default - the API has no authentication. CRUCIBLE_HOST in the
+#   environment or .env sets the bind address persistently; see scripts/bind_host.py.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,11 +26,35 @@ _python_version_ok() {
     [ "$maj" -gt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -ge 12 ]; }
 }
 
+# The locked Vite and @vitejs/plugin-react declare engines ^20.19.0 || >=22.12.0
+# (frontend/package.json mirrors it). Major alone is not enough: Node 20.0-20.18
+# and 22.0-22.11 install fine and then fail the build.
+NODE_REQUIREMENT="20.19+ or 22.12+"
+
 _node_version_ok() {
     command -v node &>/dev/null || return 1
-    local maj
-    maj=$(node --version 2>&1 | grep -oE "^v[0-9]+" | grep -oE "[0-9]+" || true)
-    [ -n "$maj" ] && [ "$maj" -ge 18 ]
+    local ver maj min
+    ver=$(node --version 2>&1 | grep -oE "^v[0-9]+\.[0-9]+" || true)
+    [ -n "$ver" ] || return 1
+    ver="${ver#v}"
+    maj="${ver%%.*}"
+    min="${ver#*.}"
+    { [ "$maj" -eq 20 ] && [ "$min" -ge 19 ]; } \
+        || { [ "$maj" -eq 22 ] && [ "$min" -ge 12 ]; } \
+        || [ "$maj" -ge 23 ]
+}
+
+# For the paths that run npm without going through setup's installer (update,
+# dev, start's rebuild): stop with the fix rather than let npm/Vite fail opaquely.
+_require_node() {
+    _node_version_ok && return 0
+    if command -v node &>/dev/null; then
+        echo "ERROR: Node.js $NODE_REQUIREMENT is required, but found $(node --version)." >&2
+    else
+        echo "ERROR: Node.js $NODE_REQUIREMENT is required, but node was not found." >&2
+    fi
+    echo "  Run ./manage.sh setup to install it, or get it from https://nodejs.org/" >&2
+    exit 1
 }
 
 _install_node_nvm() {
@@ -37,7 +64,7 @@ _install_node_nvm() {
         curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || true
     fi
     if [ ! -s "$nvm_dir/nvm.sh" ]; then
-        echo "ERROR: nvm install failed. Install Node.js 18+ from https://nodejs.org/" >&2
+        echo "ERROR: nvm install failed. Install Node.js $NODE_REQUIREMENT from https://nodejs.org/" >&2
         exit 1
     fi
     export NVM_DIR="$nvm_dir"
@@ -61,7 +88,8 @@ _install_node_linux() {
     elif command -v pacman &>/dev/null; then
         sudo pacman -Sy --noconfirm nodejs npm || true
     fi
-    # Fall back to nvm if the package manager did not give us 18+
+    # Fall back to nvm if the package manager did not give us a new enough Node
+    # (distro repos often carry an older 20.x or 22.x); nvm's --lts is current.
     if ! _node_version_ok; then
         _install_node_nvm
     fi
@@ -147,16 +175,16 @@ _install_deps() {
         echo "  Found: Node $(node --version)"
     else
         if command -v node &>/dev/null; then
-            echo "  Found Node $(node --version) - 18+ is required."
+            echo "  Found Node $(node --version) - $NODE_REQUIREMENT is required."
         fi
-        echo "  Node.js 18+ is required but not found."
+        echo "  Node.js $NODE_REQUIREMENT is required but not found."
         echo "  Source: https://nodejs.org/ (via package manager)"
         printf "  Install now? [Y/n] "
         read -r _reply || true
         case "$_reply" in
-            [Nn]*) echo "  Install Node.js 18+ from: https://nodejs.org/"; exit 1 ;;
+            [Nn]*) echo "  Install Node.js $NODE_REQUIREMENT from: https://nodejs.org/"; exit 1 ;;
         esac
-        echo "  Installing Node.js 18+..."
+        echo "  Installing Node.js LTS..."
         if [ "$os" = "Darwin" ]; then
             if command -v brew &>/dev/null; then
                 brew install node
@@ -168,11 +196,11 @@ _install_deps() {
             _install_node_linux
         else
             echo "ERROR: Unsupported OS." >&2
-            echo "  Install Node.js 18+ from https://nodejs.org/" >&2
+            echo "  Install Node.js $NODE_REQUIREMENT from https://nodejs.org/" >&2
             exit 1
         fi
         if ! _node_version_ok; then
-            echo "ERROR: Node.js 18+ install failed. Install manually from https://nodejs.org/" >&2
+            echo "ERROR: Node.js $NODE_REQUIREMENT install failed. Install manually from https://nodejs.org/" >&2
             exit 1
         fi
         echo "  Installed: Node $(node --version)"
@@ -185,6 +213,7 @@ _activate() {
 }
 
 _build_frontend() {
+    _require_node
     echo "Building frontend..."
     cd "$ROOT/frontend"
     npm run build
@@ -227,6 +256,70 @@ _migrate() {
     echo "  Migrations applied."
 }
 
+# --- Bind address ----------------------------------------------------------
+# The API has no authentication, so uvicorn (and the splash, and in dev Vite)
+# listen on loopback unless the user opts in: --lan for one run, CRUCIBLE_HOST in
+# the environment or .env for good. scripts/bind_host.py owns that precedence -
+# this side only passes --lan through and acts on the answer (GPT-007).
+CRUCIBLE_LAN_ARG=""
+BIND_HOST="127.0.0.1"
+# Where a browser on this machine - and the Vite /api proxy - reaches uvicorn:
+# localhost for a loopback or wildcard bind, the address itself otherwise.
+BROWSE_HOST="localhost"
+BIND_MODE="loopback"
+
+_parse_run_args() {
+    # $1 = command name, the rest = its arguments. Only `start` and `dev` take any.
+    local cmd="$1"
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --lan) CRUCIBLE_LAN_ARG="--lan" ;;
+            *)
+                echo "Unknown option for $cmd: $1" >&2
+                echo "Usage: $0 $cmd [--lan]" >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+_resolve_bind_host() {
+    # One --describe call answers everything the launcher needs, so no loopback
+    # test or browse-host rule is copied here. Unquoted on purpose: empty or
+    # "--lan". Needs the venv's python (or any python 3) - the script is stdlib only.
+    local desc
+    # shellcheck disable=SC2086
+    desc="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG --describe)" || desc=""
+    BIND_HOST="$(printf '%s\n' "$desc" | sed -n 1p)"
+    BROWSE_HOST="$(printf '%s\n' "$desc" | sed -n 2p)"
+    BIND_MODE="$(printf '%s\n' "$desc" | sed -n 3p)"
+    if [ -z "$BIND_HOST" ] || [ -z "$BROWSE_HOST" ] || [ -z "$BIND_MODE" ]; then
+        echo "ERROR: could not resolve the bind address (scripts/bind_host.py failed)." >&2
+        exit 1
+    fi
+}
+
+_print_access() {
+    # $1 = the port people browse to, $2 = the command to suggest --lan for.
+    if [ "$BIND_MODE" = "loopback" ]; then
+        echo "LAN access is off (this machine only). For other devices: $0 $2 --lan, or set CRUCIBLE_HOST=0.0.0.0 in .env."
+        return 0
+    fi
+    local urls url
+    # shellcheck disable=SC2086
+    urls="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG --urls "$1" 2>/dev/null || true)"
+    if [ -n "$urls" ]; then
+        for url in $urls; do
+            echo "On your network: $url"
+        done
+    else
+        echo "Listening on $BIND_HOST (could not work out this machine's LAN address)."
+    fi
+    echo "WARNING: LAN access is on and Crucible has no authentication - anyone who can reach it can use it. Only do this on networks you trust."
+}
+
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
@@ -266,8 +359,8 @@ _start_splash() {
 
     # Silenced: the only thing it has to say is "port taken", and uvicorn says
     # that far more clearly further down. Run it by hand to see the message.
-    python "$ROOT/scripts/splash_server.py" --parent-pid $$ --ready-file "$ready" \
-        >/dev/null 2>&1 &
+    python "$ROOT/scripts/splash_server.py" --host "$BIND_HOST" --parent-pid $$ \
+        --ready-file "$ready" >/dev/null 2>&1 &
     _SPLASH_PID=$!
 
     # Wait for the sentinel, not for a fixed delay: the server writes it from
@@ -297,8 +390,8 @@ _start_splash() {
         return 0
     fi
 
-    if ! _open_browser "http://localhost:8000"; then
-        echo "  (no browser opener found - open http://localhost:8000 yourself)"
+    if ! _open_browser "http://$BROWSE_HOST:8000"; then
+        echo "  (no browser opener found - open http://$BROWSE_HOST:8000 yourself)"
     fi
     return 0
 }
@@ -606,6 +699,7 @@ cmd_start() {
     fi
 
     _activate
+    _resolve_bind_host
 
     echo ""
     echo "=== Crucible ==="
@@ -634,7 +728,8 @@ cmd_start() {
     fi
 
     echo ""
-    echo "Starting server at http://localhost:8000"
+    echo "Starting server at http://$BROWSE_HOST:8000"
+    _print_access 8000 start
     echo "Press Ctrl+C to stop."
     echo ""
 
@@ -650,7 +745,7 @@ cmd_start() {
     _stop_splash
 
     while true; do
-        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 || true
+        python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 || true
         if [ -f "$ROOT/.restart" ]; then
             rm -f "$ROOT/.restart"
             echo ""
@@ -788,6 +883,7 @@ cmd_update() {
     echo "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models/sam3/"
 
     echo "[5/6] Updating frontend dependencies..."
+    _require_node
     cd "$ROOT/frontend"
     npm install
     cd "$ROOT"
@@ -813,10 +909,13 @@ cmd_dev() {
     fi
 
     _activate
+    _require_node
+    _resolve_bind_host
     _migrate
 
     echo "Starting backend on :8000 and frontend dev server on :5173..."
-    echo "Open http://localhost:5173 in your browser."
+    echo "Open http://$BROWSE_HOST:5173 in your browser."
+    _print_access 5173 dev
     echo ""
 
     rm -f "$ROOT/.restart"
@@ -829,7 +928,7 @@ cmd_dev() {
         _uvicorn_pid=""
         trap 'kill "$_uvicorn_pid" 2>/dev/null' EXIT INT TERM
         while true; do
-            python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend &
+            python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 --reload --reload-dir backend &
             _uvicorn_pid=$!
             wait "$_uvicorn_pid" || true
             if [ -f "$ROOT/.restart" ]; then
@@ -846,7 +945,14 @@ cmd_dev() {
     trap 'kill "$BACKEND_PID" 2>/dev/null' EXIT INT TERM
 
     cd "$ROOT/frontend"
-    npm run dev
+    # vite.config.ts proxies /api here. A server bound to one LAN address does
+    # not answer on localhost, so the proxy must follow the bind.
+    export CRUCIBLE_API_TARGET="http://$BROWSE_HOST:8000"
+    if [ "$BIND_MODE" = "loopback" ]; then
+        npm run dev
+    else
+        npm run dev -- --host "$BIND_HOST"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -867,18 +973,19 @@ _menu() {
         1) cmd_setup  ;;
         2) cmd_start  ;;
         3) cmd_update ;;
-        *) echo "Invalid choice. Run: $0 <setup|start|update|dev>" >&2; exit 1 ;;
+        *) echo "Invalid choice. Run: $0 <setup|start|update|dev> [--lan]" >&2; exit 1 ;;
     esac
 }
 
 case "${1:-}" in
     setup)  cmd_setup  ;;
-    start)  cmd_start  ;;
+    start)  shift; _parse_run_args start "$@"; cmd_start ;;
     update) cmd_update ;;
-    dev)    cmd_dev    ;;
+    dev)    shift; _parse_run_args dev "$@"; cmd_dev ;;
     "")     _menu      ;;
     *)
-        echo "Usage: $0 <setup|start|update|dev>" >&2
+        echo "Usage: $0 <setup|start|update|dev> [--lan]" >&2
+        echo "  --lan  (start, dev) let other devices on your network connect - no authentication" >&2
         exit 1
         ;;
 esac

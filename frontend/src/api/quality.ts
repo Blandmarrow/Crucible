@@ -1,4 +1,5 @@
 import client from "./client";
+import type { DeleteResult } from "./images";
 
 export interface DuplicateImage {
   id: string;
@@ -130,7 +131,9 @@ export const qualityApi = {
       .then((r) => r.data),
 
   resolveDuplicates: (keep_ids: string[], delete_ids: string[]) =>
-    client.post("/quality/duplicates/resolve", { keep_ids, delete_ids }),
+    client
+      .post<DeleteResult>("/quality/duplicates/resolve", { keep_ids, delete_ids })
+      .then((r) => r.data),
 
   embedReferences: (files: File[]) => {
     const form = new FormData();
@@ -158,10 +161,11 @@ export const qualityApi = {
 
   /** Free every resident scoring model, and nothing else — a captioning or
    *  detection model loaded for other work survives. `freed_mb` sums the
-   *  `vram_mb` of what was resident when the call arrived. */
+   *  `vram_mb` of what was resident when the call arrived and actually left;
+   *  a model something still holds a lease on stays and is named in `in_use`. */
   unloadModels: () =>
     client
-      .post<{ unloaded: string[]; freed_mb: number }>("/quality/models/unload")
+      .post<{ unloaded: string[]; freed_mb: number; in_use: string[] }>("/quality/models/unload")
       .then((r) => r.data),
 
   /** The dataset's style-score distribution plus its run descriptor. An unknown

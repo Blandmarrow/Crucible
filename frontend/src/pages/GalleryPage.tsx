@@ -19,7 +19,8 @@ import ImportFolderModal from "../components/common/ImportFolderModal";
 import { datasetsApi } from "../api/datasets";
 import { jobsApi } from "../api/jobs";
 import { labelsApi } from "../api/labels";
-import { showImportSummaryToast } from "../utils/importToast";
+import { adoptJob } from "../utils/jobReconcile";
+import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import { writeNavContext } from "../utils/galleryNav";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
@@ -636,20 +637,40 @@ export default function GalleryPage() {
     queryFn: settingsApi.getThresholds,
     staleTime: 60_000,
   });
-  const [rescanJobId, setRescanJobId] = useState<string | null>(null);
-  const rescanProgress = useJobStore((s) => s.activeJobs.get(rescanJobId ?? ""));
+  // The dataset is captured with the job, not read from the render: the pane can
+  // move to another dataset while the rescan runs, and the refresh belongs to the
+  // one that was rescanned. `manual` = the user clicked, so the outcome toasts.
+  const [rescan, setRescan] = useState<{ jobId: string; datasetId: string; manual: boolean } | null>(null);
+  const rescanProgress = useJobStore((s) => s.activeJobs.get(rescan?.jobId ?? ""));
   const autoRescannedRef = useRef<Set<string>>(new Set());
-  // true when the active rescan was started by the user (show a summary toast on completion)
-  const rescanManualRef = useRef(false);
+  // True while a manual rescan's loading toast is up, so unmounting mid-run can
+  // take it down rather than leave a spinner nothing will ever resolve.
+  const rescanToastUpRef = useRef(false);
 
   const runRescan = useCallback((manual: boolean) => {
-    if (!datasetId || rescanJobId) return;
-    rescanManualRef.current = manual;
-    if (manual) toast.loading("Rescanning folder…", { id: "gallery-rescan" });
-    datasetsApi.rescan(datasetId, true)
-      .then((data) => setRescanJobId(data.job_id))
-      .catch(() => { if (manual) toast.error("Rescan failed", { id: "gallery-rescan" }); });
-  }, [datasetId, rescanJobId]);
+    if (!datasetId || rescan) return;
+    const dsId = datasetId;
+    if (manual) {
+      rescanToastUpRef.current = true;
+      toast.loading("Rescanning folder…", { id: "gallery-rescan" });
+    }
+    datasetsApi.rescan(dsId, true)
+      .then((data) => {
+        setRescan({ jobId: data.job_id, datasetId: dsId, manual });
+        // Watched whatever the SSE stream sees — a fast failure in a stream gap
+        // would otherwise leave the button disabled for good.
+        void adoptJob(data.job_id);
+      })
+      .catch((err) => {
+        if (!manual) return;
+        rescanToastUpRef.current = false;
+        toast.error(`Rescan failed: ${apiErrorDetail(err, "could not start the rescan")}`, { id: "gallery-rescan" });
+      });
+  }, [datasetId, rescan]);
+
+  useEffect(() => () => {
+    if (rescanToastUpRef.current) toast.dismiss("gallery-rescan");
+  }, []);
 
   useEffect(() => {
     if (!datasetId || !thresholds?.auto_rescan_on_open) return;
@@ -658,17 +679,30 @@ export default function GalleryPage() {
     runRescan(false);
   }, [datasetId, thresholds?.auto_rescan_on_open, runRescan]);
 
+  // Any terminal status the server reported (never a cancel button's optimistic
+  // write): a failed or cancelled rescan used to leave the button disabled until
+  // a reload, since only `completed` cleared the state. A cancelled rescan still
+  // commits what it registered, so every outcome refreshes the rescanned dataset.
   useEffect(() => {
-    if (!rescanJobId || rescanProgress?.status !== "completed") return;
-    invalidateDatasetContentScope(qc, datasetId);
+    if (!rescan || !rescanProgress) return;
+    if (!TERMINAL_JOB_STATUSES.has(rescanProgress.status) || rescanProgress.optimistic) return;
+    invalidateDatasetContentScope(qc, rescan.datasetId);
     // A rescan adopts clips out of videos/ too, and its toast reports the count.
     // Without this the header badge updates (it reads `dataset.video_count`) but
     // `VideoStrip` keeps its pre-rescan list for the 30 s staleTime — the page
     // says "12 videos" above a strip that renders nothing, and Extract frames is
     // unreachable until the tab loses and regains focus.
-    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
-    if (rescanManualRef.current) {
-      const jid = rescanJobId;
+    qc.invalidateQueries({ queryKey: ["videos", rescan.datasetId] });
+    rescanToastUpRef.current = false;
+    if (rescan.manual && rescanProgress.status === "failed") {
+      toast.error(
+        rescanProgress.message ? `Rescan failed: ${rescanProgress.message}` : "Rescan failed — see Logs",
+        { id: "gallery-rescan" },
+      );
+    } else if (rescan.manual && rescanProgress.status === "cancelled") {
+      toast("Rescan cancelled", { id: "gallery-rescan" });
+    } else if (rescan.manual) {
+      const jid = rescan.jobId;
       jobsApi.get(jid).then((job) => {
         const r = job.result_data as {
           added?: number; renamed?: number; captions_updated?: number; missing?: unknown[];
@@ -686,25 +720,13 @@ export default function GalleryPage() {
         );
       }).catch(() => toast.success("Rescan complete", { id: "gallery-rescan" }));
     }
-    setRescanJobId(null);
-  }, [rescanProgress?.status, rescanJobId, datasetId, qc]);
+    setRescan(null);
+  }, [rescanProgress, rescan, qc]);
 
   // ── Import folder (from the gallery toolbar) ──────────────────────────────
+  // Only the modal's visibility lives here. The import's outcome — refresh and
+  // toast, for every terminal status — is `TopBar`'s, which outlives this page.
   const [showImport, setShowImport] = useState(false);
-  const [importJobId, setImportJobId] = useState<string | null>(null);
-  const importProgress = useJobStore((s) => s.activeJobs.get(importJobId ?? ""));
-
-  useEffect(() => {
-    if (!importJobId || importProgress?.status !== "completed") return;
-    invalidateDatasetContentScope(qc, datasetId);
-    // An import is a provenance writer: a scraper sidecar is the largest source
-    // of new `other:` licenses, and they are unpickable until this refetches.
-    qc.invalidateQueries({ queryKey: ["licenses-in-use", datasetId] });
-    // Same as the rescan handler above: `include_videos` creates Video rows.
-    qc.invalidateQueries({ queryKey: ["videos", datasetId] });
-    showImportSummaryToast(importJobId);
-    setImportJobId(null);
-  }, [importProgress?.status, importJobId, datasetId, qc]);
 
   const scoreFiltersParam = scoreFilters.length > 0
     ? JSON.stringify(scoreFilters.map(f => ({
@@ -927,9 +949,19 @@ export default function GalleryPage() {
       // Only for multi-moves — dragging a single unselected card must not wipe
       // an unrelated selection.
       if (vars.ids.length > 1) clear();
-      toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      if (data.moved > 0) {
+        toast.success(`Moved ${data.moved} image${data.moved !== 1 ? "s" : ""} to "${data.subfolder || "(root)"}"`);
+      }
+      // Same report as SelectionToolbar's move: a rename that failed leaves the
+      // image where it was, and a 200 must not read as a clean move.
+      if (data.failed > 0) {
+        toast.error(`${data.failed} image${data.failed !== 1 ? "s" : ""} could not be renamed and stayed where they were`);
+      }
     },
     onError: (err) => {
+      // Per-image commits: a request that failed partway still moved some.
+      qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       toast.error(apiErrorDetail(err, "Move failed"));
     },
   });
@@ -986,8 +1018,9 @@ export default function GalleryPage() {
   // dragged card is part of it, otherwise just that card.
   const dragIdsFor = useCallback((draggedId: string) => {
     // The selection store is module-global, so in a split-pane setup it can hold ids
-    // from another dataset — the backend derives dataset_id from the first row and
-    // would silently move them into this dataset's folder.
+    // from another dataset. A drop lands in *this* dataset's subfolder, and the
+    // endpoint refuses a mixed-dataset request outright (it once renamed the other
+    // dataset's files into this dataset's folder), so only this pane's ids go.
     return selectedIds.has(draggedId)
       ? [...selectedIds].filter(id => datasetByImageId.get(id) === datasetId)
       : [draggedId];
@@ -1482,7 +1515,7 @@ export default function GalleryPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRename(node);
                 if (e.key === "Escape") {
-                  // GalleryPage has a document-level Escape handler of its own.
+                  // Defensive: GalleryPage has no Escape handler of its own today.
                   e.stopPropagation();
                   setRenamingPath(null);
                 }
@@ -2061,13 +2094,13 @@ export default function GalleryPage() {
             <button
               className="btn ghost"
               title="Rescan folder from disk — pick up images and .txt captions added outside the app"
-              disabled={rescanJobId !== null}
+              disabled={rescan !== null}
               onClick={() => runRescan(true)}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
                 <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"/>
               </svg>
-              {rescanJobId !== null ? "Rescanning…" : "Rescan"}
+              {rescan !== null ? "Rescanning…" : "Rescan"}
             </button>
             <label className="btn" style={{ cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.65 : 1, pointerEvents: uploading ? "none" : "auto" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -2550,7 +2583,6 @@ export default function GalleryPage() {
         <ImportFolderModal
           datasets={allDatasets.length ? allDatasets : dataset ? [dataset] : []}
           initialDatasetId={datasetId ?? undefined}
-          onStarted={setImportJobId}
           onClose={() => setShowImport(false)}
         />
       )}

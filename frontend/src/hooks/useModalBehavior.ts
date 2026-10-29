@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Mous
  * The handlers live on the **panel**, not on `window`, which is what makes
  * stacked modals behave: only the panel the user is actually in reacts, and the
  * one underneath stays inert. Escape also calls `stopPropagation()`, so a page's
- * own window-level Escape handler (GalleryPage, ImageDetailPage) no longer fires
+ * own window-level Escape handler (ImageDetailPage's draw-cancel) no longer fires
  * behind an open dialog.
  */
 

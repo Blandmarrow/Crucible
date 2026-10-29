@@ -79,32 +79,6 @@ staleness sweep while still recording the seam.
   1,808 words and is **not** a split candidate: it is the routing table that makes the
   on-demand split work at all, and it grows by one row per topic file by design.
 
-## docs/dev/backend-infrastructure.md
-
-- **Moves:** § Database (1,142 words — the largest section by a factor of two), plus its
-  two neighbours that are really about the same thing, § Startup database backup and
-  § Migration drift check
-- **New file:** docs/dev/database.md
-- **Why here:** the file is two subjects wearing one title. One is the *schema and the
-  SQLite engine* — per-connection pragmas, FK enforcement and every `ondelete`, the index
-  inventories, deferred blob columns, the backup rotation, the drift check. The other is
-  the *running process* — the lifespan hook, production frontend serving, the server
-  control endpoints and the restart loop, SSE, job cancellation, the retention sweep, and
-  the open `JobQueue.stop()` hang. A reader arrives for exactly one of the two and there
-  is no overlap between them. Splitting there leaves ~2,130 and ~1,720 words, both close
-  to the 60% target (2,100), which is why the seam is here and not between § Database and
-  everything else. The process half has since grown by § App-level exception handlers, so
-  it is the one with no headroom left — if a third subject appears, re-check the seam
-  before assuming this one still holds.
-- **Watch for:** the § Database prose is cited from several directions and every one of
-  these is a `§`-level pointer the checker cannot verify — `docs/dev/video.md` and
-  `docs/dev/video-extract.md` (the frame-lineage FK and `ix_images_source_video_id`),
-  `docs/dev/versioning.md` (the versioning tables' cascades and the two decorative
-  model-level FKs), `docs/dev/provenance.md` (the dropped `ix_images_dataset_license`),
-  and CLAUDE.md's Documentation Map row and § Tests line. The migration-drift paragraph
-  is also referenced from `scripts/check_migrations.py`'s own module docstring. The new
-  file mirrors no user doc, so the naming convention gives no name for free — `database.md`
-  is a proposal, not a constraint.
 
 ## docs/dev/gallery.md
 
@@ -402,6 +376,34 @@ utilities → `docs/dev/shared-utilities.md`.
   SHA-256 pin, the pickle argument, `_ensure_weights`' plain GET, the function-scope torch
   import) with the inpainter — they are the reason the section is long, and they are about
   this model rather than about the manager.
+- **Second seam (recorded 2026-10-28, GPT-032/034):** the LaMa move alone no longer gets the
+  file under budget — it is 4,442 words after § Leases (440) arrived, so ~3,650 once LaMa
+  leaves. Move § Leases and § Releasing an entry's weights (765) together into a new
+  docs/dev/model-residency.md: *what keeps a model resident and how its weights leave*. They
+  are one subject — the lease is what decides whether a release may happen, and
+  `_release_to_cpu`'s tenant walk is what makes it free anything — and both are read by
+  someone touching a consumer's hold or an unload path, not by someone adding a model ID.
+  Leaves ~2,450 here. **Watch for:** `§ Leases` is cited by name from
+  `docs/dev/scoring.md`, `docs/dev/detection.md`, `docs/dev/image-processing-models.md`,
+  `docs/dev/backend-infrastructure.md` and PM-030; `§ Releasing an entry's weights` from
+  `docs/dev/detection-inference.md` and this file's own sam2 table row. Grep both headings.
+
+
+## docs/dev/scoring.md
+
+- **Moves:** § The aesthetic model picker (1,006 words) with its three subsections — the
+  marker as a safety device, the two destructive consumers, per-model coverage and the
+  re-score offer
+- **New file:** docs/dev/aesthetic-model.md (mirrors docs/scoring.md § Choosing the
+  aesthetic model)
+- **Why here:** the file went over (3,559) when § The model lifecycle gained the lease
+  rules (GPT-032). The picker is the one section that is about a *choice* the user makes
+  and the bookkeeping that keeps it honest (`aesthetic_model`, its two consumer guards,
+  coverage), where everything else is about the scorers themselves and the columns they
+  write. Leaves ~2,550; the lifecycle section stays, since it is about this job's models.
+- **Watch for:** the picker is referenced from `docs/dev/scores-stale.md`,
+  `docs/dev/export.md` and `docs/dev/statistics.md` (`aesthetic_model` and its guards) —
+  grep `aesthetic model picker` and `aesthetic_model` across `docs/` before and after.
 
 
 ## docs/dev/captioning.md
@@ -432,3 +434,84 @@ utilities → `docs/dev/shared-utilities.md`.
   `docs/dev/captioning.md` for provider configuration; grep `captioning.md` across `docs/`
   and `backend/` before finishing, and give both files a Documentation Map row with fresh
   `Words` cells.
+
+## docs/dev/versioning-service.md
+
+- **Moves:** the `restore_snapshot` bullet with its Pass 0–3 sub-bullets, the five
+  PM-026 bullets after it (complete-or-abort safety snapshot, Pass 1 all-or-nothing,
+  Pass 3's failure contract, the `result_data` outcome, measured phash) and the
+  `duplicate_dataset` read-side-twin bullet
+- **New file:** docs/dev/versioning-restore.md
+- **Why here:** the file is one `## Service` heading over a flat bullet list, and nearly
+  half of it is restore alone — a four-pass algorithm plus its failure contract, read
+  whenever a restore misbehaves. What stays (the two hooks, `_store_row_bytes`, snapshot
+  creation, diff, the mirror bullets, the injection table) is what every *overwrite path
+  elsewhere* needs. Leaves roughly 1,550 (restore) and 2,000 words, both under the 60% target —
+  the latter before GPT-026 added ~330 words of detections-mirror bullets beside the labels
+  one; if the stay half is then over 60%, the labels and detections mirror bullets are the
+  next to move, since each spans snapshot, restore and diff. Give both files `##` headings
+  per subject while splitting; this one has none below `## Service`.
+- **Watch for:** CLAUDE.md's preamble to the invariants says two invariants "point at
+  restore's Pass 2 and Pass 3" in this file, and `docs/dev/versioning.md`,
+  PM-025 and PM-026 cite it for Pass 0c, the safety snapshot and the failure contract —
+  grep `versioning-service.md` across `docs/`, `CLAUDE.md` and `backend/` (an alembic
+  migration docstring cites it too) and repoint whichever ones mean restore. Add a
+  Documentation Map row for the new file.
+
+## docs/workspace.md
+
+- **Moves:** § Starting up (435 words, now including the LAN opt-in bullet that links
+  README's § Access from other devices), § Restarting & shutting down (336) and § Database
+  backups (246)
+- **New file:** docs/server.md (the user half of docs/dev/backend-infrastructure.md and
+  docs/dev/database.md)
+- **Why here:** those three are one subject, the server process's life: launching it,
+  stopping or restarting it, and what it does to the database at startup. The rest of the
+  page is the app's own furniture: dialogs, the top bar, meters, Split View, Logs, the File
+  Browser and Booru. It tripped the budget when § Restarting & shutting down gained the
+  shutdown grace for running jobs (GPT-012). The seam leaves ~935 and ~1,575 words. The
+  remainder sits just over the ~1,500 target, so if it must go lower, § File Browser (557)
+  is the next self-contained move, to docs/file-browser.md, mirroring docs/dev/file-browser.md.
+- **Watch for:** README links three of the moving anchors (`#starting-up`,
+  `#restarting--shutting-down`, `#database-backups`) and needs a Docs-table row for the new
+  file. `docs/features.md` takes a row, not prose. `docs/dev/database.md` and
+  `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
+  horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
+  stays behind, so that link must become `workspace.md#logs`.
+
+## docs/dev/bulk-image-jobs.md
+
+- **Moves:** § Painting detections out (watermark removal) → docs/dev/inpaint.md, and
+  § Detection-driven cropping (crop to detected subject) → docs/dev/detection-crop.md.
+- **New files:** docs/dev/inpaint.md and docs/dev/detection-crop.md (the user-facing side of
+  both is in docs/detection.md, so neither mirrors a user doc of its own name).
+- **Why here:** the file grew around one idea, "bulk jobs that rewrite files", and the two
+  detection-driven jobs became subsystems of their own: each has its own router, request
+  model and scope rules. It tripped the budget when § Batch resize and aspect crop gained the
+  stage, flush, swap, commit order (GPT-010). Moving both leaves ~1,400 words behind and
+  ~1,130 and ~1,210 in the new files, all under the ~2,100 target. One move alone leaves
+  ~2,500, which is still over.
+- **Watch for:** the **Remapping detections through replace-mode crops** bullets sit inside
+  § Detection-driven cropping but serve all four crop sites, batch crop included. Keep them
+  in bulk-image-jobs.md (or give them their own `##`) rather than carrying them out with the
+  detection worker, because § Batch resize and aspect crop and docs/dev/image-detail.md
+  point at them. `docs/dev/bulk-ops.md` § Bulk jobs that rewrite files lists
+  `POST /detection/crop` as living here. CLAUDE.md's Map row for this file names
+  `CropToDetectionForm`, `batch_inpaint` and the LaMa paint mask in its trigger, so those
+  words move to the two new rows.
+
+## docs/dev/backend-infrastructure.md
+
+- **Moves:** § Request guard: Host and Origin, § Frontend serving (production), § App-level
+  exception handlers and § Server control endpoints → docs/dev/http-edge.md.
+- **New file:** docs/dev/http-edge.md (no user doc of its own; the user side of the LAN
+  opt-in is README.md and docs/workspace.md).
+- **Why here:** the file is two subsystems: what wraps every request (middleware, the SPA
+  catch-all, the exception handlers, the shutdown/restart routes) and the job queue
+  (shutdown grace, cancellation, SSE, retention, `GET /jobs`). It tripped the budget when the
+  request guard landed (GPT-007). The seam leaves ~1,720 words in the new file and ~1,940
+  behind, both under the ~2,100 target. § CI workflows stays; it is the odd one out either way.
+- **Watch for:** § Server control endpoints and § Shutdown: stopping the job queue point at
+  each other — the restart loop calls `JobQueue.stop()` — so both need a cross-file pointer.
+  PM-015 and PM-031 cite § Frontend serving and § Request guard; CLAUDE.md's Path traversal
+  bullet names the SPA catch-all; the Map row's trigger words split across the two rows.

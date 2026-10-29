@@ -100,7 +100,7 @@ def test_unload_with_nothing_resident_reports_nothing(tmp_path, monkeypatch):
         async with api_env(tmp_path) as env:
             r = await env.client.post(f"{API}/quality/models/unload")
             assert r.status_code == 200, r.text
-            assert r.json() == {"unloaded": [], "freed_mb": 0}
+            assert r.json() == {"unloaded": [], "freed_mb": 0, "in_use": []}
 
     run(scenario())
 
@@ -209,12 +209,11 @@ def test_unload_still_moves_a_plain_entry_off_the_gpu(monkeypatch):
 # --- Auto-unload at the end of a run ----------------------------------------
 
 
-class _FakeEntry:
+def _fake_entry() -> ModelEntry:
     """What `load_aesthetic` returns: `.model` is the three-tenant dict, and the
-    job only ever passes it straight back to a scorer."""
-    model = {"clip": None, "mlp": None, "preprocess": None}
-    processor = None
-    vram_mb = 3500
+    job only ever passes it straight back to a scorer. A real `ModelEntry`, since
+    the job leases it (`ModelManager.lease` reads `released` and counts `leases`)."""
+    return ModelEntry({"clip": None, "mlp": None, "preprocess": None}, None, vram_mb=3500)
 
 
 def _install_scorer_stub(monkeypatch, scores: list[float]) -> None:
@@ -243,7 +242,7 @@ def _record_loads_and_unloads(monkeypatch) -> list[str]:
     unloaded: list[str] = []
 
     async def fake_load_aesthetic(job_id=None, loop=None, dataset_id=None):
-        return _FakeEntry()
+        return _fake_entry()
 
     async def fake_unload(model_id: str) -> None:
         unloaded.append(model_id)
@@ -387,3 +386,107 @@ def test_the_job_leaves_no_weights_on_the_gpu(tmp_path, monkeypatch):
     assert clip.on_cpu, "the run finished with the CLIP backbone still in VRAM"
     assert mlp.on_cpu, "the run finished with the aesthetic MLP still in VRAM"
     assert "aesthetic" not in model_manager._registry
+
+
+# --- Leases (GPT-032) --------------------------------------------------------
+
+
+def test_unload_route_skips_a_leased_model_and_reports_it(tmp_path, monkeypatch):
+    """A concurrent holder (an embed-references request, another job) keeps its
+    model; every other scoring id still unloads, and the response neither counts
+    the kept model as unloaded nor as freed VRAM."""
+    aesthetic = _register(monkeypatch, "aesthetic", _FakeWeights())
+    dino = _register(monkeypatch, "dino", _FakeWeights())
+    dino.vram_mb = 1200
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            with model_manager.lease(aesthetic):
+                r = await env.client.post(f"{API}/quality/models/unload")
+            assert r.status_code == 200, r.text
+            assert r.json() == {"unloaded": ["dino"], "freed_mb": 1200, "in_use": ["aesthetic"]}
+
+    try:
+        run(scenario())
+        assert "aesthetic" in model_manager._registry
+        assert aesthetic.model.on_cpu is False, "a leased model's weights were touched"
+        assert "dino" not in model_manager._registry
+    finally:
+        model_manager._registry.pop("aesthetic", None)
+        model_manager._registry.pop("dino", None)
+
+
+def _install_dino_stub(monkeypatch, seen: list[bool]) -> None:
+    stub = types.ModuleType("backend.ml.dino_scorer")
+
+    async def extract_embeddings_dino(paths, entry, job_id=None):
+        seen.append(entry.in_use)
+        return [None for _ in paths]
+
+    async def extract_layer_embeddings_dino(paths, entry, job_id=None):  # pragma: no cover
+        return [None for _ in paths]
+
+    stub.extract_embeddings_dino = extract_embeddings_dino
+    stub.extract_layer_embeddings_dino = extract_layer_embeddings_dino
+    monkeypatch.setitem(sys.modules, "backend.ml.dino_scorer", stub)
+
+
+def test_job_leases_each_stage_and_auto_unload_survives_a_leased_id(tmp_path, monkeypatch):
+    """The job holds a lease while each scorer runs and none afterwards; and its
+    `finally` catches a refused unload *per id*. `aesthetic` sorts before `dino`,
+    so a single try around the loop would leave `dino` stranded in VRAM."""
+    _install_scorer_stub(monkeypatch, [6.25])
+    seen_dino: list[bool] = []
+    _install_dino_stub(monkeypatch, seen_dino)
+
+    aesthetic = _register(monkeypatch, "aesthetic", {"clip": _FakeWeights(), "mlp": _FakeWeights()})
+    dino_weights = _FakeWeights()
+    seen_aesthetic: list[int] = []
+
+    async def score_images_batch(paths, handle, job_id=None, model=None):
+        seen_aesthetic.append(aesthetic.leases)
+        return [6.25 for _ in paths]
+
+    sys.modules["backend.ml.aesthetic_scorer"].score_images_batch = score_images_batch
+
+    async def fake_load_aesthetic(job_id=None, loop=None, dataset_id=None):
+        return model_manager._registry["aesthetic"]
+
+    async def fake_load_dino(job_id=None, loop=None, dataset_id=None):
+        entry = ModelEntry(dino_weights, None, vram_mb=1200)
+        model_manager._registry["dino"] = entry
+        return entry
+
+    monkeypatch.setattr(model_manager, "load_aesthetic", fake_load_aesthetic)
+    monkeypatch.setattr(model_manager, "load_dino", fake_load_dino)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            dataset_id = await _seed_one_image(env)
+            # Someone else's hold on `aesthetic`, outliving the job.
+            with model_manager.lease(aesthetic):
+                r = await env.client.post(
+                    f"{API}/quality/score",
+                    json={
+                        "dataset_id": dataset_id,
+                        "run_aesthetic": True,
+                        "run_dino": True,
+                        "run_technical": False,
+                    },
+                )
+                assert r.status_code == 200, r.text
+                job = await wait_for_job(env, r.json()["job_id"])
+                assert job["status"] == "completed", job
+                assert aesthetic.leases == 1, "the job left its own lease behind"
+
+    try:
+        run(scenario())
+        # Outer hold plus the job's own stage lease.
+        assert seen_aesthetic == [2]
+        assert seen_dino == [True]
+        assert "aesthetic" in model_manager._registry, "a leased model was unloaded"
+        assert "dino" not in model_manager._registry, "one refused id stopped the rest"
+        assert dino_weights.on_cpu
+    finally:
+        model_manager._registry.pop("aesthetic", None)
+        model_manager._registry.pop("dino", None)

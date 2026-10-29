@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eraser } from "lucide-react";
 import toast from "react-hot-toast";
@@ -7,6 +7,7 @@ import { datasetsApi } from "../../api/datasets";
 import { inpaintApi } from "../../api/inpaint";
 import { jobsApi } from "../../api/jobs";
 import { useJobStore } from "../../store/jobStore";
+import { invalidateDatasetContentScope } from "../../constants/queryKeys";
 import { apiErrorDetail } from "../../utils/apiError";
 
 // Destination-subfolder sentinels (new-file mode only)
@@ -17,6 +18,11 @@ const DEST_CUSTOM = "__custom__"; // free-text new subfolder
 interface Props {
   datasetId: string;
   imageIds?: string[];
+  /** Every dataset `imageIds` belong to, when they come from a gallery selection
+   *  that can span split-view panes. This job's backend takes any dataset's ids,
+   *  and TopBar refreshes only the job's own `dataset_id`, so the others are
+   *  refreshed here on completion, from the list as it stood at submit (GPT-028). */
+  selectionDatasetIds?: string[];
   subfolder?: string;
   qualityFlags?: string[];
   // When set, these labels are offered instead of the dataset-wide label query —
@@ -26,6 +32,10 @@ interface Props {
   disabled?: boolean;
   onSuccess?: () => void;
   onCancel?: () => void;
+  /** Told whenever a started job begins or stops running — the same moment Cancel
+   *  is disabled and re-enabled. A host dialog uses it to refuse Escape while the
+   *  job runs, since closing unmounts the watcher that reports the result. */
+  onRunningChange?: (running: boolean) => void;
 }
 
 function resultToast(result: Record<string, unknown>) {
@@ -45,7 +55,7 @@ function resultToast(result: Record<string, unknown>) {
   failed > 0 ? toast(msg, { icon: "⚠️" }) : toast.success(msg);
 }
 
-export default function InpaintForm({ datasetId, imageIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel }: Props) {
+export default function InpaintForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel, onRunningChange }: Props) {
   const qc = useQueryClient();
 
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set());
@@ -55,6 +65,7 @@ export default function InpaintForm({ datasetId, imageIds, subfolder, qualityFla
   const [destCustom, setDestCustom] = useState("");
   const [jobLabel, setJobLabel] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
+  const submittedDatasetIds = useRef<string[]>([]);
 
   const jobProgress = useJobStore((s) => s.activeJobs.get(jobId ?? ""));
 
@@ -89,6 +100,7 @@ export default function InpaintForm({ datasetId, imageIds, subfolder, qualityFla
     if (!jobId || !jobProgress) return;
     if (jobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
+      for (const dsId of submittedDatasetIds.current) invalidateDatasetContentScope(qc, dsId);
       qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
       // Counts come from the job row, never off the SSE payload: `broadcaster.emit`
       // drops events once a subscriber's 200-slot queue fills, so the terminal
@@ -127,6 +139,7 @@ export default function InpaintForm({ datasetId, imageIds, subfolder, qualityFla
         dest_subfolder: resolveDestSubfolder(),
         label: jobLabel.trim() || undefined,
       }),
+    onMutate: () => { submittedDatasetIds.current = selectionDatasetIds ?? []; },
     onSuccess: (data) => {
       if (data.total === 0) {
         toast("No images with matching detections");
@@ -144,6 +157,10 @@ export default function InpaintForm({ datasetId, imageIds, subfolder, qualityFla
   });
 
   const running = !!jobId && jobProgress?.status === "running";
+  useEffect(() => {
+    onRunningChange?.(running);
+    return () => onRunningChange?.(false);
+  }, [running, onRunningChange]);
   const noDetections = !labelsLoading && detectionLabels.length === 0;
 
   return (

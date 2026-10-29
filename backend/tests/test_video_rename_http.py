@@ -65,7 +65,7 @@ def test_the_poster_moves_with_the_file(tmp_path):
 
             async with env.Session() as db:
                 row = (await db.execute(select(Video))).scalar_one()
-            assert row.poster_path.endswith("/videos/thumbnails/renamed.webp")
+            assert Path(row.poster_path).as_posix().endswith("/videos/thumbnails/renamed.webp")
             assert Path(row.poster_path).exists()
             assert not old_poster.exists()
 
@@ -281,7 +281,7 @@ def test_a_failed_poster_move_does_not_lose_the_rename(tmp_path):
                 row = (await db.execute(select(Video).where(Video.id == target_id))).scalar_one()
             assert row.filename == "renamed.mkv"
             assert Path(row.file_path).exists(), "the rename was lost"
-            assert row.poster_path.endswith("/renamed.webp"), "the row must state intent"
+            assert Path(row.poster_path).as_posix().endswith("/renamed.webp"), "the row must state intent"
 
             # The payoff: the backfill recuts, and the sibling's poster survives.
             assert (await env.client.get(f"{API}/videos/{target_id}/poster")).status_code == 200

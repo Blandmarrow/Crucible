@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime
 
-from backend.utils import compile_user_regex, regex_error, regex_sub_deadline
+from backend.utils import compile_user_regex, regex_sub_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,10 @@ async def bulk_edit_captions(
     # Regex remove/find_replace: `regex` bounds a catastrophic pattern from inside the
     # engine and releases the GIL, so the thread offload is real concurrency.
     if use_regex and operation in ("remove", "find_replace"):
-        try:
-            compiled = compile_user_regex(text)
-        except regex_error:
-            return {"affected": 0, "skipped": len(images)}
+        # An invalid pattern raises `regex_error` to the router, which answers 400.
+        # Swallowing it here reported "nothing matched" for a pattern that never
+        # ran (GPT-031), indistinguishable from a valid one that matched nothing.
+        compiled = compile_user_regex(text)
 
         repl = "" if operation == "remove" else replacement
         items = [(img.id, img.caption_text or "") for img in images]
@@ -120,10 +120,12 @@ async def bulk_edit_captions(
             for img_id, old_text in batch:
                 if not old_text:
                     continue
-                try:
-                    subbed = regex_sub_deadline(compiled, repl, old_text, deadline)
-                except regex_error:
-                    continue
+                # A bad replacement template (`\9`, an unknown group name) raises
+                # `regex_error` here, on the first caption the pattern matches. It
+                # propagates rather than skipping the caption: every substitution
+                # runs before anything is written, so the router's 400 leaves the
+                # batch untouched. Swallowing it reported "nothing matched".
+                subbed = regex_sub_deadline(compiled, repl, old_text, deadline)
                 new_text = " ".join(subbed.split())
                 if new_text != old_text:
                     updates[img_id] = new_text
@@ -203,10 +205,8 @@ async def find_replace_captions(
     updated = 0
 
     if use_regex:
-        try:
-            compiled = compile_user_regex(find)
-        except regex_error:
-            return 0
+        # Raises `regex_error` on an invalid pattern; the router answers 400.
+        compiled = compile_user_regex(find)
 
         items = [(img.id, img.caption_text or "") for img in images]
 
@@ -214,10 +214,8 @@ async def find_replace_captions(
             deadline = time.monotonic() + _REGEX_TIMEOUT
             updates: dict[str, str] = {}
             for img_id, old_text in batch:
-                try:
-                    new_text = regex_sub_deadline(compiled, replace, old_text, deadline)
-                except regex_error:
-                    continue
+                # A bad replacement template raises here; see bulk_edit_captions.
+                new_text = regex_sub_deadline(compiled, replace, old_text, deadline)
                 if new_text != old_text:
                     updates[img_id] = new_text
             return updates
@@ -261,8 +259,11 @@ async def get_tag_stats(db: AsyncSession, dataset_id: str, subfolder: str | None
     result = await db.stream(q)
     freq: dict[str, int] = {}
     async for (caption_text,) in result:
-        for tag in caption_text.split(","):
-            tag = tag.strip()
+        # The count is the number of images carrying the tag, so a tag repeated
+        # within one caption counts once (GPT-035). dict.fromkeys, not a set: a
+        # set's order varies per process, and first-seen order is what breaks
+        # ties in the sort below. Case-sensitive, like get_tag_cooccurrence.
+        for tag in dict.fromkeys(t.strip() for t in caption_text.split(",")):
             if tag:
                 freq[tag] = freq.get(tag, 0) + 1
     return [

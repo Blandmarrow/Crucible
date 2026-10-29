@@ -8,18 +8,19 @@ import { EMPTY_PROVENANCE } from "../../constants/licenses";
 import { useCustomLicenses } from "../../hooks/useCustomLicenses";
 import { useModalBehavior } from "../../hooks/useModalBehavior";
 import DirPickerModal from "./DirPickerModal";
+import { adoptJob } from "../../utils/jobReconcile";
+import { apiErrorDetail } from "../../utils/apiError";
 
 interface Props {
   /** Candidate datasets to import into. When more than one, a target selector is shown. */
   datasets: Dataset[];
   /** Preselected target (e.g. the card or gallery a user opened this from). */
   initialDatasetId?: string;
-  onStarted: (jobId: string) => void;
   onClose: () => void;
 }
 
 /** Shared "Import from folder" modal used by DatasetsPage and GalleryPage. */
-export default function ImportFolderModal({ datasets, initialDatasetId, onStarted, onClose }: Props) {
+export default function ImportFolderModal({ datasets, initialDatasetId, onClose }: Props) {
   const [targetId, setTargetId] = useState(initialDatasetId ?? datasets[0]?.id ?? "");
   const [path, setPath] = useState("");
   const [subfolder, setSubfolder] = useState("");
@@ -53,12 +54,16 @@ export default function ImportFolderModal({ datasets, initialDatasetId, onStarte
   const importMutation = useMutation({
     mutationFn: () =>
       datasetsApi.importFolder(targetId, path, subfolder, preserveStructure, importCaptions, provenance, includeVideos),
+    // Submitted, not started: the job is queued, and a folder that turns out not
+    // to exist fails in the worker, after this modal has gone. Its outcome is
+    // TopBar's to report (GPT-030); adopting the job is what guarantees TopBar
+    // hears of it even if the SSE stream misses every event.
     onSuccess: (data) => {
-      toast.success("Import started");
-      onStarted(data.job_id);
+      void adoptJob(data.job_id);
+      toast.success("Import submitted");
       onClose();
     },
-    onError: () => toast.error("Import failed"),
+    onError: (err) => toast.error(`Import failed: ${apiErrorDetail(err, "could not submit the import")}`),
   });
 
   return (

@@ -401,7 +401,7 @@ def test_a_rescan_with_no_collision_renames_nothing(tmp_path):
             async with env.Session() as db:
                 row = (await db.execute(select(Video))).scalar_one()
             assert row.filename == "solo.mp4"
-            assert row.poster_path.endswith("/videos/thumbnails/solo.webp")
+            assert Path(row.poster_path).as_posix().endswith("/videos/thumbnails/solo.webp")
 
     run(scenario())
 

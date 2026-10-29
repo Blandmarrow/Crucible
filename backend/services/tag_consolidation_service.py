@@ -10,7 +10,6 @@ See docs/dev/tag-consolidation.md.
 """
 import asyncio
 import logging
-import time
 from datetime import datetime
 
 import numpy as np
@@ -73,8 +72,7 @@ async def analyze(
         return {"clusters": [], "vocab_size": len(vocab), "image_count": image_count, "truncated": truncated}
 
     entry = await model_manager.load_tag_embedder(job_id=job_id, loop=asyncio.get_running_loop(), dataset_id=dataset_id)
-    entry.in_use = True
-    try:
+    with model_manager.lease(entry):
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, tag_embedder.embed_texts_sync, vocab, entry)
         await broadcaster.emit(job_id, {
@@ -85,9 +83,6 @@ async def analyze(
         index_clusters = await loop.run_in_executor(
             None, tag_embedder.cluster_texts_sync, vocab, embeddings, threshold
         )
-    finally:
-        entry.in_use = False
-        entry.last_used = time.time()
 
     clusters = []
     for idxs in index_clusters:

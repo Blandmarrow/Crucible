@@ -6,17 +6,22 @@ sidecar alongside the DB caption. The failure classes pinned here:
 - a literal find-replace must touch only matching captions (DB + sidecar), never
   the rest;
 - a regex `remove` collapses whitespace and reports skipped rows;
-- an **invalid** regex is swallowed by design (`caption_service.py:200-203`
-  returns 0) → 200 + no-op, not 400;
-- a regex **timeout** raises builtin `TimeoutError`, which the per-item
-  `except regex_error` does NOT catch, so it escapes before any sidecar write →
-  408 with every caption and sidecar byte-identical.
+- an **invalid** regex is a 400 naming the compile error, with nothing written —
+  it used to be swallowed into a 200 "nothing matched", indistinguishable from a
+  valid pattern that matched nothing (GPT-031);
+- an invalid **replacement template** (`\\9`) compiles with the pattern and only
+  fails on a match; it is the same 400, raised before anything is written, where
+  a per-item `except regex_error: continue` used to report "nothing matched";
+- a regex **timeout** raises builtin `TimeoutError`, which escapes before any
+  sidecar write → 408 with every caption and sidecar byte-identical.
 
 The timeout tests set `_REGEX_TIMEOUT = 0.0`, which makes `regex_sub_deadline`
 raise on its pre-check deadline before touching the engine — deterministic and
 CI-safe (no reliance on a catastrophic pattern actually running slowly).
 """
 from pathlib import Path
+
+import pytest
 
 from backend.models.image import Image
 from backend.services import caption_service
@@ -87,8 +92,8 @@ def test_bulk_edit_regex_remove_normalizes_and_skips(tmp_path):
     run(scenario())
 
 
-def test_find_replace_invalid_regex_is_noop(tmp_path):
-    """A compile error is swallowed (`caption_service.py:200-203`), not a 400."""
+def test_find_replace_invalid_regex_is_a_400(tmp_path):
+    """A compile error is reported, not swallowed into `{"updated": 0}` (GPT-031)."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
@@ -99,11 +104,87 @@ def test_find_replace_invalid_regex_is_noop(tmp_path):
                 f"{API}/captions/dataset/{ds['id']}/find-replace",
                 json={"find": "(", "replace": "x", "use_regex": True},
             )
-            assert r.status_code == 200, r.text
-            assert r.json() == {"updated": 0}
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"].startswith("Invalid regex: ")
 
             assert await _db_caption(env, a["id"]) == "unchanged caption"
             assert _sidecar(env, a, ds).read_text(encoding="utf-8") == "unchanged caption"
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["find_replace", "remove"])
+def test_bulk_edit_invalid_regex_is_a_400(tmp_path, operation):
+    """Both regex operations of `/bulk-edit` compile the pattern; an invalid one used
+    to come back 200 `{affected: 0, skipped: N}` — what the toolbar toasts as "No
+    captions matched" — for a pattern that never ran (GPT-031)."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png")
+            await _caption(env, a["id"], "a red square")
+
+            r = await env.client.post(
+                f"{API}/captions/dataset/{ds['id']}/bulk-edit",
+                json={"operation": operation, "text": "(", "replacement": "x",
+                      "use_regex": True, "image_ids": [a["id"]]},
+            )
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"].startswith("Invalid regex: ")
+
+            assert await _db_caption(env, a["id"]) == "a red square"
+            assert _sidecar(env, a, ds).read_text(encoding="utf-8") == "a red square"
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("route", ["find-replace", "bulk-edit"])
+def test_invalid_replacement_template_is_a_400(tmp_path, route):
+    """`\\9` names a group the pattern lacks. It compiles with the pattern and fails
+    only on a match, so the per-item loop used to skip that caption and answer 200
+    "nothing matched" — GPT-031's symptom for the replacement half. One caption
+    matches and one does not: neither may change."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((1, 1, 1)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes((2, 2, 2)))
+            await _caption(env, a["id"], "a red square")
+            await _caption(env, b["id"], "green shoes")
+
+            body = (
+                {"find": "(red)", "replace": r"\9", "use_regex": True}
+                if route == "find-replace"
+                else {"operation": "find_replace", "text": "(red)", "replacement": r"\9",
+                      "use_regex": True, "image_ids": [a["id"], b["id"]]}
+            )
+            r = await env.client.post(f"{API}/captions/dataset/{ds['id']}/{route}", json=body)
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"].startswith("Invalid regex: ")
+
+            assert await _db_caption(env, a["id"]) == "a red square"
+            assert await _db_caption(env, b["id"]) == "green shoes"
+            assert _sidecar(env, a, ds).read_text(encoding="utf-8") == "a red square"
+
+    run(scenario())
+
+
+def test_bulk_edit_valid_regex_that_matches_nothing_is_still_a_200(tmp_path):
+    """The control the probe paired with the bug: a *valid* pattern that matches
+    nothing keeps its 200 no-op, so the two cases are now distinguishable."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png")
+            await _caption(env, a["id"], "a red square")
+
+            r = await env.client.post(
+                f"{API}/captions/dataset/{ds['id']}/bulk-edit",
+                json={"operation": "find_replace", "text": "zzz+", "replacement": "x",
+                      "use_regex": True, "image_ids": [a["id"]]},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json() == {"affected": 0, "skipped": 1}
 
     run(scenario())
 

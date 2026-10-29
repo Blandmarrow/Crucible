@@ -60,8 +60,8 @@ export default function ContextMenu({ x, y, actions, onClose }: ContextMenuProps
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // Stop the page's own document-level Escape handler from also firing —
-      // dismissing the menu should not, say, clear the gallery's selection.
+      // Stop a page-level Escape handler (ImageDetailPage's draw-cancel) or an
+      // enclosing dialog from also reacting: dismissing the menu dismisses only it.
       e.stopPropagation();
       onClose();
     };

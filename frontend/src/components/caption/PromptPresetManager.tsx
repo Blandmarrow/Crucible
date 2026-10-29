@@ -83,7 +83,12 @@ export default function PromptPresetManager({ currentModel, currentStyle, curren
                 placeholder="Preset name…"
                 value={saveName}
                 onChange={(e) => setSaveName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setSaving(false); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  // Stopped so that, inside a dialog (the gallery's Caption modal),
+                  // Escape closes this inline row and not the dialog around it.
+                  if (e.key === "Escape") { e.stopPropagation(); setSaving(false); }
+                }}
                 autoFocus
               />
               <button

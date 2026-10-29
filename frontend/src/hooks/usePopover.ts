@@ -16,9 +16,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * and exists only so Escape can hand focus back rather than dropping it on
  * `<body>`.
  *
- * Escape calls `stopPropagation`: `GalleryPage` and `ImageDetailPage` both carry
- * window-level Escape handlers that would otherwise clear the selection or close
- * the pane behind the popover being dismissed.
+ * Escape calls `stopPropagation`, so it dismisses the popover and nothing else:
+ * `ImageDetailPage` (whose `LabelsPanel` renders a `LabelPicker`) carries a
+ * window-level Escape handler that cancels a detection draw, and a popover
+ * inside a `useModalBehavior` dialog would otherwise close the dialog too.
+ * `GalleryPage` has no Escape handler of its own.
  *
  * Not implemented on purpose (the `ContextMenu` precedent): arrow-key roving
  * focus, portaling, viewport clamping. A panel that needs to escape a scrolling

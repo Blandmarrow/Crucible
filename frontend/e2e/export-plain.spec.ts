@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { createDatasetViaApi, uploadViaApi } from './helpers'
 
 // Run a "plain folder" export from the UI, watch the progress panel complete,
@@ -8,8 +10,8 @@ test('run a plain export to completion', async ({ page, request }) => {
   await uploadViaApi(request, ds.id, 'x.png')
   await uploadViaApi(request, ds.id, 'y.png')
 
-  // The e2e backend serves a throwaway data dir; write the export under /tmp.
-  const outDir = `/tmp/e2e-export-${Date.now()}`
+  // The e2e backend serves a throwaway data dir; write the export under the temp dir.
+  const outDir = path.join(os.tmpdir(), `e2e-export-${Date.now()}`)
 
   await page.goto(`/datasets/${ds.id}/export`)
   await page.getByRole('button', { name: 'plain folder' }).click()
@@ -34,7 +36,7 @@ test('an export with no label filter writes every unlabelled image', async ({ pa
   await uploadViaApi(request, ds.id, 'a.png')
   await uploadViaApi(request, ds.id, 'b.png')
 
-  const outDir = `/tmp/e2e-export-nolabels-${Date.now()}`
+  const outDir = path.join(os.tmpdir(), `e2e-export-nolabels-${Date.now()}`)
 
   await page.goto(`/datasets/${ds.id}/export`)
   await page.getByRole('button', { name: 'plain folder' }).click()
@@ -47,7 +49,7 @@ test('an export with no label filter writes every unlabelled image', async ({ pa
 
   await expect(page.getByText('Export complete', { exact: false })).toBeVisible({ timeout: 30_000 })
 
-  const listing = await request.get('/api/v1/filesystem/list', { params: { path: `${outDir}/images` } })
+  const listing = await request.get('/api/v1/filesystem/list', { params: { path: path.join(outDir, 'images') } })
   expect(listing.status(), await listing.text()).toBe(200)
   const files = (await listing.json()).entries.filter((e: { type: string }) => e.type === 'file')
   expect(files).toHaveLength(2)

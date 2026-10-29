@@ -6,6 +6,7 @@ import { useModalBehavior } from "../../hooks/useModalBehavior";
 import { useJobStore } from "../../store/jobStore";
 import JobProgressBar from "../common/JobProgressBar";
 import type { Version } from "../../types";
+import { showRestoreSummaryToast } from "../../utils/restoreToast";
 
 interface Props {
   datasetId: string;
@@ -25,7 +26,9 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
 
   useEffect(() => {
     if (jobProgress?.status === "completed") {
-      toast.success("Restore complete");
+      // A restore that lost files still completes; the toast reads its
+      // result_data and warns instead of claiming success (GPT-025).
+      if (jobId) showRestoreSummaryToast(jobId, "Restore complete");
       onSuccess();
       onClose();
     } else if (jobProgress?.status === "failed") {
@@ -33,7 +36,7 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
       setLoading(false);
       setJobId(null);
     }
-  }, [jobProgress?.status, onSuccess, onClose]);
+  }, [jobProgress?.status, jobProgress?.message, jobId, onSuccess, onClose]);
 
   async function handleConfirm() {
     setLoading(true);

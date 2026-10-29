@@ -1,22 +1,20 @@
 """`duplicate_dataset --include-videos` under real foreign-key enforcement.
 
-The rest of the suite runs with SQLite's `foreign_keys` pragma OFF — the default
-for every connection, and this harness builds its schema with `create_all` on its
-own engine, so it never gets the `PRAGMA foreign_keys=ON` that
-`backend/database.py` installs on the app engine. Every FK in the schema is
-unenforced there, which is fine for tests about rows and files but blind to one
-whole failure class.
+The suite used to run with SQLite's `foreign_keys` pragma OFF — the default for
+every connection, and the harness builds its schema with `create_all` on its own
+engine, so it never got the `PRAGMA foreign_keys=ON` that `backend/database.py`
+installs on the app engine. Every FK in the schema was unenforced there, which is
+fine for tests about rows and files but blind to one whole failure class.
+`api_env` now enforces them by default (GPT-002); the explicit
+`foreign_keys=True` below predates that and is kept as documentation.
 
 It hid a real one. `Image.source_video_id` is a genuine FK to `videos.id`, and
 the video-copy step adds its `Video` rows to the session without flushing them —
 so the copied frames' INSERT reached the database before the video they name.
 Under the app's engine that is `IntegrityError: FOREIGN KEY constraint failed`
 and the whole duplicate job fails; under the harness's it passed silently, and
-only running the real app surfaced it. This module opts the pragma back on for
-exactly that path so it cannot come back.
-
-Nothing else here needs the pragma: this is the only place the branch creates a
-row that points at another row created moments earlier in the same transaction.
+only running the real app surfaced it. This module pins exactly that path so it
+cannot come back.
 """
 
 from sqlalchemy import select

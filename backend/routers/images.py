@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
+from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -54,15 +54,17 @@ from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.duplicate_service import carry_duplicate_flags, prune_orphaned_duplicate_flags
+from backend.services.image_delete import unlink_files_for_rows, unlink_image_files
 from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
 from backend.services.image_service import (
+    aspect_crop_rect,
     crop_image_to_dest,
-    crop_to_aspect,
     extract_generation_metadata,
     extract_embedded_provenance,
     generate_thumbnail,
     get_image_info,
     resize_image,
+    temp_sibling,
 )
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.workers.job_queue import job_queue
@@ -215,6 +217,8 @@ def _apply_image_filters(q, f: ImageFilterParams):
             q = q.where(score_col >= f.min_score)
         if f.max_score is not None:
             q = q.where(score_col <= f.max_score)
+        if f.max_score_lt is not None:
+            q = q.where(score_col < f.max_score_lt)
 
     if f.quality_flag:
         q = q.where(Image.quality_flags[f.quality_flag].as_boolean() == True)  # noqa: E712
@@ -695,64 +699,45 @@ async def delete_image(image_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Image not found")
     dataset_id = img.dataset_id
     ensure_not_busy(dataset_id)
-    # The *resolved* paths the guard hands back are what gets unlinked — validating
-    # one path and deleting another would defeat the check entirely.
-    p = contained_path(img.file_path, settings.datasets_dir, context="delete_image", ident=img.id)
-    t = contained_path(
-        img.thumbnail_path, settings.datasets_dir, context="delete_image", ident=img.id
-    )
-    txt = p.with_suffix(".txt") if p is not None else None
-    if p is not None:
-        await version_service.mark_image_deleted_in_versions(img.id, str(p), db)
+    # Files first, row second (PM-021, GPT-008): a lock on the image file raises
+    # `FileInUseError` here — a 409 — with the row and the file both intact.
+    await unlink_image_files(db, img.id, img.file_path, img.thumbnail_path, context="delete_image")
     await db.delete(img)
     # `is_duplicate` is a relationship to another row, so deleting this one can
     # orphan a survivor's flag. Between the DELETE and the commit at every such
-    # site: one commit, atomic with the delete, ahead of the unlinks (PM-013,
-    # PM-022).
+    # site: one commit, atomic with the delete (PM-022).
     await prune_orphaned_duplicate_flags(db, [dataset_id])
     await db.commit()
-    for f in [p, t, txt]:
-        if f and f.exists():
-            f.unlink(missing_ok=True)
     await refresh_stats(db, dataset_id)
 
 
-@router.delete("/batch/delete", status_code=204)
+@router.delete("/batch/delete")
 async def batch_delete(image_ids: list[str], db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
-        .where(Image.id.in_(image_ids))
-    )
-    rows = result.all()
+    rows = []
+    for chunk in chunked(image_ids):
+        result = await db.execute(
+            select(Image.id, Image.dataset_id, Image.file_path, Image.thumbnail_path)
+            .where(Image.id.in_(chunk))
+        )
+        rows.extend(result.all())
     if not rows:
-        return
+        return {"deleted": 0, "in_use": 0, "failed": 0}
 
     dataset_ids = {r.dataset_id for r in rows}
     for did in dataset_ids:
         ensure_not_busy(did)
-    files_to_delete: list[Path] = []
-    for r in rows:
-        # Per row, not per request: one escaped path must not stop its neighbours
-        # from being deleted properly.
-        p = contained_path(r.file_path, settings.datasets_dir, context="batch_delete", ident=r.id)
-        if p is not None:
-            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-            files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = contained_path(
-            r.thumbnail_path, settings.datasets_dir, context="batch_delete", ident=r.id
-        )
-        if t is not None:
-            files_to_delete.append(t)
-
-    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    # Files first, per row (PM-021, GPT-008): a row whose file is locked is kept
+    # and counted, and every other row goes. One escaped path must not stop its
+    # neighbours from being deleted properly either.
+    deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="batch_delete")
+    for chunk in chunked(deletable):
+        await db.execute(delete(Image).where(Image.id.in_(chunk)))
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
 
-    for f in files_to_delete:
-        f.unlink(missing_ok=True)
-
     for did in dataset_ids:
         await refresh_stats(db, did)
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}
 
 
 @router.post("/bulk-count")
@@ -1031,32 +1016,17 @@ async def bulk_delete_filtered(body: BulkDeleteRequest, db: AsyncSession = Depen
     result = await db.execute(query)
     rows = result.all()
     if not rows:
-        return {"deleted": 0}
+        return {"deleted": 0, "in_use": 0, "failed": 0}
 
-    image_ids = [r.id for r in rows]
-    files_to_delete: list[Path] = []
-    for r in rows:
-        p = contained_path(
-            r.file_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
-        )
-        if p is not None:
-            await version_service.mark_image_deleted_in_versions(r.id, str(p), db)
-            files_to_delete.extend([p, p.with_suffix(".txt")])
-        t = contained_path(
-            r.thumbnail_path, settings.datasets_dir, context="bulk_delete_filtered", ident=r.id
-        )
-        if t is not None:
-            files_to_delete.append(t)
-
-    await db.execute(delete(Image).where(Image.id.in_(image_ids)))
+    # Files first, per row, as `batch_delete` (PM-021, GPT-008).
+    deletable, in_use, failed = await unlink_files_for_rows(db, rows, context="bulk_delete_filtered")
+    for chunk in chunked(deletable):
+        await db.execute(delete(Image).where(Image.id.in_(chunk)))
     await prune_orphaned_duplicate_flags(db, [body.dataset_id])
     await db.commit()
 
-    for f in files_to_delete:
-        f.unlink(missing_ok=True)
-
     await refresh_stats(db, body.dataset_id)
-    return {"deleted": len(image_ids)}
+    return {"deleted": len(deletable), "in_use": in_use, "failed": failed}
 
 
 @router.post("/bulk-thumbnails")
@@ -1247,6 +1217,33 @@ async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
 _record_in_place = record_in_place
 
 
+async def _refresh_stats_after_edit(db: AsyncSession, dataset_id: str) -> None:
+    """`refresh_stats` in an in-place edit's epilogue: the edit changed
+    `file_size_bytes`, so the dataset's `total_size_bytes` moved too (GPT-016).
+    Best-effort — the edit is committed, and the next refresh corrects it."""
+    try:
+        await refresh_stats(db, dataset_id)
+    except Exception:
+        logger.warning("Could not refresh stats for dataset %s", dataset_id, exc_info=True)
+        # A failed commit leaves the session needing a rollback; without it the
+        # caller's next statement (a job's `result_data` write) raises
+        # `PendingRollbackError` and fails a run whose edits all committed.
+        # Expires every instance — callers read what they return *before* this.
+        await db.rollback()
+
+
+def _discard_temp(tmp: Path) -> None:
+    """Remove an in-place edit's temp output after the edit failed.
+
+    Best-effort: the edit is already reported as failed, and a leftover temp
+    file is a stray a rescan would adopt, not a corruption.
+    """
+    try:
+        tmp.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not remove temp file %s", tmp, exc_info=True)
+
+
 async def guard_batch_datasets(db: AsyncSession, image_ids: list[str]) -> set[str]:
     """`ensure_not_busy` every dataset a bare id list touches; return the set.
 
@@ -1301,8 +1298,8 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
+            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
+            image_ids = list(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # The whole outcome of the run, seeded like the LUT/upscale twins.
@@ -1312,42 +1309,60 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
             # committed, the gallery just keeps rendering the old tile.
             counts = {
                 "processed": 0,
-                "skipped": len(body.image_ids) - len(images),
+                "skipped": len(body.image_ids) - len(image_ids),
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
+            touched: set[str] = set()
 
             cancelled = False
-            for i, img in enumerate(images):
+            total = len(image_ids)
+            for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                # Loaded per item, not once up front: a failed item rolls the
+                # session back, which expires every instance it holds.
+                img = await session.get(Image, image_id)
+                if img is None:
+                    counts["skipped"] += 1
+                    continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
+                filename = img.filename
+                src_path = Path(img.file_path)
+                tmp_path = temp_sibling(src_path, "resizetmp")
+                # Stage, flush, swap, commit — the single resize's order (GPT-010).
                 try:
-                    new_w, new_h = await loop.run_in_executor(
-                        None, resize_image, img.file_path, body.width, body.height,
+                    info = await loop.run_in_executor(
+                        None, resize_image, str(src_path), str(tmp_path), body.width, body.height,
                         body.scale, body.maintain_ar,
                     )
+                    img.width, img.height = info["width"], info["height"]
+                    img.file_size_bytes = info["file_size_bytes"]
+                    img.phash = info["phash"]
+                    _record_in_place(img, "resize", width=info["width"], height=info["height"])
+                    await session.flush()
+                    await replace_retrying(tmp_path, src_path)
                 except Exception as exc:
-                    logger.error("Batch resize failed for %s: %s", img.filename, exc)
+                    await session.rollback()
+                    _discard_temp(tmp_path)
+                    logger.error("Batch resize failed for %s: %s", filename, exc)
                     counts["failed"] += 1
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "batch_resize",
-                        "status": "running", "done": i + 1, "total": len(images),
-                        "percent": round((i + 1) / len(images) * 100, 1),
-                        "current_item": img.filename,
+                        "status": "running", "done": i + 1, "total": total,
+                        "percent": round((i + 1) / total * 100, 1),
+                        "current_item": filename,
                         "message": f"Failed: {exc}",
                     })
                     continue
-                img.width, img.height = new_w, new_h
-                _record_in_place(img, "resize", width=new_w, height=new_h)
-                # Per image, with nothing fallible between the (already-done)
-                # overwrite and it. The commit used to sit outside the loop, so a
-                # raise on image N rolled back the geometry and processing_history
-                # of images 1..N — every one of them already rewritten on disk
-                # (PM-013).
+                # Per image, with only the commit after the swap. The commit used
+                # to sit outside the loop, so a raise on image N rolled back the
+                # geometry and processing_history of images 1..N — every one of
+                # them already rewritten on disk (PM-013).
                 await session.commit()
+                touched.add(img.dataset_id)
 
                 # --- epilogue: best-effort, cannot undo the resize ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -1365,12 +1380,14 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                         )
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "batch_resize",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "status": "running", "done": i + 1, "total": total,
+                    "percent": round((i + 1) / total * 100, 1),
                     "current_item": img.filename,
                 })
                 counts["processed"] += 1
 
+            for ds_id in touched:
+                await _refresh_stats_after_edit(session, ds_id)
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = counts
@@ -1402,48 +1419,68 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image).where(Image.id.in_(body.image_ids)))
-            images = result.scalars().all()
+            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
+            image_ids = list(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # Seeded and incremented exactly like the resize twin above.
             counts = {
                 "processed": 0,
-                "skipped": len(body.image_ids) - len(images),
+                "skipped": len(body.image_ids) - len(image_ids),
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
+            touched: set[str] = set()
 
             cancelled = False
-            for i, img in enumerate(images):
+            total = len(image_ids)
+            for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
                     break
+                # Per item, as the resize twin: a rollback expires the session.
+                img = await session.get(Image, image_id)
+                if img is None:
+                    counts["skipped"] += 1
+                    continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
+                filename = img.filename
+                src_path = Path(img.file_path)
+                tmp_path = temp_sibling(src_path, "croptmp")
+                # Stage, flush, swap, commit (GPT-010). The rect is computed
+                # without writing, so the detection remap — DB work that can fail
+                # — runs and is flushed while the original is still intact; the
+                # crop is written to a temp file and swapped over it last.
                 try:
-                    new_w, new_h, rect, old_size = await loop.run_in_executor(
-                        None, crop_to_aspect, img.file_path, body.target_ar, body.strategy
+                    rect, old_size = await loop.run_in_executor(
+                        None, aspect_crop_rect, str(src_path), body.target_ar, body.strategy
                     )
+                    info = await loop.run_in_executor(
+                        None, crop_image_to_dest, str(src_path), str(tmp_path), *rect,
+                    )
+                    img.width, img.height = info["width"], info["height"]
+                    img.file_size_bytes = info["file_size_bytes"]
+                    img.phash = info["phash"]
+                    _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
+                    await remap_detections_for_crop(session, img.id, rect, old_size)
+                    await session.flush()
+                    await replace_retrying(tmp_path, src_path)
                 except Exception as exc:
-                    logger.error("Batch crop failed for %s: %s", img.filename, exc)
+                    await session.rollback()
+                    _discard_temp(tmp_path)
+                    logger.error("Batch crop failed for %s: %s", filename, exc)
                     counts["failed"] += 1
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "batch_crop",
-                        "status": "running", "done": i + 1, "total": len(images),
-                        "percent": round((i + 1) / len(images) * 100, 1),
-                        "current_item": img.filename,
+                        "status": "running", "done": i + 1, "total": total,
+                        "percent": round((i + 1) / total * 100, 1),
+                        "current_item": filename,
                         "message": f"Failed: {exc}",
                     })
                     continue
-                img.width, img.height = new_w, new_h
-                _record_in_place(img, "crop_aspect", target_ar=body.target_ar, rect=list(rect))
-                # Aspect crop changed geometry: remap this image's detections.
-                # DB-only work, so it stays *above* the commit — the same place
-                # `_run_crop_upscale_replace` puts it. Below this line the row and
-                # the file on disk agree, durably.
-                await remap_detections_for_crop(session, img.id, rect, old_size)
                 await session.commit()
+                touched.add(img.dataset_id)
 
                 # --- epilogue: best-effort, cannot undo the crop ---
                 if img.thumbnail_path:
@@ -1459,12 +1496,14 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                         )
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "batch_crop",
-                    "status": "running", "done": i + 1, "total": len(images),
-                    "percent": round((i + 1) / len(images) * 100, 1),
+                    "status": "running", "done": i + 1, "total": total,
+                    "percent": round((i + 1) / total * 100, 1),
                     "current_item": img.filename,
                 })
                 counts["processed"] += 1
 
+            for ds_id in touched:
+                await _refresh_stats_after_edit(session, ds_id)
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
                 job_row.result_data = counts
@@ -1484,14 +1523,29 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     ensure_not_busy(img.dataset_id)
     await version_service.protect_file_before_overwrite(image_id, img.file_path, db)
     await db.commit()  # persist the COW hash backfill before the overwrite
-    new_w, new_h = await asyncio.get_running_loop().run_in_executor(
-        None, resize_image, img.file_path, body.width, body.height, body.scale, body.maintain_ar, body.resample
-    )
-    img.width, img.height = new_w, new_h
-    _record_in_place(img, "resize", width=new_w, height=new_h)
-    # `resize_image` saved over `img.file_path` in place; nothing fallible may sit
-    # between that irreversible write and this commit, or a raise rolls the row
-    # back onto pixels that no longer match it (PM-013).
+    # Stage, flush, swap, commit (GPT-010): resize into a temp file, stage every
+    # row field and flush while the original is still intact, and only then swap
+    # the output over it — so the commit is the one thing left between the
+    # irreversible swap and the row that describes it (PM-013). A failure before
+    # the swap rolls back with the original untouched; a lock on the swap is a
+    # 409 (PM-021).
+    src_path = Path(img.file_path)
+    tmp_path = temp_sibling(src_path, "resizetmp")
+    try:
+        info = await asyncio.get_running_loop().run_in_executor(
+            None, resize_image, str(src_path), str(tmp_path),
+            body.width, body.height, body.scale, body.maintain_ar, body.resample,
+        )
+        new_w, new_h = info["width"], info["height"]
+        img.width, img.height = new_w, new_h
+        img.file_size_bytes = info["file_size_bytes"]
+        img.phash = info["phash"]
+        _record_in_place(img, "resize", width=new_w, height=new_h)
+        await db.flush()
+        await replace_retrying(tmp_path, src_path)
+    except BaseException:
+        _discard_temp(tmp_path)
+        raise
     await db.commit()
 
     # --- epilogue: best-effort, cannot undo the resize ---
@@ -1510,6 +1564,7 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
             logger.warning(
                 "Resize: thumbnail for %s could not be regenerated: %s", img.filename, exc
             )
+    await _refresh_stats_after_edit(db, img.dataset_id)
     return {"width": new_w, "height": new_h}
 
 
@@ -1545,31 +1600,37 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                 )
         await version_service.protect_file_before_overwrite(img.id, img.file_path, db)
         await db.commit()  # persist the COW hash backfill before the overwrite
-        tmp_path = src_path.with_name(src_path.stem + "_croptmp" + src_path.suffix)
+        tmp_path = temp_sibling(src_path, "croptmp")
 
         if not body.upscale_model:
-            # Synchronous replace crop
+            # Synchronous replace crop. Stage, flush, swap, commit (GPT-010): the
+            # detection remap is DB work that can fail — a locked database, a
+            # malformed stored mask — so it runs, with every row field, and is
+            # flushed *before* the swap, while the original is still intact. Then
+            # the swap is the one irreversible step, and only the commit follows
+            # it (PM-013). The thumbnail regenerates in the epilogue below.
             old_size = (img.width, img.height)
-            info = await loop.run_in_executor(
-                None, crop_image_to_dest,
-                str(src_path), str(tmp_path),
-                body.x, body.y, body.width, body.height,
-                body.output_width, body.output_height,
-            )
-            tmp_path.replace(src_path)
-            img.width = info["width"]
-            img.height = info["height"]
-            img.file_size_bytes = info["file_size_bytes"]
-            img.format = info["format"]
-            img.phash = info["phash"]
-            _record_in_place(img, "crop", rect=[body.x, body.y, body.width, body.height])
-            # Replace crop changed geometry: remap this image's detections.
-            await remap_detections_for_crop(
-                db, img.id, (body.x, body.y, body.width, body.height), old_size
-            )
-            # `tmp_path.replace(src_path)` above is irreversible; nothing fallible
-            # may precede this commit or the row rolls back onto the cropped file
-            # (PM-013). The thumbnail regenerates in the epilogue below.
+            try:
+                info = await loop.run_in_executor(
+                    None, crop_image_to_dest,
+                    str(src_path), str(tmp_path),
+                    body.x, body.y, body.width, body.height,
+                    body.output_width, body.output_height,
+                )
+                img.width = info["width"]
+                img.height = info["height"]
+                img.file_size_bytes = info["file_size_bytes"]
+                img.format = info["format"]
+                img.phash = info["phash"]
+                _record_in_place(img, "crop", rect=[body.x, body.y, body.width, body.height])
+                await remap_detections_for_crop(
+                    db, img.id, (body.x, body.y, body.width, body.height), old_size
+                )
+                await db.flush()
+                await replace_retrying(tmp_path, src_path)
+            except BaseException:
+                _discard_temp(tmp_path)
+                raise
             await db.commit()
 
             # --- epilogue: best-effort, cannot undo the crop ---
@@ -1585,7 +1646,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     logger.warning(
                         "Crop: thumbnail for %s could not be regenerated: %s", img.filename, exc
                     )
-            return {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
+            result = {"id": img.id, "filename": img.filename, "width": img.width, "height": img.height}
+            await _refresh_stats_after_edit(db, img.dataset_id)
+            return result
 
         # Replace + upscale: crop to temp, enqueue job that upscales to original path
         old_size = (img.width, img.height)
@@ -1606,6 +1669,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             # For detection remap after a successful upscale (crop frame = old dims).
             "crop_rect": [body.x, body.y, body.width, body.height],
             "old_size": [old_size[0], old_size[1]],
+            # The upscaler writes here, never over the original: the output is
+            # swapped into place only after the row is staged and flushed (GPT-010).
+            "out_tmp_path": str(temp_sibling(src_path, "cuptmp")),
         }
         job = BackgroundJob(job_type="crop_upscale", label="Crop + upscale", dataset_id=img.dataset_id, total_items=1, config=replace_cfg)
         db.add(job)
@@ -1621,9 +1687,14 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             try:
                 info = await loop2.run_in_executor(
                     None, upscale_image_sync,
-                    replace_cfg["tmp_path"], replace_cfg["dest_path"], replace_cfg["upscale_model"], False,
+                    replace_cfg["tmp_path"], replace_cfg["out_tmp_path"], replace_cfg["upscale_model"], False,
                     replace_cfg["upscale_target_width"], replace_cfg["upscale_target_height"],
                 )
+            except BaseException:
+                # A save that died partway may have left output at either name.
+                _discard_temp(Path(replace_cfg["out_tmp_path"]))
+                _discard_temp(Path(replace_cfg["out_tmp_path"]).with_suffix(".png"))
+                raise
             finally:
                 try:
                     os.remove(replace_cfg["tmp_path"])
@@ -1631,49 +1702,70 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     pass
 
             # The PNG fallback may have written a different path than the one
-            # asked for; the thumbnail has to be cut from the file that exists.
-            # It is cut in the epilogue, after the row is committed: the crop has
-            # already overwritten the original, so a raise here would leave the
-            # row describing a file that is gone (PM-013).
-            actual_out_path = info.get("out_path", replace_cfg["dest_path"])
+            # asked for (`.png` for a `.bmp` temp); the final name follows
+            # it, so the row, the thumbnail and the file all name the same picture
+            # (PM-009). Nothing has touched the original yet.
+            out_tmp = Path(info.get("out_path", replace_cfg["out_tmp_path"]))
+            dest_path = Path(replace_cfg["dest_path"])
+            final_path = dest_path.with_suffix(out_tmp.suffix)
             superseded: Path | None = None
             stale = 0
+            # `upscale_image_sync` reports no phash, and the crop changed the
+            # picture, so the row's would describe the pre-crop image (GPT-016).
+            # Measured from the written temp, before the swap; `get_image_info`
+            # never raises and answers `{}` on an unreadable file.
+            measured = await loop2.run_in_executor(None, get_image_info, str(out_tmp))
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
-                if updated:
-                    updated.width = info["width"]
-                    updated.height = info["height"]
-                    updated.file_size_bytes = info["file_size_bytes"]
-                    if actual_out_path != replace_cfg["dest_path"]:
-                        # A .bmp read back as .png: the row has to follow the
-                        # written file and the original has to go, or the dataset
-                        # ends up with two files and one row (PM-009). The COW
-                        # copy already exists — `protect_file_before_overwrite`
-                        # ran before the crop — so the unlink is safe. The stem is
-                        # unchanged, so the thumbnail and sidecar stay put. It
-                        # happens after the commit, since `unlink` is fallible.
-                        superseded = Path(replace_cfg["dest_path"])
-                        updated.filename = Path(actual_out_path).name
-                        updated.file_path = actual_out_path
-                        updated.format = info["format"]
-                    _record_in_place(
-                        updated, "crop_upscale",
-                        rect=replace_cfg["crop_rect"],
-                        model=Path(replace_cfg["upscale_model"]).name,
-                    )
-                    # Remap detections only now that the upscale succeeded (a
-                    # failed upscale raises above and never reaches here). The
-                    # crop rect is in the OLD (pre-crop) transposed frame.
-                    rect = replace_cfg["crop_rect"]
-                    old_dims = replace_cfg["old_size"]
-                    await remap_detections_for_crop(
-                        session, replace_cfg["image_id"],
-                        (rect[0], rect[1], rect[2], rect[3]),
-                        (old_dims[0], old_dims[1]),
-                    )
-                    # DB-only work above may still roll back safely; below this
-                    # line the row and the file on disk agree, durably.
+                if updated is None:
+                    # The row went while the upscale ran: there is nothing to
+                    # describe the output, so it must not land in the dataset.
+                    _discard_temp(out_tmp)
+                else:
+                    # Stage, flush, swap, commit (GPT-010): every row field and
+                    # the detection remap — DB work that can fail — are staged
+                    # and flushed while the original is intact; the swap is the
+                    # one irreversible step, and only the commit follows it. A
+                    # failure before the swap fails the job with the original,
+                    # its row and its detections untouched (PM-013).
+                    try:
+                        updated.width = info["width"]
+                        updated.height = info["height"]
+                        updated.file_size_bytes = info["file_size_bytes"]
+                        if measured.get("phash"):
+                            updated.phash = measured["phash"]
+                        if final_path != dest_path:
+                            # A .bmp read back as .png: the row has to follow the
+                            # written file and the original has to go, or the
+                            # dataset ends up with two files and one row (PM-009).
+                            # The COW copy already exists —
+                            # `protect_file_before_overwrite` ran before the crop —
+                            # so the unlink is safe. The stem is unchanged, so the
+                            # thumbnail and sidecar stay put. It happens after the
+                            # commit, since `unlink` is fallible.
+                            superseded = dest_path
+                            updated.filename = final_path.name
+                            updated.file_path = str(final_path)
+                            updated.format = info["format"]
+                        _record_in_place(
+                            updated, "crop_upscale",
+                            rect=replace_cfg["crop_rect"],
+                            model=Path(replace_cfg["upscale_model"]).name,
+                        )
+                        # The crop rect is in the OLD (pre-crop) transposed frame.
+                        rect = replace_cfg["crop_rect"]
+                        old_dims = replace_cfg["old_size"]
+                        await remap_detections_for_crop(
+                            session, replace_cfg["image_id"],
+                            (rect[0], rect[1], rect[2], rect[3]),
+                            (old_dims[0], old_dims[1]),
+                        )
+                        await session.flush()
+                        await replace_retrying(out_tmp, final_path)
+                    except BaseException:
+                        _discard_temp(out_tmp)
+                        raise
                     await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the crop+upscale ---
@@ -1689,7 +1781,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                             )
                     try:
                         await loop2.run_in_executor(
-                            None, generate_thumbnail, actual_out_path, replace_cfg["thumb_path"]
+                            None, generate_thumbnail, str(final_path), replace_cfg["thumb_path"]
                         )
                     except Exception as exc:
                         # A stale thumbnail is cosmetic; the image is committed
@@ -1699,11 +1791,12 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         stale = 1
                         logger.warning(
                             "Crop+upscale: thumbnail for %s could not be regenerated: %s",
-                            Path(actual_out_path).name, exc,
+                            final_path.name, exc,
                         )
+                    await _refresh_stats_after_edit(session, updated.dataset_id)
 
                 # Written and committed **inside** this `async with`, and
-                # deliberately dedented out of `if updated:` so a vanished row
+                # deliberately dedented out of the `if`/`else` so a vanished row
                 # still reports. The emit below is this job's own terminal
                 # `completed` event — TopBar's completion branch fires on it and
                 # immediately fetches the job row, so anything a completion
@@ -1752,7 +1845,7 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
     # Crop + upscale path (async background job)
     if body.upscale_model:
-        tmp_path = dest_images / (dest_path.stem + "_tmp" + dest_path.suffix)
+        tmp_path = temp_sibling(dest_path, "tmp")
         await loop.run_in_executor(
             None, crop_image_to_dest,
             str(src_path), str(tmp_path),
@@ -1957,6 +2050,16 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
     rows = result.all()
     if not rows:
         raise HTTPException(404, "No matching images found")
+    # Everything below takes one dataset from rows[0]: its images folder, its
+    # filename set and its busy guard. A gallery selection can span split-view
+    # panes, and with rename_on_move a second dataset's files were renamed into
+    # the first one's folder while their rows kept their own dataset_id. A
+    # subfolder is a per-dataset label, so a mixed request has no single meaning:
+    # refuse it before touching anything. The toolbar sends one request per dataset.
+    if len({row.dataset_id for row in rows}) > 1:
+        raise HTTPException(
+            400, "These images belong to more than one dataset — move each dataset's images separately",
+        )
 
     dataset_id = rows[0].dataset_id
     ensure_not_busy(dataset_id)
@@ -1989,29 +2092,46 @@ async def batch_move_subfolder(body: BatchMoveSubfolderRequest, db: AsyncSession
             new_thumb = Path(thumbnail_path_for(str(new_path)))
             renames.append((old_path, new_path, old_thumb, new_thumb, row.id, new_filename, str(new_path)))
 
-        # Apply all DB mutations in-memory (no commit yet).
-        for old_path, new_path, _ot, new_thumb, img_id, new_fn, new_fp in renames:
+        # One commit per image, right after its rename (PM-013): the rename is
+        # the item's only fallible step, so a failure rolls back that one row
+        # with its file still at the old name — and every image before it is
+        # already moved *and* committed. A single commit after the loop instead
+        # rolled back the rows of every file the loop had already renamed.
+        moved = failed = 0
+        for old_path, new_path, old_thumb, new_thumb, img_id, new_fn, new_fp in renames:
             values: dict = dict(subfolder=target, filename=new_fn, file_path=new_fp, thumbnail_path=str(new_thumb))
             if new_path != old_path:
                 values["is_auto_named"] = True
             await db.execute(sa_update(Image).where(Image.id == img_id).values(**values))
-
-        # Perform filesystem renames — if any raise, the exception propagates and
-        # db.commit() is never reached, so all DB mutations are rolled back.
-        for old_path, new_path, old_thumb, new_thumb, *_ in renames:
             if new_path != old_path:
-                rename_with_sidecar(old_path, new_path)
-                if old_thumb.exists():
-                    old_thumb.replace(new_thumb)
-    else:
-        # Just update the subfolder field; filenames stay unchanged.
-        for row in rows:
-            await db.execute(
-                sa_update(Image).where(Image.id == row.id).values(subfolder=target)
-            )
+                try:
+                    rename_with_sidecar(old_path, new_path)
+                except OSError:
+                    logger.warning("batch_move_subfolder %s: rename %s failed", img_id, old_path.name, exc_info=True)
+                    await db.rollback()
+                    failed += 1
+                    continue
+            await db.commit()
+            moved += 1
+            # --- epilogue: best-effort, cannot undo the committed rename ---
+            if old_thumb != new_thumb:
+                try:
+                    if old_thumb.exists():
+                        old_thumb.replace(new_thumb)
+                except OSError:
+                    logger.warning(
+                        "batch_move_subfolder %s: thumbnail move failed; it will be regenerated",
+                        img_id, exc_info=True,
+                    )
+        return {"moved": moved, "failed": failed, "subfolder": target}
 
+    # Just update the subfolder field; filenames stay unchanged.
+    for row in rows:
+        await db.execute(
+            sa_update(Image).where(Image.id == row.id).values(subfolder=target)
+        )
     await db.commit()
-    return {"moved": len(rows), "subfolder": target}
+    return {"moved": len(rows), "failed": 0, "subfolder": target}
 
 
 @router.post("/batch/move-dataset")
@@ -2163,15 +2283,27 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     # remain accessible; only not-yet-moved files are temporarily at the wrong path.
     await db.commit()
 
-    for old_path, new_path, old_thumb, new_thumb, *_ in plan:
-        rename_with_sidecar(old_path, new_path)
-        if old_thumb.exists():
-            shutil.copy2(old_thumb, new_thumb)
-            old_thumb.unlink()
-
-    for src_id in source_dataset_ids:
-        await refresh_stats(db, src_id)
-    await refresh_stats(db, body.target_dataset_id)
+    # The rows are committed, so the recount runs however this pass ends — a
+    # raise mid-loop used to skip it and leave both datasets counting the
+    # pre-move state. Best-effort, so it cannot mask the error that sent us here.
+    try:
+        for old_path, new_path, old_thumb, new_thumb, *_ in plan:
+            rename_with_sidecar(old_path, new_path)
+            # The thumbnail is derived: a failed move costs a re-render
+            # (`serve_thumbnail` regenerates a missing one), and must not abort
+            # the renames after it, whose committed rows already name new paths.
+            try:
+                if old_thumb.exists():
+                    shutil.copy2(old_thumb, new_thumb)
+                    old_thumb.unlink()
+            except OSError:
+                logger.warning(
+                    "batch_move_dataset: thumbnail move for %s failed; it will be regenerated",
+                    new_path.name, exc_info=True,
+                )
+    finally:
+        for ds_id in {*source_dataset_ids, body.target_dataset_id}:
+            await _refresh_stats_after_edit(db, ds_id)
     return {"moved": len(rows), "target_dataset_id": body.target_dataset_id}
 
 

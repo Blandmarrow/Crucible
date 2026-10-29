@@ -1,18 +1,69 @@
 # manage.ps1 - Crucible launcher (Windows)
-# Usage: .\manage.ps1 <setup|start|update|dev>
+# Usage: .\manage.ps1 <setup|start|update|dev> [-Lan]
+#   -Lan (start, dev; --lan also accepted): listen on every network interface so
+#   other devices can connect. Off by default - the API has no authentication.
+#   CRUCIBLE_HOST in the environment or .env sets the bind address persistently;
+#   see scripts\bind_host.py.
 
+# Deliberately a simple (non-advanced) script - no [Parameter()]/[CmdletBinding()]
+# attributes - so an argument the binder does not recognise, such as the POSIX-style
+# --lan, lands in $args instead of failing the whole invocation.
 param(
-    [Parameter(Mandatory = $false, Position = 0)]
     [ValidateSet("setup", "start", "update", "dev")]
-    [string]$Command
+    [string]$Command,
+    [switch]$Lan
 )
 
 $ErrorActionPreference = "Stop"
 $ROOT = $PSScriptRoot
 
+# $args is per-scope: read it here, at script scope, before any function shadows it.
+$script:LanRequested = [bool]$Lan
+foreach ($extra in $args) {
+    if ("$extra" -eq "--lan") {
+        $script:LanRequested = $true
+    } else {
+        Write-Host "Unknown option: $extra" -ForegroundColor Red
+        Write-Host "Usage: .\manage.ps1 <setup|start|update|dev> [-Lan]" -ForegroundColor Red
+        exit 1
+    }
+}
+if ($script:LanRequested -and $Command -and $Command -ne "start" -and $Command -ne "dev") {
+    Write-Host "-Lan applies to start and dev only." -ForegroundColor Red
+    exit 1
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# The locked Vite and @vitejs/plugin-react declare engines ^20.19.0 || >=22.12.0
+# (frontend\package.json mirrors it). Major alone is not enough: Node 20.0-20.18
+# and 22.0-22.11 install fine and then fail the build.
+$script:NodeRequirement = "20.19+ or 22.12+"
+
+function Test-NodeVersion {
+    param([string]$Version)
+    if ($Version -notmatch "^v?(\d+)\.(\d+)") { return $false }
+    $maj = [int]$Matches[1]; $min = [int]$Matches[2]
+    return (($maj -eq 20 -and $min -ge 19) -or ($maj -eq 22 -and $min -ge 12) -or $maj -ge 23)
+}
+
+function Assert-NodeVersion {
+    # For the paths that run npm without going through setup's installer (update,
+    # dev, start's rebuild): stop with the fix rather than let npm/Vite fail opaquely.
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "ERROR: Node.js $($script:NodeRequirement) is required, but node was not found." -ForegroundColor Red
+        Write-Host "  Run .\manage.ps1 setup to install it, or get it from https://nodejs.org/" -ForegroundColor Cyan
+        exit 1
+    }
+    $nodeVer = "$(node --version)".Trim()
+    if (-not (Test-NodeVersion $nodeVer)) {
+        Write-Host "ERROR: Node.js $($script:NodeRequirement) is required, but found $nodeVer." -ForegroundColor Red
+        Write-Host "  Run .\manage.ps1 setup to install it, or get it from https://nodejs.org/" -ForegroundColor Cyan
+        exit 1
+    }
+}
 
 function Install-Deps {
     # --- Python ---
@@ -108,25 +159,25 @@ function Install-Deps {
 
     if (Get-Command node -ErrorAction SilentlyContinue) {
         $nodeVer = node --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and "$nodeVer" -match "v(\d+)") {
-            if ([int]$Matches[1] -ge 18) {
+        if ($LASTEXITCODE -eq 0 -and "$nodeVer" -match "v\d+\.\d+") {
+            if (Test-NodeVersion ("$nodeVer".Trim())) {
                 Write-Host "  Found: Node $nodeVer" -ForegroundColor Green
                 $nodeOk = $true
             } else {
-                Write-Host "  Found Node $nodeVer - 18+ is required." -ForegroundColor Yellow
+                Write-Host "  Found Node $nodeVer - $($script:NodeRequirement) is required." -ForegroundColor Yellow
             }
         }
     }
 
     if (-not $nodeOk) {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
-            Write-Host "  Node.js 18+ is required but not found." -ForegroundColor Yellow
+            Write-Host "  Node.js $($script:NodeRequirement) is required but not found." -ForegroundColor Yellow
             Write-Host "  Source: https://nodejs.org/ (via winget - Node.js LTS)" -ForegroundColor DarkGray
             if ([System.Console]::IsInputRedirected) { $reply = "" } else {
                 $reply = Read-Host "  Install Node.js LTS? [Y/n]"
             }
             if ($reply -ne "" -and $reply -notmatch "^[Yy]") {
-                Write-Host "  Install Node.js 18+ manually from: https://nodejs.org/" -ForegroundColor Cyan
+                Write-Host "  Install Node.js $($script:NodeRequirement) manually from: https://nodejs.org/" -ForegroundColor Cyan
                 exit 1
             }
             Write-Host "  Installing Node.js LTS via winget (user scope, no admin needed)..." -ForegroundColor Yellow
@@ -134,20 +185,25 @@ function Install-Deps {
             if ($LASTEXITCODE -eq 0) {
                 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
                 $nodeVer = & node --version 2>&1
-                if ($LASTEXITCODE -eq 0) {
+                if ($LASTEXITCODE -eq 0 -and (Test-NodeVersion ("$nodeVer".Trim()))) {
                     Write-Host "  Installed: Node $nodeVer" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -eq 0) {
+                    # winget succeeded, but an older node.exe earlier on PATH still wins.
+                    Write-Host "ERROR: Node.js LTS was installed, but $nodeVer is still first on PATH." -ForegroundColor Red
+                    Write-Host "  Remove or upgrade that Node.js to $($script:NodeRequirement), then re-run setup." -ForegroundColor Cyan
+                    exit 1
                 } else {
                     Write-Host "  Node.js installed. Please restart your terminal and re-run setup." -ForegroundColor Yellow
                     exit 1
                 }
             } else {
-                Write-Host "ERROR: winget install failed. Install Node.js 18+ from:" -ForegroundColor Red
+                Write-Host "ERROR: winget install failed. Install Node.js $($script:NodeRequirement) from:" -ForegroundColor Red
                 Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
                 exit 1
             }
         } else {
-            Write-Host "ERROR: Node.js 18+ not found and winget is unavailable." -ForegroundColor Red
-            Write-Host "  Install Node.js 18+ from: https://nodejs.org/" -ForegroundColor Cyan
+            Write-Host "ERROR: Node.js $($script:NodeRequirement) not found and winget is unavailable." -ForegroundColor Red
+            Write-Host "  Install Node.js $($script:NodeRequirement) from: https://nodejs.org/" -ForegroundColor Cyan
             exit 1
         }
     }
@@ -342,6 +398,7 @@ function Install-TorchIfNeeded {
 }
 
 function Build-Frontend {
+    Assert-NodeVersion
     Write-Host "Building frontend..." -ForegroundColor Yellow
     Push-Location "$ROOT\frontend"
     npm run build
@@ -415,6 +472,69 @@ function Run-Migrations {
     Write-Host "  Migrations applied." -ForegroundColor Green
 }
 
+# --- Bind address ----------------------------------------------------------
+# The API has no authentication, so uvicorn (and the splash, and in dev Vite)
+# listen on loopback unless the user opts in: -Lan for one run, CRUCIBLE_HOST in
+# the environment or .env for good. scripts\bind_host.py owns that precedence -
+# this side only passes --lan through and acts on the answer (GPT-007).
+# Never name a variable $host here: it is PowerShell's read-only automatic $Host.
+$script:BindHost = "127.0.0.1"
+# Where a browser on this machine - and the Vite /api proxy - reaches uvicorn:
+# localhost for a loopback or wildcard bind, the address itself otherwise.
+$script:BrowseHost = "localhost"
+$script:BindMode = "loopback"
+
+function Invoke-BindHostScript {
+    # Runs scripts\bind_host.py with the given extra arguments and returns its
+    # stdout lines. Preference dropped as elsewhere (PM-019): a redirected native
+    # stderr line must not become a terminating NativeCommandError.
+    param([string[]]$ExtraArgs)
+    $py = "$ROOT\venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { $py = "python" }
+    $bindArgs = @("$ROOT\scripts\bind_host.py")
+    if ($script:LanRequested) { $bindArgs += "--lan" }
+    if ($ExtraArgs) { $bindArgs += $ExtraArgs }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = @(& $py @bindArgs 2>$null | Where-Object { $_ -is [string] })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($code -ne 0) { return @() }
+    return $out
+}
+
+function Resolve-BindHost {
+    # One --describe call answers everything the launcher needs, so no loopback
+    # test or browse-host rule is copied here.
+    $out = @(Invoke-BindHostScript -ExtraArgs @("--describe") | ForEach-Object { ([string]$_).Trim() })
+    if ($out.Count -lt 3 -or -not $out[0] -or -not $out[1] -or -not $out[2]) {
+        Write-Host "ERROR: could not resolve the bind address (scripts\bind_host.py failed)." -ForegroundColor Red
+        exit 1
+    }
+    $script:BindHost = $out[0]
+    $script:BrowseHost = $out[1]
+    $script:BindMode = $out[2]
+}
+
+function Write-AccessInfo {
+    # $Port = the port people browse to, $CommandName = the command to suggest -Lan for.
+    param([int]$Port, [string]$CommandName)
+    if ($script:BindMode -eq "loopback") {
+        Write-Host "LAN access is off (this machine only). For other devices: .\manage.ps1 $CommandName -Lan, or set CRUCIBLE_HOST=0.0.0.0 in .env." -ForegroundColor DarkGray
+        return
+    }
+    $urls = @(Invoke-BindHostScript -ExtraArgs @("--urls", "$Port") | Where-Object { "$_".Trim() -ne "" })
+    if ($urls.Count -gt 0) {
+        foreach ($url in $urls) { Write-Host "On your network: $("$url".Trim())" -ForegroundColor Green }
+    } else {
+        Write-Host "Listening on $($script:BindHost) (could not work out this machine's LAN address)." -ForegroundColor Green
+    }
+    Write-Host "WARNING: LAN access is on and Crucible has no authentication - anyone who can reach it can use it. Only do this on networks you trust." -ForegroundColor Yellow
+}
+
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
@@ -439,7 +559,7 @@ function Start-Splash {
 
     try {
         $script:SplashProcess = Start-Process -FilePath $py `
-            -ArgumentList @("`"$splash`"", "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
+            -ArgumentList @("`"$splash`"", "--host", $script:BindHost, "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
             -WindowStyle Hidden -PassThru
     } catch {
         $script:SplashProcess = $null
@@ -473,8 +593,8 @@ function Start-Splash {
         return
     }
 
-    try { Start-Process "http://localhost:8000" | Out-Null } catch {
-        Write-Host "  (could not open a browser - open http://localhost:8000 yourself)" -ForegroundColor DarkGray
+    try { Start-Process "http://$($script:BrowseHost):8000" | Out-Null } catch {
+        Write-Host "  (could not open a browser - open http://$($script:BrowseHost):8000 yourself)" -ForegroundColor DarkGray
     }
 }
 
@@ -645,6 +765,7 @@ function Cmd-Start {
     }
 
     Activate-Venv
+    Resolve-BindHost
 
     Write-Host ""
     Write-Host "=== Crucible ===" -ForegroundColor Cyan
@@ -674,7 +795,8 @@ function Cmd-Start {
     }
 
     Write-Host ""
-    Write-Host "Starting server at http://localhost:8000" -ForegroundColor Green
+    Write-Host "Starting server at http://$($script:BrowseHost):8000" -ForegroundColor Green
+    Write-AccessInfo -Port 8000 -CommandName "start"
     Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
     Write-Host ""
 
@@ -685,7 +807,7 @@ function Cmd-Start {
     if (Test-Path "$ROOT\.shutdown") { Remove-Item "$ROOT\.shutdown" -Force }
 
     :restart_loop while ($true) {
-        python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+        python -m uvicorn backend.main:app --host $script:BindHost --port 8000
         if (Test-Path "$ROOT\.restart") {
             Remove-Item "$ROOT\.restart" -Force
             Write-Host ""
@@ -851,6 +973,7 @@ function Cmd-Update {
     Write-Host "  NOTE: SAM3 also needs the checkpoint: download sam3.safetensors from https://huggingface.co/1038lab/sam3 into models\sam3\" -ForegroundColor DarkGray
 
     Write-Host "[5/6] Updating frontend dependencies..." -ForegroundColor Yellow
+    Assert-NodeVersion
     Push-Location "$ROOT\frontend"
     npm install
     if ($LASTEXITCODE -ne 0) {
@@ -882,23 +1005,26 @@ function Cmd-Dev {
     }
 
     Activate-Venv
+    Assert-NodeVersion
+    Resolve-BindHost
 
     Push-Location "$ROOT\backend"
     python -m alembic upgrade head
     Pop-Location
 
     Write-Host "Starting backend on :8000 and frontend dev server on :5173..." -ForegroundColor Cyan
-    Write-Host "Open http://localhost:5173 in your browser." -ForegroundColor Green
+    Write-Host "Open http://$($script:BrowseHost):5173 in your browser." -ForegroundColor Green
+    Write-AccessInfo -Port 5173 -CommandName "dev"
     Write-Host ""
 
     $backendJob = Start-Job -ScriptBlock {
-        param($root)
+        param($root, $bindHost)
         Set-Location $root
 
         if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
 
         :restart_loop while ($true) {
-            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port 8000 --reload --reload-dir backend
             if (Test-Path "$root\.restart") {
                 Remove-Item "$root\.restart" -Force
                 Write-Host ""
@@ -908,11 +1034,22 @@ function Cmd-Dev {
                 break restart_loop
             }
         }
-    } -ArgumentList $ROOT
+    } -ArgumentList $ROOT, $script:BindHost
 
     Push-Location "$ROOT\frontend"
-    npm run dev
+    # vite.config.ts proxies /api here. A server bound to one LAN address does
+    # not answer on localhost, so the proxy must follow the bind.
+    $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):8000"
+    if ($script:BindMode -eq "loopback") {
+        npm run dev
+    } else {
+        # node + vite.js directly rather than `npm run dev -- --host`: when npm
+        # resolves to npm.ps1, PowerShell consumes the bare `--` itself.
+        node "$ROOT\frontend\node_modules\vite\bin\vite.js" --host $script:BindHost
+    }
     Pop-Location
+    # $env: is the caller's session, not a child scope: do not leave it behind.
+    Remove-Item Env:CRUCIBLE_API_TARGET -ErrorAction SilentlyContinue
 
     Stop-Job $backendJob -ErrorAction SilentlyContinue
     Remove-Job $backendJob -ErrorAction SilentlyContinue
@@ -936,9 +1073,15 @@ if ($Command -eq "") {
         "2" { $Command = "start" }
         "3" { $Command = "update" }
         default {
-            Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev>" -ForegroundColor Red
+            Write-Host "Invalid choice. Run .\manage.ps1 <setup|start|update|dev> [-Lan]" -ForegroundColor Red
             exit 1
         }
+    }
+    # The same refusal the command-line form gets above: -Lan means nothing to
+    # setup or update, and silently ignoring it would hide that.
+    if ($script:LanRequested -and $Command -ne "start") {
+        Write-Host "-Lan applies to start and dev only." -ForegroundColor Red
+        exit 1
     }
 }
 

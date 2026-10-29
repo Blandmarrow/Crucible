@@ -22,10 +22,13 @@ Both must land on `index.html` — the SPA fallback is the right answer for a pa
 that names nothing inside dist, and it is also what a legitimate React Router
 route gets, so the guard costs no real behaviour.
 
-The route is only registered when `frontend/dist` exists (`main.py` guards the
-whole block on it), so this module skips on a backend-only checkout — the same
-convention `needs_cv2` uses in `conftest.py`. `qa-smoke` builds the frontend
-before pytest, so the sweep runs it.
+The real route is only registered when `frontend/dist` exists, and no CI job that
+runs pytest builds it — so this module used to skip on every CI run, leaving the
+PM-015 regression tests enforced nowhere (GPT-003, PM-028). It now drives
+`main.mount_spa` against a throwaway `dist` under `tmp_path` instead, with a
+`secret.md` beside it standing in for the file an escape would read. Nothing here
+depends on a build, so it runs everywhere pytest does. Never reinstate a skip on
+a built artifact for a security regression test.
 """
 
 import asyncio
@@ -33,34 +36,51 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from backend.main import mount_spa
 
-pytestmark = pytest.mark.skipif(
-    not (FRONTEND_DIST / "index.html").is_file(),
-    reason="frontend/dist is not built, so the SPA catch-all route is not registered",
-)
+INDEX_HTML = b"<!doctype html><title>spa index</title>"
+FAVICON = b"<svg>favicon</svg>"
+SECRET = b"# secret outside dist"
+
+
+@pytest.fixture
+def spa(tmp_path: Path):
+    """A throwaway built-SPA tree and an app serving it.
+
+    `secret.md` sits *beside* `dist`, one `..` up — the same shape as the real
+    repo, where `frontend/dist/../../CLAUDE.md` is the file an escape would read.
+    """
+    root = tmp_path / "root"
+    dist = root / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_bytes(INDEX_HTML)
+    (dist / "favicon.svg").write_bytes(FAVICON)
+    secret = root / "secret.md"
+    secret.write_bytes(SECRET)
+
+    app = FastAPI()
+    mount_spa(app, dist)
+    return app, secret
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-async def _get(path: str) -> httpx.Response:
-    """One GET against the real app. No DB and no job queue — the route needs neither.
+async def _get(app: FastAPI, path: str) -> httpx.Response:
+    """One GET against the app.
 
     httpx percent-decodes into ASGI `scope["path"]` exactly as uvicorn does, which
     is what makes it the right transport for the `%2e%2e` vector.
     """
-    from backend.main import app
-
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.get(path)
 
 
-async def _get_raw_path(path: str) -> tuple[int, bytes]:
+async def _get_raw_path(app: FastAPI, path: str) -> tuple[int, bytes]:
     """Drive the ASGI app with `scope["path"]` set verbatim.
 
     Needed for the leading-slash vector specifically: httpx parses `//foo` as a
@@ -68,25 +88,42 @@ async def _get_raw_path(path: str) -> tuple[int, bytes]:
     `_get` silently tests nothing — it passed against the unguarded handler.
     uvicorn has no such reinterpretation; a raw `GET //etc/passwd HTTP/1.1`
     arrives here as `scope["path"] == "//etc/passwd"`, which is what this builds.
-    """
-    from backend.main import app
 
+    It has to behave like a real server, not just a source of one request
+    (GPT-005). Starlette ≥1.8's `FileResponse` runs a `while True: await
+    receive()` disconnect listener alongside the body send; a `receive()` that
+    hands back `http.request` on every call never yields to it, so the response
+    starves and the test hangs instead of failing. So `receive()` delivers the
+    request once, then blocks until the response is complete and reports the
+    disconnect — what uvicorn does — and the scope declares the `spec_version`
+    a real server sends. The `wait_for` makes any future protocol mismatch a
+    failure rather than a hung CI job.
+    """
     status: dict[str, int] = {}
     chunks: list[bytes] = []
+    request_sent = False
+    response_done = asyncio.Event()
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await response_done.wait()
+        return {"type": "http.disconnect"}
 
     async def send(message):
         if message["type"] == "http.response.start":
             status["code"] = message["status"]
         elif message["type"] == "http.response.body":
             chunks.append(message.get("body", b""))
+            if not message.get("more_body", False):
+                response_done.set()
 
-    await app(
+    await asyncio.wait_for(app(
         {
             "type": "http",
-            "asgi": {"version": "3.0"},
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
             "http_version": "1.1",
             "method": "GET",
             "scheme": "http",
@@ -100,49 +137,39 @@ async def _get_raw_path(path: str) -> tuple[int, bytes]:
         },
         receive,
         send,
-    )
+    ), timeout=10)
     return status["code"], b"".join(chunks)
 
 
-def _index_bytes() -> bytes:
-    return (FRONTEND_DIST / "index.html").read_bytes()
+def test_percent_encoded_dots_do_not_escape_the_dist_directory(spa):
+    """`/%2e%2e/secret.md` must not return the file beside dist."""
+    app, secret = spa
 
-
-def test_percent_encoded_dots_do_not_escape_the_dist_directory():
-    """`/%2e%2e/%2e%2e/CLAUDE.md` must not return CLAUDE.md.
-
-    Two levels up from `frontend/dist` is the repo root, so the target is a real
-    file that exists on every checkout — the read succeeds if the guard is gone.
-    """
-    target = REPO_ROOT / "CLAUDE.md"
-    assert target.is_file(), "fixture assumption: CLAUDE.md sits at the repo root"
-
-    r = run(_get("/%2e%2e/%2e%2e/CLAUDE.md"))
+    r = run(_get(app, "/%2e%2e/secret.md"))
 
     assert r.status_code == 200
-    assert r.content == _index_bytes()
-    assert r.content != target.read_bytes()
-    assert b"# CLAUDE.md" not in r.content
+    assert r.content == INDEX_HTML
+    assert SECRET not in r.content
 
 
-def test_an_absolute_path_does_not_replace_the_dist_root():
+def test_an_absolute_path_does_not_replace_the_dist_root(spa):
     """The `Path("dist") / "/abs"` == `Path("/abs")` vector, which needs no dots.
 
     Goes through `_get_raw_path`, not the httpx client — see that helper for why
     the client cannot express this one. The request path is derived from the
     target's own absolute location rather than hardcoded, so it reads the same on
-    Windows (`/C:/…`) as on POSIX (`//workspaces/…`).
+    Windows (`/C:/…`) as on POSIX (`//tmp/…`).
     """
-    target = REPO_ROOT / "CLAUDE.md"
+    app, secret = spa
 
-    status, body = run(_get_raw_path(f"/{target.as_posix()}"))
+    status, body = run(_get_raw_path(app, f"/{secret.as_posix()}"))
 
     assert status == 200
-    assert body == _index_bytes()
-    assert b"# CLAUDE.md" not in body
+    assert body == INDEX_HTML
+    assert SECRET not in body
 
 
-def test_a_real_file_inside_dist_is_still_served():
+def test_a_real_file_inside_dist_is_still_served(spa):
     """The guard must not turn the catch-all into a blanket index.html.
 
     `main.py` serves the unhashed root files (`favicon.svg`, `apple-touch-icon.png`,
@@ -150,23 +177,19 @@ def test_a_real_file_inside_dist_is_still_served():
     the `StaticFiles` mount. Breaking this branch is a silent regression — every
     request still answers 200.
     """
-    candidates = [
-        p for p in FRONTEND_DIST.iterdir()
-        if p.is_file() and p.name != "index.html"
-    ]
-    if not candidates:
-        pytest.skip("this build has no unhashed root file besides index.html")
-    served = candidates[0]
+    app, _ = spa
 
-    r = run(_get(f"/{served.name}"))
+    r = run(_get(app, "/favicon.svg"))
 
     assert r.status_code == 200
-    assert r.content == served.read_bytes()
+    assert r.content == FAVICON
 
 
-def test_an_unknown_route_still_falls_through_to_the_spa():
+def test_an_unknown_route_still_falls_through_to_the_spa(spa):
     """React Router owns unmatched paths — the guard must not change that."""
-    r = run(_get("/gallery"))
+    app, _ = spa
+
+    r = run(_get(app, "/gallery"))
 
     assert r.status_code == 200
-    assert r.content == _index_bytes()
+    assert r.content == INDEX_HTML

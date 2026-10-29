@@ -6,7 +6,7 @@ an occasional frontend rebuild, then the `backend.main` import chain (torch and
 transformers). This serves the animated Crucible mark on the app's own port for
 that stretch, so the launcher can open a browser immediately on the real URL:
 
-    splash binds 0.0.0.0:8000    ->  browser opens http://localhost:8000
+    splash binds HOST:8000       ->  browser opens http://localhost:8000
     migrations + frontend build      (splash answers /api/v1/health with 503)
     splash stops, uvicorn binds  ->  page sees 200 and loads the app
 
@@ -19,7 +19,9 @@ Stdlib only, and it must stay that way: importing anything from `backend/` would
 drag in the very import chain this exists to paper over. Run it as a child of
 the launcher:
 
-    python scripts/splash_server.py --parent-pid $$
+    python scripts/splash_server.py --host "$HOST" --parent-pid $$
+
+HOST is what scripts/bind_host.py resolved — the address uvicorn will bind.
 
 Exit codes: 0 normal shutdown, 3 the port is already taken (the launcher then
 skips the splash and lets uvicorn report the conflict itself).
@@ -31,6 +33,7 @@ import json
 import os
 import re
 import signal
+import socket
 import socketserver
 import sys
 import threading
@@ -233,13 +236,13 @@ def _watchdog(server: ThreadingHTTPServer, parent_pid: int | None, timeout: floa
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    # Deliberately the same address uvicorn binds. A splash on 127.0.0.1 and an
-    # app on 0.0.0.0 look like two different listeners to anything forwarding
-    # the port (Docker publishing, a dev container, WSL), so the handover can
-    # strand a browser that reached the splash through the forward. Same address
-    # in, same address out. It exposes nothing the app does not already: a
-    # static page, for seconds, on a port that then serves the whole API.
-    ap.add_argument("--host", default="0.0.0.0")
+    # The launchers pass the address uvicorn will bind (scripts/bind_host.py), and
+    # it must be the same one. A splash on 127.0.0.1 and an app on 0.0.0.0 look
+    # like two different listeners to anything forwarding the port (Docker
+    # publishing, a dev container, WSL), so the handover can strand a browser
+    # that reached the splash through the forward. Same address in, same address
+    # out. The default matches the launchers' own default: loopback (GPT-007).
+    ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--parent-pid", type=int, default=None,
                     help="exit when this process goes away")
@@ -257,8 +260,12 @@ def main(argv: list[str] | None = None) -> int:
 
     ready = Path(args.ready_file) if args.ready_file else None
 
+    if ":" in args.host.strip("[]"):
+        # An IPv6 bind address (CRUCIBLE_HOST=::); the stdlib server is IPv4-only
+        # unless told otherwise.
+        SplashServer.address_family = socket.AF_INET6
     try:
-        server = SplashServer((args.host, args.port), SplashHandler)
+        server = SplashServer((args.host.strip("[]"), args.port), SplashHandler)
     except OSError as exc:
         print(f"splash: cannot bind {args.host}:{args.port} ({exc})", file=sys.stderr)
         return 3

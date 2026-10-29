@@ -96,6 +96,10 @@ anything fallible before the commit?", never "can this file be locked right now?
   Pass 2's in-place frame overwrite (`_run_reextraction::_rewrite`) uses `replace_retrying`
   and, being a job, counts a surviving lock as one `failed` frame with `is_fault=True`
   rather than letting a `WinError 32` kill the run.
+- **Amended 2026-10-27 (GPT-008, GPT-010):** the image side caught up. All four image
+  deletes now unlink first through `backend/services/image_delete.py` — `delete_image` 409s,
+  and the three batch deletes keep a locked row and count it `in_use` — and the in-place
+  crop/resize swaps go through `replace_retrying`. `filesystem.py` is still unconverted.
 - Three sites are deliberately **exempt** and are named in `CLAUDE.md` so a later sweep does
   not "finish the conversion": `_delete_previous_frames`, `_rewrite`'s superseded-original
   unlink, and `video_service.generate_poster`'s poster replace. All three already log and

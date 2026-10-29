@@ -115,8 +115,9 @@ vector plus the two that keep the guard honest (a real file inside dist is still
 served; an unknown route still reaches the SPA). Bite proven for both vectors by
 restoring the pre-fix two lines and watching them fail. The absolute-path case
 drives a hand-built ASGI scope with `scope["path"]` set verbatim, which is what
-uvicorn produces from a raw `GET //etc/passwd HTTP/1.1`; the module skips when
-`frontend/dist` is absent.
+uvicorn produces from a raw `GET //etc/passwd HTTP/1.1`. The module originally
+skipped when `frontend/dist` was absent, which made it unenforced in CI; it now
+mounts a throwaway `dist` instead. See PM-028.
 
 ### Status & date
 

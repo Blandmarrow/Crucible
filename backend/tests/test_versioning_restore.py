@@ -21,6 +21,9 @@ Covered failure classes (all previously reproduced live):
 - three of the ten `*_score` columns had no `VersionImageState` mirror, so a
   restore blanked them and a diff never reported them as changed, on the false
   premise that a technical score is recomputed on demand
+- a snapshot path outside the dataset (a pre-rename snapshot) was written to
+  unchecked, re-creating the old root or overwriting another dataset's file;
+  Pass 0c now refuses it before anything changes (GPT-021, PM-025)
 """
 import asyncio
 from pathlib import Path
@@ -38,6 +41,7 @@ from backend.models.threshold_settings import ThresholdSettings
 from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImageState
 from backend.models.video import Video
 from backend.services import version_service
+from backend.tests.conftest import enforce_foreign_keys
 
 
 def run(coro):
@@ -66,25 +70,21 @@ async def make_env(
     names_contents: dict[str, bytes],
     mode: str = "auto",
     *,
-    foreign_keys: bool = False,
+    foreign_keys: bool = True,
 ):
     """Engine + session factory + one dataset with the given image files.
 
-    `foreign_keys` opts this engine into the `PRAGMA foreign_keys=ON` that
-    `backend/database.py` installs on the app engine. SQLite defaults it OFF per
-    connection, so without it every FK in the schema is unenforced here and a
-    restore that writes a dangling `Image.source_video_id` passes silently —
-    exactly the blind spot `test_duplicate_video_fk_enforced.py` documents.
+    `foreign_keys` installs the `PRAGMA foreign_keys=ON` that
+    `backend/database.py` puts on the app engine — on by default, as in
+    production. SQLite defaults it OFF per connection, so without it every FK in
+    the schema is unenforced and a restore that writes a dangling
+    `Image.source_video_id` passes silently — the blind spot
+    `test_duplicate_video_fk_enforced.py` documents. Pass False only for a
+    scenario that must plant a state the app cannot reach.
     """
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test.db")
     if foreign_keys:
-        from sqlalchemy import event
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def _fk_on(dbapi_conn, _record):  # pragma: no cover - trivial
-            cur = dbapi_conn.cursor()
-            cur.execute("PRAGMA foreign_keys=ON")
-            cur.close()
+        enforce_foreign_keys(engine)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -531,7 +531,8 @@ def test_restore_after_the_source_video_was_deleted(tmp_path):
     the commit raised `IntegrityError: FOREIGN KEY constraint failed`, the job
     ended `failed`, and every retry failed identically — the snapshot was
     permanently un-restorable while still burning a pre-restore auto-snapshot per
-    attempt. The whole suite missed it because the harness leaves the pragma off.
+    attempt. The whole suite missed it because the harness then left the pragma
+    off (it is on by default since GPT-002).
     """
     async def scenario():
         engine, Session, ds_dir, ds_id = await make_env(
@@ -612,6 +613,156 @@ def test_restore_keeps_lineage_when_the_video_still_exists(tmp_path):
             await db.refresh(frame)
             assert frame.source_video_id == video_id
             assert frame.source_timestamp_ms == 900
+        await engine.dispose()
+
+    run(scenario())
+
+
+# ── Pass 0c: the restore path gate (GPT-021, PM-025) ─────────────────────────
+
+
+async def _version_count(db, ds_id: str) -> int:
+    rows = await db.execute(select(DatasetVersion.id).where(DatasetVersion.dataset_id == ds_id))
+    return len(rows.scalars().all())
+
+
+async def _point_state_at(db, version_id: str, filename: str, path: Path) -> None:
+    state = (await db.execute(select(VersionImageState).where(
+        VersionImageState.version_id == version_id,
+        VersionImageState.filename == filename,
+    ))).scalar_one()
+    state.file_path = str(path)
+    await db.commit()
+
+
+def test_restore_refuses_a_target_outside_the_dataset(tmp_path):
+    """A snapshot row naming a folder outside the dataset — a pre-rename snapshot
+    — is refused before anything changes: no pre-restore version, branch head
+    where it was, the live file and row untouched, and the foreign folder never
+    created. The pre-restore snapshot is on precisely so its absence is
+    observable: the gate has to run before it."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"}, mode="manual")
+        elsewhere = tmp_path / "datasets" / "old-name" / "images" / "1.png"
+        async with Session() as db:
+            s1 = await version_service.create_snapshot(db, ds_id, "s1", "")
+            img = await _get_by_filename(db, ds_id, "1.png")
+            img.aesthetic_score = 9.9
+            await db.commit()
+            s2_id = (await version_service.create_snapshot(db, ds_id, "s2", "")).id
+            await _point_state_at(db, s1.id, "1.png", elsewhere)
+            before = await _version_count(db, ds_id)
+
+            with pytest.raises(version_service.RestoreRefused, match="Nothing was changed"):
+                await version_service.restore_snapshot(
+                    db, ds_id, s1.id, pre_restore_snapshot=True)
+            await db.rollback()
+
+            assert await _version_count(db, ds_id) == before, "no orphan pre-restore version"
+            main = (await db.execute(select(DatasetBranch).where(
+                DatasetBranch.dataset_id == ds_id))).scalar_one()
+            assert main.head_version_id == s2_id
+            await db.refresh(img)
+            assert img.aesthetic_score == 9.9
+            assert img.file_path == str(ds_dir / "images" / "1.png")
+        assert (ds_dir / "images" / "1.png").read_bytes() == b"AAAA"
+        assert not elsewhere.parent.parent.exists(), "the escaped root must not be re-created"
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_restore_refuses_a_path_another_dataset_owns(tmp_path):
+    """Rule 3: a target inside this dataset that another dataset's row also
+    names — the shape a pre-fix restore left behind — is refused, never written
+    over. The message names the other dataset."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        ds2_dir = tmp_path / "datasets" / "ds2"
+        (ds2_dir / "images").mkdir(parents=True)
+        async with Session() as db:
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+            ds2 = Dataset(name="t2", folder_path=str(ds2_dir))
+            db.add(ds2)
+            await db.flush()
+            db.add(Image(
+                dataset_id=ds2.id, filename="1.png", original_filename="1.png",
+                subfolder="", file_path=str(ds_dir / "images" / "1.png"),
+                thumbnail_path=str(ds2_dir / "thumbnails" / "1.webp"),
+            ))
+            img = await _get_by_filename(db, ds_id, "1.png")
+            img.caption_text = "edited"
+            await db.commit()
+
+            with pytest.raises(version_service.RestoreRefused, match="'t2'"):
+                await version_service.restore_snapshot(
+                    db, ds_id, snap.id, pre_restore_snapshot=False)
+            await db.rollback()
+            await db.refresh(img)
+            assert img.caption_text == "edited"
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_a_refused_checkout_stays_on_its_branch(tmp_path):
+    """Checkout is a restore of the target branch's head; when that restore is
+    refused the dataset must still be on the branch it started from."""
+    async def scenario():
+        engine, Session, ds_dir, ds_id = await make_env(tmp_path, {"1.png": b"AAAA"})
+        async with Session() as db:
+            await version_service.create_snapshot(db, ds_id, "main-snap", "")
+            main = (await db.execute(select(DatasetBranch).where(
+                DatasetBranch.dataset_id == ds_id))).scalar_one()
+            exp, exp_snap = await version_service.create_branch(db, ds_id, "exp")
+            main_id = main.id
+            ds = await db.get(Dataset, ds_id)
+            ds.current_branch_id = main_id
+            await db.commit()
+            await _point_state_at(
+                db, exp_snap.id, "1.png", tmp_path / "datasets" / "gone" / "images" / "1.png")
+
+            with pytest.raises(version_service.RestoreRefused):
+                await version_service.checkout_branch(
+                    db, ds_id, exp.id, pre_restore_snapshot=True)
+            await db.rollback()
+            ds = await db.get(Dataset, ds_id)
+            await db.refresh(ds)
+            assert ds.current_branch_id == main_id
+        await engine.dispose()
+
+    run(scenario())
+
+
+def test_duplicate_from_snapshot_skips_an_out_of_tree_lazy_row(tmp_path):
+    """`duplicate_dataset`'s snapshot branch is the read-side twin: an Auto-mode
+    row with no recorded hash is copied from its *recorded path*, so one naming
+    another dataset's folder pulled that dataset's bytes into the clone. It is
+    now skipped; its in-tree neighbour still copies."""
+    from backend.services import dataset_service
+
+    async def scenario():
+        from backend.tests.conftest import png_bytes
+
+        # Real PNGs: the clone regenerates a thumbnail from each copied file.
+        engine, Session, ds_dir, ds_id = await make_env(
+            tmp_path, {"1.png": png_bytes((1, 1, 1)), "2.png": png_bytes((2, 2, 2))}, mode="auto")
+        foreign = tmp_path / "datasets" / "other" / "images" / "2.png"
+        foreign.parent.mkdir(parents=True)
+        foreign_bytes = png_bytes((9, 9, 9))
+        foreign.write_bytes(foreign_bytes)
+        async with Session() as db:
+            snap = await version_service.create_snapshot(db, ds_id, "s1", "")
+            await _point_state_at(db, snap.id, "2.png", foreign)
+
+            clone = await dataset_service.duplicate_dataset(
+                db, await db.get(Dataset, ds_id), "clone",
+                job_id=None, source_version_id=snap.id,
+            )
+            rows = (await db.execute(select(Image).where(
+                Image.dataset_id == clone["dataset_id"]))).scalars().all()
+            assert [r.filename for r in rows] == ["1.png"]
+            assert all(Path(r.file_path).read_bytes() != foreign_bytes for r in rows)
         await engine.dispose()
 
     run(scenario())

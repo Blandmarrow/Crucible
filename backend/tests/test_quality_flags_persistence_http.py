@@ -40,7 +40,7 @@ def test_duplicate_resolve_keep_clears_flags_persistently(tmp_path):
                 f"{API}/quality/duplicates/resolve",
                 json={"keep_ids": [img["id"]], "delete_ids": []},
             )
-            assert r.status_code == 204, r.text
+            assert r.status_code == 200, r.text
 
             async with env.Session() as db:
                 row = await db.get(Image, img["id"])

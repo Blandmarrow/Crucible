@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, useId } from "react";
 import type { HTMLAttributes, DragEvent as ReactDragEvent } from "react";
 import { DECLARED_CATEGORIES_KEY, DATASETS_UI_KEY } from "../constants/storage";
 import { loadPersisted } from "../utils/persistentState";
@@ -16,7 +16,6 @@ import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
 import { apiErrorDetail } from "../utils/apiError";
-import { showImportSummaryToast } from "../utils/importToast";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import { versioningApi } from "../api/versioning";
 import { settingsApi } from "../api/settings";
@@ -24,6 +23,7 @@ import type { Dataset } from "../types";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ImportFolderModal from "../components/common/ImportFolderModal";
 import DirPickerModal from "../components/common/DirPickerModal";
+import ModalShell from "../components/common/ModalShell";
 import { useJobStore } from "../store/jobStore";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 
@@ -119,6 +119,8 @@ function CategoryPicker({ value, onChange, existingCategories, label, labelNote,
   const [isNew, setIsNew] = useState(!inExisting);
 
   const selectValue = isNew ? "__new__" : value;
+  // Unique per instance: the create and edit modals each render one.
+  const selectId = useId();
 
   const handleSelect = (v: string) => {
     if (v === "__new__") {
@@ -133,12 +135,13 @@ function CategoryPicker({ value, onChange, existingCategories, label, labelNote,
   return (
     <div>
       {label && (
-        <label className="label">
+        <label className="label" htmlFor={selectId}>
           {label}
           {labelNote && <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}> {labelNote}</span>}
         </label>
       )}
       <select
+        id={selectId}
         className="select"
         value={selectValue}
         onChange={(e) => handleSelect(e.target.value)}
@@ -154,6 +157,7 @@ function CategoryPicker({ value, onChange, existingCategories, label, labelNote,
         <input
           className="input"
           placeholder="Category name"
+          aria-label="New category name"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -167,6 +171,8 @@ function CategoryPicker({ value, onChange, existingCategories, label, labelNote,
 
 export default function DatasetsPage() {
   const { go } = usePaneNavigate();
+  // Prefix for the dialog fields' `id`/`htmlFor` pairs (GPT-029).
+  const uid = useId();
   const qc = useQueryClient();
 
   // ── Search & Sort ────────────────────────────────────────────────────────
@@ -229,8 +235,6 @@ export default function DatasetsPage() {
   // ── Import modal ─────────────────────────────────────────────────────────
   const [importOpen, setImportOpen] = useState(false);
   const [importInitialId, setImportInitialId] = useState<string | undefined>(undefined);
-  const [importJobId, setImportJobId] = useState<string | null>(null);
-  const importJobProgress = useJobStore((s) => s.activeJobs.get(importJobId ?? ""));
 
   // ── Rescan + caption-import jobs ──────────────────────────────────────────
   const [rescanJobId, setRescanJobId] = useState<string | null>(null);
@@ -324,31 +328,12 @@ export default function DatasetsPage() {
   const totalSize = datasets.reduce((s, d) => s + d.total_size_bytes, 0);
 
   // ── Effects ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!importJobId || !importJobProgress) return;
-    if (importJobProgress.status === "completed") {
-      qc.invalidateQueries({ queryKey: ["datasets"] });
-      if (importJobProgress.dataset_id) {
-        qc.invalidateQueries({ queryKey: ["images", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["dataset", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["dataset-stats", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["tag-stats", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["score-values", importJobProgress.dataset_id] });
-        qc.invalidateQueries({ queryKey: ["tag-cooccurrence", importJobProgress.dataset_id] });
-        // An import is a provenance writer: a scraper sidecar is the largest
-        // source of new `other:` licenses, unpickable until this refetches.
-        qc.invalidateQueries({ queryKey: ["licenses-in-use", importJobProgress.dataset_id] });
-      }
-      showImportSummaryToast(importJobId);
-      setImportJobId(null);
-    } else if (importJobProgress.status === "failed") {
-      setImportJobId(null);
-    }
-  }, [importJobProgress?.status, importJobId, qc]);
+  // No folder-import effect: its outcome (refresh and toast) is TopBar's, which
+  // outlives this page — see ImportFolderModal.
 
   const invalidateDatasetCaches = useCallback((datasetId: string) => {
     invalidateDatasetContentScope(qc, datasetId);
-    // Both callers (rescan and import) can add Video rows now, and the preview
+    // A rescan can add Video rows (it adopts clips out of videos/), and the preview
     // strip's counts come off `["dataset", id]` — so leaving this out desynced
     // the card's video count from the video list any pane opened next.
     qc.invalidateQueries({ queryKey: ["videos", datasetId] });
@@ -382,8 +367,18 @@ export default function DatasetsPage() {
       toast.error("Rescan failed");
       setRescanJobId(null);
       setRescanTargetId(null);
+    } else if (rescanJobProgress.status === "cancelled" && !rescanJobProgress.optimistic) {
+      // A cancelled rescan still commits what it registered before the stop, so
+      // the dataset has changed.
+      // Not on the cancel button's optimistic write: rows can land until the
+      // server confirms.
+      const dsId = rescanJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      toast("Rescan cancelled");
+      setRescanJobId(null);
+      setRescanTargetId(null);
     }
-  }, [rescanJobProgress?.status, rescanJobId, invalidateDatasetCaches]);
+  }, [rescanJobProgress?.status, rescanJobProgress?.optimistic, rescanJobProgress?.dataset_id, rescanJobId, invalidateDatasetCaches]);
 
   useEffect(() => {
     if (!captionJobId || !captionJobProgress) return;
@@ -402,8 +397,14 @@ export default function DatasetsPage() {
     } else if (captionJobProgress.status === "failed") {
       toast.error("Caption import failed");
       setCaptionJobId(null);
+    } else if (captionJobProgress.status === "cancelled" && !captionJobProgress.optimistic) {
+      // Same as the rescan arm: captions matched before the stop were written.
+      const dsId = captionJobProgress.dataset_id;
+      if (dsId) invalidateDatasetCaches(dsId);
+      toast("Caption import cancelled");
+      setCaptionJobId(null);
     }
-  }, [captionJobProgress?.status, captionJobId, invalidateDatasetCaches]);
+  }, [captionJobProgress?.status, captionJobProgress?.optimistic, captionJobProgress?.dataset_id, captionJobId, invalidateDatasetCaches]);
 
   useEffect(() => {
     if (!duplicateJobId || !duplicateJobProgress) return;
@@ -426,8 +427,12 @@ export default function DatasetsPage() {
     } else if (duplicateJobProgress.status === "failed") {
       setDuplicateJobId(null);
       toast.error("Duplicate failed");
+    } else if (duplicateJobProgress.status === "cancelled" && !duplicateJobProgress.optimistic) {
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      setDuplicateJobId(null);
+      toast("Duplicate cancelled");
     }
-  }, [duplicateJobProgress?.status, duplicateJobId, qc]);
+  }, [duplicateJobProgress?.status, duplicateJobProgress?.optimistic, duplicateJobId, qc]);
 
   useEffect(() => {
     localStorage.setItem(DECLARED_CATEGORIES_KEY, JSON.stringify(emptyCategories));
@@ -495,6 +500,8 @@ export default function DatasetsPage() {
       setDeleteTarget(null);
       toast.success("Dataset deleted");
     },
+    // A 409 (a versioning job holds the dataset) must not fail silently.
+    onError: (err) => toast.error(apiErrorDetail(err, "Failed to delete dataset")),
   });
 
   const renameMutation = useMutation({
@@ -671,6 +678,18 @@ export default function DatasetsPage() {
   }, [handleCardDrop]);
 
   // ── New category handler ──────────────────────────────────────────────────
+  // Each closer is what the dialog's Cancel button did, so Escape (and the New
+  // Category backdrop) leave the same state behind as Cancel.
+  function closeCreate() {
+    setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory(""); setNewProvenance(EMPTY_PROVENANCE);
+  }
+  function closeCaptionImport() {
+    setCaptionImportTarget(null); setCaptionImportPath("");
+  }
+  function closeCreateCategory() {
+    setShowCreateCategory(false); setNewCategoryName("");
+  }
+
   function handleCreateCategory() {
     const name = newCategoryName.trim();
     if (!name) return;
@@ -1457,97 +1476,95 @@ export default function DatasetsPage() {
 
       {/* ── Edit Dataset Modal ─────────────────────────────────────────────── */}
       {renameTarget && (
-        <div className="dialog-bg">
-          <div className="dialog">
-            <h3>Edit Dataset</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
-              <div>
-                <label className="label">Name</label>
-                <input
-                  className="input"
-                  value={renameName}
-                  autoFocus
-                  onChange={(e) => setRenameName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && renameName && renameChanged) renameMutation.mutate();
-                  }}
-                />
-              </div>
-              <div>
-                <label className="label">Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
-                <input
-                  className="input"
-                  placeholder="…"
-                  value={renameDesc}
-                  onChange={(e) => setRenameDesc(e.target.value)}
-                />
-              </div>
-              <CategoryPicker
-                value={renameCategory}
-                onChange={setRenameCategory}
-                existingCategories={existingCategories}
-                label="Category"
-                labelNote="(optional — groups datasets into folders)"
-                autoFocusNew={false}
-              />
-              <ProvenanceFields
-                value={renameProvenance}
-                onChange={setRenameProvenance}
-                note="Defaults for every image in this dataset that hasn't set its own. Changing them updates all non-overridden images."
-                customLicenses={renameCustomLicenses}
+        <ModalShell label="Edit Dataset" onClose={() => setRenameTarget(null)}>
+          <h3>Edit Dataset</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
+            <div>
+              <label className="label" htmlFor={`${uid}-edit-name`}>Name</label>
+              <input
+                id={`${uid}-edit-name`}
+                className="input"
+                value={renameName}
+                autoFocus
+                onChange={(e) => setRenameName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && renameName && renameChanged) renameMutation.mutate();
+                }}
               />
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => setRenameTarget(null)}>Cancel</button>
-              <button
-                className="btn primary"
-                onClick={() => renameMutation.mutate()}
-                disabled={!renameName || !renameChanged || renameMutation.isPending}
-              >
-                Save
-              </button>
+            <div>
+              <label className="label" htmlFor={`${uid}-edit-desc`}>Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
+              <input
+                id={`${uid}-edit-desc`}
+                className="input"
+                placeholder="…"
+                value={renameDesc}
+                onChange={(e) => setRenameDesc(e.target.value)}
+              />
             </div>
+            <CategoryPicker
+              value={renameCategory}
+              onChange={setRenameCategory}
+              existingCategories={existingCategories}
+              label="Category"
+              labelNote="(optional — groups datasets into folders)"
+              autoFocusNew={false}
+            />
+            <ProvenanceFields
+              value={renameProvenance}
+              onChange={setRenameProvenance}
+              note="Defaults for every image in this dataset that hasn't set its own. Changing them updates all non-overridden images."
+              customLicenses={renameCustomLicenses}
+            />
           </div>
-        </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={() => setRenameTarget(null)}>Cancel</button>
+            <button
+              className="btn primary"
+              onClick={() => renameMutation.mutate()}
+              disabled={!renameName || !renameChanged || renameMutation.isPending}
+            >
+              Save
+            </button>
+          </div>
+        </ModalShell>
       )}
 
       {/* ── Create Modal ───────────────────────────────────────────────────── */}
       {showCreate && (
-        <div className="dialog-bg">
-          <div className="dialog">
-            <h3>New Dataset</h3>
-            <p>Give it a name and optional description.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
-              <div>
-                <label className="label">Name</label>
-                <input className="input" placeholder="my_dataset" value={newName} autoFocus
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && newName && createMutation.mutate()} />
-              </div>
-              <div>
-                <label className="label">Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
-                <input className="input" placeholder="…" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-              </div>
-              <CategoryPicker
-                value={newCategory}
-                onChange={setNewCategory}
-                existingCategories={existingCategories}
-                label="Category"
-                labelNote="(optional)"
-                autoFocusNew={false}
-              />
-              <ProvenanceFields
-                value={newProvenance}
-                onChange={setNewProvenance}
-                note="Defaults inherited by every image in this dataset unless the image sets its own."
-              />
+        <ModalShell label="New Dataset" onClose={closeCreate}>
+          <h3>New Dataset</h3>
+          <p>Give it a name and optional description.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 }}>
+            <div>
+              <label className="label" htmlFor={`${uid}-new-name`}>Name</label>
+              <input id={`${uid}-new-name`} className="input" placeholder="my_dataset" value={newName} autoFocus
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && newName && createMutation.mutate()} />
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => { setShowCreate(false); setNewName(""); setNewDesc(""); setNewCategory(""); setNewProvenance(EMPTY_PROVENANCE); }}>Cancel</button>
-              <button className="btn primary" onClick={() => createMutation.mutate()} disabled={!newName || createMutation.isPending}>Create</button>
+            <div>
+              <label className="label" htmlFor={`${uid}-new-desc`}>Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
+              <input id={`${uid}-new-desc`} className="input" placeholder="…" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
             </div>
+            <CategoryPicker
+              value={newCategory}
+              onChange={setNewCategory}
+              existingCategories={existingCategories}
+              label="Category"
+              labelNote="(optional)"
+              autoFocusNew={false}
+            />
+            <ProvenanceFields
+              value={newProvenance}
+              onChange={setNewProvenance}
+              note="Defaults inherited by every image in this dataset unless the image sets its own."
+            />
           </div>
-        </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={closeCreate}>Cancel</button>
+            <button className="btn primary" onClick={() => createMutation.mutate()} disabled={!newName || createMutation.isPending}>Create</button>
+          </div>
+        </ModalShell>
       )}
 
       {/* ── Import Modal ───────────────────────────────────────────────────── */}
@@ -1555,165 +1572,161 @@ export default function DatasetsPage() {
         <ImportFolderModal
           datasets={datasets}
           initialDatasetId={importInitialId}
-          onStarted={setImportJobId}
           onClose={() => setImportOpen(false)}
         />
       )}
 
       {/* ── Import Captions Modal ──────────────────────────────────────────── */}
       {captionImportTarget && (
-        <div className="dialog-bg">
-          <div className="dialog">
-            <h3>Import captions from folder</h3>
-            <p>Into: <strong style={{ color: "var(--fg)" }}>{captionImportTarget.name}</strong></p>
-            <p style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: -4, marginBottom: 14 }}>
-              Matches each <code>.txt</code> file to an image by filename and overwrites its caption.
-            </p>
-            <div style={{ marginBottom: 18 }}>
-              <label className="label">Folder path</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input className="input" placeholder="/home/user/captions or D:\captions" value={captionImportPath}
-                  onChange={(e) => setCaptionImportPath(e.target.value)} autoFocus style={{ flex: 1 }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && captionImportPath && !captionImportMutation.isPending) captionImportMutation.mutate(); }} />
-                <button className="btn" onClick={() => setCaptionDirPickerOpen(true)}>Browse…</button>
-              </div>
-            </div>
-            {captionDirPickerOpen && (
-              <DirPickerModal
-                initialPath={captionImportPath}
-                title="Select a caption folder"
-                confirmLabel="Use folder"
-                onConfirm={(p) => { setCaptionImportPath(p); setCaptionDirPickerOpen(false); }}
-                onCancel={() => setCaptionDirPickerOpen(false)}
-              />
-            )}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn ghost" onClick={() => { setCaptionImportTarget(null); setCaptionImportPath(""); }}>Cancel</button>
-              <button className="btn primary" onClick={() => captionImportMutation.mutate()} disabled={!captionImportPath || captionImportMutation.isPending}>Import captions</button>
+        <ModalShell label="Import captions from folder" onClose={closeCaptionImport}>
+          <h3>Import captions from folder</h3>
+          <p>Into: <strong style={{ color: "var(--fg)" }}>{captionImportTarget.name}</strong></p>
+          <p style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: -4, marginBottom: 14 }}>
+            Matches each <code>.txt</code> file to an image by filename and overwrites its caption.
+          </p>
+          <div style={{ marginBottom: 18 }}>
+            <label className="label" htmlFor={`${uid}-caption-path`}>Folder path</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input id={`${uid}-caption-path`} className="input" placeholder="/home/user/captions or D:\captions" value={captionImportPath}
+                onChange={(e) => setCaptionImportPath(e.target.value)} autoFocus style={{ flex: 1 }}
+                onKeyDown={(e) => { if (e.key === "Enter" && captionImportPath && !captionImportMutation.isPending) captionImportMutation.mutate(); }} />
+              <button className="btn" onClick={() => setCaptionDirPickerOpen(true)}>Browse…</button>
             </div>
           </div>
-        </div>
+          {captionDirPickerOpen && (
+            <DirPickerModal
+              initialPath={captionImportPath}
+              title="Select a caption folder"
+              confirmLabel="Use folder"
+              onConfirm={(p) => { setCaptionImportPath(p); setCaptionDirPickerOpen(false); }}
+              onCancel={() => setCaptionDirPickerOpen(false)}
+            />
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn ghost" onClick={closeCaptionImport}>Cancel</button>
+            <button className="btn primary" onClick={() => captionImportMutation.mutate()} disabled={!captionImportPath || captionImportMutation.isPending}>Import captions</button>
+          </div>
+        </ModalShell>
       )}
 
       {/* ── Duplicate Modal ────────────────────────────────────────────────── */}
       {duplicateTarget && (
-        <div className="dialog-bg">
-          <div className="dialog">
-            <h3>Duplicate Dataset</h3>
-            <p style={{ marginBottom: 16 }}>
-              Source: <strong style={{ color: "var(--fg)" }}>{duplicateTarget.name}</strong>
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
+        <ModalShell label="Duplicate Dataset" onClose={() => setDuplicateTarget(null)}>
+          <h3>Duplicate Dataset</h3>
+          <p style={{ marginBottom: 16 }}>
+            Source: <strong style={{ color: "var(--fg)" }}>{duplicateTarget.name}</strong>
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
+            <div>
+              <label className="label" htmlFor={`${uid}-dup-name`}>New name</label>
+              <input
+                id={`${uid}-dup-name`}
+                className="input"
+                autoFocus
+                value={duplicateName}
+                onChange={(e) => setDuplicateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && duplicateName && !duplicateMutation.isPending)
+                    duplicateMutation.mutate();
+                }}
+              />
+            </div>
+
+            {/* Snapshot source — only shown when versioning is enabled */}
+            {versioningEnabled && (
               <div>
-                <label className="label">New name</label>
-                <input
-                  className="input"
-                  autoFocus
-                  value={duplicateName}
-                  onChange={(e) => setDuplicateName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && duplicateName && !duplicateMutation.isPending)
-                      duplicateMutation.mutate();
-                  }}
-                />
-              </div>
-
-              {/* Snapshot source — only shown when versioning is enabled */}
-              {versioningEnabled && (
-                <div>
-                  <label className="label" style={{ marginBottom: 8 }}>Source snapshot</label>
-                  {dupBranches.length === 0 ? (
-                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
-                      No snapshots yet — will duplicate current state
-                    </p>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span style={{ fontSize: 12, color: "var(--fg-mute)", minWidth: 50 }}>Branch</span>
-                        <select
-                          className="select"
-                          style={{ flex: 1 }}
-                          value={resolvedDupBranchId ?? ""}
-                          onChange={(e) => {
-                            setDupBranchId(e.target.value || undefined);
-                            setDuplicateVersionId(undefined);
-                          }}
-                        >
-                          {dupBranches.map((b) => (
-                            <option key={b.id} value={b.id}>{b.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span style={{ fontSize: 12, color: "var(--fg-mute)", minWidth: 50 }}>Version</span>
-                        <select
-                          className="select"
-                          style={{ flex: 1 }}
-                          value={duplicateVersionId ?? ""}
-                          onChange={(e) => setDuplicateVersionId(e.target.value || undefined)}
-                        >
-                          <option value="">Current state</option>
-                          {dupVersions.map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.name ?? "Snapshot"} — {formatDate(v.created_at)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                <label className="label" style={{ marginBottom: 8 }}>Source snapshot</label>
+                {dupBranches.length === 0 ? (
+                  <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
+                    No snapshots yet — will duplicate current state
+                  </p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: "var(--fg-mute)", minWidth: 50 }}>Branch</span>
+                      <select
+                        className="select"
+                        style={{ flex: 1 }}
+                        value={resolvedDupBranchId ?? ""}
+                        onChange={(e) => {
+                          setDupBranchId(e.target.value || undefined);
+                          setDuplicateVersionId(undefined);
+                        }}
+                      >
+                        {dupBranches.map((b) => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
                     </div>
-                  )}
-                </div>
-              )}
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: "var(--fg-mute)", minWidth: 50 }}>Version</span>
+                      <select
+                        className="select"
+                        style={{ flex: 1 }}
+                        value={duplicateVersionId ?? ""}
+                        onChange={(e) => setDuplicateVersionId(e.target.value || undefined)}
+                      >
+                        <option value="">Current state</option>
+                        {dupVersions.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name ?? "Snapshot"} — {formatDate(v.created_at)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
-              {/* Videos are counted apart from images and are not copied by
-                  default — so the cost is spelled out from the columns the card
-                  already shows, and the row only exists when there is footage
-                  to carry. */}
-              {duplicateTarget.video_count > 0 && (
-                <div>
-                  <label
-                    className="label"
-                    style={{
-                      display: "flex", alignItems: "center", gap: 8, marginBottom: 0,
-                      cursor: duplicateVersionId ? "not-allowed" : "pointer",
-                      opacity: duplicateVersionId ? 0.5 : 1,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={!duplicateVersionId && duplicateIncludeVideos}
-                      disabled={!!duplicateVersionId}
-                      onChange={(e) => setDuplicateIncludeVideos(e.target.checked)}
-                    />
-                    Copy {duplicateTarget.video_count}{" "}
-                    {duplicateTarget.video_count === 1 ? "video" : "videos"}{" "}
-                    ({formatSize(duplicateTarget.video_size_bytes)})
-                  </label>
-                  {duplicateVersionId && (
-                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0 0 24px" }}>
-                      Snapshots don't capture videos
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button
-                className="btn ghost"
-                onClick={() => { setDuplicateTarget(null); }}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn primary"
-                onClick={() => duplicateMutation.mutate()}
-                disabled={!duplicateName || duplicateMutation.isPending}
-              >
-                Duplicate
-              </button>
-            </div>
+            {/* Videos are counted apart from images and are not copied by
+                default — so the cost is spelled out from the columns the card
+                already shows, and the row only exists when there is footage
+                to carry. */}
+            {duplicateTarget.video_count > 0 && (
+              <div>
+                <label
+                  className="label"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, marginBottom: 0,
+                    cursor: duplicateVersionId ? "not-allowed" : "pointer",
+                    opacity: duplicateVersionId ? 0.5 : 1,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!duplicateVersionId && duplicateIncludeVideos}
+                    disabled={!!duplicateVersionId}
+                    onChange={(e) => setDuplicateIncludeVideos(e.target.checked)}
+                  />
+                  Copy {duplicateTarget.video_count}{" "}
+                  {duplicateTarget.video_count === 1 ? "video" : "videos"}{" "}
+                  ({formatSize(duplicateTarget.video_size_bytes)})
+                </label>
+                {duplicateVersionId && (
+                  <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0 0 24px" }}>
+                    Snapshots don't capture videos
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button
+              className="btn ghost"
+              onClick={() => { setDuplicateTarget(null); }}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              onClick={() => duplicateMutation.mutate()}
+              disabled={!duplicateName || duplicateMutation.isPending}
+            >
+              Duplicate
+            </button>
+          </div>
+        </ModalShell>
       )}
 
       {/* ── Delete dataset confirm ─────────────────────────────────────────── */}
@@ -1742,40 +1755,34 @@ export default function DatasetsPage() {
 
       {/* ── New Category modal ─────────────────────────────────────────────── */}
       {showCreateCategory && (
-        <div
-          className="dialog-bg"
-          onClick={() => { setShowCreateCategory(false); setNewCategoryName(""); }}
-        >
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>New Category</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
-              <label className="label">Category name</label>
-              <input
-                className="input"
-                autoFocus
-                placeholder="e.g. Portraits"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateCategory();
-                  if (e.key === "Escape") { setShowCreateCategory(false); setNewCategoryName(""); }
-                }}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button className="btn" onClick={() => { setShowCreateCategory(false); setNewCategoryName(""); }}>
-                Cancel
-              </button>
-              <button
-                className="btn primary"
-                disabled={!newCategoryName.trim()}
-                onClick={handleCreateCategory}
-              >
-                Create
-              </button>
-            </div>
+        // The one DatasetsPage dialog a backdrop click always closed, so it keeps that.
+        <ModalShell label="New Category" onClose={closeCreateCategory} closeOnBackdrop>
+          <h3>New Category</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+            <label className="label" htmlFor={`${uid}-category-name`}>Category name</label>
+            <input
+              id={`${uid}-category-name`}
+              className="input"
+              autoFocus
+              placeholder="e.g. Portraits"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreateCategory(); }}
+            />
           </div>
-        </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={closeCreateCategory}>
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              disabled={!newCategoryName.trim()}
+              onClick={handleCreateCategory}
+            >
+              Create
+            </button>
+          </div>
+        </ModalShell>
       )}
     </div>
   );

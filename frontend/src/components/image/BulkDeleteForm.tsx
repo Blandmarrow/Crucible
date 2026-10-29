@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2, TriangleAlert } from "lucide-react";
 import toast from "react-hot-toast";
-import { imagesApi } from "../../api/images";
+import { imagesApi, keptImagesMessage, type DeleteResult } from "../../api/images";
 import { useSelectionStore } from "../../store/selectionStore";
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
 export default function BulkDeleteForm({ datasetId, imageIds, qualityFlags, subfolder, disabled }: Props) {
   const qc = useQueryClient();
   const clearSelection = useSelectionStore((s) => s.clear);
-  const [result, setResult] = useState<{ deleted: number } | null>(null);
+  const [result, setResult] = useState<DeleteResult | null>(null);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -29,11 +29,13 @@ export default function BulkDeleteForm({ datasetId, imageIds, qualityFlags, subf
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       clearSelection();
       setResult(data);
-      if (data.deleted === 0) {
+      const kept = keptImagesMessage(data);
+      if (data.deleted === 0 && !kept) {
         toast("No images matched — nothing was deleted");
-      } else {
+      } else if (data.deleted > 0) {
         toast.success(`Deleted ${data.deleted} image${data.deleted !== 1 ? "s" : ""}`);
       }
+      if (kept) toast.error(kept);
     },
     onError: () => toast.error("Bulk delete failed"),
   });
@@ -53,6 +55,9 @@ export default function BulkDeleteForm({ datasetId, imageIds, qualityFlags, subf
       {result && (
         <div className="flex items-center gap-2 text-sm">
           <span className="badge badge-bad">{result.deleted} deleted</span>
+          {result.in_use + result.failed > 0 && (
+            <span className="badge badge-yellow">{result.in_use + result.failed} kept</span>
+          )}
         </div>
       )}
 

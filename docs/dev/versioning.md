@@ -12,13 +12,15 @@ Snapshot-based version control for datasets. Users can create named snapshots, r
 
 | Mode | Snapshot behaviour | COW overwrite hook |
 |---|---|---|
-| `"off"` | Disabled — every *write* route 400s via `_require_versioning_enabled` (snapshot, prune, branch create/delete/checkout, version update/delete, restore). The four read routes still answer, deliberately: `Sidebar` and `DatasetsPage` list branches and versions whatever the mode is | No-op |
-| `"manual"` | Snapshot copies every file to the object store eagerly (full point-in-time backup). Always runs as a background job. | No-op |
-| `"auto"` | Snapshot records metadata + `file_hash=NULL`; object store copies are made lazily on first overwrite (copy-on-write). | Fires before in-place resize/upscale/LUT replace |
+| `"off"` | Disabled — every *write* route 400s via `_require_versioning_enabled` (snapshot, prune, branch create/delete/checkout, version update/delete, restore). The four read routes still answer, deliberately: `Sidebar` and `DatasetsPage` list branches and versions whatever the mode is | Fires for existing lazy rows |
+| `"manual"` | Snapshot copies every file to the object store eagerly (full point-in-time backup). Always runs as a background job. | Fires for existing lazy rows (none, unless an Auto snapshot or a failed copy left some) |
+| `"auto"` | Snapshot records metadata + `file_hash=NULL`; object store copies are made lazily on first overwrite (copy-on-write). | Fires before every in-place overwrite |
 
-Deletion protection fires in both `"manual"` and `"auto"` because deletion is irreversible — the file is backed up before `Path.unlink()`.
+**Protection is gated on the data, not the mode** (GPT-022, PM-026). Both hooks — overwrite and deletion — fire in every mode whenever the image has a snapshot row with `file_hash IS NULL` (`_has_lazy_rows`, one indexed `LIMIT 1` query), and back the file up first. The mode only decides how a *new* snapshot is taken. Gating on the mode let an Auto snapshot's lazy rows go unprotected after a switch to Manual or Off, and a restore then read the overwritten file as "unchanged". The cost: Off mode keeps spending disk on snapshots that already exist, and an overwrite in Manual or Off can now fail when the object store cannot be written, as it always could in Auto.
 
 **Dataset-busy guard** — `backend/services/dataset_busy.py`, a small in-process module (single-process app): `busy(dataset_id, reason)` contextmanager + `ensure_not_busy(dataset_id)` which raises HTTP 409. The five versioning job `_run` wrappers in `routers/versioning.py` (restore, checkout, background snapshot, background branch-create, prune) hold the flag for the job's duration, and they are no longer the only holders: `routers/videos.py`'s `_delete_previous_frames` takes it around the replace step alone, because that step deletes N rows, N files and N thumbnails in seconds — extraction as a whole deliberately does not hold it (`docs/dev/video-extract.md`). Interactive *direct-mutation* endpoints call `ensure_not_busy` after resolving the dataset id — `routers/images.py` (upload, delete/batch-delete/bulk-delete, bulk-rename, rename, resize, crop, batch move-subfolder, batch move-dataset + copy-dataset — both source and target, plus `bulk_provenance`, single-image provenance, `bulk_thumbnails` — which guards every dataset its rows touch — and `_guard_batch_datasets`, the shared guard `/batch/resize` and `/batch/crop` acquired with PM-018), `routers/quality.py` (`resolve_duplicates`), `routers/captions.py` (single caption save, find-replace, bulk-edit) — and so do the video and filesystem routers, whose own docs own the detail: `routers/videos.py` (extract, re-extract, rename, delete — `docs/dev/video-extract.md`, `docs/dev/video-reextract.md`, `docs/dev/video-endpoints.md`) and `routers/filesystem.py` (rename, delete — `docs/dev/file-browser.md`). Treat the list as "where to look", not as exhaustive; grep `ensure_not_busy` for the current set. Enqueued background jobs are deliberately *not* guarded — the single job queue already serializes them against versioning jobs. No frontend change: the 409 surfaces through the normal error toast.
+
+**The structural dataset routes are guarded too** (GPT-015) — `routers/datasets.py`: `update_dataset` when the **name** changes (the rename moves the folder and rebases every stored path under it, which a running restore is still writing to — the race that fed GPT-021), `delete_dataset` after its 404 check, and `remove_subfolder` (it rewrites `Image.subfolder`, the column `repath_subfolder_endpoint` already guards for). A category- or provenance-only PATCH stays unguarded on purpose: `DatasetsPage` sends those in bulk and nothing on disk moves. `DatasetsPage`'s delete mutation toasts the 409 rather than failing silently. `backend/tests/test_dataset_busy_routes_http.py` pins all four.
 
 ## Model and storage
 
@@ -37,7 +39,7 @@ Files are stored **only once per unique content** (idempotent). All writes go th
 |---|---|
 | `dataset_branches` | Named branches; `head_version_id` FK to latest snapshot on the branch |
 | `dataset_versions` | Snapshot records; `parent_id` self-ref for chain; auto-named `Snapshot YYYY-MM-DD HH:MM` if name omitted |
-| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) + the five provenance columns (see **Provenance mirror** below) + all ten `*_score` columns + the three frame-lineage columns (`source_video_id`, `source_timestamp_ms`, `source_shot_index`) |
+| `version_image_states` | One row per image per snapshot — stores all metadata + `file_hash` (SHA-256; NULL until COW fills it in `"auto"` mode) + `processing_history` (JSON array of replace operations) + `sort_order` (custom gallery position; NULL if image was unordered at snapshot time) + the five provenance columns (see **Provenance mirror** below) + all ten `*_score` columns + the three frame-lineage columns (`source_video_id`, `source_timestamp_ms`, `source_shot_index`) + the two join-table mirrors, `label_ids` (NOT NULL, `'[]'`) and `detections` (nullable: NULL = recorded before the column existed, which a restore leaves alone) — see `docs/dev/versioning-service.md` |
 
 The last two groups are recent and each carries a rule. A `*_score` column counts as
 **authored** data to a snapshot — nothing recomputes one on restore — so all ten are mirrored
@@ -47,6 +49,11 @@ it once and nothing edits it; and `source_video_id` is the one column a restore 
 back verbatim — `VersionImageState` carries no FK while `Image.source_video_id` does, so
 restore resolves the snapshotted ids against live `videos` and writes NULL for any that are
 gone. See `docs/dev/video-extract.md` § Frame lineage and PM-016.
+
+**`VersionImageState.file_path` is absolute** — the path the image had when the snapshot was taken, and the path a restore writes to. Three things keep it honest, because a path read from history is only as good as the root it names (PM-025):
+- `dataset_service.rename_dataset` rebases every snapshot row of the dataset with the same unresolved `is_relative_to` rule as the live rows (restore's Pass 0 compares the two as raw strings), as a chunked bulk UPDATE issued *before* the folder rename and rolled back if it raises (PM-013). Before this, a pre-rename snapshot restored into the old root, and over another dataset's files once one reused the name (GPT-021).
+- Migration `e3b7a9c2d4f1` repaired the snapshots already stale: per version, only when every stray row is provably `<parent>/<old_slug>/images/.../<filename>` with one shared old slug and no collision; anything else is left with a WARNING. It also prints a count of live rows outside their dataset folder and repairs none of them (no file moves in a migration).
+- Restore's Pass 0c gate refuses whatever still escapes, before anything is written (`docs/dev/versioning-service.md`).
 
 `datasets.current_branch_id` — tracks the active branch (updated on checkout).
 
@@ -70,8 +77,10 @@ gone. See `docs/dev/video-extract.md` § Frame lineage and PM-016.
 | `GET` | `/{id}/versions/{version_id}` | Get version detail |
 | `PATCH` | `/{id}/versions/{version_id}` | Update version (`is_pinned`) |
 | `DELETE` | `/{id}/versions/{version_id}` | Delete version (400 if last on branch) |
-| `POST` | `/{id}/versions/{version_id}/restore` | Restore (always bg job → `{job_id}`) |
+| `POST` | `/{id}/versions/{version_id}/restore` | Restore (always bg job → `{job_id}`); the outcome, failures included, lands in `result_data` (see `docs/dev/versioning-service.md`) |
 | `POST` | `/{id}/versions/prune` | Prune unreferenced object-store files (bg job `prune_versions` → `{job_id}`); 400 if versioning mode is `off`; summary written to `BackgroundJob.result_data` and emitted as the final progress message |
+
+**Every id must belong to the dataset in the URL** (GPT-024). A `branch_id` (snapshot create, checkout) or a `from_version_id`/`version_id` (branch create, restore, diff, the version routes) from another dataset — or one that does not exist — answers **404** *before* any job row is created. The service functions refuse the same ids with a `ValueError`, so a caller that skips the router cannot move another dataset's branch head either.
 
 The service behind these routes — `create_snapshot`, `restore_snapshot`'s four passes,
 `diff_versions`, the two copy-on-write hooks and the table of routers that fire them — is
@@ -102,4 +111,10 @@ The service behind these routes — `create_snapshot`, `restore_snapshot`'s four
 
 **Provenance mirror**: `VersionImageState` mirrors the five `Image` provenance columns (`source_name`, `source_url`, `license`, `attribution`, `source_meta`) — they are set in the snapshot loop's `VersionImageState(...)` construction and written back field-by-field in restore Pass 2c, alongside `generation_metadata` in both, and all five are diffed. `create_snapshot`'s `select(Image)` must carry `options=[undefer(Image.source_meta)]`: that column is `deferred=True`, and the snapshot build reads it, so without the undefer it lazy-loads on an async session and raises `MissingGreenlet`. `restore_snapshot` only assigns it, which triggers no load. Omitting any of them makes a restore silently wipe provenance; `test_provenance.py::test_snapshot_restore_preserves_provenance` guards it. See `docs/dev/provenance.md`.
 
-**Regression tests**: `backend/tests/test_versioning_restore.py` exercises the real service against a scratch DB + files (via `asyncio.run`, no async pytest plugin): filename swaps, deleted-image name reuse (keep/remove), pre-restore snapshot branch placement, cross-dataset-move restore (fork + adopt), and abort-on-failed-pre-snapshot. Extend it when touching restore's pass structure. `backend/tests/test_versioning_maintenance.py` (same harness) covers `_store_object` atomicity + the stale-`precomputed_sha256` TOCTOU regression, prune (referenced kept, junk/`.tmp-*` deleted, `min_age_seconds` skip), the busy guard, and the version-delete DB cascade.
+**Regression tests**: `backend/tests/test_versioning_restore.py` exercises the real service against a scratch DB + files (via `asyncio.run`, no async pytest plugin): filename swaps, deleted-image name reuse (keep/remove), pre-restore snapshot branch placement, cross-dataset-move restore (fork + adopt), abort-on-failed-pre-snapshot, and the Pass 0c path gate (an out-of-dataset target, a path another dataset owns, a refused checkout staying on its branch). Extend it when touching restore's pass structure.
+
+**Rename-then-restore tests**: `backend/tests/test_versioning_restore_after_rename_http.py` drives the GPT-021 scenario end to end — snapshot, rename, a new dataset reusing the old name, restore — in both modes, plus a legacy un-rebased snapshot that must be refused with nothing changed; `backend/tests/test_dataset_rename_folder_http.py` pins the rebase itself and its rollback, and `backend/tests/test_migration_rebase_snapshot_paths.py` the migration's planner.
+
+**PM-026's fixes** each have their own file: `test_versioning_ownership_http.py` (foreign ids, GPT-024), `test_versioning_protection.py` (lazy rows protected in every mode, GPT-022), `test_versioning_pre_restore_complete.py` (the complete-or-abort safety snapshot and the Pass 1 abort, GPT-023), `test_restore_outcome_http.py` (failure accounting, reconciliation and `result_data`, GPT-025) and `test_restore_measures_pixels.py` (measured phash, GPT-016).
+
+`backend/tests/test_versioning_maintenance.py` (the same harness as `test_versioning_restore.py`) covers `_store_object` atomicity + the stale-`precomputed_sha256` TOCTOU regression, prune (referenced kept, junk/`.tmp-*` deleted, `min_age_seconds` skip), the busy guard, and the version-delete DB cascade.

@@ -1990,7 +1990,8 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db)):
     )
     frames_orphaned = orphaned.rowcount or 0
 
-    # Files first, row second — the reverse of delete_image, on purpose. If the
+    # Files first, row second, on purpose — the image deletes share this order
+    # (services/image_delete.py, GPT-008). If the
     # commit below fails, the row survives pointing at nothing, which
     # _rescan_videos reports under `videos_missing` and the user can retry.
     # Committing first and then failing the unlink would leave an orphan in

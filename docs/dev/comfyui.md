@@ -44,7 +44,9 @@ running the backend.
 ### Backend (`backend/routers/comfy.py`, `backend/services/comfy_service.py`)
 
 `comfy_service.py` is pure (no DB/HTTP routing): `ComfyClient` wraps the ComfyUI endpoints
-(`POST /prompt`, `GET /history/{id}`, `GET /view`, `POST /interrupt` best-effort);
+(`POST /prompt`, `GET /history/{id}`, `GET /view`, and `GET`/`POST /queue` plus a
+prompt-targeted `POST /interrupt` for `cancel_prompt`, below); it takes an optional httpx
+`transport` so tests can drive it over `httpx.MockTransport`;
 `patch_workflow(workflow, pinned, row_values, row_index)` deep-copies the template and
 resolves each pin as: row value (coerced to the template value's JSON type) → `int_mode`
 roll (random/increment) → run default `value` → template. Coercion is
@@ -82,6 +84,10 @@ text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on
 column: base = effective prompt (row → default → template), result written into row values
 (changed completed/failed rows reset to pending), regex bounded like caption bulk-edit — one
 30 s batch deadline enforced inside the `regex` engine via `regex_sub_deadline` (408 on timeout).
+An invalid pattern is a 400 `Invalid regex: …` here and on both caption routes alike
+(`backend/tests/test_comfy_bulk_edit_regex_http.py`; GPT-031 brought the caption side into line).
+So is an invalid replacement template (`\9`), which only fails on a match, inside the executor:
+that `regex_error` used to escape the route as a 500.
 
 Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
 prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no
@@ -110,7 +116,8 @@ second pending/running run for the same plan — matched on `job_type` **and**
 `docs/dev/comfy-prompts.md`). Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
-Per row, sequentially (one at a time — ComfyUI's own queue is never stacked): mark `running` →
+Per row, sequentially (one of ours outstanding at a time — a failed or cancelled row's prompt is
+taken out of ComfyUI before the next is submitted, see § Removing our prompt): mark `running` →
 `patch_workflow` → submit → poll history every 1 s (30-min deadline, `PER_ROW_TIMEOUT_S`) →
 download each output image → write into `{dataset}/images/` named
 `{plan_slug}_001.ext` via `unique_filename_with_thumb` → `_register_file_sync` in an executor
@@ -162,9 +169,46 @@ Failure/cancel semantics:
   `pending`. Like cancel, this raises straight out of `_run` — which is why the stats refresh
   lives in the `_run_with_stats` wrapper's `finally` and per row, not after the loop.
 - Cancel (`DELETE /jobs/{id}`) is cooperative: checked before each row and inside the poll
-  loop, which best-effort `POST /interrupt`s ComfyUI and reverts the in-flight row to
-  `pending` before raising. Note `DELETE /jobs` flips the job row to `cancelled` immediately,
-  so a row can briefly read `running` until the worker's next check (~1 s).
+  loop, which reverts the in-flight row to `pending` and raises; the `CancelledError` branch
+  then takes our prompt out of ComfyUI. `DELETE /jobs` only flips a still-*pending* job to
+  `cancelled`; a running one just gets the cooperative flag and is marked `cancelled` when the
+  worker unwinds, so a row can briefly read `running` until the next check (~1 s).
+
+#### Removing our prompt
+
+ComfyUI is shared: the sync-from-canvas workflow (`docs/dev/comfyui-sync.md`) assumes the
+user also queues prompts from the canvas against the same server. A bare `POST /interrupt`
+stops *whatever is executing* — which, with a canvas prompt running and ours pending, killed
+the user's prompt and left ours queued; and a row timeout that merely raised left our prompt
+in ComfyUI's queue with the next row stacked on top. So the job never sends a global
+interrupt. `ComfyClient.cancel_prompt(prompt_id, client_id)` reads `GET /queue` (items are
+`[number, prompt_id, prompt, extra_data, outputs]`; `extra_data.client_id` is our job id,
+passed at submit), deletes ours from the pending queue (`POST /queue {"delete": [...]}`, by
+id **and** by client_id — the second catches a cancel that landed mid-submit, before we
+learned the id), sends `POST /interrupt {"prompt_id": ours}` only if ours is the one
+running, and re-reads to confirm — the **whole** call, every request included, bounded by
+`CANCEL_CONFIRM_WINDOW_S` (5 s). It never raises; it returns `not_found | removed |
+interrupted | still_running | unreachable`. Only a failed *connection* is `unreachable`;
+an unreadable `/queue`, a `ReadTimeout` or any other stall after connecting is
+`still_running` — unconfirmed is not gone, and a slow server reported as down let the next
+row stack on a prompt still sitting there.
+
+The router runs it only while ComfyUI may still hold the row's prompt — from submit until
+`/history` reports it finished (`maybe_queued and not history_seen`); a 400-rejected or
+never-connected submit queued nothing and skips it. Bounded by `REMOTE_CLEANUP_BUDGET_S`
+(6 s, just above the client's window), or `REMOTE_CLEANUP_HARD_CANCEL_BUDGET_S` (1.5 s) when
+`current_task().cancelling() > 0` — a hard cancel from `JobQueue.stop()`, which then allows
+only `STOP_UNWIND_SECONDS`; the cooperative path fits inside `STOP_GRACE_SECONDS`
+(`docs/dev/backend-infrastructure.md`). In the `CancelledError` branch it runs **last**, after
+the row reset commits, inside `except Exception` with a bare `raise` (PM-027). In the generic
+branch a non-clean outcome is appended to `row.error_msg`, and `still_running` on a non-connect
+error **aborts the run** (remaining rows stay `pending`) rather than stack the next row on a
+prompt we could not remove; `unreachable` does not abort, leaving the 3-strike connect breaker
+to decide as before.
+
+Residual risk, accepted: an old ComfyUI ignores the interrupt body and interrupts globally,
+so if our prompt finishes in the milliseconds between the `GET /queue` and the interrupt,
+whatever runs next is stopped.
 
 ### Frontend (`frontend/src/pages/ComfyPage.tsx`, `frontend/src/components/comfy/`)
 
@@ -266,12 +310,13 @@ covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
   that embeds literal quotes into the DDL default.
 - JSON-column reassignment invariant applies to `row.values`, `row.image_ids`,
   `plan.pinned_params`, and `plan.output_node_ids` (see CLAUDE.md Key invariants).
-- `/interrupt` only affects the currently executing prompt — sufficient here because rows are
-  submitted one at a time, so nothing of ours ever waits in ComfyUI's queue.
-- **No mock ComfyUI server is checked in**, so the `comfy_generate` run body has no
-  end-to-end coverage. The shape one would need: `system_stats`, `prompt`, `history` and
-  `view` endpoints, PNG responses carrying an embedded workflow chunk, and two trigger
-  prompts that make the server answer 400 and fail mid-execution respectively. Checking one
-  in under `backend/tests/` is the only way to exercise that body; until then, treat this as
-  a description of the gap rather than of an artifact.
+- `/interrupt` stops whatever is executing, not necessarily ours, and `POST /queue
+  {"delete"}` only touches pending prompts — so neither alone removes our prompt, and a bare
+  interrupt is never sent (§ Removing our prompt). Never use `{"clear": true}`.
+- **The mock ComfyUI server is partial.** `backend/tests/test_comfy_queue_cleanup.py`'s
+  `FakeComfy` (over `httpx.MockTransport`) serves `system_stats`, `prompt`, `history`, `view`
+  and `/queue`, and drives the run body through cancel, timeout, abort and connect-breaker
+  paths. It does not serve PNGs carrying an embedded workflow chunk, nor a prompt that fails
+  mid-execution, so import of generation metadata and the history-error path are still
+  uncovered end to end.
 - Workflow sync (bridge extension, sync button, history-pull): `docs/dev/comfyui-sync.md`.

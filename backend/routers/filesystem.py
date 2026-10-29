@@ -26,7 +26,7 @@ from backend.utils import (
     chunked,
     contained_path,
     rename_with_sidecar,
-    sanitize_abs_path,
+    canonical_abs_path,
     thumbnail_path_for,
     within_datasets_dir,
 )
@@ -86,13 +86,14 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
     next one the more general fallback. `{ds}` holding rows should get C's
     "rename the dataset instead", not A's generic message.
 
-    Comparisons are unresolved strings throughout, deliberately.
-    `sanitize_abs_path` does not resolve — it rejects null bytes and relative
-    paths and hands back a bare `Path`; `Dataset.folder_path` is stored as
-    `str(settings.datasets_dir / slug)`, equally unresolved; and the File
-    Browser only ever sends paths it got back from `GET /list`. Resolving here
-    would harden one guard against a request shape `/move`'s two and `/delete`'s
-    scope predicate all still let through.
+    Comparisons are plain string compares against stored paths, which is sound
+    because every route canonicalizes its input once at entry with
+    `canonical_abs_path` — resolved, then rebased onto the unresolved
+    `settings.datasets_dir` that `Dataset.folder_path` and `Image.file_path` are
+    built from. Before that, `{ds}/images/../images` slipped past all four guards
+    here, `/move`'s two and `/delete`'s scope predicate alike (GPT-011). Do not
+    `.resolve()` here instead: a resolved string matches no stored one when
+    `datasets_dir` sits under a symlink.
     """
     old_prefix = str(p) + os.sep
 
@@ -212,7 +213,7 @@ async def list_roots():
 
 @router.get("/list")
 async def list_directory(path: str = Query(...)):
-    p = sanitize_abs_path(path)
+    p = canonical_abs_path(path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "Path not found")
     if not p.is_dir():
@@ -257,11 +258,11 @@ async def preview_media(path: str = Query(...)):
     Videos are served through the same route as images rather than a second
     endpoint: FileResponse supplies `accept-ranges` and 206 on its own, which is
     all a <video> needs to seek. The path is client-supplied and only
-    `sanitize_abs_path`-checked — the same deliberate local-desktop posture this
+    `canonical_abs_path`-checked — the same deliberate local-desktop posture this
     endpoint has always had for images (see docs/dev/file-browser.md § Path
     safety); widening the extension allowlist adds no new exposure class.
     """
-    p = sanitize_abs_path(path)
+    p = canonical_abs_path(path, settings.datasets_dir)
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "File not found")
     kind = media_kind_for(p.suffix)
@@ -277,7 +278,7 @@ async def preview_media(path: str = Query(...)):
 
 @router.get("/image-meta")
 async def image_meta(path: str = Query(...)):
-    p = sanitize_abs_path(path)
+    p = canonical_abs_path(path, settings.datasets_dir)
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "File not found")
     if p.suffix.lower() not in IMAGE_EXTENSIONS:
@@ -297,8 +298,8 @@ class MoveRequest(BaseModel):
 
 @router.post("/move")
 async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
-    src = sanitize_abs_path(req.src)
-    dst_dir = sanitize_abs_path(req.dst_dir)
+    src = canonical_abs_path(req.src, settings.datasets_dir)
+    dst_dir = canonical_abs_path(req.dst_dir, settings.datasets_dir)
 
     if not src.exists():
         raise HTTPException(404, "Source not found")
@@ -497,7 +498,7 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     if "/" in req.new_name or "\\" in req.new_name or "\x00" in req.new_name:
         raise HTTPException(400, "new_name must not contain path separators")
 
-    p = sanitize_abs_path(req.path)
+    p = canonical_abs_path(req.path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "Path not found")
 
@@ -654,7 +655,7 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     statement before the irreversible step and closing them with an explicit
     `flush()`, leaving only the `commit()` after it.
     """
-    p = sanitize_abs_path(req.path)
+    p = canonical_abs_path(req.path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "Path not found")
 
@@ -723,7 +724,7 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     # Gated per row, because the hook is a *read* of the named file: it copies the
     # bytes into `{ds}/.versions/objects/`, where a snapshot restore hands them
     # back. `delete_path` validates the path the request names with
-    # `sanitize_abs_path`, which proves it absolute and NUL-free, not contained —
+    # `canonical_abs_path`, which proves it absolute and NUL-free, not contained —
     # so a row whose `file_path` was written outside `datasets_dir` reaches this
     # hook and turns an unauthenticated delete into an arbitrary-file read. The
     # row deletes below stay unconditional: an undeletable row the user can see is
@@ -786,7 +787,7 @@ async def make_directory(req: MkdirRequest):
     if "/" in req.name or "\\" in req.name or "\x00" in req.name:
         raise HTTPException(400, "name must not contain path separators")
 
-    parent = sanitize_abs_path(req.parent)
+    parent = canonical_abs_path(req.parent, settings.datasets_dir)
     if not parent.is_dir():
         raise HTTPException(400, "Parent is not a directory")
 

@@ -33,4 +33,7 @@
   - *Moving the maintenance rules from the skill into a docs/dev/doc-maintenance.md*: the
     skill is committed and auto-triggers; the cost, that the drift check does not cover
     it, was accepted.
-- **Amendments:** none yet.
+- **Amendments:**
+  - 2026-10-29: the CLAUDE.md budget rises to 6,000 words, and large families route
+    through hub docs; see [decision 2](02-claude-md-budget-and-hub-routing.md). The other
+    budgets stand.

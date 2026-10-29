@@ -30,3 +30,12 @@ always-loaded CLAUDE.md, on-demand topic files in `docs/dev/`, word budgets enfo
 `scripts/check_docs.py`, with Crucible's own budgets and the maintenance rules in the
 `doc-maintenance` skill. Full record:
 [decisions/01-documentation-architecture.md](decisions/01-documentation-architecture.md).
+
+## 2. CLAUDE.md budget and hub routing
+
+**Decided** (2026-10-29, by the user): `MAX_CLAUDE_WORDS` rises from 5,400 to 6,000, and
+large subsystem families route through a hub doc with one Map row per family and their
+detail files in a `SPLIT_INDEXES` folder, so the Map grows by family rather than by file;
+gallery and image similarity/scoring are the first.
+Amends decision 1. Full record:
+[decisions/02-claude-md-budget-and-hub-routing.md](decisions/02-claude-md-budget-and-hub-routing.md).

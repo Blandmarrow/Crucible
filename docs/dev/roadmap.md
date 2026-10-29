@@ -21,11 +21,11 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. Start M3 with `docs/dev/image-similarity.md`. Re-measure first: the half that stays
-   behind under the recorded seam is ~3,600 words, so the seam needs a second cut.
-3. Precaution: CLAUDE.md is at 5,399 of 5,400 words. Every split adds or edits a Map row,
-   so a split that grows CLAUDE.md must take the lever recorded in
-   [pending-splits.md](pending-splits.md) § CLAUDE.md, or shorten another row's trigger.
+2. Start M3 with its first task, the budget raise, so the splits after it have room.
+3. Then the image similarity/scoring hub. Re-measure `docs/dev/image-similarity.md`
+   first: under the recorded seam the half that stays is ~3,600 words, so it needs a
+   second cut. Moving files into the family folder changes their paths; grep each old
+   path across `docs/`, `CLAUDE.md`, `backend/` and `frontend/` before and after.
 
 ## Landed
 
@@ -40,16 +40,26 @@ restates its stages.
 
 ### M3 — The split queue
 
+Gate: every file over budget split or queued with a current seam, and the Map growing by
+family rather than by file ([decision 2](decisions.md#2-claudemd-budget-and-hub-routing)).
+
 The seams live in [pending-splits.md](pending-splits.md); this is only their order. Each
 split re-measures before cutting, and a seam the file has grown past is re-chosen.
 
-1. `docs/dev/image-similarity.md`, then `docs/scoring.md` (their new files share a name).
-2. `docs/dev/gallery.md` (the recorded seam needs re-cutting).
-3. `docs/dev/labels.md` (both seams), then `docs/dev/ml-models.md` (both seams).
-4. The other dev docs, largest first.
-5. The user docs, each with its README Docs-table and `docs/features.md` rows; README
-   § Features last.
-6. `pending-splits.md` itself, which should fall under budget once its entries are gone.
+- [ ] Raise `MAX_CLAUDE_WORDS` to 6,000 in `scripts/check_docs.py`, with the dated reason
+      pointing at decision 2, and delete the § CLAUDE.md queue entry.
+- [ ] Image similarity/scoring hub: split `docs/dev/image-similarity.md` (its recorded seam
+      needs a second cut) and move the family's detail files into a folder registered in
+      `SPLIT_INDEXES`, with one Map row for the hub. Then split `docs/scoring.md` (the user
+      doc whose new file shares the style-similarity name).
+- [ ] Gallery hub: split `docs/dev/gallery.md` (the recorded seam needs re-cutting) and do
+      the same folder move for `gallery-dnd.md`, `gallery-state.md` and `gallery-nav.md`.
+- [ ] `docs/dev/labels.md` (both seams), then `docs/dev/ml-models.md` (both seams).
+- [ ] The other dev docs, largest first. A family that grows past about three files gets
+      a hub as it splits.
+- [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README
+      § Features last.
+- [ ] `pending-splits.md` itself, which should fall under budget once its entries are gone.
 
 ### M4 — Rating feature
 

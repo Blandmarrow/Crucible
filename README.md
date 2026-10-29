@@ -76,11 +76,11 @@ Every step from raw images to a training-ready export, in order:
 ### Workspace & tooling
 - **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
 - **Split view** — run any pages side-by-side in independently scrollable panes → [details](docs/workspace.md#split-view)
-- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/workspace.md#file-browser)
+- **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/file-browser.md)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
 - **Keyboard-drivable dialogs** — Esc closes, Tab cycles within the dialog, focus returns where it came from, and screen readers announce them as dialogs → [details](docs/workspace.md#dialogs)
-- **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/workspace.md#database-backups)
+- **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/server.md#database-backups)
 
 All long-running operations run in a background job queue and stream real-time progress to the UI via SSE.
 
@@ -263,11 +263,11 @@ See [docs/settings.md](docs/settings.md).
 
 **Linux / macOS** — same commands via `./manage.sh start`, `./manage.sh dev`, `./manage.sh update`.
 
-`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/workspace.md#starting-up).
+`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up).
 
 > **If `update` stops at "git pull failed"** with *"Your local changes to the following files would be overwritten by merge"*, you have edited a tracked file. Run `git stash` (to keep the changes) or `git checkout -- <file>` (to discard them), then re-run `update`. `frontend/package-lock.json` is handled automatically — `update` discards npm's rewrites of it, since it is regenerated from the repo copy anyway.
 
-To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/workspace.md#restarting--shutting-down).
+To shut down, click the power icon in the top-right of the app, or press `Ctrl+C` in the terminal. The circular-arrow button beside it restarts the server in place without needing the terminal → [details](docs/server.md#restarting--shutting-down).
 
 ### Access from other devices (LAN)
 
@@ -323,4 +323,6 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
 | Export | [docs/export.md](docs/export.md) |
 | Settings | [docs/settings.md](docs/settings.md) |
-| Workspace — jobs, server control, split view, logs | [docs/workspace.md](docs/workspace.md) |
+| Workspace — dialogs, jobs, hardware meters, split view, logs, booru lookup | [docs/workspace.md](docs/workspace.md) |
+| Server — starting, restarting, shutting down, database backups | [docs/server.md](docs/server.md) |
+| File Browser | [docs/file-browser.md](docs/file-browser.md) |

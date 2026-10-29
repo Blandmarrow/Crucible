@@ -42,7 +42,7 @@ The order images travel through the app:
 | ComfyUI | [comfyui.md](comfyui.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
-| File Browser | [workspace.md](workspace.md#file-browser) |
+| File Browser | [file-browser.md](file-browser.md) |
 | Logs | [workspace.md](workspace.md#logs) |
 | Settings | [settings.md](settings.md) · [labels.md](labels.md) |
 
@@ -53,6 +53,7 @@ The order images travel through the app:
 | Source & license provenance — where images came from, what you may do with them, export credits | [provenance.md](provenance.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
 | Settings reference — all seven tabs | [settings.md](settings.md) |
-| Background jobs, restart & shutdown, hardware meters, split view, dialog keyboard behavior, logs, file browser, booru lookup | [workspace.md](workspace.md) |
+| Background jobs, hardware meters, split view, dialog keyboard behavior, logs, booru lookup | [workspace.md](workspace.md) |
+| Starting the server, restart & shutdown, database backups | [server.md](server.md) |
 
 All long-running operations run in a background job queue and stream real-time progress to the UI — see [Background jobs](workspace.md#background-jobs--the-top-bar).

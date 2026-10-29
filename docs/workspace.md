@@ -1,12 +1,14 @@
 # Workspace
 
-The app shell: the top bar, background jobs, server control, hardware meters, split view, dialogs, logs, the file browser, and the booru lookup.
+The app shell: dialogs, the top bar and background jobs, hardware meters, split view, logs, and the booru lookup. Starting, restarting and shutting down the server, and its database backups, are covered in [Server](server.md); the filesystem explorer in [File Browser](file-browser.md).
+
+Available from: the top bar, the bottom of the sidebar, and the **Logs** and **Booru Browser** sidebar items; dialogs and Split View work on every page.
 
 ## Dialogs
 
 Confirmation prompts and the app's main dialogs — the folder picker, folder import, move-to-dataset, set-provenance, the ComfyUI and version dialogs, every dialog on the Datasets page, and every form the gallery's selection toolbar opens — can be driven from the keyboard and are announced as dialogs by screen readers. **Esc** closes the one you are in — when a folder picker is open on top of another dialog, it closes only the picker. **Tab** and **Shift+Tab** cycle through the dialog's own controls without wandering into the page behind it, and focus returns to the button you opened it from. Clicking the dimmed background closes a dialog only where it always has (the import, ComfyUI and New Category dialogs); a confirmation for something destructive never closes that way — use **Esc** or **Cancel**. While an upscale, LUT, crop, watermark-removal or thumbnail run started from the selection toolbar is in progress, its dialog stays open on **Esc**, just as its **Cancel** button is disabled: the dialog reports the result when the run ends.
 
-Some smaller pop-ups do not yet have all of this: the detect, crop and watermark-removal forms on an image's detail page, the generation-metadata view in the gallery, the File Browser's import, new-folder and delete prompts, the Statistics image viewer, bucket list and settings drawer, and a few ComfyUI pop-ups (paste prompts, run defaults, set a column on all rows). Some of them close on **Esc** and some do not, and **Tab** can wander out into the page; each has a **Cancel** or close button, which always works. The two video dialogs are not among them: **Extract frames** and **Re-extract at full resolution** have the full keyboard behaviour, and the re-extract one can be closed mid-run without stopping anything → [Frame extraction](video-extraction.md) · [Re-extracting frames](video-reextract.md).
+Some smaller pop-ups do not yet have all of this: the detect, crop and watermark-removal forms on an image's detail page, the generation-metadata view in the gallery, the [File Browser](file-browser.md)'s import, new-folder and delete prompts, the Statistics image viewer, bucket list and settings drawer, and a few ComfyUI pop-ups (paste prompts, run defaults, set a column on all rows). Some of them close on **Esc** and some do not, and **Tab** can wander out into the page; each has a **Cancel** or close button, which always works. The two video dialogs are not among them: **Extract frames** and **Re-extract at full resolution** have the full keyboard behaviour, and the re-extract one can be closed mid-run without stopping anything → [Frame extraction](video-extraction.md) · [Re-extracting frames](video-reextract.md).
 
 ## Background jobs & the top bar
 
@@ -21,43 +23,6 @@ The centre of the top bar shows what is happening:
 - When nothing is running the bar reads **Ready**.
 
 Jobs run one at a time, in submission order, so queueing several runs back to back is the normal way to work.
-
-## Starting up
-
-`manage start` — `.\manage.ps1 start`, `./manage.sh start`, or **Start** in `Crucible.bat` — opens your browser on `http://localhost:8000` immediately, before the server is ready. Until it is, that page is a placeholder: the Crucible mark animating over "Starting Crucible…". It swaps itself for the app the moment the server answers, so there is nothing to click and no need to reload. A first launch, or the first one after an update, also rebuilds the frontend and loads PyTorch, so a couple of minutes is normal; past a minute the page says as much and offers a manual **Reload now** button.
-
-Only `start` does this — `dev` leaves your browser alone. Two other things worth knowing:
-
-- To launch without a browser (a headless machine, or you simply have the tab open already), set `CRUCIBLE_NO_BROWSER=1`: `CRUCIBLE_NO_BROWSER=1 ./manage.sh start`, or `$env:CRUCIBLE_NO_BROWSER=1` before `.\manage.ps1 start` on Windows. Nothing opens and no placeholder runs; startup is otherwise identical.
-- If something else already holds port 8000 — usually a copy of Crucible you forgot to stop — the placeholder steps aside silently and no browser opens, so what you see is the server's own "address already in use" error rather than a page from the other instance.
-- **Use `localhost:8000`, not `0.0.0.0:8000`.** Both launchers print the right URL, but with LAN access on, uvicorn's own banner (`Uvicorn running on http://0.0.0.0:8000`) prints just after it and is usually the last clickable link in the terminal. `0.0.0.0` is a bind address rather than somewhere to browse to, and browsers treat it as a *non-secure origin*, which withholds a handful of APIs Crucible uses. Land on it anyway and Crucible now bounces you to the `localhost` equivalent, keeping your port, path and query — so the wrong link costs you nothing.
-- **Browsing from another machine on your network is off by default.** Crucible listens on this machine only until you opt in with `start --lan` (`.\manage.ps1 start -Lan` on Windows) or `CRUCIBLE_HOST=0.0.0.0` in `.env`; the launcher then prints the address to use and a reminder that there is no login. Earlier versions listened on the network without asking, so if you used to browse from another device, opt in once. See [Access from other devices](../README.md#access-from-other-devices-lan) for host names and the security trade-off.
-- **A LAN address** (`http://192.168.1.5:8000`, say) is also a non-secure origin, and that one is left alone — it is a deliberate choice about where you want to reach the app from, and rewriting it would point your browser at the wrong machine. Everything works there; copy buttons fall back to an older browser mechanism, which is invisible in use.
-
-## Restarting & shutting down
-
-Two buttons sit at the right of the top bar. Both ask for confirmation first, and both are disabled while the other is in progress.
-
-- **Restart** (circular arrow) — restarts the server in place, without needing terminal access. Any running jobs are interrupted. A full-screen overlay covers the app while it waits, and the page reloads itself the moment the server answers. If it takes longer than about 25 seconds the overlay explains what it is waiting for and offers a manual **Reload now** button — it never gives up on its own, because a cold start that loads PyTorch can legitimately take a while.
-- **Shut down** (power icon) — stops the server process. On Windows the terminal window closes by itself after a clean shutdown.
-
-> **The server only comes back on its own if you started it with `manage`** (`manage.ps1 start` / `./manage.sh start`, or `Crucible.bat`). Those scripts run the server in a loop that relaunches it after a restart. If you started uvicorn by hand, Restart stops the server and you will need to start it again yourself.
-
-If a job is running when you restart or shut down, it is asked to stop and given about **10 seconds** to do so. Snapshot, restore and branch-checkout jobs get up to **2 minutes**, because stopping one halfway would leave the dataset half-changed. After that the server stops it regardless, so a restart can take that much longer while a job is running. Jobs still waiting in the queue are not started.
-
-Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](#logs) history. Work a job finished before it stopped is kept, as it is when you cancel one. If the app lost touch with the server while a job finished, the top bar and the open page catch up by themselves once the connection is back, with no reload needed.
-
-## Database backups
-
-Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). When the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
-
-Three things worth knowing:
-
-- A start within **15 minutes** of the newest backup does nothing — no check, no copy. Only five copies are kept, so a run of quick restarts would otherwise discard the whole backup history in a few minutes, which is the opposite of what it is for. Restarting to force a fresh copy therefore does not work; a backup is a periodic safety net, not a snapshot button. For a point-in-time copy you control, use [dataset versioning](versioning.md).
-- A database that fails the integrity check is **not** backed up. That is deliberate — copying a damaged file in would push the newest good backup one slot closer to deletion. The failure is written to the server's console output.
-- Backups are full copies on the same disk. They protect against a bad edit or a corrupted database, not against losing the drive. If a dataset matters, copy a backup somewhere else.
-
-To restore one, stop the server, rename the backup over `dataset_manager.db`, and start again. Image files are not part of the backup — for those, use [dataset versioning](versioning.md).
 
 ## Hardware meters
 
@@ -92,21 +57,6 @@ A global **Logs** page (sidebar nav item) with two tabs:
 - **Copy Errors** exports all entries as plain text; **Clear** removes them and resets the sidebar badge
 
 **Persistent overlay**: a fixed bottom panel auto-opens whenever a new JS error is captured, showing the same entries without requiring navigation to the Logs page. Close it with **×** — the sidebar badge count remains until errors are cleared.
-
-## File Browser
-
-A three-panel filesystem explorer built into the app:
-
-- Left panel: drive roots + quick-access shortcut to the datasets folder
-- Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Media only** toggle to hide anything that is neither an image nor a video, context menu (rename / delete / import into dataset)
-- Right panel: preview + size and modified date. For an image, also dimensions/format and generation metadata (A1111 / ComfyUI); for a video, a player you can scrub
-- The video preview steps aside for anything that changes the file. Start a rename, or open the delete or import dialog, and the player is replaced by **Preview paused** until you are done — a file still being played cannot be renamed or deleted on Windows, and the player is released so the change goes through. Cancel, and the preview comes back
-- If a video will not play, a short line under the filename says why. When Crucible can see from the file that no browser decodes it, it says so and confirms the file itself is fine — importing, posters and frame extraction all read it directly. When it cannot tell, it says both possibilities plainly: either the browser has no decoder, or the file could not be loaded (it may have been renamed, moved or deleted)
-- Videos are listed with a film-strip icon and counted in the status bar
-- Create folders, rename files and directories, delete items (syncs DB records automatically — renaming or deleting an image or video that belongs to a dataset keeps its record in step). Deleting a dataset's file or folder also removes the thumbnail or poster that went with it and updates the dataset's image and video counts, and it is refused while that dataset is busy with another job
-- Some things cannot be renamed, and Crucible says which: a dataset's own folder (rename the dataset from the Datasets page instead, so its record follows), any folder *above* one, the `images` / `videos` / `thumbnails` / `.versions` folders a dataset is built from, and any folder holding images or videos that belong to a dataset — including one holding only their thumbnails or posters. Renaming a *file* is refused when the new name is already taken in that folder, or when it would claim the thumbnail name another image owns
-- Moving a file into a *different* dataset is not done here: use the gallery's **Move to dataset** action, which carries the caption, provenance and thumbnail with it. The same applies to a whole folder — moving one that holds images or videos belonging to a dataset is refused wherever you point it, *including* somewhere else inside that same dataset, because the app only ever looks for a dataset's media in the images and videos folders it created for it → [how that affects rescan](datasets.md#getting-images-in). A file that belongs to a dataset also has to stay directly in that dataset's own images or videos folder, so moving one into a subfolder is refused too. Folders of your own, and files no dataset has registered, still move anywhere
-- Import any folder of images directly into an existing dataset without leaving the browser; tick **Include videos** to bring video files in as well
 
 ## Booru Tag Lookup
 

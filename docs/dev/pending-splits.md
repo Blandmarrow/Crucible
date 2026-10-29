@@ -64,6 +64,16 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
+`docs/workspace.md` → `docs/server.md` **and** `docs/file-browser.md` was executed on 2026-10-29
+as an M3 task, the second of the user-docs queue, and was **re-cut on execution**, taking the
+entry's own fallback. Re-measured at 2,696 words, the recorded seam (§ Starting up,
+§ Restarting & shutting down and § Database backups out to `docs/server.md`) would have left
+~1,670 behind, 67% of budget, so § File Browser went to its own page as well, mirroring
+`docs/dev/file-browser.md`. That left ~1,150 (workspace), ~1,110 (server) and ~610 (file
+browser). The entry's Watch-for was right but missed CLAUDE.md's `§ Restarting & shutting
+down` pointer, which the checker cannot see; the re-cut added the `#file-browser` links in
+README, `docs/datasets.md` and `docs/features.md`.
+
 `docs/gallery.md` → `docs/datasets.md` **and** `docs/subfolders.md` was executed on 2026-10-29
 as an M3 task, the first of the user-docs queue, and was **re-cut on execution**. Re-measured at
 3,227 words rather than the 2,580 the entry assumed, the recorded seam (§ Datasets and
@@ -159,25 +169,3 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
-
-
-## docs/workspace.md
-
-- **Moves:** § Starting up (435 words, now including the LAN opt-in bullet that links
-  README's § Access from other devices), § Restarting & shutting down (336) and § Database
-  backups (246)
-- **New file:** docs/server.md (the user half of docs/dev/http-edge.md and
-  docs/dev/database.md; the shutdown grace it describes is in docs/dev/backend-infrastructure.md)
-- **Why here:** those three are one subject, the server process's life: launching it,
-  stopping or restarting it, and what it does to the database at startup. The rest of the
-  page is the app's own furniture: dialogs, the top bar, meters, Split View, Logs, the File
-  Browser and Booru. It tripped the budget when § Restarting & shutting down gained the
-  shutdown grace for running jobs (GPT-012). The seam leaves ~935 and ~1,575 words. The
-  remainder sits just over the ~1,500 target, so if it must go lower, § File Browser (557)
-  is the next self-contained move, to docs/file-browser.md, mirroring docs/dev/file-browser.md.
-- **Watch for:** README links three of the moving anchors (`#starting-up`,
-  `#restarting--shutting-down`, `#database-backups`) and needs a Docs-table row for the new
-  file. `docs/features.md` takes a row, not prose. `docs/dev/database.md` and
-  `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
-  horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
-  stays behind, so that link must become `workspace.md#logs`.

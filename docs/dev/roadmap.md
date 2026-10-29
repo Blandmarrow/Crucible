@@ -27,12 +27,12 @@ restates its stages.
    `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
    splits, and the two-way `docs/dev/backend-infrastructure.md` and `docs/dev/image-files.md`
    splits, have landed, so no dev doc is over budget. The user docs go largest first, and
-   the first, `docs/gallery.md`, has split three ways. Next is `docs/workspace.md` (2,696 of
-   2,500), then `README.md` (3,006) with § Features last, each with a seam in
-   `pending-splits.md`. Re-measure first, and check the seam leaves both halves under 60%
-   of budget — the captioning seam as recorded would have left ~93%, the file-browser one
-   ~80%, the versioning-service one ~65% and the gallery one ~79%, and none of the four went
-   as recorded; the backend-infrastructure and image-files ones held.
+   `docs/gallery.md` and `docs/workspace.md` have both split three ways. Next and last is
+   `README.md` (3,027 of 2,500), whose seam — deleting § Features — is in `pending-splits.md`. Re-measure
+   first, and check the seam leaves both halves under 60% of budget — the captioning seam as
+   recorded would have left ~93%, the file-browser one ~80%, the versioning-service one ~65%,
+   the gallery one ~79% and the workspace one ~67%, and none of the five went as recorded;
+   the backend-infrastructure and image-files ones held.
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -117,7 +117,12 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
         would have left 79% behind. Datasets and getting images in moved to
         `docs/datasets.md`, the subfolder sidebar to `docs/subfolders.md`; browsing,
         sorting and manual ordering stay. Three flat siblings, no hub.
-  - [ ] `docs/workspace.md`, then `README.md`.
+  - [x] `docs/workspace.md` (2026-10-29): three ways rather than the recorded two, which
+        would have left 67% behind. Starting up, restarting and shutting down, and database
+        backups moved to `docs/server.md`, the File Browser to `docs/file-browser.md`;
+        dialogs, the top bar and jobs, meters, Split View, Logs and Booru stay. Three flat
+        siblings, no hub.
+  - [ ] `README.md`.
 - [x] `pending-splits.md` itself (2026-10-29): under budget at ~3,340 once the ml-models
       entry left.
 

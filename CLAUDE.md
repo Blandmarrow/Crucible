@@ -24,7 +24,7 @@ handoff are in `docs/dev/roadmap.md`.
 | `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
 Shutdown and Restart are the TopBar's power and circular-arrow buttons (or Ctrl+C): see
-`docs/workspace.md` § Restarting & shutting down, and `docs/dev/http-edge.md`
+`docs/server.md` § Restarting & shutting down, and `docs/dev/http-edge.md`
 § Server control endpoints for the routes behind them.
 
 ### Backend (always run from `backend/` with venv active)
@@ -219,7 +219,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1100 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1150 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

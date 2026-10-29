@@ -85,7 +85,7 @@ Three credentials that used to be editable only by hand-editing `.env` and resta
 | Key | What it unlocks |
 |---|---|
 | HuggingFace token | Downloading gated models — PaliGemma-2 is the one Crucible ships. Create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and accept the model's license there first |
-| Gelbooru API key | A higher rate limit for Gelbooru tag lookups on the [Booru page](workspace.md). Safebooru needs no key |
+| Gelbooru API key | A higher rate limit for Gelbooru tag lookups on the [Booru page](workspace.md#booru-tag-lookup). Safebooru needs no key |
 | Gelbooru user ID | The numeric ID that goes with the API key — both are required, and with either missing lookups stay anonymous |
 
 Each row shows where its current value comes from: **Saved here** (this page), **Inherited

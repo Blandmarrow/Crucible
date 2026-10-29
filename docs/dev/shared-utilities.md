@@ -47,7 +47,7 @@ poster-stem rules), `docs/dev/image-files.md` (naming, collisions and caption si
 `writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a
 listing request over a stored context) and `serverPageContext` (the one way to replace
 that context's ids with a verbatim server page — it clears the `injected` marker a
-listing response cannot carry) → `docs/dev/gallery-nav.md`.
+listing response cannot carry) → `docs/dev/gallery/nav.md`.
 
 **`frontend/src/utils/clipboard.ts`** — `copyText(text): Promise<boolean>`, the one way this
 app writes to the clipboard. `navigator.clipboard` is `[SecureContext]`, so Chromium installs

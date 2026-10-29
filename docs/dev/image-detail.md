@@ -1,6 +1,6 @@
 # Image detail view: crop, caption panel & generation metadata
 
-This file covers `ImageDetailPage` itself: the crop tool and crop+upscale, the selection toggle, the labels panel and its hotkeys, the caption panel, and AI generation-metadata extraction and display. The two pieces of state it shares with the gallery live next door — what `GalleryPage` remembers between visits (`gallery-state-*`, the debounce rules, Reset filters) is in `docs/dev/gallery-state.md`, and the id list the arrows walk (`gallery-nav-*`, `injectNavId`/`paneGo`, `atEnd`, the post-delete re-derivation, the live refresh and the live total) is in `docs/dev/gallery-nav.md`. The gallery grid itself is in `docs/dev/gallery.md`.
+This file covers `ImageDetailPage` itself: the crop tool and crop+upscale, the selection toggle, the labels panel and its hotkeys, the caption panel, and AI generation-metadata extraction and display. The two pieces of state it shares with the gallery live next door — what `GalleryPage` remembers between visits (`gallery-state-*`, the debounce rules, Reset filters) is in `docs/dev/gallery/state.md`, and the id list the arrows walk (`gallery-nav-*`, `injectNavId`/`paneGo`, `atEnd`, the post-delete re-derivation, the live refresh and the live total) is in `docs/dev/gallery/nav.md`. The gallery grid itself is in `docs/dev/gallery.md`.
 
 ## ImageDetailPage crop tool
 

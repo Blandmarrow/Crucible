@@ -970,7 +970,7 @@ export default function GalleryPage() {
   // subtree prefix rewrite server-side, and all three need the same client-side
   // re-pointing afterwards. Deliberately *not* folded into moveToSubfolderMutation:
   // that one's clear() touches the module-global selection store, which must never
-  // fire for a folder operation. See docs/dev/gallery.md § Renaming and moving a subfolder.
+  // fire for a folder operation. See docs/dev/gallery/subfolder-rename.md § Renaming and moving a subfolder.
   const repathSubfolderMutation = useMutation({
     mutationFn: (p: { path: string; newPath: string; kind: "rename" | "move" }) =>
       datasetsApi.repathSubfolder(datasetId!, p.path, p.newPath),

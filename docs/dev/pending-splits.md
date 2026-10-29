@@ -46,33 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## docs/dev/gallery.md
-
-- **Moves:** § Gallery subfolder sidebar (544 words), § The subfolder row context menu (190)
-  and § Renaming and moving a subfolder (1,168)
-- **New file:** docs/dev/gallery-subfolders.md (mirrors docs/gallery.md § Organising into
-  subfolders)
-- **Why here:** the file tripped its budget again the same day `gallery-dnd.md` was split
-  out of it, because subfolder *management* arrived — rename, re-nest, the row context
-  menu, the re-path endpoint and its five pieces of path-keyed bookkeeping. Those three
-  sections are one subsystem and a reader arrives for exactly it: the sidebar is the UI,
-  the menu is how the two new operations are reached, and the re-path section is the
-  endpoint plus the client state it invalidates. What stays is *reading* a gallery —
-  selection and the shift-click range model, the filter bar, sorting. The seam leaves
-  ~1,900 and ~2,430 out of 4,335; the staying half is over the ~2,100 target because
-  § Gallery image selection is 1,263 words on its own, and its recorded second seam (the
-  select-all affordance + count key + pagination arithmetic, versus the shift-click range
-  model) is the one to take if it needs a third file.
-- **Watch for:** § Renaming and moving a subfolder is cited from `docs/dev/gallery-dnd.md`
-  § Dragging a subfolder onto another and § Manual image ordering (both in the file that
-  just split off, so they become cross-file pointers a second time), and § The subfolder
-  row context menu from `docs/dev/styling.md` § Context menu and `docs/dev/file-browser.md`.
-  `docs/dev/datasets-page.md` points at the subfolder sidebar — that moves now, so this is
-  the one inbound reference that has to change direction rather than stay put. § Gallery
-  filters and § Gallery image selection are cited from `docs/dev/image-filters.md` and
-  stay behind. The sidebar section's own bullets cross-reference `docs/dev/gallery-dnd.md`
-  in both directions.
-
 ## docs/dev/file-browser.md
 
 - **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
@@ -159,7 +132,7 @@ staleness sweep while still recording the seam.
   docs/dev/labels-ui.md and mirrors nothing in `docs/`. The file tripped its budget when
   the review fixes landed: the shared filter validator, the derivative table, the assign
   guard and the render-time bounds check all arrived at once.
-- **Watch for:** § Frontend is cited **by name** from `docs/dev/gallery.md` § Gallery
+- **Watch for:** § Frontend is cited **by name** from `docs/dev/gallery/filters.md` § Gallery
   filters ("six edits, see `docs/dev/labels.md` § Frontend") and stays behind — that is
   the one pointer that keeps working only if § Frontend does not move in a later pass.
   Everything moving has an inbound pointer of its own: `docs/dev/image-filters.md` (the
@@ -176,9 +149,9 @@ staleness sweep while still recording the seam.
   words after the hotkey assign-queue paragraphs. The first seam alone would leave
   ~2,830, so move § Frontend to docs/dev/labels-ui.md in the same pass — that lands
   roughly 1,770 / 1,470 / 1,160. Doing so breaks the pointer the entry above calls out:
-  `docs/dev/gallery.md` and `docs/dev/persistence.md` both cite "§ Frontend" for the six
+  `docs/dev/gallery/filters.md` and `docs/dev/persistence.md` both cite "§ Frontend" for the six
   persistence edits, so give that part its own heading in labels-ui.md and repoint both,
-  and check the bullet at `docs/dev/gallery.md` § Gallery filters against the 250-word
+  and check the bullet at `docs/dev/gallery/filters.md` § Gallery filters against the 250-word
   paragraph limit afterwards, since a longer pointer can push it over.
 
 ## docs/scoring.md
@@ -241,7 +214,22 @@ staleness sweep while still recording the seam.
   docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
 
-`docs/dev/image-detail.md` → `docs/dev/gallery-state.md` **and** `docs/dev/gallery-nav.md` was
+`docs/dev/gallery.md` → the Gallery hub and its `docs/dev/gallery/` folder was executed on
+2026-10-29 as an M3 task, and was **re-cut on execution**. The recorded seam assumed 4,335
+words and moved the three subfolder sections out; the file had reached 6,017, so taking only
+that seam would have left ~3,100 behind. Every section moved instead: § Gallery image
+selection to `docs/dev/gallery/selection.md`; the recorded seam's three sections, cut once
+more at the UI/endpoint line because together they came to ~2,860, to
+`docs/dev/gallery/subfolders.md` (the sidebar and its context menu) and
+`docs/dev/gallery/subfolder-rename.md` (the re-path endpoint and its client bookkeeping); and
+§ Gallery filters with § Sorting to `docs/dev/gallery/filters.md`. gallery-dnd.md,
+gallery-state.md and gallery-nav.md moved in, with only their intros and pointers edited, as `docs/dev/gallery/drag-drop.md`,
+`docs/dev/gallery/state.md` and `docs/dev/gallery/nav.md`, and `docs/dev/gallery.md` became the
+family hub. Selection's recorded second seam (select-all + count key + pagination, versus the
+shift-click range model) still stands, but at ~1,280 words it is not needed.
+
+`docs/dev/image-detail.md` → `docs/dev/gallery/state.md` **and** `docs/dev/gallery/nav.md`
+(then gallery-state.md and gallery-nav.md, moved into the Gallery family on 2026-10-29) was
 executed on 2026-08-10, at the start of the session that would have appended the live-refresh
 fixes to it. The seam was **re-cut on execution**: the recorded seam moved the persistence half
 out and left the nav half behind, but between recording and execution the file grew 3,781 →
@@ -261,7 +249,8 @@ was the largest section and a separate CPU-only workflow with its own concepts. 
 was executed on 2026-10-29 into `docs/style-similarity.md`, together with the dev side's
 Quality hub.
 
-`docs/dev/gallery.md` → `docs/dev/gallery-dnd.md` was executed on 2026-08-03, at the start of
+`docs/dev/gallery.md` → `docs/dev/gallery/drag-drop.md` (then gallery-dnd.md) was executed on
+2026-08-03, at the start of
 the session that added subfolder rename and re-nesting — the seam held as recorded, and
 both § Manual image ordering and § Drag images onto subfolders moved together. The staying
 half landed at ~2,900 words before that session's own additions, above the ~2,100 target

@@ -21,13 +21,17 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. The budget raise and the Quality hub have landed. Next is the gallery hub, built the
-   same way: `docs/dev/quality.md` is the worked example (a lean hub with a § Where things
-   live table, the family in a `SPLIT_INDEXES` folder, one Map row sized `~N (+ details)`).
-3. Re-measure `docs/dev/gallery.md` first; its recorded seam needs re-cutting. Moving files
-   into the family folder changes their paths, so before editing hand a scout the old
-   paths to inventory across `docs/`, `CLAUDE.md`, `backend/`, `frontend/`, `scripts/` and
-   `.claude/`, and re-run the sweep after. Keep the repoint pass off `__pycache__`.
+2. The budget raise and the Quality and Gallery hubs have landed. Next is the video folder:
+   a pure move, no split. `docs/dev/quality.md` and `docs/dev/gallery.md` are the worked
+   examples (a lean hub with a § Where things live table, the family in a `SPLIT_INDEXES`
+   folder, one Map row sized `~N (+ details)`); `docs/dev/video.md` already has the routing
+   table, so it mostly needs its eleven siblings moved under it and their Map rows folded.
+3. Moving files changes their paths, so before editing hand a scout the old paths to
+   inventory across `docs/`, `CLAUDE.md`, `backend/`, `frontend/`, `scripts/` and `.claude/`,
+   and re-run the sweep after. Keep the repoint pass off `__pycache__`. `§` pointers are not
+   checked by `check_docs.py`, so verify each one against the new file's headings by hand;
+   historical notes in `pending-splits.md` name old paths in inline code and FAIL the
+   checker until they are rewritten.
 
 ## Landed
 
@@ -54,8 +58,9 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       ways, the old dev scoring.md split two ways, and both moved with scores-stale.md into
       `docs/dev/quality/` behind the `docs/dev/quality.md` hub. `docs/scoring.md` split off
       `docs/style-similarity.md`; its residual seam stays queued.
-- [ ] Gallery hub: split `docs/dev/gallery.md` (the recorded seam needs re-cutting) and do
-      the same folder move for `gallery-dnd.md`, `gallery-state.md` and `gallery-nav.md`.
+- [x] Gallery hub (2026-10-29): the old gallery.md (6,017 words) split four ways and moved,
+      with the dnd, state and nav files, into `docs/dev/gallery/` behind the
+      `docs/dev/gallery.md` hub.
 - [ ] Video folder: move `docs/dev/video.md`'s eleven detail files into a folder with
       `video.md` as its index, and fold their Map rows into its one row. No split; the
       family's two queued seams (`video-reextract.md`, `docs/video.md`) run afterwards.

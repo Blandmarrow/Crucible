@@ -3,8 +3,9 @@
 What `GalleryPage` remembers between visits: the `gallery-state-*` blob, the debounce rules that
 protect it, the save effect and its unmount flush, and **Reset filters**. The sibling key
 `gallery-nav-*` — the ordered id list the detail view's arrows walk — is in
-`docs/dev/gallery-nav.md`. The grid itself is in `docs/dev/gallery.md`, and the detail view in
-`docs/dev/image-detail.md`.
+`docs/dev/gallery/nav.md`. The grid itself is in the rest of the Gallery family — the hub,
+`docs/dev/gallery.md`, routes from a code path to the file that owns it — and the detail view
+in `docs/dev/image-detail.md`.
 
 ## What the blob holds
 
@@ -12,7 +13,7 @@ protect it, the save effect and its unmount flush, and **Reset filters**. The si
 
 | Key | Storage | Contents | Purpose |
 |---|---|---|---|
-| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder, frameVideoId, expandedPaths }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart. `expandedPaths` is the subfolder tree's open branches, a `Set<string>` stored as `string[]` (see `docs/dev/gallery.md` § Gallery subfolder sidebar). `scoreFilters` is the chip array **as the component holds it** — `{field, min, max}` with *string* bounds, where `""` means "no bound" and is not `0` — never the `score_filters` request param, which has already parsed those to numbers and collapsed that distinction; it is re-validated on read by `GalleryPage`'s module-local `sanitizeScoreFilters` (see `docs/dev/gallery.md` § Gallery filters) |
+| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder, frameVideoId, expandedPaths }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart. `expandedPaths` is the subfolder tree's open branches, a `Set<string>` stored as `string[]` (see `docs/dev/gallery/subfolders.md` § Gallery subfolder sidebar). `scoreFilters` is the chip array **as the component holds it** — `{field, min, max}` with *string* bounds, where `""` means "no bound" and is not `0` — never the `score_filters` request param, which has already parsed those to numbers and collapsed that distinction; it is re-validated on read by `GalleryPage`'s module-local `sanitizeScoreFilters` (see `docs/dev/gallery/filters.md` § Gallery filters) |
 
 **The blob is read only in `useState` initializers, so only a remount re-seeds it** — which for the one gesture that changes `datasetId` under a live page (a pane's dataset `<select>`) is guaranteed by `PageRenderer`'s `key={view.datasetId}`; see `docs/dev/panes-routing.md` § A pane's dataset is part of a page's identity.
 

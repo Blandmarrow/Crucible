@@ -51,7 +51,7 @@ last-range-end, so dragging the end backwards deselects what it passes — but r
 against the strip's own `videos` order and its own set. The port also changed the *trigger*,
 deliberately: the strip has no `isCheckbox` distinction at all, so shift on the card body
 extends the range as well as shift on the checkbox. In the grid the card body is a plain
-toggle and only the checkbox ranges (`docs/dev/gallery.md`). `docs/video.md` documents the
+toggle and only the checkbox ranges (`docs/dev/gallery/selection.md`). `docs/video.md` documents the
 strip's behaviour for users. With a selection, the header grows
 `N selected · Extract frames · Clear`, and the selection is cleared when `datasetId`
 changes (adjusted during render, so a stale selection is never painted; the anchors are
@@ -231,7 +231,7 @@ A **stale-id guard**, derived during render like `appliedSubfolder`, drops `fram
 once `["videos", datasetId]` resolves without a match — otherwise a deleted video leaves a
 permanently empty gallery behind a blank `<select>`, the problem `licenseFilter`'s
 vocabulary bounds-check solves. That `<select>` renders only when the dataset has videos and
-reuses `VideoStrip`'s query cache rather than fetching again; see `docs/dev/gallery.md`
+reuses `VideoStrip`'s query cache rather than fetching again; see `docs/dev/gallery/filters.md`
 § Gallery filters for its state and persistence.
 
 Two entry points feed it: a **"Show all N frames"** row above `VideoDetailPage`'s

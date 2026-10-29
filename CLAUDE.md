@@ -175,10 +175,7 @@ substantial edit.
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2410 |
 | `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
 | `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~500 (+ details) |
-| `docs/dev/gallery.md` | Working on `GalleryPage`, the subfolder sidebar, or a gallery filter — select-all-matching-filters, subfolder create/rename/move/delete and the row context menu, expand/collapse and its persistence, pagination | ~6005 |
-| `docs/dev/gallery-dnd.md` | Working on gallery drag & drop — dragging image cards onto subfolder rows, dragging a subfolder onto another and reading the drop target | ~2890 |
-| `docs/dev/gallery-state.md` | Working on the `gallery-state-*` blob, persisting a gallery filter, or a debounced filter input — what the blob holds and the `useState`-initializer read, the PM-012 mount-bail and its restore-side seeding rule | ~1075 |
-| `docs/dev/gallery-nav.md` | Working on the detail view's arrows, `gallery-nav-*`, `injectNavId`/`paneGo`, or the live refresh while a job adds rows — the stored context and `navPageParams`/`navIdsParams`, the `injected` marker and `serverPageContext`, the live total | ~2720 |
+| `docs/dev/gallery.md` | **Start here for anything on `GalleryPage`** — selection, select-all-matching-filters and pagination, the subfolder sidebar, its context menu and expand/collapse, subfolder rename/move, a gallery filter or sort, drag & drop, reading the drop target and manual ordering, the `gallery-state-*` blob, persisting a gallery filter and debounced filter inputs (PM-012), the detail view's arrows (`gallery-nav-*`, `injectNavId`/`paneGo`, `serverPageContext`, the live refresh and live total); its § Where things live table routes from a code path to the file in `docs/dev/gallery/` that owns it | ~600 (+ details) |
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — drag-`.txt`-onto-image | ~3500 |
 | `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
@@ -222,7 +219,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~600 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~650 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

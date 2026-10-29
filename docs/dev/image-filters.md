@@ -4,9 +4,9 @@ The image listing endpoint (`backend/routers/images.py::list_images`) carries a 
 filter params beyond `dataset_id`/`subfolder` — score ranges, quality flags, dimensions and
 format, detection and mask predicates, caption length, license and frame lineage. They are one
 shared contract with seven consumers, which is why they live in their own file: the gallery's
-filter bar (`docs/dev/gallery.md` § Gallery filters) and the detail view's boundary prefetch,
+filter bar (`docs/dev/gallery/filters.md` § Gallery filters) and the detail view's boundary prefetch,
 which replays that same memo out of the stored nav context
-(`docs/dev/gallery-nav.md`), the Statistics page's bar click-through
+(`docs/dev/gallery/nav.md`), the Statistics page's bar click-through
 into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
 (`docs/dev/video-ui.md`), the license filters shared with export
 (`docs/dev/provenance.md`, `docs/dev/export-licensing.md`), and the two endpoints in
@@ -46,12 +46,12 @@ assuming.
 | `detection_count_min` / `detection_count_max` | `int` | Correlated `COUNT(Detection.id)` coalesced to 0 (so the "0" bucket = images with no detections works), both bounds inclusive |
 | `caption_words_min` / `caption_words_max` | `int` | Word count range — SQL approximation via `length(trim(text)) - length(replace(trim(text), ' ', '')) + 1`; `min` is inclusive, `max` is exclusive |
 | `license_filter` | `str` (JSON) | JSON-encoded **array** of effective license ids (never comma-separated — an `other:<free text>` id may contain commas), parsed by `utils.parse_license_filter_param`. Matched against `COALESCE(NULLIF(images.license,''), datasets.license, '')` over a join. Any array containing a blank entry (`[""]`, `["  "]`, or a mixed `["CC-BY-4.0", ""]`) is **rejected with 400** — use `license_missing` for unlicensed images; an empty array (`[]`) is no filter |
-| `source_video_id` | `str` | Frame lineage: only images extracted from that video, wherever curation has since filed them. A plain indexed equality on `Image.source_video_id` (no join, no `EXISTS`), applied right after the subfolder block. Truthiness-gated, so `""` is no filter; no allowlist — the value is an opaque uuid and an unknown one correctly returns zero rows. See `docs/dev/gallery.md` § Gallery filters and `docs/dev/video-ui.md` |
+| `source_video_id` | `str` | Frame lineage: only images extracted from that video, wherever curation has since filed them. A plain indexed equality on `Image.source_video_id` (no join, no `EXISTS`), applied right after the subfolder block. Truthiness-gated, so `""` is no filter; no allowlist — the value is an opaque uuid and an unknown one correctly returns zero rows. See `docs/dev/gallery/filters.md` § Gallery filters and `docs/dev/video-ui.md` |
 | `license_missing` | `bool` | `true` = only images whose effective license is `""`; `false` = only images that have one. This is the Licenses panel's unlicensed click-through |
 | `label_filter` | `str` (JSON) | JSON-encoded **array** of label ids, the same encoding as `license_filter` and parsed by `utils.parse_id_list_param` (which deliberately is *not* `parse_license_filter_param` — that one also runs license normalization). Applied as a correlated `EXISTS` over `image_labels`, **never a join**: `/count` runs this same builder over `select(func.count(Image.id))`, so a join would count a two-label image twice. A blank entry is a **400**, for the `license_filter` reasoning, and so is a list of more than `MAX_LABEL_FILTER_IDS` (100) ids — under `label_match="all"` the id count is an expression-tree depth, and ~1,000 of them overflow SQLite's `SQLITE_MAX_EXPR_DEPTH` into an uncaught 500. See `docs/dev/labels.md` |
 | `label_match` | `str` | `"any"` (the default, one `EXISTS` with `label_id.in_(ids)`) or `"all"` (one `EXISTS` per id). A plain `str` rather than a `Literal`, so a bad value is a **400 from the shared validator** rather than a per-route 422 |
 | `label_missing` | `bool` | `true` = only images carrying no label at all (`~exists`); `false` = only images that carry one — **`false` is a filter, not "no filter"**, which is why every client encoder omits it when unset. Combining `true` with a non-empty `label_filter` is a **400** — unsatisfiable, and a query that always returns zero rows is indistinguishable from a broken filter |
-| `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range — **pure SQL** over the persisted `func.coalesce(Image.caption_token_count, 0)` column (`min` inclusive, `max` exclusive), so ordinary `ORDER BY`/`OFFSET`/`LIMIT` paging applies; no `tiktoken` in the request path. See `docs/dev/gallery.md` § Gallery filters |
+| `caption_tokens_min` / `caption_tokens_max` | `int` | GPT-2 BPE token count range — **pure SQL** over the persisted `func.coalesce(Image.caption_token_count, 0)` column (`min` inclusive, `max` exclusive), so ordinary `ORDER BY`/`OFFSET`/`LIMIT` paging applies; no `tiktoken` in the request path. See `docs/dev/gallery/filters.md` § Gallery filters |
 
 The three label rows' 400s live in one place, `utils.validate_label_filter_params`,
 which `_apply_image_filters` calls **unconditionally** rather than inside the label
@@ -64,7 +64,7 @@ different shapes (`docs/dev/export.md`, `docs/dev/shared-utilities.md`).
 
 Two sibling endpoints answer *how many* and *which ids* the same filters match, so the gallery
 can offer "select all 1,240 matching filters" instead of one page at a time
-(`docs/dev/gallery.md` § Gallery image selection). Both are pure reads over the identical
+(`docs/dev/gallery/selection.md` § Gallery image selection). Both are pure reads over the identical
 `where` chain.
 
 | Route | Returns |

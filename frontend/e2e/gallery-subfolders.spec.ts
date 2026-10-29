@@ -5,7 +5,7 @@ import { createDatasetViaApi, uploadViaApi } from './helpers'
 // menu. The drag gesture that also re-nests is deliberately **not** covered here: an
 // 8 px PointerSensor activationConstraint needs a multi-step mouse.move dance, there
 // is no existing drag spec to copy the idiom from, and a flaky one would cost more
-// than it catches. It is verified by hand instead — see docs/dev/gallery-dnd.md.
+// than it catches. It is verified by hand instead — see docs/dev/gallery/drag-drop.md.
 
 test('rename a subfolder from its context menu', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `sf-rename-${Date.now()}`)

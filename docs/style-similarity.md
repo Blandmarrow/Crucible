@@ -6,7 +6,7 @@ Available from: the collapsible **Style similarity** section at the bottom of th
 
 ## Running a comparison
 
-A collapsible section at the bottom of the **Score images** page scores how close each image is to a set of reference images — the tool for keeping a training set stylistically consistent. Because it compares embeddings that already exist, it is CPU-only and runs immediately rather than queueing a job.
+This section scores how close each image is to a set of reference images — the tool for keeping a training set stylistically consistent. Because it compares embeddings that already exist, it is CPU-only and runs immediately rather than queueing a job.
 
 - **Embedding model** — see the table below. **Start with CLIP**: measured against a deliberately out-of-style control set, it separated in-style from out-of-style images best of the three and matched the *look* — lighting and palette — most closely, while DINOv2 leaned toward subject and framing. All three require the matching embeddings to have been computed first.
 - **DINOv2 layer** — when using DINOv2 or the blend, pick which of the 12 transformer layers to compare on; each block captures increasingly abstract features. Layer 12 uses the standard embedding; the rest require per-layer embeddings. **All layers** scores every layer independently and stores the results side by side for comparison in the image detail view. Layers 1–8 pack every image into 0.90–0.99, so there is no cut point in them however sensible the ordering — usable spread only appears at layers 10–12.

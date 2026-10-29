@@ -39,7 +39,7 @@ of work as §N, and those numbers never move; the build order is this table alon
 | Order | Stage | Depends on | Notes |
 |---|---|---|---|
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
-| ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/quality/scoring.md`; this section is deleted per this file's own lifecycle rule. |
+| ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/quality/aesthetic-model.md`; this section is deleted per this file's own lifecycle rule. |
 | 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
 | 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
@@ -358,7 +358,7 @@ DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spe
 
 **Nothing here blocks §1.** What used to lead this list — where the aesthetic model
 selection lives — was settled as a per-run choice with a sticky default and shipped with
-§2; it is now documented behaviour in `docs/dev/quality/scoring.md`, not a question.
+§2; it is now documented behaviour in `docs/dev/quality/aesthetic-model.md`, not a question.
 
 - How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
   per-user or per-install? Larger is more stable and costs re-rating it every session.

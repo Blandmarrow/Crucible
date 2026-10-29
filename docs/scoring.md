@@ -1,6 +1,6 @@
 # Quality Scoring
 
-Score every image across aesthetic, technical, watermark, NSFW, and style-similarity metrics, then filter and curate on the results.
+Score every image across aesthetic, technical, watermark and NSFW metrics, and compute the embeddings [Style Similarity](style-similarity.md) compares, then filter and curate on the results.
 
 Available from: the **Score images** sidebar item on any dataset page, and the **Score** button in the gallery selection toolbar (scoped to the selection).
 

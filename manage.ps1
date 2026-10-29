@@ -530,7 +530,9 @@ function Cmd-Setup {
         if ($venvOk) {
             Write-Host "  venv already exists, skipping creation." -ForegroundColor DarkGray
         } else {
-            Write-Host "  Existing venv uses $venvVer - recreating with stable Python 3.12+..." -ForegroundColor Yellow
+            # $venvVer is null (or stderr text) when the interpreter is missing or broken.
+            if ("$venvVer" -match "Python \d+\.\d+") { $venvDesc = "uses $venvVer" } else { $venvDesc = "has no runnable interpreter" }
+            Write-Host "  Existing venv $venvDesc - recreating with stable Python 3.12+..." -ForegroundColor Yellow
             Remove-Item -Recurse -Force "$ROOT\venv"
             & $script:PythonExe -m venv --system-site-packages "$ROOT\venv"
             Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green

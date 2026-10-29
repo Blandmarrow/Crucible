@@ -1,0 +1,35 @@
+# Style similarity — the modes and what they are worth
+
+This file covers the CLIP/DINOv2 style-similarity flow: the embeddings a scoring run stores for it, `POST /quality/style-similarity` and its `embedding_type` modes, what each mode is measurably worth, and the vectorized all-layers path. Making a stored score readable — the `StyleSimilarityRun` descriptor, `GET /quality/style-similarity/{dataset_id}`, the percentile and the rendered meters — is `docs/dev/quality/style-match.md`. The scorers that write the embedding columns are `docs/dev/quality/scoring.md`; the CLIP and DINOv2 models are loaded through the shared model manager (`docs/dev/ml-models.md`). Part of the Quality family; the hub, `docs/dev/quality.md`, routes from a code path to the file that owns it.
+
+## Style similarity
+
+**Style similarity flow**: (1) run scoring with the desired embedding flags — `run_embeddings=True` stores `clip_embedding`; `run_dino=True` stores `dino_embedding` (independent of `run_embeddings`); `run_dino_layers=True` (requires `run_dino=True`) stores `dino_layer_embeddings`. (2) call `POST /quality/style-similarity` with `reference_image_ids` and/or `reference_embeddings` (base64 float16 bytes, CLIP-only). The `embedding_type` field selects the scoring mode:
+
+| `embedding_type` | `dino_layer` | Column(s) written | Description |
+|---|---|---|---|
+| `"clip"` | — | `style_similarity_score` | Cosine similarity of CLIP embeddings |
+| `"dino"` | `null` | `style_similarity_score` | Cosine similarity of DINOv2 final-layer embeddings |
+| `"dino"` | 1–12 | `style_similarity_score` | Cosine similarity using a specific DINOv2 transformer layer (from `dino_layer_embeddings`) |
+| `"combined"` | `null` | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_sim` (final layer) |
+| `"combined"` | 1–12 | `style_similarity_score` | `0.38 × clip_sim + 0.62 × dino_layer_sim` (specific layer) |
+| `"dino_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Scores each of the 12 DINOv2 layers independently; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
+| `"combined_all_layers"` | — | `dino_layer_scores` (JSON) + `style_similarity_score` | Blended score (0.38 CLIP + 0.62 DINOv2) for each of the 12 layers; writes `{"1": score, …, "12": score}` and sets `style_similarity_score` to layer 12's value |
+
+Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request. `StyleSimilarityRequest` accepts an optional `image_ids: list[str] | None` field; when set, only those images are scored (candidate queries in all embedding-type branches are filtered accordingly). `QualityPage` omits `image_ids` (scores the whole dataset); `SelectionToolbar` passes the current selection.
+
+**Getting the reference ids out of the picker.** `StyleReferencePicker`'s selection is React state on `QualityPage` (`selectedRefIds`) and the ids are never rendered, so nothing outside the page can consume the chosen set. The Action row's secondary **Copy reference IDs** button writes `Array.from(selectedRefIds).join(",")` to the clipboard (via `utils/clipboard.ts::copyText`) for that reason — it exists to feed offline harnesses such as `backend/scripts/style_gate.py`, and covers dataset references only, since dragged-in local files are embedded on the fly and have no `Image.id`.
+
+### What the modes are actually worth
+
+Measured on 2026-08-02 by `backend/scripts/style_gate.py` (a read-only offline harness that calls these same production functions), against 98 frames of one animated film scored from eight references of one lighting cluster, with **20 out-of-style controls** — bright painted illustrations — mixed in. Full method, tables and verdict in `backend/scripts/style_gate_report.md`. This was Phase 0 of the aesthetic-rating roadmap, and its conclusion is that **the centroid baseline is good enough that style matching does not need a learned head**: AUC 0.94–0.97 separating frames from controls, no control in any mode's top 20.
+
+Three things that change what to recommend, none of them visible from the code:
+
+- **CLIP is the best mode for style matching, and range is a misleading proxy for that.** CLIP's scores occupy a narrow band (0.53–0.93 vs DINOv2's 0.05–0.70) yet it separates best — AUC 0.9733 vs 0.9417, its worst control ranked 75th of 110, and only 15 of 90 frames scored below its best-scoring control against DINOv2's 46. DINOv2 drifts toward *subject and framing*: its top band filled with close-ups of one character that share the reference shots' composition but none of their palette. Both are defensible readings of "style"; the picker's copy should not imply DINOv2 is the more advanced choice.
+- **`combined` is not an independent third opinion.** Spearman ρ 0.9844 against `dino`, sharing 18 of 20 top images — it is DINOv2 with a slight CLIP tilt. CLIP vs DINOv2 (ρ 0.7525) is the only real disagreement, so anything wanting an A/B across "the three modes" is really testing two.
+- **Per-layer scoring below layer ~10 cannot be thresholded.** Every candidate scored 0.90–0.99 on layers 1–8: some ordering survives there (AUC 0.68 at layer 1 rising to ~0.94 by layers 5–9, none beating layer 12's 0.961) but it is compressed into a few hundredths, most of which the 4-decimal rounding spends on the constant part. Usable spread appears only at layers 10–12 (range 0.25 → 0.65). The `DINO_LAYER_LABELS` picker offers all twelve as equals; for filtering they are not.
+
+`style_similarity_score` is the one score column a re-scoring run cannot refresh, and so the sole member of `_UNREFRESHABLE_SCORE_COLUMNS` — see `docs/dev/quality/scores-stale.md` § The clear predicate for why that is a boundary rather than an oversight.
+
+**All-layers scoring is vectorized and RAM-bounded** (`dino_all_layers` / `combined_all_layers`): rather than re-slicing every reference blob per candidate per layer (the old `slice_layer_embedding` inner loops), the per-layer normalized mean reference is computed once via `_mean_layer_refs()` (stack refs → mean per layer → L2-normalize), and each candidate blob is decoded whole with `_decode_dino_layers()` (`np.frombuffer(...).reshape(12, 768)`); scoring is one matmul per layer (`cand[:, l, :] @ mean_refs[l]`), matching `compute_style_similarity`'s normalize-then-dot exactly. In combined mode the CLIP score doesn't depend on the layer, so it's computed once per chunk. Candidates are **keyset-paginated** (`WHERE Image.id > last ORDER BY Image.id LIMIT 2000`) through the shared local `_score_all_layers_paginated()` helper so the ~18 KB per-layer blobs are never all resident at once (~1.8 GB at 100k images). Output shape and rounding are byte-identical to the pre-vectorization loop (combined rounds the blended score to 4 decimals; both round each per-layer cosine to 4).

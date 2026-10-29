@@ -2,7 +2,7 @@
 
 This file covers the ML model lifecycle (loading, VRAM management, device abstraction), the model ID registry used by captioning and quality scoring, and the LaMa inpainter's download-and-verify loader.
 
-The subsystems that consume these models have their own files: `docs/dev/detection.md` (object detection) and `docs/dev/scoring.md` (quality scorers and flags), the latter with `docs/dev/image-similarity.md` for duplicate detection and style similarity. The two image-processing pipelines that used to live at the bottom of this file — upscaling and LUT grading — are `docs/dev/image-processing-models.md`.
+The subsystems that consume these models have their own files: `docs/dev/detection.md` (object detection) and the Quality family that `docs/dev/quality.md` routes to (quality scorers and flags, duplicate detection, style similarity). The two image-processing pipelines that used to live at the bottom of this file — upscaling and LUT grading — are `docs/dev/image-processing-models.md`.
 
 ### ML model management
 
@@ -26,7 +26,7 @@ After a successful load, `_registry[model_id]["vram_mb"]` is updated with the me
 | `DELETE /captioning/model/{id}/unload` | The one captioning model the page names. 409 while a job holds it; the page's Unload button is disabled during a run. |
 | `POST /quality/models/unload`, and the auto-unload in the `quality_score` job's `finally` | The four ids in `routers/quality.py::SCORING_MODEL_IDS`. Gated by the `auto_unload_after_scoring` setting for the job; the endpoint is unconditional. |
 
-Prefer one of these over `evict_all()` in anything new: a scoring run that swept the registry would evict a Florence-2 or SAM2 someone loaded for other work. `evict_all` remains right for the caption *pipeline*, which is a multi-step job that owns the VRAM for its whole duration. See `docs/dev/scoring.md` § The model lifecycle.
+Prefer one of these over `evict_all()` in anything new: a scoring run that swept the registry would evict a Florence-2 or SAM2 someone loaded for other work. `evict_all` remains right for the caption *pipeline*, which is a multi-step job that owns the VRAM for its whole duration. See `docs/dev/quality/scoring.md` § The model lifecycle.
 
 `HF_TOKEN` is written into `os.environ` by `backend/services/secrets_service.py::sync_env`, its only writer, so every loader that passes no `token=` picks it up: early in `main.py` from the `.env`/OS-env chain, again in the lifespan from the DB, and on every `PATCH /settings/secrets`. A token saved in Settings → API Keys therefore applies to the next download with no restart — `huggingface_hub` re-reads the variable on every call. See `docs/dev/settings.md` § API Keys tab for the precedence rules.
 

@@ -140,40 +140,6 @@ staleness sweep while still recording the seam.
   § Path safety and `docs/dev/video-reextract.md` cite the stem-collision section by heading;
   CLAUDE.md's stem-keyed pointer names it too
 
-## docs/dev/image-similarity.md
-
-- **Moves:** § Style similarity in full — its mode table, § What the modes are actually
-  worth, § Making the score readable — the run descriptor and the percentile, and every
-  subsection under it (2,437 words, more than half the file)
-- **New file:** docs/dev/style-similarity.md (mirrors docs/scoring.md § Style similarity,
-  whose own second seam names the same subject)
-- **Why here:** the file has been two subsystems under one title since it was written, and
-  its own `# Title` says so — "duplicates **and** style". They share nothing but the word
-  *similarity*: duplicates are pHash Hamming distance, a grouping pass inside the technical
-  scorer, and a destructive resolution UI; style is CLIP/DINOv2 cosines, a synchronous
-  CPU-only endpoint, a run descriptor table, a percentile contract and three rendered
-  meters. A reader arrives for exactly one. Splitting there leaves ~3,630 and ~2,440 — both
-  over the ~2,100 target, which is the honest cost of a file that is two full subsystems
-  rather than one that grew a tail. (The duplicates half is the one that has since grown:
-  the file went 4,916 → 6,064 words, all of it on that side, so the seam is more overdue
-  than the ~2,300 first recorded here suggested — and the half left behind is the bigger
-  one now.) If the style half needs a second seam it is between the
-  *scoring* (modes, gate findings, all-layers vectorization) and the *reading* (descriptor,
-  endpoint, percentile, surfaces) — the § Making the score readable heading is already that
-  line.
-- **Watch for:** the duplicates half is cited from `docs/dev/scoring.md`,
-  `docs/dev/bulk-ops.md` and `docs/dev/video.md`; the style half from
-  `docs/dev/scores-stale.md` (§ The clear predicate, in both directions),
-  `docs/dev/statistics.md` (the `"style"` cache slot), `docs/dev/gallery.md` (the card
-  meter), `docs/dev/image-detail.md` (the Style match block and the layer breakdown) and
-  `docs/dev/persistence.md` (the meter key). CLAUDE.md's Documentation Map row names both
-  subjects and has to become two rows. `backend/scripts/style_gate_report.md` is the source
-  the gate findings summarise and points back here by name. Several of these are `§`-level
-  pointers the checker cannot verify — grep `image-similarity.md` across `docs/`,
-  `CLAUDE.md` and `backend/scripts/` before and after. The user doc the new file mirrors is
-  a *section* rather than a page today; if `docs/scoring.md`'s own recorded second seam runs
-  first and produces a docs/style-similarity.md, the names line up for free.
-
 ## docs/dev/labels.md
 
 - **Moves:** § Filters (384 words), § Export (241), § The mirror column (165) and
@@ -373,26 +339,9 @@ utilities → `docs/dev/shared-utilities.md`.
   `_release_to_cpu`'s tenant walk is what makes it free anything — and both are read by
   someone touching a consumer's hold or an unload path, not by someone adding a model ID.
   Leaves ~2,450 here. **Watch for:** `§ Leases` is cited by name from
-  `docs/dev/scoring.md`, `docs/dev/detection.md`, `docs/dev/image-processing-models.md`,
+  `docs/dev/quality/scoring.md`, `docs/dev/detection.md`, `docs/dev/image-processing-models.md`,
   `docs/dev/backend-infrastructure.md` and PM-030; `§ Releasing an entry's weights` from
   `docs/dev/detection-inference.md` and this file's own sam2 table row. Grep both headings.
-
-
-## docs/dev/scoring.md
-
-- **Moves:** § The aesthetic model picker (1,006 words) with its three subsections — the
-  marker as a safety device, the two destructive consumers, per-model coverage and the
-  re-score offer
-- **New file:** docs/dev/aesthetic-model.md (mirrors docs/scoring.md § Choosing the
-  aesthetic model)
-- **Why here:** the file went over (3,559) when § The model lifecycle gained the lease
-  rules (GPT-032). The picker is the one section that is about a *choice* the user makes
-  and the bookkeeping that keeps it honest (`aesthetic_model`, its two consumer guards,
-  coverage), where everything else is about the scorers themselves and the columns they
-  write. Leaves ~2,550; the lifecycle section stays, since it is about this job's models.
-- **Watch for:** the picker is referenced from `docs/dev/scores-stale.md`,
-  `docs/dev/export.md` and `docs/dev/statistics.md` (`aesthetic_model` and its guards) —
-  grep `aesthetic model picker` and `aesthetic_model` across `docs/` before and after.
 
 
 ## docs/dev/captioning.md

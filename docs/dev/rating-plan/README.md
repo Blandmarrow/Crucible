@@ -39,7 +39,7 @@ of work as §N, and those numbers never move; the build order is this table alon
 | Order | Stage | Depends on | Notes |
 |---|---|---|---|
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
-| ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/scoring.md`; this section is deleted per this file's own lifecycle rule. |
+| ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/quality/scoring.md`; this section is deleted per this file's own lifecycle rule. |
 | 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
 | 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
@@ -72,13 +72,13 @@ Recorded so they are not reintroduced by someone reading an older draft:
   `aesthetic_min` and `rankForKeepBest` read `aesthetic_score` and therefore consume the
   head's output whether or not anyone wires them. The protection moves from the column to
   the consumer — §2 shipped exactly that for its own two producers, so §3 inherits the
-  guards rather than inventing them. See `docs/dev/scoring.md` § The marker is a safety
+  guards rather than inventing them. See `docs/dev/quality/aesthetic-model.md` § The marker is a safety
   device, and write `head:{uuid}` into the same `Image.aesthetic_model` column.
 - **Pairwise labeling is cut.** Tier sort only; see § Why tier sort.
 - **Scope is global-with-override**, not per-dataset. This was decided about §3's *head*
   alone. §2's model selection was never covered by it and was settled the other way — a
   per-run choice with a sticky default, no scope concept at all, and that is what shipped.
-  See `docs/dev/scoring.md` § The aesthetic model picker.
+  See `docs/dev/quality/aesthetic-model.md`.
 - **Labeling is not the expensive part any more.** The previous estimate ("an 800-pair
   labeling UI, likely more work than everything else combined") assumed pairwise. Tier sort
   over a rating column that already exists is a fraction of it.
@@ -221,7 +221,7 @@ therefore excluded"), not that the filter is withheld.
 ## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
-embeddings). Read `docs/dev/image-similarity.md`, `docs/dev/scores-stale.md` and
+embeddings). Read `docs/dev/quality/style-similarity.md`, `docs/dev/quality/scores-stale.md` and
 `docs/dev/panes-routing.md`.
 
 ### Where it lives
@@ -229,7 +229,7 @@ embeddings). Read `docs/dev/image-similarity.md`, `docs/dev/scores-stale.md` and
 A new **top-level** routed page, "Aesthetic Rating", beside Datasets and File Browser — not
 a per-dataset one, because a head trained from labels pooled across datasets cannot live
 under a single dataset. The per-dataset half is the picker §2 shipped (see
-`docs/dev/scoring.md` § The aesthetic model picker), a panel on the existing
+`docs/dev/quality/aesthetic-model.md`), a panel on the existing
 Score images page. One new routed page, not two; note the *seventh* site in
 `docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
 
@@ -287,7 +287,7 @@ meaning.
   modes give a free three-way A/B; the Phase 0 gate measured them and they do not —
   `combined` is DINOv2 with a slight CLIP tilt (Spearman ρ 0.98, 18 of 20 top images
   shared). **CLIP vs DINOv2 is the only real axis**, and it is a two-way A/B. See
-  `docs/dev/image-similarity.md` § What the modes are actually worth.
+  `docs/dev/quality/style-similarity.md` § What the modes are actually worth.
 - **Scope**: a global base head plus optional per-dataset overrides. An override **wins
   outright** where it exists (a hard switch, chosen for predictability). Because that lets a
   head fit from 300 ratings outrank one fit from 1,200, the heads table must show each
@@ -332,7 +332,7 @@ Four tiles, three of which are nearly free:
 
 ## 5. DINOv3 — deferred, opt-in only
 
-Read `docs/dev/image-similarity.md`.
+Read `docs/dev/quality/style-similarity.md`.
 
 **Decided**: not as the default, and not in the same change as §3. Manual Meta approval as a
 prerequisite for quality scoring is a worse regression than the model is an upgrade, and
@@ -351,14 +351,14 @@ the `range(1, 13)` hidden-states loop both survive unchanged.
 
 Touchpoints when it happens: `model_name` in `backend/ml/model_manager.py`,
 `_LAYER_BLOB_SIZE`/`slice_layer_embedding`, the layer table in
-`docs/dev/image-similarity.md`, the scorer row in `docs/dev/scoring.md`, and the
+`docs/dev/quality/style-similarity.md`, the scorer row in `docs/dev/quality/scoring.md`, and the
 DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spec.ts`.
 
 ## Still open
 
 **Nothing here blocks §1.** What used to lead this list — where the aesthetic model
 selection lives — was settled as a per-run choice with a sticky default and shipped with
-§2; it is now documented behaviour in `docs/dev/scoring.md`, not a question.
+§2; it is now documented behaviour in `docs/dev/quality/scoring.md`, not a question.
 
 - How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
   per-user or per-install? Larger is more stable and costs re-rating it every session.

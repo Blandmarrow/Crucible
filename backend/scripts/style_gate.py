@@ -50,7 +50,7 @@ MODES = ("clip", "dino", "combined")
 
 # Column each mode needs on both the references and a candidate. A row missing one is
 # excluded from *that mode only* and counted as coverage — never scored as zero, per the
-# failure contract in docs/dev/scoring.md.
+# failure contract in docs/dev/quality/scoring.md.
 MODE_COLUMNS = {
     "clip": ("clip_embedding",),
     "dino": ("dino_embedding",),

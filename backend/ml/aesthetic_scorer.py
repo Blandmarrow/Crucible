@@ -118,7 +118,7 @@ async def score_images_watermark(
             r = await loop.run_in_executor(None, fn)
         except Exception:
             # "Nothing measured", not a zero — the technical scorer's contract
-            # (docs/dev/scoring.md § The failure contract). A 0.0 here claimed the
+            # (docs/dev/quality/scoring.md § The failure contract). A 0.0 here claimed the
             # image was confidently watermark-free about a file no decoder read,
             # and it inflated `score_coverage`. The flag stays False rather than
             # None because routers/quality.py folds it into a JSON flags dict
@@ -237,7 +237,7 @@ async def score_images_batch(
             score = await loop.run_in_executor(None, score_one, path, model_handle)
         except Exception:
             # NULL, not 0.0 — the technical scorer's failure contract
-            # (docs/dev/scoring.md § The failure contract). `aesthetic_score` is
+            # (docs/dev/quality/scoring.md § The failure contract). `aesthetic_score` is
             # a 1–10 column, so 0.0 was not merely a wrong measurement but an
             # out-of-range one, and it sorted the failure to the bottom of every
             # "worst first" view as though it had been judged.

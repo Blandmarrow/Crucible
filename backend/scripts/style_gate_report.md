@@ -42,7 +42,7 @@ testing.
   from that in-memory set.
 - **Missing embeddings are reported, never scored.** A row lacking a column a mode needs is
   excluded *from that mode only* and counted, per the failure contract in
-  `docs/dev/scoring.md`. A mode with no usable references or candidates is reported as
+  `docs/dev/quality/scoring.md`. A mode with no usable references or candidates is reported as
   skipped with the counts that made it so — never as a run that scored nothing.
 - **Torch-free by default.** `dino_scorer` imports torch at module top, so
   `slice_layer_embedding` is imported lazily inside the `--layers` branch alone; the script
@@ -206,6 +206,6 @@ not an inability to order. Nothing here suggests a learned head would repay a tr
 labelling UI. Style stays on the centroid baseline; the aesthetic-rating head in the rating plan
 §§1–3 remains about *aesthetic quality*, which this run says nothing about.
 
-Three findings carried into `docs/dev/image-similarity.md`, all cheap to act on: CLIP is the
+Three findings carried into `docs/dev/quality/style-similarity.md`, all cheap to act on: CLIP is the
 default worth recommending for style matching; the three modes are two signals, not three;
 and the DINOv2 per-layer picker offers nine layers that cannot be thresholded.

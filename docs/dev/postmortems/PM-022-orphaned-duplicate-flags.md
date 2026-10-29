@@ -125,6 +125,6 @@ card, not the badge total.
 
 MITIGATED — the invariant has one owner and the scan is the repair path, but nothing
 structurally prevents a *new* delete endpoint from skipping the prune, or a new
-cross-dataset path from skipping the carry; the enumerated lists in `docs/dev/image-similarity.md` and in the
+cross-dataset path from skipping the carry; the enumerated lists in `docs/dev/quality/duplicates.md` and in the
 service docstring are a reviewer's checklist, not a guard.
 Last reviewed for staleness: 2026-08-06.

@@ -370,11 +370,11 @@ the five pass the map positionally).
 | File | Contents |
 |---|---|
 | `src/api/labels.ts` | `labelsApi = { list, counts, create, update, remove, reorder, assign }` |
-| `src/hooks/useLabels.ts` | `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below |
+| `src/hooks/useLabels.ts` | `useLabels`: `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below. `useAssignImageLabels(imageId)`: the one assign mutation for a single image, shared by the hotkeys and the detail panel — see § Hotkeys |
 | `src/components/settings/LabelsPanel.tsx` | The Settings tab body — the 20-colour palette, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
 | `src/components/settings/HotkeyCaptureButton.tsx` | Captures the next keypress while focused |
 | `src/components/common/LabelPicker.tsx` | `LabelCheckList` (searchable checkbox list + `footer` slot) and `LabelPicker` (the same behind a trigger). The one control behind all four picking surfaces — see `docs/dev/styling.md` § Anchored popovers, including why `placement` is not a style choice |
-| `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an inline `LabelPicker`, one `assign` per tick |
+| `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an inline `LabelPicker`, one `assign` per tick through `useAssignImageLabels` |
 | `src/components/gallery/LabelsBulkModal.tsx` | Dumb modal (form state only) with *Add* and *Remove* `LabelCheckList`s |
 | `src/utils/keyboard.ts` | `isTextEntryTarget(e)`, adopted by both of `ImageDetailPage`'s pre-existing keydown effects |
 
@@ -443,6 +443,26 @@ assigns — the guard the two existing effects do not need and this one does); a
 `<textarea>` on this page and typing "a" would otherwise label the image.
 Semantics are **toggle**, so a mistyped key is undone with the same key.
 
+**The assigns for one image are queued.** A toggle is a whole `add` or `remove`
+decided on the client, so two in flight at once can reach the server in either
+order. A fast double-tap sent remove + add on separate connections, the server
+applied the add first, and the label ended up removed while the chip said
+attached; the same key then *added* on the next press. Both the hotkey and the
+detail panel therefore write through `useAssignImageLabels(imageId)`, whose
+TanStack `scope` runs every assign for that image one at a time, in the order
+made. It refetches only once the last queued assign settles, which is also the
+rollback for a failed one. A refetch between two queued assigns would fetch a state
+the next one is about to change, and overwrite its optimistic flip. For the same
+reason the handler cancels any `["image", imageId]` refetch already in flight
+before it flips the chip.
+
+**Add-or-remove is read from the query cache at keypress time**, never from a value
+the effect closed over. The effect re-subscribes only after React commits, so a
+key pressed just after a refetch rendered toggled against the *previous* label
+set: an "add" of a label already attached, which does nothing. The double-tap
+journey in `frontend/e2e/labels.spec.ts` failed on every run against the
+unqueued code.
+
 `ImageDetailPage` mounts the detail panel with ``key={`labels-${image.id}`}`` —
 **prefixed**, because `ProvenancePanel` is a sibling in the same children array
 and already uses a bare `image.id`, and two siblings sharing one key is a
@@ -466,4 +486,4 @@ reconciliation error that renders the panel twice rather than warning about it.
 | `test_label_filters_http.py` | any/all/missing, the row-multiplication regression, three-endpoint agreement, the 400 shapes and the `MAX_LABEL_FILTER_IDS` cap, dataset scoping |
 | `test_labels_survive_rebuild_paths.py` | the rebuild-path guard over the four paths it names (and both of `duplicate_dataset`'s branches, checked separately), the derivative-site guard, plus snapshot/restore/copy/move/duplicate round-trips |
 | `test_export_label_filter.py` | narrowing, preview-equals-export, the caption invariant, and the export **request** layer: the trio reaching the loop over the wire and the 400s/422 the endpoints answer |
-| `frontend/e2e/labels.spec.ts` | the end-to-end journey, and the caption-textarea guard |
+| `frontend/e2e/labels.spec.ts` | the end-to-end journey, the hotkey double-tap ordering, and the caption-textarea guard |

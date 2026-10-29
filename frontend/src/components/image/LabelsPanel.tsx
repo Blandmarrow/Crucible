@@ -1,12 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import toast from "react-hot-toast";
 import { X } from "lucide-react";
 
-import { labelsApi } from "../../api/labels";
 import LabelPicker from "../common/LabelPicker";
-import { invalidateLabelScope } from "../../constants/queryKeys";
-import { useLabels } from "../../hooks/useLabels";
-import { apiErrorDetail } from "../../utils/apiError";
+import { useAssignImageLabels, useLabels } from "../../hooks/useLabels";
 
 interface Props {
   imageId: string;
@@ -29,15 +24,9 @@ interface Props {
  * labels is four clicks rather than four round trips through the trigger.
  */
 export default function LabelsPanel({ imageId, labelIds }: Props) {
-  const qc = useQueryClient();
   const { labels, byId } = useLabels();
-
-  const assign = useMutation({
-    mutationFn: (body: { add?: string[]; remove?: string[] }) =>
-      labelsApi.assign({ image_ids: [imageId], ...body }),
-    onSuccess: () => invalidateLabelScope(qc),
-    onError: (err) => toast.error(apiErrorDetail(err, "Could not update labels")),
-  });
+  // Shared with the page's hotkeys, so a click and a keypress queue behind each other.
+  const assign = useAssignImageLabels(imageId);
 
   const attached = labelIds.map((id) => byId.get(id)).filter((l) => l !== undefined);
 

@@ -10,7 +10,6 @@ import Cropper from "react-easy-crop";
 import toast from "react-hot-toast";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { imagesApi } from "../api/images";
-import { labelsApi } from "../api/labels";
 import { videosApi } from "../api/videos";
 import { captionsApi } from "../api/captions";
 import { formatDuration } from "../utils/duration";
@@ -44,9 +43,9 @@ import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { CaptionData, Detection, ImageDetail } from "../types";
 import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, serverPageContext, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { isTextEntryTarget } from "../utils/keyboard";
-import { useLabels } from "../hooks/useLabels";
+import { useAssignImageLabels, useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
-import { imagesCountKey, invalidateDatasetContentScope, invalidateLabelScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import type { ImageFilterParams } from "../api/images";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
@@ -707,20 +706,10 @@ export default function ImageDetailPage() {
   const { byHotkey } = useLabels();
   const labelHotkeysEnabled = useUiPrefsStore((s) => s.labelHotkeysEnabled);
 
-  const labelToggle = useMutation({
-    mutationFn: (body: { add?: string[]; remove?: string[] }) =>
-      labelsApi.assign({ image_ids: [imageId!], ...body }),
-    onSuccess: () => invalidateLabelScope(qc),
-    onError: (err) => {
-      toast.error(apiErrorDetail(err, "Could not update labels"));
-      // Roll back the optimistic flip below. Without this a failed assign — a 409
-      // from a busy dataset, say — leaves the chip showing a label the server
-      // never attached, and the long `staleTime` keeps it there.
-      qc.invalidateQueries({ queryKey: ["image", imageId] });
-    },
-  });
+  // Queued per image and refetched once the last one settles, which is also what
+  // rolls back the optimistic flip below when an assign fails — see the hook.
+  const labelToggle = useAssignImageLabels(imageId);
 
-  const currentLabelIds = image?.label_ids;
   useEffect(() => {
     if (!labelHotkeysEnabled || !imageId) return;
     const anyModalOpen = showDetectModal || showDeleteConfirm || formModalOpen;
@@ -736,11 +725,20 @@ export default function ImageDetailPage() {
       if (isTextEntryTarget(e)) return;
       const label = byHotkey.get(e.key.toLowerCase());
       if (!label) return;
+      // Read from the cache at keypress time, never from a value this effect
+      // closed over: the effect re-subscribes only after React commits, so a key
+      // pressed just after a refetch rendered would toggle against the previous
+      // label set — an "add" of a label already attached, which does nothing.
+      const current = qc.getQueryData<ImageDetail>(["image", imageId])?.label_ids;
+      if (!current) return;
       e.preventDefault();
       // Toggle, so a mistyped key is undone with the same key.
-      const attached = (currentLabelIds ?? []).includes(label.id);
+      const attached = current.includes(label.id);
       labelToggle.mutate(attached ? { remove: [label.id] } : { add: [label.id] });
-      // Optimistic, so the chip flips before the refetch lands.
+      // Optimistic, so the chip flips before the refetch lands. Cancel any image
+      // refetch still in flight first: it was requested before this toggle and
+      // would land on top of the flip with the old label set.
+      void qc.cancelQueries({ queryKey: ["image", imageId] });
       qc.setQueryData(["image", imageId], (prev: ImageDetail | undefined) =>
         prev
           ? {
@@ -756,7 +754,7 @@ export default function ImageDetailPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
-    labelHotkeysEnabled, imageId, byHotkey, currentLabelIds, labelToggle, qc,
+    labelHotkeysEnabled, imageId, byHotkey, labelToggle, qc,
     showDetectModal, showDeleteConfirm, formModalOpen, paneCtx, activePaneId,
   ]);
 

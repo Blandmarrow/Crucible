@@ -1,7 +1,10 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 
 import { labelsApi, type Label } from "../api/labels";
+import { invalidateLabelScope } from "../constants/queryKeys";
+import { apiErrorDetail } from "../utils/apiError";
 
 /**
  * The global label vocabulary, plus the two lookups every consumer wants.
@@ -44,4 +47,37 @@ export function useLabels() {
   }, [labels]);
 
   return { labels, byId, byHotkey, isLoading, isLoaded };
+}
+
+/**
+ * Add/remove labels on one image — the detail view's hotkeys and its labels
+ * panel both write through this, and both must share it.
+ *
+ * Each toggle is a whole `{add}` or `{remove}` decided client-side, so two in
+ * flight at once can land on the server in either order: a fast double-tap
+ * sent remove + add on separate connections, the server applied add first, and
+ * the label ended up removed while the screen said attached. The shared `scope`
+ * makes TanStack queue every assign for this image behind the previous one, so
+ * they reach the server in the order they were made.
+ *
+ * Settling refetches only once the *last* queued assign is done. Refetching
+ * after each one would fetch a state the next queued assign is about to change,
+ * and that response would overwrite the caller's optimistic flip of the next
+ * one. That is also the rollback for a failed assign: the final refetch puts
+ * back whatever the server actually holds.
+ */
+export function useAssignImageLabels(imageId: string | undefined) {
+  const qc = useQueryClient();
+  const mutationKey = ["label-assign", imageId];
+  return useMutation({
+    mutationKey,
+    scope: { id: `label-assign:${imageId}` },
+    mutationFn: (body: { add?: string[]; remove?: string[] }) =>
+      labelsApi.assign({ image_ids: [imageId!], ...body }),
+    onError: (err) => toast.error(apiErrorDetail(err, "Could not update labels")),
+    onSettled: () => {
+      // Counts this one too: it is still pending while its own onSettled runs.
+      if (qc.isMutating({ mutationKey }) <= 1) invalidateLabelScope(qc);
+    },
+  });
 }

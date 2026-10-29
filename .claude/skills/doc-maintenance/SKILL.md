@@ -80,8 +80,9 @@ from them**. That check is yours.
 
 `scripts/check_docs.py` warns when a file exceeds its word budget (`MAX_TOPIC_WORDS = 3500`
 for everything under `docs/dev/`, subfolders included; `MAX_USER_WORDS = 2500` for `docs/`
-and `MAX_README_WORDS = 2500`; `MAX_CLAUDE_WORDS = 5400` — that one expresses a ~250-line
-ceiling, converted at CLAUDE.md's own density of ~21.5 words per line) or when any single
+and `MAX_README_WORDS = 2500`; `MAX_CLAUDE_WORDS = 6000` — that one expresses a ~280-line
+ceiling, converted at CLAUDE.md's own density of ~21.5 words per line, raised from 5,400 by
+decision 2 in `docs/dev/decisions.md`) or when any single
 paragraph exceeds `MAX_BLOCK_WORDS` (250). The folders in `TRANSIENT_DIRS` are exempt. The
 budgets live in that script's CONFIG block, and its module docstring says why they count
 words rather than lines — the short version is that a line budget is satisfiable by
@@ -144,7 +145,10 @@ handoff cannot be silently skipped. Delete the entry in the commit that performs
    ` — ` and only what the file holds that neither the trigger nor the file's own intro
    paragraph already names, then the approximate word count. The intro is the file's table
    of contents; a row that restates it costs every conversation those words. A missing row
-   is a WARN, and the Map is how the file gets found.
+   is a WARN, and the Map is how the file gets found. **Inside a hubbed family** (a hub doc
+   whose detail folder is in `SPLIT_INDEXES`, per decision 2), the new file goes in that
+   folder and gets a row in the hub's routing table instead; CLAUDE.md keeps one row per
+   family.
 7. **Fix pointers that were intra-file and are now cross-file** — a `§ Section` reference to
    a section that moved. The check cannot see these; grep `§` in the files you touched.
 8. **Relabel links whose text names the old file.** A markdown link labelled `x.md` that now

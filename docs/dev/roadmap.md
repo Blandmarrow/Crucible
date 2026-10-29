@@ -21,8 +21,10 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. Start M3 with its first task, the budget raise, so the splits after it have room.
-3. Then the image similarity/scoring hub. Re-measure `docs/dev/image-similarity.md`
+2. The budget raise has landed; next is the image similarity/scoring hub, planned as
+   docs/dev/quality.md with the family in docs/dev/quality/ (the user, 2026-10-29),
+   taking the `docs/dev/scoring.md` split along with it.
+3. For the hub: Re-measure `docs/dev/image-similarity.md`
    first: under the recorded seam the half that stays is ~3,600 words, so it needs a
    second cut. Moving files into the family folder changes their paths; grep each old
    path across `docs/`, `CLAUDE.md`, `backend/` and `frontend/` before and after.
@@ -46,8 +48,8 @@ family rather than by file ([decision 2](decisions.md#2-claudemd-budget-and-hub-
 The seams live in [pending-splits.md](pending-splits.md); this is only their order. Each
 split re-measures before cutting, and a seam the file has grown past is re-chosen.
 
-- [ ] Raise `MAX_CLAUDE_WORDS` to 6,000 in `scripts/check_docs.py`, with the dated reason
-      pointing at decision 2, and delete the § CLAUDE.md queue entry.
+- [x] Raise `MAX_CLAUDE_WORDS` to 6,000 in `scripts/check_docs.py`, with the dated reason
+      pointing at decision 2, and delete the § CLAUDE.md queue entry (2026-10-29).
 - [ ] Image similarity/scoring hub: split `docs/dev/image-similarity.md` (its recorded seam
       needs a second cut) and move the family's detail files into a folder registered in
       `SPLIT_INDEXES`, with one Map row for the hub. Then split `docs/scoring.md` (the user

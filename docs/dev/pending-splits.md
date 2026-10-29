@@ -46,33 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## CLAUDE.md
-
-- **Moves:** the reviewer site-lists inside the three largest remaining invariant bullets
-  (Path traversal guard, Provenance, and the `Image`-column mirror with its join-table and
-  `detections` sub-bullets). Three cuts are already done (2026-10-29): five subsystem
-  bullets to their topic files, the test conventions to docs/dev/backend-tests.md, and the
-  Map rows' "covers" halves that restated a file's intro, plus duplicated guidance inside
-  CLAUDE.md itself. That left it at 5,399 words, one under budget, so this entry stays
-  until the next edit that trips it
-- **New file:** none — the site-lists move into the topic files that already own them
-  (docs/dev/file-browser.md or shared-utilities.md for the traversal gate list,
-  docs/dev/provenance.md for the provenance sub-bullets, docs/dev/versioning-service.md or
-  labels.md for the mirror rules), each leaving a pointer behind in CLAUDE.md
-- **Why here:** the test every § Key invariants bullet is held to is "would I want this
-  loaded even for a task in an unrelated subsystem?"; the rule statement passes it, the
-  enumerated reviewer checklist beneath it mostly does not. The user chose the Map lever
-  first (2026-10-29) because docs-architecture v3.1 asks for reviewer site-lists *inside*
-  the invariant; this lever is the one left, and it needs that tension weighed again
-  before it is taken. The Map has no duplication left to remove: what remains of each row
-  is its trigger and the items its file's intro does not name
-- **Watch for:** the PM-013 "nothing fallible" ordering, the client-supplied-regex rule and
-  the platform trap in the Windows open-file bullet are the invariants every module touches
-  and must stay whole. `quality_flags["duplicate_of"]`'s remap-or-strip clause belongs to the
-  `source_video_id` cross-dataset sub-bullet and stays there. Several code comments cite
-  "CLAUDE.md § Key invariants" or a bullet by name, so grep the backend for the bullet's title
-  before moving it, not only the docs
-
 ## docs/dev/gallery.md
 
 - **Moves:** § Gallery subfolder sidebar (544 words), § The subfolder row context menu (190)

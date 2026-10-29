@@ -122,9 +122,13 @@ MAINTENANCE_RULES = ".claude/skills/doc-maintenance/SKILL.md"
 # Revisit once the queue is cleared.
 #
 # CLAUDE.md is loaded into every conversation, so it stays the tightest budget per word
-# of value; the Documentation Map grows by one row per topic file by design.
-MAX_CLAUDE_WORDS = 5400
-NOTE_CLAUDE_WORDS = 5400   # = MAX: no NOTE tier (2026-10-29); the queue does that job
+# of value; the Documentation Map grows by one row per family (a hub doc routes to its
+# detail files) or per topic file where a family has no hub.
+# Raised 5400 -> 6000 (2026-10-29, decision 2, docs/dev/decisions/02-claude-md-budget-
+# and-hub-routing.md): at 5,400 every split would have forced an invariant out to pay for
+# its own Map row. Hubs make the Map grow by family; the raise covers families without one.
+MAX_CLAUDE_WORDS = 6000
+NOTE_CLAUDE_WORDS = 6000   # = MAX: no NOTE tier (2026-10-29); the queue does that job
 # Topic files load on demand: one subsystem per file.
 MAX_TOPIC_WORDS = 3500
 NOTE_TOPIC_WORDS = 3500    # = MAX: no NOTE tier (2026-10-29)

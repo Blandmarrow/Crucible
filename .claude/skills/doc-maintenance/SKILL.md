@@ -49,14 +49,15 @@ from them**. That check is yours.
 
 ## Splitting an oversized doc
 
-`scripts/check_docs.py` warns when a file exceeds its word budget (`TOPIC_MAX_WORDS = 3500`
-for `docs/dev/`, `USER_MAX_WORDS = 2500` for `docs/`, `CLAUDE_MAX_WORDS = 5400` — that one
-expresses a ~250-line ceiling, converted at CLAUDE.md's own density of ~21.5 words per
-line) or when any
-single paragraph exceeds `MAX_BLOCK_WORDS` (250). Read that script's module docstring for
-why the budgets count words rather than lines — the short version is that a line budget is
-satisfiable by writing longer lines, and that is how facts end up stacked four clauses deep
-where the next editor cannot see them.
+`scripts/check_docs.py` warns when a file exceeds its word budget (`MAX_TOPIC_WORDS = 3500`
+for everything under `docs/dev/`, subfolders included; `MAX_USER_WORDS = 2500` for `docs/`
+and `MAX_README_WORDS = 2500`; `MAX_CLAUDE_WORDS = 5400` — that one expresses a ~250-line
+ceiling, converted at CLAUDE.md's own density of ~21.5 words per line) or when any single
+paragraph exceeds `MAX_BLOCK_WORDS` (250). The folders in `TRANSIENT_DIRS` are exempt. The
+budgets live in that script's CONFIG block, and its module docstring says why they count
+words rather than lines — the short version is that a line budget is satisfiable by
+writing longer lines, and that is how facts end up stacked four clauses deep where the next
+editor cannot see them.
 
 **The remedy for an over-budget file is a split. It is never compression.** Squeezing
 accurate prose into denser prose is the failure the budgets exist to prevent, not a way to
@@ -114,6 +115,8 @@ handoff cannot be silently skipped. Delete the entry in the commit that performs
    approximate word count. A missing row is a WARN, and the Map is how the file gets found.
 7. **Fix pointers that were intra-file and are now cross-file** — a `§ Section` reference to
    a section that moved. The check cannot see these; grep `§` in the files you touched.
+8. **Relabel links whose text names the old file.** A markdown link labelled `x.md` that now
+   opens `y.md` is a check FAIL (`ENABLE_LINK_LABELS`); repointing the target alone leaves it.
 
 Do not append a new feature to the least-bad existing file. The queue holds files that need
 restructuring, not only files that are numerically over — an entry is welcome at any size.
@@ -125,7 +128,7 @@ stops the checker reading it as a split that already happened.
 A file organised with `**Bold**:` lead-ins instead of `##` headings cannot be split well:
 the over-budget warning picks a seam by reporting per-section word counts, and with no
 headings at all it can only say "read the file". **Five** topic files are in that state today.
-A further thirteen have no `## ` heading but do use `###`, which is enough — `section_words`
+A further thirteen have no `## ` heading but do use `###`, which is enough — `sections()`
 splits on the shallowest level a file actually uses, so those still get a per-section
 breakdown. So eighteen files want headings *added* and five want them *at all*; expect the
 file you are editing to be one of the eighteen. Every file with a seam recorded in
@@ -153,8 +156,10 @@ So before opening a PR:
    the prose that is already there.
 4. Check the user docs for features the branch shipped that they never mention.
 5. Run `python scripts/check_docs.py` and fix what it reports — it is also CI
-   (`.github/workflows/check-docs.yml`), where only its three FAIL checks (broken paths,
-   markdown links and anchors, the `@docs/` footgun) block a PR; the rest are warnings.
+   (`.github/workflows/check-docs.yml`), where only its FAIL checks (missing inline-code
+   paths, markdown links and anchors, the `@docs/` footgun, a link labelled `x.md` that opens
+   another file) block a PR; the rest are warnings. CI also runs `--self-test` first, which
+   proves the checker still fails on seeded errors — run it too after editing the script.
 
 When asked for a "doc audit" outside a branch context, do the same against the whole file:
 diff each topic file's claims against the code it describes and propose corrections.
@@ -169,7 +174,7 @@ diff each topic file's claims against the code it describes and propose correcti
 - **Refresh the Map's word count** when you substantially edit a file. `check_map_words`
   WARNs when the hand-written `Words` cell drifts by more than `MAP_WORDS_TOLERANCE` (5%) or
   `MAP_WORDS_FLOOR` (50 words), whichever is larger, and again if a Map row loses the cell
-  entirely. Round to the nearest 5 — the script prints the value to use.
+  entirely. The warning prints a value to use, rounded to 50.
 
 ## Proposing a skill
 

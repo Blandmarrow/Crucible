@@ -1,33 +1,29 @@
 name: check-docs
 
-# Runs the documentation drift check (scripts/check_docs.py). Fails the build on
-# broken repo-path references, bad markdown links/anchors, or the `@docs/`/`@CLAUDE`
-# auto-load footgun; word budgets, unrecorded split seams, paragraph length and
-# Documentation Map <-> file mismatches are warnings only. Stdlib-only, no deps.
+# Runs the documentation drift check (scripts/check_docs.py), the docs-architecture v3.1
+# reference checker with Crucible's settings in its CONFIG block. FAILs the build on broken
+# markdown links and anchors, missing inline-code paths, the `@docs/`/`@CLAUDE` auto-load
+# footgun, and a link whose label names one .md file but opens another. Word budgets,
+# unrecorded split seams, paragraph length, Documentation Map coverage and word counts, and
+# postmortem status sync are warnings only. The first step proves the checker still fails
+# on seeded errors, so a broken checker cannot pass the docs silently.
 #
-# The path filters cover every file the check reads — `docs/**` (both the user docs and
-# docs/dev/) plus the two landing files. They were dev-only until user docs were brought
-# under the same word budgets, which left a user doc going over budget invisible here.
+# Deliberately stdlib-only: no install step. If a new check seems to need a package,
+# reconsider the check's design before adding an install step here.
+#
+# No path filter on purpose: the check resolves paths the docs cite in backend/ and
+# frontend/, so a code rename can break a doc without touching one. Until 2026-10-29 this
+# workflow filtered on doc paths only, and such a PR never ran it. It runs in seconds. If
+# you add a filter, include the docs, the source roots they reference,
+# scripts/check_docs.py and this file, and keep the pull_request and push lists identical.
 
 on:
   pull_request:
-    paths:
-      - "CLAUDE.md"
-      - "README.md"
-      - "docs/**"
-      - "scripts/check_docs.py"
-      - ".github/workflows/check-docs.yml"
   push:
     branches: [main]
-    paths:
-      - "CLAUDE.md"
-      - "README.md"
-      - "docs/**"
-      - "scripts/check_docs.py"
 
-# Every job here only reads the repo and runs tests; nothing writes back to
-# GitHub. Pin the token to the minimum so a compromised action or dependency
-# cannot use it to push, comment, or publish.
+# Nothing here writes back to the repo. Pin the token to the minimum so a compromised
+# action or dependency cannot use it to push, comment, or publish.
 permissions:
   contents: read
 
@@ -38,6 +34,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
-      - name: Run documentation drift check
+          python-version: "3.12"
+      - name: Drift check verifies itself (seeded errors must fail)
+        run: python scripts/check_docs.py --self-test
+      - name: Documentation drift check
         run: python scripts/check_docs.py

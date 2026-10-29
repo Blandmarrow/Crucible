@@ -74,8 +74,9 @@ intact; `frontend-build.yml` runs `npm run build` then `npm run typecheck:e2e` (
 and then `npm run lint` with `continue-on-error: true`, so lint is reported and can never fail
 the check while the pre-existing react-hooks backlog stands; `e2e-smoke.yml` runs Playwright,
 whose webServer is the Node launcher `frontend/e2e/serve.mjs` (Node rather than bash so it
-also starts on Windows); `check-docs.yml` runs `scripts/check_docs.py`, where only its three
-FAIL checks block; and `check-mark.yml` runs `scripts/check_mark.py`, the brand-mark drift
+also starts on Windows); `check-docs.yml` runs `scripts/check_docs.py --self-test` and then
+`scripts/check_docs.py` on every PR, unfiltered, where only its FAIL checks block (broken
+links and anchors, missing inline-code paths, the `@docs/` footgun, a stale link label); and `check-mark.yml` runs `scripts/check_mark.py`, the brand-mark drift
 check (`docs/dev/styling.md`), only when a file it compares changes.
 
 **The Windows job.** `backend-tests.yml` also runs the same suite on `windows-latest` as

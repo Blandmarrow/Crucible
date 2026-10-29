@@ -55,7 +55,7 @@ plus the `labelHotkeysEnabled` toggle. Extracted into
 precedent; the tab body is a thin `{activeTab === "labels" && <div className="panel"><LabelsPanel /></div>}`.
 Nothing here is a `ThresholdSettings` field — the vocabulary is its own table behind
 `/labels`, and every edit saves immediately rather than through the page-level Save
-button. See `docs/dev/labels.md`.
+button. See `docs/dev/labels-ui.md` for the panel and `docs/dev/labels.md` for the `/labels` endpoints it calls.
 
 **Recolouring** is a per-row swatch button opening a `usePopover` panel (`docs/dev/styling.md`
 § Anchored popovers) — twenty swatches in the shared `SwatchGrid`, which the create form

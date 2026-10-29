@@ -59,7 +59,7 @@ Client side, `ExportPage` builds the trio through one `labelParams()` helper use
 by both the POST bodies and the preview query, **omitting falsy values**:
 `label_missing: false` means "only labelled images", so sending the plain boolean
 default made every export silently drop every unlabelled image while the preview
-promised the full count. See `docs/dev/labels.md`.
+promised the full count. See `docs/dev/label-consumers.md` § Export.
 
 `exclude_flags` is parsed by `_parse_flags()` in `routers/export.py`, which validates every name against `ALLOWED_FLAG_KEYS` and raises HTTP 400 on an unknown key (captioning validates the same set via a pydantic `field_validator`, so it answers 422 instead — the check is equivalent, the status differs). **Call `_parse_flags` in the request path, never inside the job coroutine**: the three POST handlers enqueue a job and return `{job_id}` before the coroutine runs, so an exception raised in there fails the job instead of reaching the client. Each handler parses once into a local and closes over it.
 

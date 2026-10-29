@@ -14,7 +14,12 @@ touch `Image.caption_text`, are never written into a caption sidecar, and are
 never exported as caption tokens. That constraint is enforced by
 `backend/tests/test_export_label_filter.py`, not just documented.
 
-Read `docs/labels.md` for the user-facing description of the same feature.
+This file is the vocabulary itself: the two tables, `services/label_service.py`, the
+`/labels` router and `POST /labels/assign`. Where an assignment shows up elsewhere — the
+gallery and export filters, the snapshot mirror and restore, cross-dataset copies and
+same-dataset derivatives — is `docs/dev/label-consumers.md`; the Settings tab, detail
+panel, hotkeys and bulk modal are `docs/dev/labels-ui.md`. Read `docs/labels.md` for the
+user-facing description of the same feature.
 
 ## The naming rule
 
@@ -86,26 +91,6 @@ declared as **table-level** `sa.ForeignKeyConstraint(...)` inside `create_table`
 column-level inline FKs break SQLAlchemy's SQLite reflection and cause permanent
 `scripts/check_migrations.py` drift.
 
-## The mirror column
-
-`VersionImageState.label_ids` is a NOT NULL JSON list with a `'[]'`
-`server_default`. Its rules, in the model's comment and pinned by
-`test_labels_survive_rebuild_paths.py`:
-
-- **Ids, not names.** A *rename* means "same concept, new spelling" — with ids a
-  restore reattaches the concept under its current name for free, where names
-  would name a label that no longer exists. A *delete* is a deliberate removal,
-  and with ids a restore honestly drops the assignment rather than resurrecting
-  it. Storing both is worse than either: a rename would flip the blob for every
-  image at once and produce a full-dataset "modified" diff for a vocabulary edit
-  that changed no image.
-- **NOT NULL with `'[]'`**, not nullable — a NULL/`[]` split would make every
-  pre-migration row differ from every post-migration row.
-- **Stored sorted.** The diff compares with `!=`, so an unsorted list would
-  report a reorder as a change.
-- **No FK**, matching `image_id`/`source_video_id` on the same model: a snapshot
-  must survive the deletion of what it names.
-
 ## `services/label_service.py`
 
 CRUD stays inline in the router (following `routers/providers.py`, the closest
@@ -118,7 +103,7 @@ drift into meaning different things.
 | `label_filter_clause(label_ids, match, missing)` | `_apply_image_filters`, `_run_export_loop`, `preview_export` |
 | `labels_by_image(db, image_ids)` | `list_images`, `get_image`, `create_snapshot`, `copy_labels` |
 | `live_label_ids(db, candidate_ids)` | `restore_snapshot`, `duplicate_dataset` (snapshot branch) |
-| `copy_labels(db, id_map)` | `batch_copy_dataset`, `duplicate_dataset` (on-disk branch), and the five same-dataset derivative sites below |
+| `copy_labels(db, id_map)` | `batch_copy_dataset`, `duplicate_dataset` (on-disk branch), and the five same-dataset derivative sites (`docs/dev/label-consumers.md` § Versioning and cross-dataset hooks) |
 | `set_labels(db, wanted)` | `restore_snapshot` |
 
 `ROWS_PER_STATEMENT = 8_000` is the chunk size, and it is a **row** count
@@ -215,258 +200,6 @@ are filled by the router:
 - `PATCH /images/{id}/provenance` — the third `ImageOut` producer, filled the same
   way and for the same reason it re-attaches `detections`: the client seeds its
   per-image cache from this response, and `label_ids` is required on the TS type.
-
-## Filters
-
-`label_filter` / `label_match` / `label_missing` are appended to
-`ImageFilterParams`, so `ImageIdsParams` and `ImageListParams` inherit them and
-`/images/`, `/images/count` and `/images/ids` agree by construction — see
-`docs/dev/image-filters.md`. `label_filter` is a JSON array in a string, the same
-encoding as `license_filter`, parsed by `utils.parse_id_list_param`.
-
-`label_match` is a plain `str`, **not** a `Literal`, so a bad value is a **400
-from the shared filter validator** rather than a 422 from per-route query
-parsing — the contract `test_bad_input_is_rejected_identically_by_all_three`
-pins. On export it *is* a `Literal` and so gives a 422; that asymmetry is
-deliberate and is the one `_parse_flags` already documents.
-
-The SQL block sits after the detection-count block and before `score_filters`,
-and uses **correlated `EXISTS` only, never a join**: `/count` runs the same
-builder over `select(func.count(Image.id))`, so a join to `image_labels` would
-count a two-label image twice and duplicate rows in `/images/`. The license block
-stays the only one that mutates the FROM clause, and stays last.
-
-- `label_missing is True` → `~exists`; `is False` → `exists`.
-- `label_match="any"` (the default) → one `EXISTS` with `label_id.in_(ids)`.
-- `label_match="all"` → one `EXISTS` **per id**, preferred over
-  `GROUP BY … HAVING COUNT(...)`, which would need a join and a grouping this
-  shared builder must not introduce. Each is index-backed on
-  `ix_image_labels_image_id`, and nobody ticks fifty labels.
-
-The 400s live in **`utils.validate_label_filter_params`**, not inline in
-`_apply_image_filters`, because export calls the same function — see
-`docs/dev/shared-utilities.md`. It raises for: a blank entry in `label_filter`
-(the `license_filter` reasoning — silently dropping a blank narrows a mixed list
-and voids an all-blank one, both silent lies); an invalid `label_match`;
-`label_missing=true` combined with a non-empty `label_filter`, which is
-unsatisfiable and indistinguishable from a broken filter; and **more than
-`MAX_LABEL_FILTER_IDS` (100) ids**, since `match=all` builds one `EXISTS` per id
-and ~1,000 of them overflow SQLite's `SQLITE_MAX_EXPR_DEPTH` into an uncaught 500.
-Unparseable JSON is the fifth, and stays in `parse_id_list_param`.
-
-`_apply_image_filters` calls the validator **unconditionally**, beside the
-`score_field`/`quality_flag` checks rather than inside the label block:
-`?label_match=either` with no filter at all is still bad input, and all three
-endpoints must refuse it identically.
-
-`label_filter_clause` additionally raises `ValueError` on a `match` that is
-neither `"any"` nor `"all"`, instead of falling through to "any" — a direct
-service call with a typo cannot then quietly answer the wrong question. HTTP
-callers never reach it, having been 400'd upstream.
-
-## Export
-
-`_run_export_loop` and `preview_export` each take the three params and apply
-`label_filter_clause` right after the `subfolders` where. Like `subfolders`, the
-label filter **narrows the query** rather than appearing in the exclusion tally:
-it defines which images the export is about, not an exclusion over a fixed
-population. So `image_count` shrinks and no new counter is needed. The three
-request bodies in `routers/export.py` and the preview `GET` carry them too; the
-preview parses via `parse_id_list_param`.
-
-**Export validates exactly what the gallery validates.** All four POST/GET
-handlers call `utils.validate_label_filter_params` — the three POSTs in the
-*request* path beside their `_normalize_mask_labels` normalizers, so a bad shape
-is a 400 to the client rather than an already-enqueued job failing later.
-
-The client half matters as much: `ExportPage` encodes the trio through a single
-`labelParams()` helper used by **both** the export POST bodies and the preview
-query, and it **omits every falsy value**. `label_missing: false` is not "no
-filter" — in the documented three-endpoint contract it means *"only images that
-carry a label"* — so sending the plain boolean default silently dropped every
-unlabelled image from every export while the preview, which stripped falsy values,
-promised the full count. The server behaviour is correct and deliberately
-unchanged; two encodings of one thing was the bug. `frontend/e2e/export-plain.spec.ts`
-guards it by asserting on the files on disk, not on the preview.
-
-`_write_image` and the caption sidecar writer stay untouched — see the invariant
-at the top of this file.
-
-## Versioning and cross-dataset hooks
-
-`create_snapshot` prefetches `labels_by_image` once for the dataset (a per-image
-query inside the state loop would be N+1 over 20k images) and passes
-`label_ids=labels_by_id.get(img.id, [])` — never `or None`; the column is NOT
-NULL.
-
-`restore_snapshot` writes labels at the **end of Pass 2c**, before the
-`db.commit()` that is the DB→filesystem boundary. Four things about it:
-
-- It keys on **`p.img.id`, not `p.state.image_id`** — Pass 0b can fork a fresh
-  uuid or adopt a different row, and writing the snapshot's id would label an
-  image in another dataset, or nothing at all.
-- Plans with `p.img is None` (`skip_recreate`) are skipped.
-- Ids are resolved through `live_label_ids`, with one aggregate warning for
-  assignments naming a label deleted since the snapshot — there is no FK to
-  catch it.
-- `set_labels` is an **authoritative replace, not a merge**: a restore means "the
-  dataset looked like this", so a label added after the snapshot disappears,
-  exactly as a caption edit does. It deletes only for image ids in `wanted`, so
-  `handle_extra_images="keep"` images keep theirs.
-
-A row Pass 0b forks (its image now lives in another dataset) needs no id
-remapping at all — the direct payoff of the vocabulary being global.
-
-The diff triple: `VersionImageState.label_ids` is in `_DIFF_COLS` and
-`_DIFF_COMPARE_FIELDS`, and **not** in `_HEAVY_DIFF_FIELDS`. It is mutable state
-(attach/detach) and therefore diffed, unlike the immutable lineage carve-out
-beside it. Because the *comparison* runs on ids, a rename produces no diff at all
-— the correct answer. Ids are resolved to names once per diff, after the modified
-list is built, and joined to a comma-separated string server-side, so
-`DiffModal` needs no change; an id with no row renders `(deleted)`.
-
-Cross-dataset:
-
-- **`batch_copy_dataset`** binds `new_img = Image(...)` into an `id_map` and
-  calls `copy_labels` between the insert loop and the FS copies, preserving that
-  function's deliberate stage-DB → copy-files → commit ordering.
-- **`duplicate_dataset`**, Step 2A (on-disk) builds the same `image_id_map` and
-  calls `copy_labels` after the loop — including after the cancellation `break`,
-  so a cancelled duplicate keeps labels for whatever it did copy. Step 2B (from a
-  snapshot) reads `state.label_ids` off the mirror and resolves against the live
-  vocabulary exactly as restore does, in one query for the whole run.
-- **`batch_move_dataset`: no change**, and that is a property asserted rather
-  than remembered.
-
-Labels travel on a copy while **detections do not** (there are no `Detection`
-references in `dataset_service.py`). Not a bug — "this image is a reject" is a
-fact about the image — but surprising enough that someone will otherwise "fix"
-it. *Snapshots* are the exception: since GPT-026 a snapshot mirrors detections
-too (`VersionImageState.detections`) and a restore writes them back, because a
-restore swaps the pixels their geometry is measured against. Duplicating a
-dataset, from disk or from a snapshot, still leaves them behind. See
-`docs/dev/versioning-service.md`.
-
-**Same-dataset derivatives carry labels too**, for the same reason and by the
-same rule as `copy_provenance`: a crop is the same picture at a different
-framing, so a fact about the picture is still true of it. Five sites build a new
-`Image` beside its parent and each calls `copy_labels`:
-
-| Site | Shape |
-|---|---|
-| `routers/lut.py`, `routers/upscaling.py`, `routers/detection.py` (crop-to-detection) | Accumulate `derivative_ids[parent] = new_img.id` through the loop, drain with one `copy_labels` **after** the loop — so a cancelled run still labels what it did copy — before the trailing commit |
-| `routers/images.py::crop`, sync copy-mode tail | The `id=str(uuid4())` is assigned explicitly (the `batch_copy_dataset` precedent) so the join rows can name the crop, and `copy_labels` rides the same transaction |
-| `routers/images.py::crop`'s nested `_run_crop_upscale` | Runs in its own session with the parent ORM object gone, so `job_cfg` carries `parent_id`; `copy_labels` re-reads the parent's labels itself, and a `flush()` comes first because `Image.id` is a Python-side default |
-
-A *score* must not travel the same way — those pixels are not the scored pixels —
-and `test_video_lineage_mirrors._score_carriers` names these same five sites as
-its deliberate exclusion. The label guard is the inverse and is executable:
-`test_labels_survive_rebuild_paths.py::test_every_same_dataset_derivative_carries_labels`
-walks each function's AST for the `copy_labels` **call** (not a kwarg — four of
-the five pass the map positionally).
-
-## Frontend
-
-| File | Contents |
-|---|---|
-| `src/api/labels.ts` | `labelsApi = { list, counts, create, update, remove, reorder, assign }` |
-| `src/hooks/useLabels.ts` | `useLabels`: `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below. `useAssignImageLabels(imageId)`: the one assign mutation for a single image, shared by the hotkeys and the detail panel — see § Hotkeys |
-| `src/components/settings/LabelsPanel.tsx` | The Settings tab body — the 20-colour palette, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
-| `src/components/settings/HotkeyCaptureButton.tsx` | Captures the next keypress while focused |
-| `src/components/common/LabelPicker.tsx` | `LabelCheckList` (searchable checkbox list + `footer` slot) and `LabelPicker` (the same behind a trigger). The one control behind all four picking surfaces — see `docs/dev/styling.md` § Anchored popovers, including why `placement` is not a style choice |
-| `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an inline `LabelPicker`, one `assign` per tick through `useAssignImageLabels` |
-| `src/components/gallery/LabelsBulkModal.tsx` | Dumb modal (form state only) with *Add* and *Remove* `LabelCheckList`s |
-| `src/utils/keyboard.ts` | `isTextEntryTarget(e)`, adopted by both of `ImageDetailPage`'s pre-existing keydown effects |
-
-The query key is a bare `["labels"]` with no dataset in it, because the
-vocabulary is app-wide. Writers call `invalidateLabelScope(qc)` from
-`constants/queryKeys.ts` rather than listing keys inline — there are four writers
-(Settings, the detail panel, the hotkey, the toolbar), which is exactly the drift
-that file exists to prevent. It takes **no `datasetId`** and invalidates every key
-at its bare prefix, matching `invalidateProvenanceScope`: the bulk assign it
-mostly serves labels a selection that can straddle datasets, so scoping to one
-pane's id left other datasets' grids and card dots stale.
-
-Both the gallery and the Export page bounds-check a label filter against the
-vocabulary and drop ids whose label was deleted — the `licenseFilter` precedent.
-Without it the grid silently shows zero images with nothing on screen explaining
-why (the picker is hidden entirely while the vocabulary is empty, so there is not
-even a control to open). In the gallery, dropping anything also resets paging.
-
-The check is **derived during render**, gated on `useLabels().isLoaded` — the
-`frameVideoId` guard in `GalleryPage` is the precedent, and `isLoaded` (the
-query's `isSuccess`) is what separates "still fetching" from "the vocabulary is
-genuinely empty", which `labels` alone collapses into `[]`. It is deliberately not
-a mount-once `useRef` latch, which had three escapes: an empty vocabulary never
-reconciled at all, a label deleted later in the session never reconciled either,
-and the Export page's dataset-switch effect re-seeded the filter from a different
-blob past a ref that had already fired. `handleResetToDefaults` there resets the
-label trio alongside the other fourteen filters, or the debounced persist writes
-it straight back into the blob it just cleared.
-
-`GalleryPage` persistence needs **six** edits, because the filter blob is
-hand-rolled there rather than using `useDebouncedPersist`: the inline type in
-`loadSavedState`, the `useState` seed that reads it, `liveStateRef` (both lines),
-the debounced write (the `JSON.stringify` literal **and** the dep array — a field
-whose own change moves no other dep is otherwise only written by the unmount
-flush, and a reload drops it), the unmount blob (the destructure **and** its
-literal), and `handleResetFilters`. Neither write site merges with what is
-stored, so a field present in one literal and missing from the other is deleted
-on whichever path runs. See `docs/dev/persistence.md`.
-
-**A debounced field is two of those seeds, not one.** `search` and
-`detectionLabel` each commit out of a `*Input` draft through a 350 ms timer whose
-only bail-out is `input === committed`, so a restore must seed **both halves**
-from the one stored value, and every clear (Reset filters, the input's ×) must
-clear both together. Seeding or clearing one half leaves the pair unequal, which
-is exactly the state that makes the timer fire on mount and throw away the
-restored page — PM-012, in `docs/dev/postmortems.md`. Persist only the committed
-value; a persisted draft leaves the restore no correct choice.
-
-### Hotkeys
-
-`labelHotkeysEnabled` lives in `store/uiPrefsStore.ts`, not only in localStorage,
-so toggling it in Settings re-renders an already-mounted detail pane in split
-view.
-
-**Conflict prevention is structural, not a blocklist.** The `[a-z0-9]` charset
-cannot express Escape, Space, ArrowLeft/Right or Delete — the five keys
-`ImageDetailPage` already binds — so no reserved-key set is needed and none can
-go stale when a sixth binding is added. The instinct to add
-`RESERVED = new Set([...])` is the version that rots. Cross-label collisions are
-a server 409, pre-empted in the UI by naming which label owns the key.
-
-The handler guards, all required: the pref is on; `paneCtx.paneId === activePaneId`;
-no modal open; no modifier held; **`!e.repeat`** (a held key would fire dozens of
-assigns — the guard the two existing effects do not need and this one does); and
-`!isTextEntryTarget`, which is load-bearing because the caption editor is a
-`<textarea>` on this page and typing "a" would otherwise label the image.
-Semantics are **toggle**, so a mistyped key is undone with the same key.
-
-**The assigns for one image are queued.** A toggle is a whole `add` or `remove`
-decided on the client, so two in flight at once can reach the server in either
-order. A fast double-tap sent remove + add on separate connections, the server
-applied the add first, and the label ended up removed while the chip said
-attached; the same key then *added* on the next press. Both the hotkey and the
-detail panel therefore write through `useAssignImageLabels(imageId)`, whose
-TanStack `scope` runs every assign for that image one at a time, in the order
-made. It refetches only once the last queued assign settles, which is also the
-rollback for a failed one. A refetch between two queued assigns would fetch a state
-the next one is about to change, and overwrite its optimistic flip. For the same
-reason the handler cancels any `["image", imageId]` refetch already in flight
-before it flips the chip.
-
-**Add-or-remove is read from the query cache at keypress time**, never from a value
-the effect closed over. The effect re-subscribes only after React commits, so a
-key pressed just after a refetch rendered toggled against the *previous* label
-set: an "add" of a label already attached, which does nothing. The double-tap
-journey in `frontend/e2e/labels.spec.ts` failed on every run against the
-unqueued code.
-
-`ImageDetailPage` mounts the detail panel with ``key={`labels-${image.id}`}`` —
-**prefixed**, because `ProvenancePanel` is a sibling in the same children array
-and already uses a bare `image.id`, and two siblings sharing one key is a
-reconciliation error that renders the panel twice rather than warning about it.
 
 ## Non-goals
 

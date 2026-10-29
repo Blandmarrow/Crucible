@@ -33,7 +33,7 @@ Both refusals are a 403 JSON `{"detail": …}` naming the host or origin. A WebS
 
 ### App-level exception handlers
 
-Three `@app.exception_handler` registrations sit in `backend/main.py` between the middleware registrations and the router includes. Both are app-level for the same reason: the exposure they close belongs to a *class* of route, not to one route, and a per-route defence is a rule every future route has to remember.
+Three `@app.exception_handler` registrations sit in `backend/main.py` between the middleware registration and the router includes. All three are app-level for the same reason: the exposure they close belongs to a *class* of route, not to one route, and a per-route defence is a rule every future route has to remember.
 
 | Exception | Answer | Why here |
 |---|---|---|

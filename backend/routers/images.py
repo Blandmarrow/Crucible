@@ -893,7 +893,7 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     # A non-batch row whose .webp is missing (never generated, or hand-deleted)
     # still owns its stem — the thumbnail this rename creates for it would be
     # regenerated onto that row's path by `serve_thumbnail`. Occupancy is the union
-    # of the two, exactly as `file-browser.md` defines it.
+    # of the two, exactly as `docs/dev/file-browser-rename-delete.md` § `POST /rename` defines it.
     occupied_thumb_stems |= {Path(n).stem for n in db_names}
     # Image files currently on disk that belong to this batch — they will be renamed away,
     # so the counter should not treat them as occupied during planning.

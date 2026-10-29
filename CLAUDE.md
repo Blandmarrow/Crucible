@@ -202,7 +202,9 @@ substantial edit.
 | `docs/dev/image-filters.md` | Adding or changing a `GET /images/` filter param — plus `GET /images/count` and `/images/ids` and the `ImageFilterParams` model all three share | ~1750 |
 | `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
 | `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
-| `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the move/rename/delete DB-sync guards and their 409s, structural-folder refusals | ~3810 |
+| `docs/dev/file-browser.md` | Working on `FileBrowserPage`, its preview panel, or any `/filesystem` endpoint's listing side or `/mkdir` — `canonical_abs_path` and stored-path containment, the name-collision 409s, the router's known holes, the `released` prop | ~1300 |
+| `docs/dev/file-browser-move.md` | Working on `POST /filesystem/move` — the file/directory branches, the canonical-media-folder 409, the derived-artifact guard, escaped-LIKE prefix tests | ~1300 |
+| `docs/dev/file-browser-rename-delete.md` | Working on `POST /filesystem/rename` or `/delete` — guards C/D/A/B and `_DATASET_LAYOUT_DIRS`, the thumbnail-stem 409, the delete's hook ordering and `_add_orphan` | ~1500 |
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
@@ -216,7 +218,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~800 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~900 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

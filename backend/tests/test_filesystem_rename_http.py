@@ -60,7 +60,7 @@ async def _relocate_out_of_layout(env, src: Path, dst_dir: Path) -> Path:
 
     This is the state `POST /move` produced until V-21 refused it, so the fixture
     is built directly rather than through the endpoint (which now 409s — see
-    `docs/dev/file-browser.md` § `POST /move`). Still worth guarding `/rename`
+    `docs/dev/file-browser-move.md` § `POST /move`). Still worth guarding `/rename`
     against: a user who rearranges a dataset folder in their own file manager, or
     a database written before V-21, arrives in exactly this state with no endpoint
     involved. The app does not support that layout, but it must not corrupt

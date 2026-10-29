@@ -24,11 +24,12 @@ restates its stages.
 2. The budget raise, the Quality and Gallery hubs, the whole video family (the folder
    move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md` split)
    and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
-   `docs/dev/captioning.md` and `docs/dev/bulk-image-jobs.md` splits have landed. Next are
-   the other over-budget dev docs, largest first: `file-browser.md`,
+   `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
+   splits have landed. Next are the other over-budget dev docs, largest first:
    `versioning-service.md`, `backend-infrastructure.md`, `image-files.md`, each with a seam
    in `pending-splits.md` (re-measure first, and check each seam leaves both halves under
-   60% of budget — the captioning seam as recorded would have left ~93%).
+   60% of budget — the captioning seam as recorded would have left ~93%, the file-browser
+   one ~80%, and both went three ways instead).
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -85,6 +86,11 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       cropping moved to `docs/dev/detection-crop.md` and watermark removal to
       `docs/dev/inpaint.md`; the crop remap stays as its own `##`, since all four crop sites
       use it. Three flat siblings, no hub.
+- [x] `docs/dev/file-browser.md` (2026-10-29): three ways rather than the recorded two,
+      whose mutations half would have sat at 80%. `POST /move` (API-only) moved to
+      `docs/dev/file-browser-move.md`, and rename and delete, the two DB-syncing mutations
+      the page fires, to `docs/dev/file-browser-rename-delete.md`; the endpoint table, collisions,
+      path safety, § Still open and the page stay. Three flat siblings, no hub.
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README

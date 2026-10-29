@@ -46,36 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## docs/dev/file-browser.md
-
-- **Moves:** § `POST /move` (1,064 words) and § `POST /rename` (1,021), plus § `POST /delete`
-  (395), § Still open (148) and the two short sections that exist only to serve them,
-  § Name collisions (55) and § DB sync (119)
-- **New file:** docs/dev/file-browser-mutations.md
-- **Why here:** the file is a read surface and a write surface bolted together. Everything
-  moving is about *mutating the filesystem and keeping the DB in step* — the structural-folder
-  refusals, the 409s, the orphan bookkeeping, the versioning hook, the collision rules. What
-  stays is *browsing*: the eight endpoints' listing side, path safety, the three-panel page
-  and its preview panel. A reader working on the preview never needs the move/rename
-  semantics and vice versa. § Still open travels **with** the mutations rather than staying:
-  it is a list of open holes in `/move`, `/rename` and `/delete` specifically, and it cites
-  § `POST /move` by name. That lands ~2,800 moving and ~825 staying (§ Endpoints, § Path
-  safety, § Frontend, intro) out of 3,652. The moving half is at 80% of budget rather than
-  the 60% target, recorded honestly as the cost of the only coherent seam: this is one
-  router, and two endpoint sections carry three-quarters of its words. A second seam between
-  move/rename and delete does **not** help — § `POST /delete` is 395 words, so splitting it
-  off leaves the move/rename file at ~2,400 and buys a third file for nothing.
-- **Watch for:** § `POST /rename` carries a `### Directory branch` subsection that travels
-  with it. § Frontend describes the page as a whole and stays, but its two PM-021 paragraphs
-  (the `released` prop and the `<video>` unmount) are about the rename and delete mutations —
-  decide with the file open whether they travel. § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
-  `docs/dev/video/endpoints.md` § Serving bytes; § `POST /delete` is cited from
-  `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
-  from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are
-  `§`-level pointers the checker cannot verify. The user doc it mirrors is
-  `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
-  gives no name for free.
-
 ## docs/dev/image-files.md
 
 - **Moves:** § Importing captions & folder rescan (the three import paths, the rescan

@@ -28,6 +28,35 @@ Do not confuse them, and never duplicate one into the other — cross-reference 
   task in an unrelated subsystem?"* If no, it is subsystem-specific. Utility entries stay
   one line; detailed behaviour goes in the utility's docstring.
 - **Procedural and recurring** → a skill, not a doc. See "Proposing a skill" below.
+- **A ruling on direction** ("we will / won't do X, because…") → the decision log, and
+  **what comes next and what blocks it** → the roadmap. See "Keeping records current".
+
+## Keeping records current
+
+Three records sit beside the topic files. Each is updated by the session that changes what
+it records, not as a separate chore:
+
+- **The roadmap (`docs/dev/roadmap.md`) is ticked in the same session** that lands the
+  work, like the drift check. It owns order and dependencies only: link the topic file for
+  the *what* and the decision for the *why*. When a milestone completes, expand the next one
+  into tasks, and shrink the finished one to a one-line "Landed" entry linking a record in
+  `docs/dev/roadmap-archive/` — archive eagerly, as soon as only follow-ups remain. Update
+  the dated "Next session" block before you stop. A feature with its own design plan keeps
+  it in a transient folder (`TRANSIENT_DIRS` in `scripts/check_docs.py`, like
+  `docs/dev/rating-plan/`); the roadmap names it and never restates its stages.
+- **Decisions go in the log (`docs/dev/decisions.md`).** A new direction gets a stub there
+  plus a `docs/dev/decisions/NN-slug.md` record (the format is in the index's intro). Only
+  the user moves a decision to Decided, and the record says who and when. Never reword an
+  existing heading — other docs link to it. To reopen a decision, add a superseding entry
+  rather than editing the old record. Rulings made before the log started (2026-10-29) are
+  not back-filled; one gets an entry when it is reopened.
+- **Incidents become postmortems.** After debugging anything that shipped broken or failed
+  in a surprising way, add `docs/dev/postmortems/PM-NNN-slug.md` (copy PM-000, next free
+  number) and an index row. The index row's Status must match the detail file's
+  `### Status & date` section: the check WARNs when they differ (`ENABLE_PM_STATUS_SYNC`).
+- **New records carry a status line** (`**Status: living.**`, or `archive (landed DATE)` for
+  a roadmap-archive record). Existing topic files do not, by decision — see
+  `docs/dev/decisions/01-documentation-architecture.md`.
 
 ## User-facing features need user-facing docs
 

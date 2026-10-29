@@ -28,9 +28,9 @@ the order they landed:
 | `docs/dev/gpt-review/infra.md` | 007 step 3: a shared token for LAN mode. Deferred by decision. |
 
 Delete the folder once that item is either built or explicitly dropped. Any durable rationale
-goes into `docs/dev/backend-infrastructure.md` first. The folder sits in a subfolder deliberately:
-like `docs/dev/postmortems/`, `scripts/check_docs.py` globs `docs/dev/*.md` non-recursively, so
-files here carry no Documentation Map row and no word budget.
+goes into `docs/dev/backend-infrastructure.md` first. The folder is registered in
+`TRANSIENT_DIRS` in `scripts/check_docs.py`: files here need no Documentation Map row and
+carry no word budget, but their links and paths are checked.
 
 The verification probes are all gone. Each one was ported into `backend/tests/` or
 `frontend/e2e/` with its assertions inverted, then deleted.

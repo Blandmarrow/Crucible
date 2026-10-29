@@ -1,4 +1,4 @@
-# Roadmap — aesthetic rating, the model picker, the learned head
+# Rating plan — aesthetic rating, the model picker, the learned head
 
 Scoped in design sessions on 2026-08-01 and 2026-08-02, not yet implemented. The 2026-08-02
 session collapsed what were three separate threads (V2.5, the marker layer, the learned
@@ -10,9 +10,11 @@ durable rationale now lives in `docs/dev/settings.md` § API Keys tab.
 **Lifecycle**: this file is transient, like the video arc's `roadmap.md` (retired in
 `dd53b13`) and the detection/SAM 3 roadmap (retired in `f31a9dc`). When a stage lands, move
 its durable rationale into the relevant `docs/dev/` topic file and delete the stage from
-here; delete the file when everything is done. It sits in a subfolder deliberately —
-`scripts/check_docs.py` globs `docs/dev/*.md` non-recursively, so like
-`docs/dev/postmortems/`, files here carry no Documentation Map row and no word budget.
+here; delete the folder when everything is done. Until 2026-10-29 it was
+docs/dev/roadmap/roadmap.md; it was renamed when `docs/dev/roadmap.md` became the
+repo-wide sequencing roadmap, which points here for this feature's build order. The folder
+is registered in `TRANSIENT_DIRS` in `scripts/check_docs.py`: it needs no Documentation Map
+row and carries no word budget, but its links and paths are checked.
 
 Nothing here is decided by the code yet. Read `CLAUDE.md` and the topic files named per
 stage before implementing, and prefer the repo's conventions over the sketches below.

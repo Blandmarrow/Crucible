@@ -241,7 +241,7 @@ def layer_sweep(refs: list[dict], cands: list[dict], top: int) -> list[dict]:
 def agreement(results: list[dict], top: int) -> list[dict]:
     """Spearman rho + top-N overlap for each pair of scored modes.
 
-    If the three modes agree almost perfectly they are not the free A/B the roadmap assumes
+    If the three modes agree almost perfectly they are not the free A/B the rating plan assumes
     — which is a finding in itself, not a null result."""
     try:
         from scipy.stats import spearmanr

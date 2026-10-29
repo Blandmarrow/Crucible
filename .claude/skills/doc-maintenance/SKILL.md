@@ -140,8 +140,11 @@ handoff cannot be silently skipped. Delete the entry in the commit that performs
    sibling files a reader will need next.
 5. **Update every inbound reference.** They are inline-code paths (`` `docs/dev/x.md` ``),
    and a stale one is a check FAIL. Grep for the old filename before and after.
-6. **Add a Documentation Map row** in `CLAUDE.md`: contents, keyword-front-loaded trigger,
-   approximate word count. A missing row is a WARN, and the Map is how the file gets found.
+6. **Add a Documentation Map row** in `CLAUDE.md`: a keyword-front-loaded trigger, then
+   ` — ` and only what the file holds that neither the trigger nor the file's own intro
+   paragraph already names, then the approximate word count. The intro is the file's table
+   of contents; a row that restates it costs every conversation those words. A missing row
+   is a WARN, and the Map is how the file gets found.
 7. **Fix pointers that were intra-file and are now cross-file** — a `§ Section` reference to
    a section that moved. The check cannot see these; grep `§` in the files you touched.
 8. **Relabel links whose text names the old file.** A markdown link labelled `x.md` that now

@@ -19,36 +19,24 @@ restates its stages.
 
 ## Next session (updated 2026-10-29)
 
-1. M2 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
+1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. Finish M2 with the second CLAUDE.md seam. Quote CLAUDE.md's word count before (5,955 on
-   2026-10-29) and after in the commit.
-3. Precaution: moved bullets go verbatim, and each leaves a pointer that still states the
-   rule and names its destination; the rules every module touches stay whole (see the
-   queue entry's Watch for).
+2. Start M3 with `docs/dev/image-similarity.md`. Re-measure first: the half that stays
+   behind under the recorded seam is ~3,600 words, so the seam needs a second cut.
+3. Precaution: CLAUDE.md is at 5,399 of 5,400 words. Every split adds or edits a Map row,
+   so a split that grows CLAUDE.md must take the lever recorded in
+   [pending-splits.md](pending-splits.md) § CLAUDE.md, or shorten another row's trigger.
 
 ## Landed
 
 - **M1 — Drift check upgrade** (2026-10-29): the reference checker, CI on every PR, this
   roadmap and the decision log. Record:
   [roadmap-archive/m1-drift-check-upgrade.md](roadmap-archive/m1-drift-check-upgrade.md).
+- **M2 — CLAUDE.md** (2026-10-29): a Verification section with one gate table, and CLAUDE.md
+  back under budget at 5,399 words. Record:
+  [roadmap-archive/m2-claude-md.md](roadmap-archive/m2-claude-md.md).
 
 ## Milestones
-
-### M2 — CLAUDE.md
-
-Gate: CLAUDE.md under its 5,400-word budget, with every gate listed in one table.
-
-- [x] A `## Verification` section: the gate table (local, CI, blocking, and what CI cannot
-      run), the `tsc --noEmit` trap, and the report-what-the-run-says rule. The `qa-smoke`
-      skill points at it.
-- [x] A `## Working here` section with one dated milestone line linking this file.
-- [x] The first CLAUDE.md seam: five invariant bullets to their topic files (the Windows
-      open-file trap keeps its rule; only its site list moved) and the test conventions to
-      [backend-tests.md](backend-tests.md). 7,013 → 5,955 words.
-- [ ] The second CLAUDE.md seam, about 555 words: [pending-splits.md](pending-splits.md)
-      § CLAUDE.md (reviewer site-lists in the three largest bullets, and Map "covers"
-      halves that duplicate a file's intro).
 
 ### M3 — The split queue
 

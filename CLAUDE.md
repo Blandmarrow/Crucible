@@ -1,11 +1,13 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Agent entry point: what applies across the whole codebase — commands, verification, the data
+flow, the invariants. Subsystem detail lives in `docs/dev/` topic files, routed by the
+Documentation Map near the end; load only the ones a task needs.
 
 ## Working here
 
 **Milestone (2026-10-29):** the docs-architecture upgrade, on branch `docs/architecture-v3.1`
-— this file's Verification section and split, then the split queue; order and the session
+— M3, the split queue; order and the session
 handoff are in `docs/dev/roadmap.md`.
 
 ## Commands
@@ -21,7 +23,9 @@ handoff are in `docs/dev/roadmap.md`.
 | `update` | `git pull` → update pip deps (GPU PyTorch auto-detect) → optional SAM2 update → `npm install` → rebuild frontend |
 | `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
-To shut down the running server, click the power icon button in the top-right of the TopBar (confirms before shutting down), or press Ctrl+C in the terminal. A circular-arrow **Restart** button sits immediately left of the power button — it restarts the server in place without requiring terminal access (see Server control endpoints below).
+Shutdown and Restart are the TopBar's power and circular-arrow buttons (or Ctrl+C): see
+`docs/workspace.md` § Restarting & shutting down, and `docs/dev/backend-infrastructure.md`
+§ Server control endpoints for the routes behind them.
 
 ### Backend (always run from `backend/` with venv active)
 
@@ -120,7 +124,6 @@ Long-running operations (captioning, quality scoring, import, export, batch ops)
 
 `BackgroundJob` has a nullable `label: str | None` column (max 200 chars). Every router that creates a job sets an auto-generated descriptive label (e.g. `"Florence-2 (large) — 50 images"`, `"Quality: technical, aesthetic — 100 images"`) and accepts an optional `label` field in the request body to override it (`body.label or auto_label`). A `_model_short_label(model: str) -> str` helper in `routers/captioning.py` converts raw model IDs to readable names for the auto-label.
 
-This file covers what applies across the whole codebase: commands, the data flow above, and the invariants below. Subsystem detail lives in topic files under `docs/dev/`, each listed with its trigger in the Documentation Map near the end. Read the relevant one(s) before working on that subsystem; do not read all of them up front.
 
 ### Shared utilities
 
@@ -159,70 +162,69 @@ Three modules carry the helpers every router and service shares: `backend/utils.
 
 ## Documentation Map
 
-Each file below covers one subsystem in depth. Read the relevant file(s) with the Read tool when
-your task touches that subsystem — do not read all of them up front. Do NOT use `@`-paths to reference
-these files anywhere — `@path` auto-loads the target into every conversation, defeating this split.
-The `Words` column is hand-written: `check_docs.py` WARNs when it drifts by more than 5% (min 50
-words), and again if a row loses the cell, so refresh it after a substantial edit.
+One subsystem per file. Read a file with the Read tool when your task touches its subsystem,
+never all of them up front, and never reference one with an `@`-path (§ Maintaining this
+documentation). The `Words` column is hand-written and checked; refresh it after a
+substantial edit.
 
 | File | Read this when... | Words |
 |---|---|---|
-| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary, the shared frontend components | ~2100 |
-| `docs/dev/ml-models.md` | Working on captioning models, the LaMa inpainter, `backend/ml/` loading, or a model unload — the model manager (VRAM/unload), model leases and `ModelInUseError`, model ID registry, device abstraction, EXIF-consistent opening, the ambient `HF_TOKEN` every loader relies on, TorchDynamo, the hash-pinned TorchScript weight download | ~4440 |
-| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, or LUT color grading — the two pipelines that rewrite pixels through a loaded model: the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, both replace/new-file surfaces | ~1810 |
-| `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, `DetectionJobRequest` scope, per-model overwrite scoping and its `inference_ok` gate, `mask_area`, watermark flag sync | ~2410 |
-| `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — tasks by model family, multi-phrase prompts, mask refine and merge geometry, the safetensors loader, triton and deferred work | ~1340 |
-| `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, thresholds, or the aesthetic model picker — the scorers and the columns they write, the failure contract when nothing can be measured, `aesthetic_model` and its two consumer guards, per-model coverage, the flag thresholds, e2e coverage, the scoring-model lifecycle | ~3430 |
+| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2100 |
+| `docs/dev/ml-models.md` | Working on captioning models, the LaMa inpainter, `backend/ml/` loading, or a model unload — model leases and `ModelInUseError`, EXIF-consistent opening, the ambient `HF_TOKEN` every loader relies on, TorchDynamo, the hash-pinned TorchScript weight download | ~4440 |
+| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, or LUT color grading — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant | ~1810 |
+| `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2410 |
+| `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
+| `docs/dev/scoring.md` | Working on `QualityPage`, quality flags, thresholds, or the aesthetic model picker — `aesthetic_model` and its two consumer guards, per-model coverage, the scoring-model lifecycle | ~3430 |
 | `docs/dev/scores-stale.md` | Working on the `scores_stale` bit, an in-place pixel rewrite, or the re-score clear predicate — `record_in_place` as single writer, `score_columns`, `_JOB_SCORE_COLUMNS`, the badge/chip/export surfaces | ~1700 |
-| `docs/dev/image-similarity.md` | Working on duplicate detection, pHash grouping, bulk duplicate resolution, style similarity, the style-run descriptor or the style-match meter — `find_duplicates_sync`'s two implementations, same-source duplicate groups, the duplicates panel's filter chips/bulk bar/batched resolve, the `embedding_type` modes and what each is measurably worth, all-layers DINOv2 scoring, `StyleSimilarityRun` and `GET /quality/style-similarity/{id}`, the percentile contract, the card meter and the detail block | ~6360 |
-| `docs/dev/gallery.md` | Working on `GalleryPage`, the subfolder sidebar, or a gallery filter — selection and shift-click ranges, select-all-matching-filters, subfolder create/rename/move/delete and the row context menu, expand/collapse and its persistence, filters, pagination, sorting | ~6005 |
-| `docs/dev/gallery-dnd.md` | Working on gallery drag & drop — manual `sort_order` ordering, dragging image cards onto subfolder rows, dragging a subfolder onto another, dnd-kit droppable/draggable id namespaces, collision detection, the drag overlay and reading the drop target | ~2890 |
-| `docs/dev/gallery-state.md` | Working on the `gallery-state-*` blob, persisting a gallery filter, or a debounced filter input — what the blob holds and the `useState`-initializer read, the PM-012 mount-bail and its restore-side seeding rule, the save effect and the unmount flush, Reset filters | ~1075 |
-| `docs/dev/gallery-nav.md` | Working on the detail view's arrows, `gallery-nav-*`, `injectNavId`/`paneGo`, or the live refresh while a job adds rows — the stored context and `navPageParams`/`navIdsParams`, the two boundary prefetch queries, `atEnd` and the post-delete re-derivation, the `injected` marker and `serverPageContext`, the live total | ~2720 |
-| `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — crop and crop+upscale, selection toggle, labels panel and hotkeys, caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
-| `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — naming and collisions, cross-dataset move and copy, folder import, rescan/sync, drag-`.txt`-onto-image | ~3500 |
-| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — the `backend/licenses.py` vocabulary, dataset→image inheritance, ingest capture precedence, cross-dataset materialization | ~3425 |
-| `docs/dev/captioning.md` | Working on `CaptioningPage`, the captioning model picker, LLM provider integration, or a caption sidecar write — the registry's `kind`/`description` and the endpoint filter, `_caption_backend` and the silent no-op, the empty-caption guard, post-processing (delimiter modes, refusal stripping, rename-on-caption), `ModelPicker` | ~3975 |
-| `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — kohya/ai-toolkit/plain, the shared export loop, stem uniquification, the filter table and preview, resize, loss masks, captions-only | ~2435 |
-| `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter — the manifest lifecycle and supersede rule, `_md_inline`/`_csv_cell` neutralisers, `license_filter` encoding, the Export page license panel | ~1325 |
-| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — the scope triple `_apply_bulk_filters`, caption find/replace/regex, bulk rename/delete/provenance/reorder, Renumber's two-phase rename | ~2180 |
-| `docs/dev/bulk-image-jobs.md` | Working on `CropToDetectionForm`, batch resize/crop, or the thumbnail rebuild — the bulk jobs that rewrite files: `detection_crop_rect`, the crop remap, `batch_inpaint` and the LaMa paint mask, `thumbnails_stale`, PM-013 loop ordering | ~3770 |
-| `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — the MiniLM tag embedder, analyze/apply jobs, whole-tag (non-substring) rewrite, preview/confirm UI | ~895 |
-| `docs/dev/video.md` | **Start here for anything video** — its § Where things live table routes from a code path to whichever of the eleven sibling docs owns it. Also covers the `Video` model and `videos/` layout, poster stems and collisions, the three ingest paths, the two `Dataset` columns | ~2850 |
-| `docs/dev/video-endpoints.md` | Working on the `/videos` router, video rename/delete, or range serving — the twelve routes, `GET /capabilities`' declaration order, `frames-summary`, the delete ordering and the containment gates | ~1330 |
-| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the arc's test index, the four `mp4_*` fixtures and their constraints, branches no fixture reaches, cv2/scenedetect in CI, the skip convention | ~1810 |
-| `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter — `VideoStrip` and its selection, `VideoDetailPage`, the extraction history panel, the `ImageDetailPage` lineage row and its gallery deep link | ~2835 |
-| `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — `ExtractFramesModal`'s two steps, the touched-flag guards, `ExtractProgressList`, `useVideoExtractJobs` and the extraction re-attach | ~2700 |
+| `docs/dev/image-similarity.md` | Working on duplicate detection, pHash grouping, bulk duplicate resolution, style similarity, the style-run descriptor or the style-match meter — `find_duplicates_sync`'s two implementations, the duplicates panel's filter chips/bulk bar/batched resolve, the `embedding_type` modes and what each is measurably worth, all-layers DINOv2 scoring, `StyleSimilarityRun` and `GET /quality/style-similarity/{id}`, the percentile contract, the card meter and the detail block | ~6360 |
+| `docs/dev/gallery.md` | Working on `GalleryPage`, the subfolder sidebar, or a gallery filter — select-all-matching-filters, subfolder create/rename/move/delete and the row context menu, expand/collapse and its persistence, pagination | ~6005 |
+| `docs/dev/gallery-dnd.md` | Working on gallery drag & drop — dragging image cards onto subfolder rows, dragging a subfolder onto another and reading the drop target | ~2890 |
+| `docs/dev/gallery-state.md` | Working on the `gallery-state-*` blob, persisting a gallery filter, or a debounced filter input — what the blob holds and the `useState`-initializer read, the PM-012 mount-bail and its restore-side seeding rule | ~1075 |
+| `docs/dev/gallery-nav.md` | Working on the detail view's arrows, `gallery-nav-*`, `injectNavId`/`paneGo`, or the live refresh while a job adds rows — the stored context and `navPageParams`/`navIdsParams`, the `injected` marker and `serverPageContext`, the live total | ~2720 |
+| `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
+| `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — drag-`.txt`-onto-image | ~3500 |
+| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
+| `docs/dev/captioning.md` | Working on `CaptioningPage`, the captioning model picker, LLM provider integration, or a caption sidecar write — the registry's `kind`/`description` and the endpoint filter, `_caption_backend` and the silent no-op, the empty-caption guard and post-processing (delimiter modes, refusal stripping, rename-on-caption) | ~3975 |
+| `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — the filter table and preview | ~2435 |
+| `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter | ~1325 |
+| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2180 |
+| `docs/dev/bulk-image-jobs.md` | Working on `CropToDetectionForm`, batch resize/crop, or the thumbnail rebuild — `detection_crop_rect`, the crop remap, `batch_inpaint` and the LaMa paint mask | ~3770 |
+| `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — analyze/apply jobs, whole-tag (non-substring) rewrite | ~895 |
+| `docs/dev/video.md` | **Start here for anything video** — its § Where things live table routes from a code path to whichever of the eleven sibling docs owns it. Also covers the two `Dataset` columns | ~2850 |
+| `docs/dev/video-endpoints.md` | Working on the `/videos` router, video rename/delete, or range serving — `GET /capabilities`' declaration order and `frames-summary` | ~1330 |
+| `docs/dev/video-tests.md` | Adding a video test, a cv2-gated test, or a CI media dependency — the four `mp4_*` fixtures and their constraints, branches no fixture reaches, cv2/scenedetect in CI, the skip convention | ~1810 |
+| `docs/dev/video-ui.md` | Working on a video browsing screen or the frame lineage filter | ~2835 |
+| `docs/dev/video-extract-ui.md` | Working on the extraction modal or its progress rows — the touched-flag guards | ~2700 |
 | `docs/dev/video-extract-controls.md` | Working on the crop/trim controls or any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract | ~1590 |
-| `docs/dev/video-decode.md` | Working on video probe/metadata, video duration, or poster frames — the cv2 probe ladder, `measure_duration_ms`, `isOpened()` as ingest gate, the poster fallback ladder | ~2465 |
-| `docs/dev/video-shots.md` | Working on probe sampling, shot detection, or frame rendering — the pass 1 pipeline in `video_extract.py`: the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` | ~2225 |
-| `docs/dev/video-extract.md` | Working on the extract/probe endpoints or the `video_extract` job — Pass 1's router half: crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage | ~3020 |
-| `docs/dev/video-reextract.md` | Working on re-extraction, `POST /videos/reextract`, or a replace-mode extension change — Pass 2 full-res: seek-by-timestamp, the `processing_history` skip rule, `render_at_timestamps` | ~3620 |
-| `docs/dev/video-reextract-ui.md` | Working on the re-extract dialog or what a finished `video_reextract` refreshes — `ReextractFramesForm`/`ReextractFramesModal`, the three entry points, the `jobStore` adoption re-attach, the `TopBar` invalidations | ~1225 |
-| `docs/dev/video-heuristics.md` | Tuning cropdetect, interlace/telecine detection, or which frame a shot yields — the pure-numpy `video_frames.py` judgement calls, sharpness, `pick_index` candidate rejection | ~1435 |
-| `docs/dev/versioning.md` | Working on `VersionsPage`, `dataset_busy`, or the versioning routes — the versioning-mode guard, branches and snapshot tables, the content-addressed object store, prune/GC, the frontend | ~2570 |
-| `docs/dev/versioning-service.md` | Working on `version_service.py` or any path that overwrites or deletes an image file in place — `protect_file_before_overwrite`/`mark_image_deleted_in_versions` and their call sites, `create_snapshot`, restore's four passes, diff | ~3855 |
-| `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, the duplicate toggle, or the folder picker — preview strip, license badge, sort/density/grouping, category rail, `ImportFolderModal`/`DirPickerModal` | ~3265 |
-| `docs/dev/statistics.md` | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` — stats queries and live polling, server-side aggregation, the validator-keyed cache, editable histograms | ~2690 |
+| `docs/dev/video-decode.md` | Working on video probe/metadata, video duration, or poster frames — the cv2 probe ladder, `isOpened()` as ingest gate, the poster fallback ladder | ~2465 |
+| `docs/dev/video-shots.md` | Working on probe sampling, shot detection, or frame rendering — the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` | ~2225 |
+| `docs/dev/video-extract.md` | Working on the extract/probe endpoints or the `video_extract` job — crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage | ~3020 |
+| `docs/dev/video-reextract.md` | Working on re-extraction, `POST /videos/reextract`, or a replace-mode extension change — seek-by-timestamp and the `processing_history` skip rule | ~3620 |
+| `docs/dev/video-reextract-ui.md` | Working on the re-extract dialog or what a finished `video_reextract` refreshes | ~1225 |
+| `docs/dev/video-heuristics.md` | Tuning cropdetect, interlace/telecine detection, or which frame a shot yields — `pick_index` candidate rejection | ~1435 |
+| `docs/dev/versioning.md` | Working on `VersionsPage`, `dataset_busy`, or the versioning routes — branches and snapshot tables, prune/GC | ~2570 |
+| `docs/dev/versioning-service.md` | Working on `version_service.py` or any path that overwrites or deletes an image file in place | ~3855 |
+| `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, the duplicate toggle, or the folder picker | ~3265 |
+| `docs/dev/statistics.md` | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` — the validator-keyed cache | ~2690 |
 | `docs/dev/labels.md` | Working on the `/labels` router, the label filters, the Settings Labels tab, or the detail-view hotkeys — the global vocabulary and `image_labels` join table, `label_service.py`, `POST /labels/assign`, the EXISTS-only filter block, the `VersionImageState.label_ids` mirror, the frontend surfaces, the per-image assign queue behind the hotkeys | ~4285 |
-| `docs/dev/image-filters.md` | Adding or changing a `GET /images/` filter param — the shared listing contract behind the gallery filter bar, stats click-through, frame lineage and the license filters, plus `GET /images/count` and `/images/ids` and the `ImageFilterParams` model all three share | ~1750 |
-| `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the `ThresholdSettings` singleton row and every tab it backs, the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
-| `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — the sidebar CPU/RAM/GPU meters and `/system`, job history + the JS error console, booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
-| `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the eight endpoints, the move/rename/delete DB-sync guards and their 409s, structural-folder refusals, path safety | ~3810 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — TanStack Query/Zustand conventions, the `SelectionToolbar` action modals, `uploadStore` | ~3255 |
-| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — SSE hooks, `jobStore`, job labels, job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
-| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, the split-view pane manager, `usePaneNavigate`, the six-site routed-page checklist | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration — the `constants/storage.ts` key registry, `loadPersisted`/`useDebouncedPersist`, the three persistence shapes | ~2250 |
-| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — CSS tokens, `@layer components`, `CrucibleMark` drift, `ConfirmDialog`, `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, middleware, SSE, the job queue or job cancellation — production frontend serving, the Host/Origin request guard (`request_guard.py`, `CRUCIBLE_ALLOWED_HOSTS`), app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the CI workflows, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~3655 |
+| `docs/dev/image-filters.md` | Adding or changing a `GET /images/` filter param — plus `GET /images/count` and `/images/ids` and the `ImageFilterParams` model all three share | ~1750 |
+| `docs/dev/settings.md` | Working on `SettingsPage`, a new app-wide setting or secret, `threshold_service.py` or `secrets_service.py` — the DB-over-`.env` secret precedence and the `HF_TOKEN` projection | ~2785 |
+| `docs/dev/workspace.md` | Working on hardware meters, `LogsPage`, or `BooruPage` — booru tag search, its per-request credential resolution and its TTL cache | ~1365 |
+| `docs/dev/file-browser.md` | Working on `FileBrowserPage` or any `/filesystem` endpoint — the move/rename/delete DB-sync guards and their 409s, structural-folder refusals | ~3810 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
+| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
+| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2250 |
+| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
+| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, middleware, SSE, the job queue or job cancellation — the Host/Origin request guard (`request_guard.py`, `CRUCIBLE_ALLOWED_HOSTS`), app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~3655 |
 | `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage, ruff and the migration drift check | ~320 |
-| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — WAL and per-connection pragmas, the FK inventory, virtual subfolders, the images/videos index inventories, UTC datetime serialization, the orphan-folder sweep, the drift check's `ACCEPTED_DRIFT`, `db_maintenance` rotation | ~1885 |
-| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — venv ML packages, the Node version check, `bind_host.py`/`CRUCIBLE_HOST`, PyTorch GPU auto-detection, SAM2/SAM3 install, lockfile reset | ~3140 |
-| `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, the `comfy_generate` job, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |
-| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — the one-shot generate endpoint, the durable `comfy_prompts` job, `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
-| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow`, the `ComfyUI-CrucibleBridge` extension (`extras/`), history-pull fallback, ComfyUI API constraints | ~710 |
+| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
+| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
+| `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |
+| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
+| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~470 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~420 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~245 |
 
 ### Code review & bug investigation
@@ -238,8 +240,7 @@ When reviewing code (any `/code-review` run or ad-hoc review request) or investi
 
 ## Maintaining this documentation
 
-Documentation is split across this file (always loaded) and the topic files above
-(loaded on demand). Three rules apply to every change; the full workflow — where a
+Three rules apply to every documentation change; the full workflow — where a
 new fact goes, split thresholds, cross-reference conventions, the end-of-branch doc
 audit, and the skill-proposal format — lives in the `doc-maintenance` skill. Invoke
 it before editing any doc.
@@ -256,5 +257,4 @@ it before editing any doc.
   wants a *split*, never compression — finish the task you were asked to do, record the
   seam in `docs/dev/pending-splits.md`, and leave the prose alone. The split itself is
   the **first** action of the next session that appends to that file, never the last
-  action of this one. Budgets count words, not lines, and any paragraph over 250 words
-  warns too — see the script's module docstring for why.
+  action of this one.

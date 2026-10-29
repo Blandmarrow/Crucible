@@ -24,7 +24,7 @@ handoff are in `docs/dev/roadmap.md`.
 | `dev` | Dev mode: backend on :8000 (hot reload) + Vite frontend on :5173 |
 
 Shutdown and Restart are the TopBar's power and circular-arrow buttons (or Ctrl+C): see
-`docs/workspace.md` § Restarting & shutting down, and `docs/dev/backend-infrastructure.md`
+`docs/workspace.md` § Restarting & shutting down, and `docs/dev/http-edge.md`
 § Server control endpoints for the routes behind them.
 
 ### Backend (always run from `backend/` with venv active)
@@ -209,7 +209,8 @@ substantial edit.
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2250 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py` lifecycle, middleware, SSE, the job queue or job cancellation — the Host/Origin request guard (`request_guard.py`, `CRUCIBLE_ALLOWED_HOSTS`), app-level exception handlers, the shutdown/restart loop and `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the SSE broadcaster (terminal events never dropped) and `GET /jobs` filters, stale-job cleanup and retention | ~3655 |
+| `docs/dev/backend-infrastructure.md` | Working on the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
+| `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler, or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline | ~1850 |
 | `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage, ruff and the migration drift check | ~320 |
 | `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
@@ -217,7 +218,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~900 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1000 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

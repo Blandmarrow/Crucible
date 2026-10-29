@@ -188,8 +188,8 @@ utilities → `docs/dev/shared-utilities.md`.
 - **Moves:** § Starting up (435 words, now including the LAN opt-in bullet that links
   README's § Access from other devices), § Restarting & shutting down (336) and § Database
   backups (246)
-- **New file:** docs/server.md (the user half of docs/dev/backend-infrastructure.md and
-  docs/dev/database.md)
+- **New file:** docs/server.md (the user half of docs/dev/http-edge.md and
+  docs/dev/database.md; the shutdown grace it describes is in docs/dev/backend-infrastructure.md)
 - **Why here:** those three are one subject, the server process's life: launching it,
   stopping or restarting it, and what it does to the database at startup. The rest of the
   page is the app's own furniture: dialogs, the top bar, meters, Split View, Logs, the File
@@ -203,19 +203,3 @@ utilities → `docs/dev/shared-utilities.md`.
   `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
   horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
   stays behind, so that link must become `workspace.md#logs`.
-
-## docs/dev/backend-infrastructure.md
-
-- **Moves:** § Request guard: Host and Origin, § Frontend serving (production), § App-level
-  exception handlers and § Server control endpoints → docs/dev/http-edge.md.
-- **New file:** docs/dev/http-edge.md (no user doc of its own; the user side of the LAN
-  opt-in is README.md and docs/workspace.md).
-- **Why here:** the file is two subsystems: what wraps every request (middleware, the SPA
-  catch-all, the exception handlers, the shutdown/restart routes) and the job queue
-  (shutdown grace, cancellation, SSE, retention, `GET /jobs`). It tripped the budget when the
-  request guard landed (GPT-007). The seam leaves ~1,720 words in the new file and ~1,940
-  behind, both under the ~2,100 target. § CI workflows stays; it is the odd one out either way.
-- **Watch for:** § Server control endpoints and § Shutdown: stopping the job queue point at
-  each other — the restart loop calls `JobQueue.stop()` — so both need a cross-file pointer.
-  PM-015 and PM-031 cite § Frontend serving and § Request guard; CLAUDE.md's Path traversal
-  bullet names the SPA catch-all; the Map row's trigger words split across the two rows.

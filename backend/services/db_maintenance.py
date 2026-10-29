@@ -35,7 +35,7 @@ BACKUP_DIR_NAME = "backups"
 # this a backend file save would integrity-check and copy the entire database — and
 # five saves would flush every pre-session backup out of a BACKUP_KEEP-slot rotation,
 # discarding the history exactly when the work has gone wrong. The restart button
-# (see docs/dev/backend-infrastructure.md § restart loop) has the same shape, slower.
+# (see docs/dev/http-edge.md § Server control endpoints) has the same shape, slower.
 BACKUP_MIN_AGE_SECONDS = 15 * 60
 
 

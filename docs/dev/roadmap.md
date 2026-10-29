@@ -25,11 +25,12 @@ restates its stages.
    folder move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md`
    split) and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
    `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
-   splits have landed. Next are the other over-budget dev docs, largest first:
-   `backend-infrastructure.md`, then `image-files.md`, each with a seam in
-   `pending-splits.md` (re-measure first, and check each seam leaves both halves under 60%
-   of budget — the captioning seam as recorded would have left ~93%, the file-browser one
-   ~80%, the versioning-service one ~65%, and none of the three went as recorded).
+   splits, and the two-way `docs/dev/backend-infrastructure.md` split, have landed. Next is
+   the last over-budget dev doc, `image-files.md`, with a seam in `pending-splits.md`
+   (re-measure first, and check the seam leaves both halves under 60% of budget — the
+   captioning seam as recorded would have left ~93%, the file-browser one ~80%, the
+   versioning-service one ~65%, and none of the three went as recorded; the
+   backend-infrastructure one held). Its seam says to add `##` headings first.
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -97,6 +98,11 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       `docs/dev/versioning.md` split eight ways into `docs/dev/versioning/` (guards, routes,
       storage, hooks, restore, mirrors, frontend, tests) behind the `docs/dev/versioning.md`
       hub, and two Map rows became one.
+- [x] `docs/dev/backend-infrastructure.md` (2026-10-29): the recorded seam, which held.
+      What wraps every request (the request guard, SPA serving, the app-level exception
+      handlers, the server control endpoints and restart loop) moved to
+      `docs/dev/http-edge.md`; the job queue, SSE, cancellation and CI stay. Two flat
+      siblings, no hub.
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README

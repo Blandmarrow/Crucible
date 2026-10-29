@@ -28,7 +28,7 @@ the order they landed:
 | `docs/dev/gpt-review/infra.md` | 007 step 3: a shared token for LAN mode. Deferred by decision. |
 
 Delete the folder once that item is either built or explicitly dropped. Any durable rationale
-goes into `docs/dev/backend-infrastructure.md` first. The folder is registered in
+goes into `docs/dev/http-edge.md` first. The folder is registered in
 `TRANSIENT_DIRS` in `scripts/check_docs.py`: files here need no Documentation Map row and
 carry no word budget, but their links and paths are checked.
 

@@ -2,7 +2,7 @@
 
 This file covers what keeps a loaded model resident and how its weights leave: the explicit `unload`/`evict_all` methods and the scoped unload endpoints, the inert VRAM budget setting `_evict_lru` ignores, the counted leases that stop a running job's model being released under it (`ModelInUseError`), and `_release_to_cpu`, which frees a dict-shaped entry tenant by tenant. Read it before touching a consumer's hold on a model or any unload path.
 
-Loading, `HF_TOKEN` and the device module are `docs/dev/ml-models.md`; what each model ID's entry holds is `docs/dev/model-registry.md`; the app-level handler that maps `ModelInUseError` to 409 is `docs/dev/backend-infrastructure.md`.
+Loading, `HF_TOKEN` and the device module are `docs/dev/ml-models.md`; what each model ID's entry holds is `docs/dev/model-registry.md`; the app-level handler that maps `ModelInUseError` to 409 is `docs/dev/http-edge.md`.
 
 ### Eviction and unloads
 

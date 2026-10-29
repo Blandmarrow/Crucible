@@ -160,7 +160,7 @@ The name is provably free because of a stronger invariant the codebase already m
 **within a dataset, no two images share a stem, in any extension.** Every image-name-picking
 site goes through `unique_filename_with_thumb`, which rejects a candidate whose *stem* is
 occupied — including the two rescan paths that adopt names off disk rather than picking them
-(`docs/dev/image-files.md` § A stem-keyed derived artifact needs a collision guard at every writer). So if this frame owns `clip_s0001_00.jpg`, no other row can
+(`docs/dev/image-import.md` § A stem-keyed derived artifact needs a collision guard at every writer). So if this frame owns `clip_s0001_00.jpg`, no other row can
 own `clip_s0001_00.png`. No `unique_filename_with_thumb` call is needed here, no
 `disk_exclude`, and no exception to the `occupied_thumb_stems` rule.
 

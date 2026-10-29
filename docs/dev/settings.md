@@ -75,7 +75,7 @@ rather than in an effect so the swatch never paints the old colour for a frame.
 Immediate-save preferences:
 - Delete-confirmation default button (`cancel` / `confirm`). Stored under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
 - Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
-- **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/image-files.md` § Importing captions & folder rescan.
+- **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/image-import.md` § Folder rescan / sync.
 
 ## Quality Thresholds tab
 
@@ -131,5 +131,5 @@ Folding these into `/thresholds` was rejected beyond the caching argument: `GET 
 
 Three details of that row are load-bearing rather than cosmetic. The input is associated with its label by `useId()` + `htmlFor` (the `ProvenanceFields` pattern — see `docs/dev/shared-utilities.md`) and the root carries `role="group"` + `aria-label={label}`, so `frontend/e2e/settings.spec.ts` can scope to one row by accessible name; all three rows carry a "Save" button with the same name, and the alternative is walking parent nodes. `autoComplete` is `"new-password"`, not `"off"` — Chrome ignores `off` on a password input and offers to save the key to the browser's password manager. And **busy is per row**: one `useMutation` drives all three, so a bare `isPending` greys out the two rows the user did not touch. `SettingsPage` derives the in-flight field from `secretsMutation.variables` with the same `Object.keys(body)[0]` idiom `onSuccess` uses — every call sends exactly one key, and no new state is needed.
 
-Gelbooru's two credentials have no env projection — `routers/booru.py` resolves them per request via `resolve_secret`; see `docs/dev/workspace.md` § Booru tag lookup.
+Gelbooru's two credentials have no env projection — `routers/booru.py` resolves them per request via `resolve_secret`; see `docs/dev/workspace.md` § Booru tag lookup page.
 

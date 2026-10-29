@@ -17,7 +17,7 @@ Two properties are load-bearing here:
   upload does — a typed name is taken as typed or refused.
 - **The pure extension change still passes.** `a.jpg` → `a.png` leaves the stem
   alone, so the thumbnail and the sidecar stay exactly where they are and no
-  uniquifier is involved. That is the explicit carve-out in docs/dev/image-files.md.
+  uniquifier is involved. That is the explicit carve-out in docs/dev/image-import.md.
 
 The `Video` arm deliberately does none of this to its poster: nothing re-derives
 a poster path — every consumer reads `Video.poster_path` — so a poster whose stem

@@ -146,8 +146,8 @@ the two disagree, and a set built from filenames alone would let a later upload 
 `clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives only
 the *proposal*; for an existing row read `Video.poster_path` and never re-derive it
 (`docs/dev/shared-utilities.md`). Moving the poster rather than the file is the opposite of
-image rescan's fix for the same bug — see `docs/dev/image-files.md` § A stem-keyed derived artifact needs a collision guard at every writer,
-PM-007 and § Importing captions & folder rescan there.
+image rescan's fix for the same bug — see `docs/dev/image-import.md` § A stem-keyed derived artifact needs a collision guard at every writer,
+PM-007 and § Folder rescan / sync there.
 
 ## The model
 

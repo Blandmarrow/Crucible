@@ -46,20 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## docs/dev/image-files.md
-
-- **Moves:** § Importing captions & folder rescan (the three import paths, the rescan
-  reconciliation and its rename-vs-adopt asymmetry), together with § A stem-keyed derived
-  artifact needs a collision guard at every writer, which it explains
-- **New file:** docs/dev/image-import.md (mirrors the import and sync half of the user-facing
-  dataset docs)
-- **Why here:** the file is three `###` sections and no `##`, and the last is most of its
-  length: naming and cross-dataset moves are one subsystem, bringing files in from disk is
-  another. Add `##` headings when next editing it so the per-section breakdown works
-- **Watch for:** `docs/dev/video.md` § Poster stems and collisions, `docs/dev/file-browser.md`
-  § Path safety and `docs/dev/video/reextract.md` cite the stem-collision section by heading;
-  CLAUDE.md's stem-keyed pointer names it too
-
 ## docs/scoring.md
 
 - **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows

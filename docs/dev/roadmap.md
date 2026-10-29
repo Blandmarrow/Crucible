@@ -25,12 +25,14 @@ restates its stages.
    folder move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md`
    split) and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
    `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
-   splits, and the two-way `docs/dev/backend-infrastructure.md` split, have landed. Next is
-   the last over-budget dev doc, `image-files.md`, with a seam in `pending-splits.md`
-   (re-measure first, and check the seam leaves both halves under 60% of budget — the
-   captioning seam as recorded would have left ~93%, the file-browser one ~80%, the
-   versioning-service one ~65%, and none of the three went as recorded; the
-   backend-infrastructure one held). Its seam says to add `##` headings first.
+   splits, and the two-way `docs/dev/backend-infrastructure.md` and `docs/dev/image-files.md`
+   splits, have landed, so no dev doc is over budget. Next are the user docs, largest
+   first, each with a seam in `pending-splits.md`: `docs/gallery.md` (3,227 of 2,500), then
+   `docs/workspace.md` (2,696), then `README.md` (2,998) with § Features last. Re-measure
+   first, and check the seam leaves both halves under 60% of budget — the captioning seam
+   as recorded would have left ~93%, the file-browser one ~80%, the versioning-service one
+   ~65%, and none of the three went as recorded; the backend-infrastructure and
+   image-files ones held.
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -103,8 +105,12 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       handlers, the server control endpoints and restart loop) moved to
       `docs/dev/http-edge.md`; the job queue, SSE, cancellation and CI stay. Two flat
       siblings, no hub.
-- [ ] The other dev docs, largest first. A family that grows past about three files gets
-      a hub as it splits.
+- [x] `docs/dev/image-files.md` (2026-10-29): the recorded seam, which held, after adding
+      `##` headings. Folder import, rescan/sync, standalone caption import, the drag-`.txt`
+      shortcut and the stem-keyed collision rule moved to `docs/dev/image-import.md`; naming,
+      cross-dataset moves and copies, and deletes stay. Two flat siblings, no hub.
+- [x] The other dev docs, largest first (2026-10-29): none is over budget after the
+      image-files split.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README
       § Features last.
 - [x] `pending-splits.md` itself (2026-10-29): under budget at ~3,340 once the ml-models

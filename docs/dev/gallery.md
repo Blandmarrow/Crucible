@@ -5,7 +5,7 @@ virtual subfolders, filtering and sorting the grid, dragging cards and folders a
 state the page keeps between visits and hands to the detail view's arrows. This file is the
 family's entry point: the tables below route from a code path to whichever file in
 `docs/dev/gallery/` owns it. The detail view itself is `docs/dev/image-detail.md`; file naming,
-imports and rescan are `docs/dev/image-files.md`; the `GET /images/` param contract every
+imports and rescan are `docs/dev/image-import.md`; the `GET /images/` param contract every
 filter sends is `docs/dev/image-filters.md`.
 
 ## The family

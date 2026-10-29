@@ -23,12 +23,12 @@ restates its stages.
    is done or the user says otherwise.
 2. The budget raise, the Quality and Gallery hubs, the whole video family (the folder
    move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md` split)
-   and the three-way `docs/dev/labels.md` and `docs/dev/ml-models.md` splits have landed.
-   Next are the other over-budget dev docs, largest first: `docs/dev/captioning.md`
-   (~3,980), `bulk-image-jobs.md`, `file-browser.md`, `versioning-service.md`,
-   `backend-infrastructure.md`, `image-files.md`, each with a seam in `pending-splits.md`
-   (re-measure first). `pending-splits.md` itself dropped under budget (~3,340) with the
-   ml-models entry gone.
+   and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md` and
+   `docs/dev/captioning.md` splits have landed. Next are the other over-budget dev docs,
+   largest first: `docs/dev/bulk-image-jobs.md` (~3,950), `file-browser.md`,
+   `versioning-service.md`, `backend-infrastructure.md`, `image-files.md`, each with a seam
+   in `pending-splits.md` (re-measure first, and check each seam leaves both halves under
+   60% of budget — the captioning seam as recorded would have left ~93%).
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -77,6 +77,10 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       `docs/dev/image-processing-models.md`; eviction, unloads, leases and releasing moved
       to `docs/dev/model-residency.md`; the ID registry and per-model loader notes moved to
       `docs/dev/model-registry.md`. Three flat siblings, no hub.
+- [x] `docs/dev/captioning.md` (2026-10-29): the recorded provider seam plus the picker.
+      Providers moved to `docs/dev/llm-providers.md` and the model picker to
+      `docs/dev/caption-model-picker.md`; the job half stays at ~2,480 (71%) as one
+      subsystem. Three flat siblings, no hub.
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README

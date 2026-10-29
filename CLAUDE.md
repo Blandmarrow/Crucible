@@ -181,7 +181,9 @@ substantial edit.
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or caption import — drag-`.txt`-onto-image | ~3500 |
 | `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
-| `docs/dev/captioning.md` | Working on `CaptioningPage`, the captioning model picker, LLM provider integration, or a caption sidecar write — the registry's `kind`/`description` and the endpoint filter, `_caption_backend` and the silent no-op, the empty-caption guard and post-processing (delimiter modes, refusal stripping, rename-on-caption) | ~3975 |
+| `docs/dev/captioning.md` | Working on a caption job, `CaptioningPage`'s progress panel, or a caption sidecar write — delimiter modes, refusal stripping, rename-on-caption, `failure_summary` and `result_data` | ~2500 |
+| `docs/dev/caption-model-picker.md` | Working on a captioning model picker or the registry's `kind`/`description` — the silent no-op, why `modelType` is the wrong gate | ~900 |
+| `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~800 |
 | `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — the filter table and preview | ~2435 |
 | `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter | ~1325 |
 | `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2180 |

@@ -91,7 +91,7 @@ Version control mode radio (`off | manual | auto`) plus branch snapshot behavior
 
 ## LLM Providers tab
 
-Manage OpenAI-compatible provider configurations (see `docs/dev/captioning.md` § OpenAI-compatible providers). Add / edit / delete providers. Name and Base URL are required; changes are saved immediately per-mutation (no page-level Save). Provider mutations also invalidate `["captioning-models"]` so the model picker on CaptioningPage reflects changes immediately.
+Manage OpenAI-compatible provider configurations (see `docs/dev/llm-providers.md`). Add / edit / delete providers. Name and Base URL are required; changes are saved immediately per-mutation (no page-level Save). Provider mutations also invalidate `["captioning-models"]` so the model picker on CaptioningPage reflects changes immediately.
 
 ## API Keys tab
 

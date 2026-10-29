@@ -3,14 +3,14 @@
 The two endpoints that turn a video into shot-segmented `Image` rows, and the background job
 behind one of them: `routers/videos.py` exposes `POST /videos/{id}/probe` and
 `POST /videos/extract`. The pipeline they drive — sampling, shot detection, rendering — is
-`services/video_extract.py` and is documented in `docs/dev/video-shots.md`. The `Video` model,
+`services/video_extract.py` and is documented in `docs/dev/video/shots.md`. The `Video` model,
 the storage layout and the poster-stem rules stay in `docs/dev/video.md`; the rest of the
-`/videos` surface is in `docs/dev/video-endpoints.md`, and `docs/dev/video-tests.md` indexes
+`/videos` surface is in `docs/dev/video/endpoints.md`, and `docs/dev/video/tests.md` indexes
 the tests for all of it.
 
 **This file is pass 1 only.** Everything here writes cheap triage frames so a long file can
 be curated quickly; turning the survivors into full-resolution training data is pass 2, in
-`docs/dev/video-reextract.md`. The two share `_write_frame` (`docs/dev/video-shots.md`
+`docs/dev/video/reextract.md`. The two share `_write_frame` (`docs/dev/video/shots.md`
 § Rendering a shot) and nothing else — pass 2 re-seeks a recorded timestamp and never detects
 a shot or picks a frame.
 
@@ -18,7 +18,7 @@ a shot or picks a frame.
 
 `POST /videos/{id}/probe` is a **plain request, not a job**. A twelve-sample probe measures
 at 4.4 s on a 1080p HEVC source — decode-dominated, and *not* the ~7.5 ms per seek this was
-once costed at (`docs/dev/video-shots.md` § Probe sampling) — so it is a few seconds of
+once costed at (`docs/dev/video/shots.md` § Probe sampling) — so it is a few seconds of
 request-path cost, and a job would add a row, an SSE subscription and a re-attach path to
 something the user is already waiting on with the modal open. It runs `probe_samples` through `run_in_executor` inside an
 `asyncio.wait_for(25 s)` → 504, with a `ValueError` out of `probe_samples` (a container that
@@ -277,4 +277,4 @@ default (see `backend/tests/test_versioning_restore.py`'s `foreign_keys=True` en
 All three are exposed on `ImageOut`, and `source_video_id` alone on `ImageListItem` — the
 gallery card needs no timestamp or shot index, and that payload is paid per row on every
 page. Both schemas are `from_attributes` over a `select(Image)`, so no construction site
-changed. `ImageDetailPage` renders them as a lineage line (`docs/dev/video-ui.md`).
+changed. `ImageDetailPage` renders them as a lineage line (`docs/dev/video/ui.md`).

@@ -69,18 +69,18 @@ staleness sweep while still recording the seam.
   with it. § Frontend describes the page as a whole and stays, but its two PM-021 paragraphs
   (the `released` prop and the `<video>` unmount) are about the rename and delete mutations —
   decide with the file open whether they travel. § Path safety stays behind but is cited by CLAUDE.md § Key invariants and by
-  `docs/dev/video-endpoints.md` § Serving bytes; § `POST /delete` is cited from
+  `docs/dev/video/endpoints.md` § Serving bytes; § `POST /delete` is cited from
   `docs/dev/postmortems/PM-014-...` and `docs/dev/versioning-service.md`, and § `POST /move`
   from PM-011. Grep `file-browser.md` across `docs/` and `CLAUDE.md` — several of those are
   `§`-level pointers the checker cannot verify. The user doc it mirrors is
   `docs/workspace.md#file-browser`, not a docs/file-browser.md, so the naming convention
   gives no name for free.
 
-## docs/dev/video-reextract.md
+## docs/dev/video/reextract.md
 
 - **Moves:** § Target resolution — one function, two callers (873 words) and § The contract
   (444), i.e. the whole request-side half
-- **New file:** docs/dev/video-reextract-endpoints.md
+- **New file:** docs/dev/video/reextract-endpoints.md
 - **Why here:** the file is two subjects wearing one name. *Deciding which frames to
   re-extract* is `_resolve_reextract_targets` and the two endpoints that share it — pure
   request/response, no filesystem — and it is what a reader arrives for when they are
@@ -92,10 +92,12 @@ staleness sweep while still recording the seam.
   the material that pushed the file over budget landed in § The video_reextract job and
   § The extension change both.
 - **Watch for:** the two halves cross-reference each other constantly — § The video_reextract
-  job cites "§ What gets skipped, and why" and "§ The extension change" by name, and § The
-  contract is what `docs/dev/video-reextract-ui.md` reads against. `docs/dev/video.md`'s
-  § Where things live points `backend/routers/videos.py` and `backend/schemas/video.py` at
-  this file for pass 2; both rows need splitting the same way. PM-021's write-up and
+  job cites "§ Target resolution — one function, two callers" and "§ The extension change"
+  by name, and § The contract is what `docs/dev/video/reextract-ui.md` reads against. The
+  new file goes in `docs/dev/video/` and takes a row in `docs/dev/video.md`'s § The family
+  table, not a Map row. That hub's § Where things live points `backend/routers/videos.py`
+  and `backend/schemas/video.py` at this file for pass 2; both rows need splitting the same
+  way. PM-021's write-up and
   CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
   in the job half.
 
@@ -110,7 +112,7 @@ staleness sweep while still recording the seam.
   length: naming and cross-dataset moves are one subsystem, bringing files in from disk is
   another. Add `##` headings when next editing it so the per-section breakdown works
 - **Watch for:** `docs/dev/video.md` § Poster stems and collisions, `docs/dev/file-browser.md`
-  § Path safety and `docs/dev/video-reextract.md` cite the stem-collision section by heading;
+  § Path safety and `docs/dev/video/reextract.md` cite the stem-collision section by heading;
   CLAUDE.md's stem-keyed pointer names it too
 
 ## docs/dev/labels.md
@@ -211,7 +213,7 @@ staleness sweep while still recording the seam.
   `docs/features.md`'s index row — a new file needs its own README Docs-table row and a
   `docs/features.md` row, not prose. Several of those links point at the *page*, not a
   section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
-  docs mirroring this page are `docs/dev/video-extract.md` and `docs/dev/video-extract-ui.md`,
+  docs mirroring this page are `docs/dev/video/extract.md` and `docs/dev/video/extract-ui.md`,
   which is where the mirror-the-user-doc naming convention points.
 
 `docs/dev/gallery.md` → the Gallery hub and its `docs/dev/gallery/` folder was executed on

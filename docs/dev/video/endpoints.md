@@ -3,26 +3,26 @@
 The `/videos` request surface: `backend/routers/videos.py`'s twelve registered routes, what
 each answers, and the ordering and containment rules the destructive ones follow. Four of the
 twelve are documented elsewhere because they belong to the extraction arc rather than to this
-router's own surface — `POST /{id}/probe` and `POST /extract` in `docs/dev/video-extract.md`,
-`POST /reextract/preview` and `POST /reextract` in `docs/dev/video-reextract.md`. The `Video`
+router's own surface — `POST /{id}/probe` and `POST /extract` in `docs/dev/video/extract.md`,
+`POST /reextract/preview` and `POST /reextract` in `docs/dev/video/reextract.md`. The `Video`
 model, the `videos/` storage layout, the poster-stem rules and the three ingest paths are in
-`docs/dev/video.md`; the decode work behind `GET /{id}/poster` is in `docs/dev/video-decode.md`;
-the screens that call all of this are in `docs/dev/video-ui.md`. Tests are indexed in
-`docs/dev/video-tests.md`.
+`docs/dev/video.md`; the decode work behind `GET /{id}/poster` is in `docs/dev/video/decode.md`;
+the screens that call all of this are in `docs/dev/video/ui.md`. Tests are indexed in
+`docs/dev/video/tests.md`.
 
 ## The twelve routes
 
 `backend/routers/videos.py`, prefix `/videos`, all twelve registered routes: `GET /` (by
 `dataset_id`), `GET /capabilities`, `GET /{id}`,
 `GET /{id}/file`, `GET /{id}/poster` (the lazy backfill and its retry backoff are in
-`docs/dev/video-decode.md` § Poster frames), `GET /{id}/frames-summary`,
+`docs/dev/video/decode.md` § Poster frames), `GET /{id}/frames-summary`,
 `POST /{id}/probe` and `POST /extract` (both
-in `docs/dev/video-extract.md` § The endpoints),
-`POST /reextract/preview` and `POST /reextract` (pass 2 — `docs/dev/video-reextract.md`),
+in `docs/dev/video/extract.md` § The endpoints),
+`POST /reextract/preview` and `POST /reextract` (pass 2 — `docs/dev/video/reextract.md`),
 `PATCH /{id}/rename`, `DELETE /{id}`.
 `GET /capabilities` reports what this install can decode independently of any one video, and
 is **declared above `GET /{video_id}`** on purpose: FastAPI matches in declaration order, so
-below it the literal segment would be read as a video id and 404 (`docs/dev/video-extract.md`
+below it the literal segment would be read as a video id and 404 (`docs/dev/video/extract.md`
 § The endpoints, where the route and its `["extract-capabilities"]` consumer are documented).
 Both file responses go through `utils.safe_dataset_path`, promoted out of
 `routers/images.py` so the video routes are not importing a private helper from another
@@ -60,7 +60,7 @@ panel, the delete-confirm count, and the modal's "Replace (deletes N previous fr
 label. It answers a different question from `GET /images/`'s `source_video_id` filter, which
 shipped later: a group here is *where an extraction landed* and stops being useful the
 moment a frame is moved out, while the filter finds every frame a video ever produced
-wherever curation has since filed it (`docs/dev/video-ui.md`).
+wherever curation has since filed it (`docs/dev/video/ui.md`).
 
 ## Serving bytes, and the file browser preview
 
@@ -111,12 +111,12 @@ its range request open to resume a seek. The helpers retry briefly and then rais
 A third site in this router is converted and is **not** a 409: pass 2's in-place frame
 overwrite (`utils.replace_retrying` inside `_run_reextraction::_rewrite`). A job cannot
 answer a status code, so there the lock is caught, counted as one `failed` frame with
-`is_fault=True`, and the run carries on — see `docs/dev/video-reextract.md`. Three further
+`is_fault=True`, and the run carries on — see `docs/dev/video/reextract.md`. Three further
 sites in the video code are deliberately **exempt**; `docs/dev/shared-utilities.md` § Locked-file mutation: which sites are converted
 names them and why.
 POSIX unlinks an open file happily, so no test here reaches the failing branch without the
 monkeypatch in `test_video_locked_files_http.py`; the frontend half — unmounting the
-`<video>` before the request goes out — is in `docs/dev/video-ui.md`, and the whole class is
+`<video>` before the request goes out — is in `docs/dev/video/ui.md`, and the whole class is
 `docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`.
 
 The two columns part company here. A locked `file_path` propagates, and because that

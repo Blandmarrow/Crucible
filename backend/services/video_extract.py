@@ -13,12 +13,12 @@ path — the overwhelming majority of sources — never spawns a subprocess.
 `imageio_ffmpeg` earns its place for exactly one thing: `bwdif`, which OpenCV
 cannot express.
 
-**Why this is not in `video_service.py`.** `docs/dev/video-decode.md` once
+**Why this is not in `video_service.py`.** `docs/dev/video/decode.md` once
 promised extraction would join the probe and the poster there; it should not. The
 judgement calls live in `video_frames.py` and need no video at all, this module
 needs mp4 fixtures and an optional dependency, and `video_service` is already
 covered by its own tests. One module would make the fast tests hostage to the
-slow ones. See `docs/dev/video-shots.md`.
+slow ones. See `docs/dev/video/shots.md`.
 
 **RSS discipline** runs through every loop below. A decoded 4K frame is 24.9 MB
 and its float32 luma plane another 33 MB; twelve frames are ~300 MB. Nothing here
@@ -856,7 +856,7 @@ def render_at_timestamps(
     timestamp — see its docstring. Frames extracted before that was fixed carry a
     timestamp one frame period early and were deliberately not migrated, so
     re-extracting one returns the frame just before the picture on disk
-    (`docs/dev/video-reextract.md` § The contract).
+    (`docs/dev/video/reextract.md` § The contract).
 
     Geometry replays verbatim from the stored `Video.crop_*` / `Video.deinterlace`
     the extract endpoint normalized; trims are irrelevant to a direct seek.

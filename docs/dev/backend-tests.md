@@ -2,13 +2,13 @@
 
 **Status: living.**
 
-This file covers the conventions for writing or fixing a backend pytest test: which harness a test drives, what CI installs and how to add a dependency, the skip gates for optional dependencies (cv2, torch, symlinks), how `api_env` treats foreign keys, and the coverage, lint and migration-drift commands. The command line that runs the suite is in CLAUDE.md § Commands; the pre-merge gate table is in CLAUDE.md § Verification. The cv2 skip convention and the video fixtures live in `docs/dev/video-tests.md`.
+This file covers the conventions for writing or fixing a backend pytest test: which harness a test drives, what CI installs and how to add a dependency, the skip gates for optional dependencies (cv2, torch, symlinks), how `api_env` treats foreign keys, and the coverage, lint and migration-drift commands. The command line that runs the suite is in CLAUDE.md § Commands; the pre-merge gate table is in CLAUDE.md § Verification. The cv2 skip convention and the video fixtures live in `docs/dev/video/tests.md`.
 
 ## Which harness
 
 Request-level tests drive `backend.main.app` over httpx (see
 `backend/tests/conftest.py`); everything else is service-level. Anything needing a
-decodable video is gated on cv2 — see `docs/dev/video-tests.md` (§ cv2 in CI, and the skip
+decodable video is gated on cv2 — see `docs/dev/video/tests.md` (§ cv2 in CI, and the skip
 convention) before adding a test or a CI dependency there.
 
 ## What CI installs

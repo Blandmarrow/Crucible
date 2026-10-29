@@ -8,7 +8,7 @@ bars are, whether the source is interlaced, which of five candidate frames to
 keep — lives here and is testable in milliseconds against synthetic arrays.
 Merging the two would make the fast tests hostage to the slow ones, and these
 heuristics are the part most likely to need tuning. Every rule below is written
-up in `docs/dev/video-heuristics.md`.
+up in `docs/dev/video/heuristics.md`.
 
 Coordinate convention: a crop rect is `(x, y, w, h)`, matching the
 `Video.crop_x/crop_y/crop_w/crop_h` column order. Note that PySceneDetect's
@@ -226,7 +226,8 @@ def clamp_crop(rect: CropRect | None, width: int, height: int) -> CropRect | Non
     The first call is the only guard there is: scenedetect 0.7.1 only logs
     "Warning: crop ends outside of video boundary." and carries on, and its
     `crop` setter raises solely for negative or non-int coordinates. See
-    `docs/dev/video-shots.md` § Cost, honestly.
+    `docs/dev/video/shots.md` § Shot detection (PySceneDetect 0.7.1), the paragraph
+    after "Cost, honestly".
     """
     if rect is None or width <= 0 or height <= 0:
         return None

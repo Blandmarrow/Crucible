@@ -120,5 +120,5 @@ anything fallible before the commit?", never "can this file be locked right now?
 MITIGATED — the video routes and pass 2's frame overwrite are converted; `routers/images.py`
 and `routers/filesystem.py` still call `Path.unlink`/`shutil.move` directly and carry the
 same exposure. The client half is unimplemented for re-extraction, where the exposure is
-only the teardown race (see `docs/dev/video-reextract-ui.md`).
+only the teardown race (see `docs/dev/video/reextract-ui.md`).
 Last reviewed for staleness: 2026-08-01.

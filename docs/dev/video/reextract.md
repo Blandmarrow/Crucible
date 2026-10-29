@@ -1,13 +1,13 @@
 # Pass 2: full-resolution re-extraction
 
-The second half of the two-pass design. Pass 1 (`docs/dev/video-extract.md`) writes cheap
+The second half of the two-pass design. Pass 1 (`docs/dev/video/extract.md`) writes cheap
 1024px triage JPEGs so a 900-shot episode can be scored, deduped and eyeballed quickly;
 pass 2 turns the frames that *survived* curation into training data at native resolution.
 `POST /videos/reextract` and `/videos/reextract/preview` in `routers/videos.py` drive it and
 `video_extract.render_at_timestamps` decodes for it. The UI half —
 `ReextractFramesForm`/`ReextractFramesModal`, its three entry points, the job adoption and
-the `TopBar` invalidations — is in `docs/dev/video-reextract-ui.md`, mirroring how
-`docs/dev/video-extract-ui.md` stands to `docs/dev/video-extract.md`.
+the `TopBar` invalidations — is in `docs/dev/video/reextract-ui.md`, mirroring how
+`docs/dev/video/extract-ui.md` stands to `docs/dev/video/extract.md`.
 
 Nothing here needs `scenedetect`. The pick already happened in pass 1, and pass 2 never
 re-detects shots, never re-picks a frame, and never touches `_shot_windows`,
@@ -34,7 +34,7 @@ fps), the offset is `1000/fps` rather than a constant and is undefined for VFR, 
 old frames; it is not a seek bug.
 
 **Geometry replays verbatim.** `Video.crop_x/y/w/h` and `Video.deinterlace` hold the
-*normalized* values the extract endpoint stored (`docs/dev/video-extract.md` § The
+*normalized* values the extract endpoint stored (`docs/dev/video/extract.md` § The
 endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.
 
 **Quality scores are left alone but no longer left silent.** Nothing is recomputed, matching
@@ -166,7 +166,7 @@ reports a missing package as a decode fault — and a disk preflight through the
 each swap. The estimator is shared with pass 1, which used to budget a flat 300 KB per frame
 — ~60× low at `long_edge=8192`, and pass 1's preflight runs *before* replace mode's delete,
 so the underestimate let a doomed job start and destroy the previous frames on the way down
-(`docs/dev/video-extract.md` § step 4).
+(`docs/dev/video/extract.md` § The `video_extract` job, step 4).
 
 ## The `video_reextract` job
 
@@ -176,7 +176,7 @@ One job per video, which is what lets each label name its video
 — it pluralises, so no label contains the literal `frame(s)`; the `[:60]` matters, `label`
 is a `String(200)`). `_make_reextract_runner` copies `_make_extract_runner`'s `_run_with_stats`
 wrapper verbatim, including its three load-bearing details — see
-`docs/dev/video-extract.md` § The `video_extract` job.
+`docs/dev/video/extract.md` § The `video_extract` job.
 
 **Per frame, and this ordering is better than the upscale path's on purpose:**
 
@@ -185,7 +185,7 @@ wrapper verbatim, including its three load-bearing details — see
 3. `get_image_info(tmp)`. `{}` means the file will not re-open — unlink the temp, count
    failed, carry on. **The original is still intact**, unlike upscale and LUT, which
    overwrite first and discover afterwards.
-4. The live `processing_history` re-check (§ What gets skipped, and why), then
+4. The live `processing_history` re-check (§ Target resolution — one function, two callers: the ladder runs twice), then
    `version_service.protect_file_before_overwrite` and an immediate `commit()` — mandatory
    per that function's docstring, and the eighth *router* call site
    (`docs/dev/versioning-service.md`).
@@ -336,7 +336,7 @@ between the render and the swap leaving no temp behind, cancel, the 507 and 503 
 in-flight dedupe in both directions, route shadowing and the SSE invariants (including
 `done` reaching `N`). `backend/tests/test_lut_replace_extension_http.py` covers the LUT
 half. `frontend/e2e/video-extract.spec.ts` covers the dialog
-(`docs/dev/video-reextract-ui.md`) in **three** specs, one per behaviour that has bitten:
+(`docs/dev/video/reextract-ui.md`) in **three** specs, one per behaviour that has bitten:
 *reports what it can and cannot do* opens it from the gallery toolbar and asserts the preview
 accounting, the long-edge bound and that it is a real dialog (Escape closes, focus returns to
 the opener); *waits rather than crashing on an offline tab* pins the error → no data → content

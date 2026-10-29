@@ -11,7 +11,7 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `CONFIRM_DEFAULT_KEY` | `localStorage`, `"cancel" \| "confirm"` | `ConfirmDialog` (reads on mount), `SettingsPage` (reads/writes on toggle) | The user's delete-confirmation default-button preference |
 | `BRANCH_SNAPSHOT_KEY` | `localStorage`, `"ask" \| "auto"` | Read by `BranchSelector` before checkout and branch creation; written by `SettingsPage` | Branch/checkout snapshot behavior |
 | `VERSIONS_BRANCH_KEY` | `sessionStorage` prefix (`"versions-branch"`); append `-${datasetId}` | Written by `VersionsPage.handleBranchSelect` and `SidebarVersionPanel`'s `onSelect` after checkout; read by `VersionsPage` on mount | Last-browsed branch on `VersionsPage` |
-| `VIDEO_STRIP_COLLAPSED_KEY` | `localStorage` prefix (`"gallery-videos-collapsed"`); append `-${datasetId}` via `datasetScopedKey()` | Read and written by `components/gallery/VideoStrip.tsx` | Whether the gallery's video strip is collapsed, per dataset (see `docs/dev/video-ui.md`) |
+| `VIDEO_STRIP_COLLAPSED_KEY` | `localStorage` prefix (`"gallery-videos-collapsed"`); append `-${datasetId}` via `datasetScopedKey()` | Read and written by `components/gallery/VideoStrip.tsx` | Whether the gallery's video strip is collapsed, per dataset (see `docs/dev/video/ui.md`) |
 | `GALLERY_PAGE_SIZE_KEY` | `localStorage`, `25 \| 50 \| 100 \| 200` | `GalleryPage`, `ImageDetailPage` (prefetch limit and end-of-page detection), `SettingsPage` | Images per page; read via `getGalleryPageSize()` (below) |
 | `SUBFOLDER_RENAME_KEY` | `localStorage`, `"on" \| "off"` | Read by `SelectionToolbar` at mutation time; written by `SettingsPage` | Subfolder auto-rename preference |
 | `GALLERY_CHECKBOX_SIZE_KEY` | `localStorage`, px | **Never read or written directly by a component** — owned by `uiPrefsStore`, which hydrates via `getGalleryCheckboxSize()` and writes back on set | Gallery selection-checkbox edge length. `clampGalleryCheckboxSize(v)` bounds it to `GALLERY_CHECKBOX_SIZE_MIN`/`MAX` (14/32) on both read and write, so a hand-edited entry can't produce a checkbox that covers the thumbnail; `GALLERY_CHECKBOX_SIZE_DEFAULT` is 18 |
@@ -48,7 +48,7 @@ because a hand-off needs two ends:
   deleting the video.
   Pass 2's re-extract dialog deliberately has **no** counterpart key: it emits per frame, so it
   re-attaches by adopting live jobs from `jobStore` instead. See
-  `docs/dev/video-extract-ui.md` and `docs/dev/video-reextract-ui.md`.
+  `docs/dev/video/extract-ui.md` and `docs/dev/video/reextract-ui.md`.
 - `STATS_VIS_KEY` (`"stats-visibility-v1"`, `pages/StatsPage.tsx`) — owned end-to-end by the
   `useStatsVisibility` hook and never read elsewhere. See `docs/dev/statistics.md`.
 - `` `stats-hist-edges-{metric}-${datasetId}` `` (`pages/StatsPage.tsx`) — one per editable

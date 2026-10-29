@@ -117,7 +117,7 @@ one, and reading the thumbnail's colour back to prove it was cut from the file t
 written.
 
 See `docs/dev/image-processing-models.md` § Upscaling and § LUT grading, `docs/dev/image-detail.md` for the
-crop 409, and `docs/dev/video-reextract.md` § The extension change.
+crop 409, and `docs/dev/video/reextract.md` § The extension change.
 
 ### Status & date
 

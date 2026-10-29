@@ -8,7 +8,7 @@ import { createDatasetViaApi, uploadVideoViaApi, uploadViaApi } from './helpers'
 // one at a time. The strip keeps its selection local (mixing video ids into the
 // image-typed `selectionStore` would corrupt SelectionToolbar's cross-dataset
 // breakdown), which is exactly why the two Delete bindings have to agree on who
-// wins — see docs/dev/video-ui.md.
+// wins — see docs/dev/video/ui.md.
 
 test('videos are deleted from the strip by button and by the Delete key', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-vdel-${Date.now()}`)

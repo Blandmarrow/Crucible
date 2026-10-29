@@ -3,11 +3,11 @@
 Covers `ReextractFramesForm` and the `ReextractFramesModal` that wraps it, the three entry
 points that open it, the `jobStore` adoption that lets a reopened dialog re-attach to a
 running job, and the `TopBar` invalidations a finished `video_reextract` fires. This is the
-UI counterpart of `docs/dev/video-reextract.md`, which documents the contract, the
+UI counterpart of `docs/dev/video/reextract.md`, which documents the contract, the
 `/videos/reextract` endpoints, `render_at_timestamps`, the `video_reextract` job and the
 extension change these controls sit in front of; the § Tests section there indexes this
 half's e2e coverage too. Pass 1's own modal stands in exactly this relation to its backend —
-`docs/dev/video-extract-ui.md` and `docs/dev/video-extract.md` — and the two UIs are
+`docs/dev/video/extract-ui.md` and `docs/dev/video/extract.md` — and the two UIs are
 deliberately unlike each other in the two places noted below. The user-facing account of
 re-extraction is `docs/video.md`.
 
@@ -40,7 +40,7 @@ before anything is started. Two shapes here are load-bearing:
 - **Adopted into state, not derived.** The completion effect reads `activeJobs.get(jobId)` and
   needs the id to *stay* tracked once the job goes terminal; a `trackedIds` list filtered on
   non-terminal would drop it at the exact moment the toast, the invalidations and `onSuccess`
-  are owed — `ExtractProgressList`'s vanish-on-complete failure (`docs/dev/video-extract-ui.md`).
+  are owed — `ExtractProgressList`'s vanish-on-complete failure (`docs/dev/video/extract-ui.md`).
   There is no loop either: the completion effect only removes terminal ids and adoption only
   adds non-terminal ones.
 - **No persisted key**, unlike pass 1's `` `video-extract-job-${videoId}` ``. Pass 2 emits per
@@ -62,7 +62,7 @@ optional `headerExtra` slot — `SelectionToolbar`'s dataset breakdown, `VideoDe
 hook must not be called conditionally and every entry point renders behind a flag;
 `useModalBehavior`'s docstring rules out a *generic* wrapper, so a feature-specific one is
 the sanctioned shape. Backdrop-click closing stays off, matching `ExtractFramesModal`
-(`docs/dev/video-extract-ui.md`) — the sibling on the same page — because a stray overlay
+(`docs/dev/video/extract-ui.md`) — the sibling on the same page — because a stray overlay
 click should not dismiss a dialog with a run in flight. Escape and a header ✕ *do* close at
 any time, and the Cancel button becomes `Close` rather than going disabled while running:
 all three are safe now that the form re-attaches. Escape used to be the only exit mid-run,
@@ -93,12 +93,12 @@ starts — but an `<img>` consumes its response body to completion, so the handl
 the time the picture is on screen, unlike a `<video preload="metadata">` that holds its range
 request open indefinitely. The remaining exposure is the teardown race alone, which is
 exactly what the server-side backoff in `replace_retrying` covers
-(`docs/dev/video-reextract.md`). Do not "fix" this by unmounting the image: it would blank
+(`docs/dev/video/reextract.md`). Do not "fix" this by unmounting the image: it would blank
 the pane for the whole run and buy nothing.
 
 ## What TopBar invalidates
 
-`ExtractFramesModal` and `useVideoExtractJobs` (`docs/dev/video-extract-ui.md`) are **not**
+`ExtractFramesModal` and `useVideoExtractJobs` (`docs/dev/video/extract-ui.md`) are **not**
 involved: that hook filters `job_type === "video_extract"` and carries the persisted-id
 machinery pass 2 does without, per the asymmetry above. `TopBar` carries `video_reextract` in
 both `LIVE_IMAGE_JOB_TYPES` and `IMAGE_MODIFYING_JOB_TYPES`, and on a terminal event

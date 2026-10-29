@@ -5,10 +5,10 @@ Covers the three pointer/geometry controls step 1 of the extraction modal is bui
 that pins their contracts. These are read when a control misbehaves: a rect that will not
 snap, a handle that jumps on press, a typed number that arrives as something else. The
 modal's own lifecycle (its two steps, the probe query, `ExtractProgressList`, the job
-re-attach) is in `docs/dev/video-extract-ui.md`, and the endpoints that receive what these
+re-attach) is in `docs/dev/video/extract-ui.md`, and the endpoints that receive what these
 controls produce — `clamp_crop`, the trim semantics, the batch-wide write — are in
-`docs/dev/video-extract.md`. `frontend/src/utils/duration.ts::formatDuration(ms)`, which
-`TrimBar` labels its handles with, is in `docs/dev/video-ui.md`. `NumberField`'s one-line
+`docs/dev/video/extract.md`. `frontend/src/utils/duration.ts::formatDuration(ms)`, which
+`TrimBar` labels its handles with, is in `docs/dev/video/ui.md`. `NumberField`'s one-line
 entry in the shared-component index is in `docs/dev/frontend-core.md`; the full contract is
 here.
 
@@ -56,7 +56,7 @@ none.
 **`pointerdown` does not move the handle.** The pointer handlers sit on the two handles
 only, so there is no jump-to-click affordance a move-on-press would serve; all it did was
 snap the handle to wherever inside its 10 px hit box the press landed, which flipped
-`trimTouched` (`docs/dev/video-extract-ui.md` § ExtractFramesModal, the no-op guard) and
+`trimTouched` (`docs/dev/video/extract-ui.md` § ExtractFramesModal, the no-op guard) and
 minted a fresh probe query key, costing an
 8-sample re-probe for a stray click. It takes focus explicitly instead — `preventDefault`
 suppresses the focus shift, so without that call a mouse user could never reach the arrow
@@ -129,7 +129,7 @@ that is not a lie. Five details are load-bearing:
 fix, the `NULL` wipe, the arrow-key floor, the derived-`cropTouched` round trip (*narrowing
 the crop and putting it back sends no crop* — narrow the rect, restore it, assert no `crop`
 key), and the replace label counting only the subfolder the job will delete
-(`docs/dev/video-extract-ui.md` § Step 2). All but the arrow-key floor read the submitted
+(`docs/dev/video/extract-ui.md` § ExtractFramesModal, **Step 2**). All but the arrow-key floor read the submitted
 request body or the rendered label; the floor reads `aria-valuenow`. Three things there are
 deliberate:
 values are typed with `pressSequentially`, since `fill()` dispatches one input event

@@ -66,7 +66,7 @@ export function browserPlaybackHint(
  *
  *  `el.error` is a MediaError; the four codes are the whole vocabulary.
  *  MEDIA_ERR_ABORTED is **null on purpose** — unmounting the player to release
- *  the file handle before a delete or rename (see docs/dev/video-ui.md) produces
+ *  the file handle before a delete or rename (see docs/dev/video/ui.md) produces
  *  exactly that, and an overlay there would accuse the app of a failure it
  *  performed itself.
  */

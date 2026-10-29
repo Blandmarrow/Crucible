@@ -21,17 +21,17 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. The budget raise and the Quality and Gallery hubs have landed. Next is the video folder:
-   a pure move, no split. `docs/dev/quality.md` and `docs/dev/gallery.md` are the worked
-   examples (a lean hub with a § Where things live table, the family in a `SPLIT_INDEXES`
-   folder, one Map row sized `~N (+ details)`); `docs/dev/video.md` already has the routing
-   table, so it mostly needs its eleven siblings moved under it and their Map rows folded.
-3. Moving files changes their paths, so before editing hand a scout the old paths to
-   inventory across `docs/`, `CLAUDE.md`, `backend/`, `frontend/`, `scripts/` and `.claude/`,
-   and re-run the sweep after. Keep the repoint pass off `__pycache__`. `§` pointers are not
-   checked by `check_docs.py`, so verify each one against the new file's headings by hand;
-   historical notes in `pending-splits.md` name old paths in inline code and FAIL the
-   checker until they are rewritten.
+2. The budget raise, the Quality and Gallery hubs and the video folder move have landed.
+   Next is the `docs/dev/video/reextract.md` split, using its seam in `pending-splits.md`
+   (re-measure first). It is a split *inside* a hubbed family, so the new
+   reextract-endpoints.md goes in `docs/dev/video/` and gets a row in `docs/dev/video.md`'s § The family
+   table rather than a Map row. The hub's § Where things live rows for
+   `backend/routers/videos.py` and `backend/schemas/video.py` need splitting the same way.
+3. A split moves sections, so `§` pointers that named a section in the same file now
+   point across files. `check_docs.py` does not check them, so grep `§` in every touched
+   file and check each against the destination's headings by hand. The video folder move
+   found eight such pointers already broken, most naming a bold run-in rather than a
+   heading. Point at the owning heading and name the run-in after it.
 
 ## Landed
 
@@ -61,9 +61,10 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
 - [x] Gallery hub (2026-10-29): the old gallery.md (6,017 words) split four ways and moved,
       with the dnd, state and nav files, into `docs/dev/gallery/` behind the
       `docs/dev/gallery.md` hub.
-- [ ] Video folder: move `docs/dev/video.md`'s eleven detail files into a folder with
-      `video.md` as its index, and fold their Map rows into its one row. No split; the
-      family's two queued seams (`video-reextract.md`, `docs/video.md`) run afterwards.
+- [x] Video folder (2026-10-29): `docs/dev/video.md`'s eleven detail files moved, without a
+      split, into `docs/dev/video/` behind the hub, and twelve Map rows became one.
+- [ ] The video family's two queued seams: `docs/dev/video/reextract.md`, then the user
+      doc `docs/video.md`.
 - [ ] `docs/dev/labels.md` (both seams), then `docs/dev/ml-models.md` (both seams).
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.

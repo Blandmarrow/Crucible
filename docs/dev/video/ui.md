@@ -4,15 +4,15 @@ Covers every screen that shows or acts on a video: the gallery's `VideoStrip` an
 selection, `VideoDetailPage`, the extraction history panel, and the frame-lineage line on
 `ImageDetailPage` with the gallery filter it deep-links into. The two-step
 `ExtractFramesModal` those screens open — with the `useVideoExtractJobs` re-attach hook —
-is in `docs/dev/video-extract-ui.md`, and its `CropOverlay`/`TrimBar` controls are in
-`docs/dev/video-extract-controls.md`. The backend
+is in `docs/dev/video/extract-ui.md`, and its `CropOverlay`/`TrimBar` controls are in
+`docs/dev/video/extract-controls.md`. The backend
 behind all of it is in `docs/dev/video.md` (model, storage, ingest),
-`docs/dev/video-endpoints.md` (the `/videos` routes) and
-`docs/dev/video-extract.md` (the probe/extract endpoints and the `video_extract` job).
+`docs/dev/video/endpoints.md` (the `/videos` routes) and
+`docs/dev/video/extract.md` (the probe/extract endpoints and the `video_extract` job).
 
 `ReextractFramesForm` and its three entry points — two of which sit on surfaces described
 below, the lineage line and the extraction history panel — are in
-`docs/dev/video-reextract-ui.md`, with pass 2's backend in `docs/dev/video-reextract.md`.
+`docs/dev/video/reextract-ui.md`, with pass 2's backend in `docs/dev/video/reextract.md`.
 
 `frontend/src/utils/duration.ts::formatDuration(ms)` → `"4:12"`, `"1:02:33"`, `"—"` for
 NULL. Every video surface formats through it, because NULL is *unknown* and must never
@@ -67,7 +67,7 @@ confirm would need one request per video to say the same sentence. The mutation 
 sequential loop over `videosApi.delete` — there is no bulk route, a strip-sized selection is
 a handful of clips, and each `DELETE` runs its own `refresh_stats`. It never rejects: both
 halves come back, successes are counted into one toast and the first failure's
-`apiErrorDetail` is shown verbatim so a 409 from a locked file (`docs/dev/video-endpoints.md`
+`apiErrorDetail` is shown verbatim so a 409 from a locked file (`docs/dev/video/endpoints.md`
 § Locked files) reaches the user with its wording intact. What failed stays selected. The
 invalidations mirror `VideoDetailPage`'s `deleteMutation` exactly — `["videos", datasetId]`,
 `["datasets"]`, `["dataset-stats", datasetId]`, `["images", datasetId]`, `["image"]`,
@@ -247,7 +247,7 @@ controls preload="metadata">` in its preview panel for a `media_kind === "video"
 and skips the image-only `["fs-image-meta", path]` query for it.
 
 `frontend/e2e/video-extract.spec.ts` drives the whole path — strip, checkbox, detail view,
-both modal steps (`docs/dev/video-extract-ui.md`). Its mp4 fixture is inlined as base64 in
+both modal steps (`docs/dev/video/extract-ui.md`). Its mp4 fixture is inlined as base64 in
 `e2e/helpers.ts::mp4Buffer()`, following `pngBuffer`'s precedent. Most cases stop short of
 submitting, the same "never click the expensive button" convention as `quality.spec.ts` — among
 them the subfolder `<select>`'s option set changing with the mode (via

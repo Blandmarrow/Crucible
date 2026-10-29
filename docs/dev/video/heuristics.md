@@ -7,14 +7,14 @@ number or a rect out, no decoder — which is why it gets its own module and its
 That is the whole point of the boundary: every rule below is testable in milliseconds against
 synthetic arrays (`test_video_frames.py`), which is the only way heuristics like these get
 tested at all. Everything that needs cv2, PySceneDetect or ffmpeg — sampling, shot detection
-and rendering — is in `docs/dev/video-shots.md`, and the endpoints and job that drive it are
-in `docs/dev/video-extract.md`.
+and rendering — is in `docs/dev/video/shots.md`, and the endpoints and job that drive it are
+in `docs/dev/video/extract.md`.
 
 A crop rect is `(x, y, w, h)`, matching the `Video.crop_*` column order — note that
 PySceneDetect's `SceneManager.crop` is *inclusive corners* `(x0, y0, x1, y1)` instead, and
 `video_extract` converts at that boundary. `clamp_crop` is the guard every *stored or applied* rect
 passes through, and it is called twice on the way to a pixel: once against the header
-dimensions, once per frame against `frame.shape` — see `docs/dev/video-shots.md`
+dimensions, once per frame against `frame.shape` — see `docs/dev/video/shots.md`
 § Rendering a shot. It is not the sole implementation of either rule, though: the detector
 applies the same even-snap and the same no-op rule itself in `crop_rect_from_profiles`,
 before `clamp_crop` is ever reached, so a tuning change to either rule has two sites.

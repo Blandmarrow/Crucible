@@ -162,6 +162,7 @@ SPLIT_INDEXES = {
     # Family hubs (decision 2): the hub links every detail file in its folder.
     "docs/dev/quality": "docs/dev/quality.md",
     "docs/dev/gallery": "docs/dev/gallery.md",
+    "docs/dev/video": "docs/dev/video.md",
 }
 
 # docs/dev/*.md files that are not topic files and need no Documentation Map row

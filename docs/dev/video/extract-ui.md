@@ -3,16 +3,16 @@
 Covers the two-step `ExtractFramesModal` — its source/probe step, its extract step, the
 `ExtractProgressList` rows — and `useVideoExtractJobs`, the hook that re-attaches a
 reopened window to a running job. The pointer/geometry controls step 1 is built from
-(`CropOverlay`, `TrimBar`, `NumberField`) are in `docs/dev/video-extract-controls.md`.
+(`CropOverlay`, `TrimBar`, `NumberField`) are in `docs/dev/video/extract-controls.md`.
 This is the UI counterpart
-of `docs/dev/video-extract.md`, which documents the probe/extract endpoints and the
+of `docs/dev/video/extract.md`, which documents the probe/extract endpoints and the
 `video_extract` job behind these controls; read the two together, since almost every
 decision here mirrors one there. The surfaces the modal's two entry points live on — the
-gallery's `VideoStrip` and `VideoDetailPage` — are in `docs/dev/video-ui.md`, along with
+gallery's `VideoStrip` and `VideoDetailPage` — are in `docs/dev/video/ui.md`, along with
 `frontend/src/utils/duration.ts::formatDuration(ms)` and the
 `frontend/e2e/video-extract.spec.ts` coverage note in its § Elsewhere. Pass 2 and its
-`ReextractFramesForm` are in `docs/dev/video-reextract.md` and
-`docs/dev/video-reextract-ui.md`. The re-attach pattern the hook
+`ReextractFramesForm` are in `docs/dev/video/reextract.md` and
+`docs/dev/video/reextract-ui.md`. The re-attach pattern the hook
 inherits from — `GeneratePromptsModal` — is in `docs/dev/comfy-prompts.md`.
 
 ## ExtractFramesModal
@@ -102,7 +102,7 @@ so frames in older subfolders survive; `total` promised "deletes 100" and remove
 mode hides the subfolder control, so this count is the only blast-radius signal on screen.
 Pinned by *the replace label counts only the subfolder it will delete*. `capabilities.shot_detection ===
 false` shows a standing warning that frames will be sampled at fixed intervals — the
-uniform-fallback disclosure is a user-facing contract (`docs/dev/video-shots.md`), and the
+uniform-fallback disclosure is a user-facing contract (`docs/dev/video/shots.md`), and the
 job announces it over SSE too. The *Add to…* label is batch-aware: `framesSummary` is the
 primary's history while the router resolves `previous` per video, so a batch names no folder.
 

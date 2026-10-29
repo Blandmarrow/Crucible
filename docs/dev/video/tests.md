@@ -2,12 +2,12 @@
 
 The arc-wide index of which module pins which behaviour, and the rules that keep the suite
 runnable both with and without OpenCV. It spans the subject matter of every other video doc —
-`docs/dev/video.md` (model, storage, ingest), `docs/dev/video-endpoints.md`,
-`docs/dev/video-decode.md`, `docs/dev/video-shots.md`, `docs/dev/video-heuristics.md`,
-`docs/dev/video-extract.md` and `docs/dev/video-reextract.md` — which is why it is an index of
-its own rather than a section inside any one of them. `docs/dev/video-reextract.md` § Tests is
+`docs/dev/video.md` (model, storage, ingest), `docs/dev/video/endpoints.md`,
+`docs/dev/video/decode.md`, `docs/dev/video/shots.md`, `docs/dev/video/heuristics.md`,
+`docs/dev/video/extract.md` and `docs/dev/video/reextract.md` — which is why it is an index of
+its own rather than a section inside any one of them. `docs/dev/video/reextract.md` § Tests is
 the one remaining test index still living in its own file and is the next candidate to land
-here. (`docs/dev/video-extract.md` has no coverage section to move — its test references are
+here. (`docs/dev/video/extract.md` has no coverage section to move — its test references are
 inline.)
 
 ## The modules
@@ -24,9 +24,9 @@ classes, the poster move, the busy 409). `test_http_smoke_crud.py` covers
 `/filesystem/preview` for both media kinds, and `test_http_smoke_jobs.py` pins the image
 side of the same stem-collision rule.
 
-Extraction (`docs/dev/video-shots.md`, `docs/dev/video-extract.md`) adds four more.
+Extraction (`docs/dev/video/shots.md`, `docs/dev/video/extract.md`) adds four more.
 `test_video_frames.py` is pure numpy and needs no fixture at all — cropdetect, combing,
-telecine, sharpness, candidate rejection, all documented in `docs/dev/video-heuristics.md`. `test_video_extract.py` is service level, with
+telecine, sharpness, candidate rejection, all documented in `docs/dev/video/heuristics.md`. `test_video_extract.py` is service level, with
 `scenedetect` skipped rather than required, and covers `measure_duration_ms` (including a
 non-seekable stub), probe sampling and its caps, the telecine pass and its 25 fps control,
 shot boundaries, the empty-list trap, both
@@ -53,7 +53,7 @@ against `len(utils._LOCK_RETRY_DELAYS) + 1` rather than the literal 5, so tuning
 is not a test failure.
 
 `test_frames_from_video_filter.py` pins the `GET /images/?source_video_id=` gallery filter
-(`docs/dev/video-ui.md` § the lineage row) on the two properties that are its reason to
+(`docs/dev/video/ui.md` § Frame lineage and the gallery deep link) on the two properties that are its reason to
 exist: the filter survives a frame **moved out of its extraction subfolder**, because the
 subfolder stops being a handle the moment curation moves a file while the lineage column does
 not, and the FK's `ondelete="SET NULL"` drops a deleted video's frames from the filter
@@ -155,7 +155,7 @@ out: no test needs the real `bwdif` path, and both 503 tests monkeypatch `capabi
 **Guard placement decides error vs skip.** A `pytestmark = skipif(...)` is consulted only
 *after* the module body has run, so it cannot protect a module-level constant like
 `SHOTS_MP4 = mp4_shots_bytes()` — those three modules (`test_video_extract_http.py`,
-`test_video_reextract_http.py`, indexed in `docs/dev/video-reextract.md`, and
+`test_video_reextract_http.py`, indexed in `docs/dev/video/reextract.md`, and
 `test_frames_from_video_filter.py`) need `pytest.importorskip("cv2")` on the line
 immediately before it. Modules that only touch cv2
 inside tests (`mp4_bytes` imports it lazily) take the same one-liner after the imports.

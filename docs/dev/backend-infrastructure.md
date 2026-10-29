@@ -89,7 +89,7 @@ before a PR exists. Its first two steps parse `manage.ps1` under Windows PowerSh
 PowerShell 7 (`Parser::ParseFile`, failing on any error); nothing else in CI can, since the Linux
 runners have no PowerShell. Those two steps sit under the same `continue-on-error` and do not
 run the script. Tests that need a real symlink carry `conftest.needs_symlinks`
-(`docs/dev/video-tests.md` § cv2 in CI, and the skip convention).
+(`docs/dev/video/tests.md` § cv2 in CI, and the skip convention).
 
 ### SSE progress
 

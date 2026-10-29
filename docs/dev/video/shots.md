@@ -2,14 +2,14 @@
 
 The extraction pipeline itself: how `services/video_extract.py` samples a file for the probe
 modal, cuts it into shots with PySceneDetect, and renders each shot into image files. The two
-endpoints and the background job that drive all of this are in `docs/dev/video-extract.md`;
+endpoints and the background job that drive all of this are in `docs/dev/video/extract.md`;
 the pure-numpy judgement calls this module feeds frames to — cropdetect, combing, telecine,
 sharpness, the candidate pick — live in `services/video_frames.py` and are documented in
-`docs/dev/video-heuristics.md`. The container-header probe, the duration measurement and the
-poster frame are a different module entirely, in `docs/dev/video-decode.md`. Pass 2
-(`docs/dev/video-reextract.md`) shares `_write_frame` below and nothing else.
+`docs/dev/video/heuristics.md`. The container-header probe, the duration measurement and the
+poster frame are a different module entirely, in `docs/dev/video/decode.md`. Pass 2
+(`docs/dev/video/reextract.md`) shares `_write_frame` below and nothing else.
 
-**Why the modules split this way.** `docs/dev/video-decode.md` once promised extraction would
+**Why the modules split this way.** `docs/dev/video/decode.md` once promised extraction would
 join the probe and the poster in `video_service.py`. It should not, and the reason is the test
 suite. `video_frames.py` needs no video — it takes an `ndarray` and returns a number or a rect
 — so every judgement call the feature stands on is testable in milliseconds against synthetic
@@ -29,10 +29,10 @@ what is installed, but the two **degrade differently**: a missing `imageio-ffmpe
 request with actionable text (`require_deinterlace` raises `ExtractionUnavailable`, which
 two router sites map), while a missing `scenedetect` never 503s at all — `detect_shots`
 catches the import failure and returns the uniform sampler, so the job runs to completion
-with `method="uniform"` and says so over SSE (§ Then the useless-single-shot case).
+with `method="uniform"` and says so over SSE (§ Shot detection (PySceneDetect 0.7.1), "Then the useless-single-shot case").
 
 Every capture *this module opens* goes through `video_service.apply_orientation` for the
-same reason the probe and the poster do — see `docs/dev/video-decode.md` § Container
+same reason the probe and the poster do — see `docs/dev/video/decode.md` § Container
 rotation. The one it does not open is scenedetect's, via `open_video(..., backend="opencv")`;
 that capture is autorotated because scenedetect 0.7.1's own opencv backend sets
 `CAP_PROP_ORIENTATION_AUTO` in `VideoStreamCv2.__init__`. It is a dependency guarantee
@@ -41,7 +41,7 @@ rather than one of ours, so re-check it on a scenedetect upgrade.
 ## Probe sampling
 
 `video_extract.probe_samples` backs `POST /videos/{id}/probe`
-(`docs/dev/video-endpoints.md`). Sample positions are inset by half a step from both ends of the trimmed span,
+(`docs/dev/video/endpoints.md`). Sample positions are inset by half a step from both ends of the trimmed span,
 because frame 0 is very often a black leader and the final frame very often a fade.
 
 **Peak RSS is the load-bearing detail.** A decoded 4K frame is 24.9 MB and its float32 luma
@@ -65,7 +65,7 @@ That is the real margin `PROBE_TIMEOUT_SECONDS` (25.0, in `routers/videos.py`) h
 Resampling averages adjacent rows together, which is precisely the field structure
 `combing_ratio` measures — analysing a resized frame would turn every interlaced source
 progressive. What the two measure, and what the probe does with the verdicts, is
-`docs/dev/video-heuristics.md`.
+`docs/dev/video/heuristics.md`.
 
 Caps are enforced server-side, not only by Pydantic: `PROBE_MAX_SAMPLES` (12) and
 `PROBE_MAX_PAYLOAD_BYTES` (2 MB, at which the loop breaks and sets `truncated`). Previews
@@ -144,7 +144,7 @@ treats as a cancel.
 The SSE line those four share is fixed text ("No shot boundaries were found, so frames were
 sampled at fixed intervals (N windows)"), so for three of the four it states a reason that is
 not the reason. Carrying a `reason` out of `detect_shots` is the fix; the message itself is
-`docs/dev/video-extract.md`'s territory.
+`docs/dev/video/extract.md`'s territory.
 
 **The no-duration variant of that fallback is one *zero-width* window**, so every pick in it
 resolves to the same position: `frames_per_shot > 1` would write N byte-identical files
@@ -188,7 +188,7 @@ candidate and releasing it; the second re-fetches only the winner. The single-pa
 alternative holds every candidate in memory — five 4K frames is 125 MB, and both
 `frames_per_shot` and `candidates` are user-settable — and cannot be short-circuited,
 because `pick_index`'s luma-outlier rejection is defined against the median of the whole
-candidate set (`docs/dev/video-heuristics.md`) and so can change the winner retroactively.
+candidate set (`docs/dev/video/heuristics.md`) and so can change the winner retroactively.
 The second pass is one extra seek-and-decode for the whole window (~7.5 ms on a light codec,
 ~300 ms on 10-bit HEVC) against the ~90 ms of numpy *every* candidate costs at 4K, so it is
 cheap either way. Pass 1 computes each candidate's luma plane once with `vf.luma` and hands

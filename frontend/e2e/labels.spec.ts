@@ -145,6 +145,45 @@ test('create a label, bulk-apply it, filter by it, then toggle it off with the h
   await expect(vocab).toHaveCount(0)
 })
 
+// A double-tap sends remove + add back to back. They used to go out on separate
+// connections at once, and when the server applied the add first the label ended
+// up removed while the chip said attached — the same key then *added* on the
+// next press. Asked of the server, not the screen, which flips optimistically.
+//
+// Seeded over the API with its own key, `k`, and deleted at the end: the other
+// tests here bind `f` through Settings and share this DB.
+test('a fast double-tap of a label hotkey leaves the label attached', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `labels-tap-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+  // The helper returns the filename; the assign endpoint wants the id, and skips
+  // an unknown one without an error.
+  const [{ id: imgId }] = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+
+  const name = `tap-${Date.now()}`
+  const created = await request.post('/api/v1/labels/', { data: { name, hotkey: 'k' } })
+  expect(created.status(), await created.text()).toBe(201)
+  const label = await created.json()
+  const assigned = await request.post('/api/v1/labels/assign', { data: { image_ids: [imgId], add: [label.id] } })
+  expect(assigned.status(), await assigned.text()).toBe(200)
+  const labelIds = async () => (await (await request.get(`/api/v1/images/${imgId}`)).json()).label_ids
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('gallery-tile').first().click()
+  const labelBlock = page.getByRole('group', { name: 'Labels' })
+  await expect(labelBlock.getByText(name)).toBeVisible()
+
+  await page.keyboard.press('k')
+  await page.keyboard.press('k')
+
+  await expect.poll(labelIds).toEqual([label.id])
+  await expect(labelBlock.getByText(name)).toBeVisible()
+  // Settled, not just eventually right: no queued assign is still waiting to flip it.
+  await page.waitForTimeout(500)
+  expect(await labelIds()).toEqual([label.id])
+
+  await request.delete(`/api/v1/labels/${label.id}`)
+})
+
 // The guard that makes the hotkeys usable at all: the caption editor is a
 // <textarea> on this page, so without `isTextEntryTarget` typing a caption would
 // label the image. Worth its own journey because it is the failure that would

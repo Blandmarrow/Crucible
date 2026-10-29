@@ -225,6 +225,15 @@ staleness sweep while still recording the seam.
   convention gives no name for free — label-consumers.md is a proposal, not a constraint.
   Grep `labels.md` across `docs/` and `CLAUDE.md` before and after, and note that
   `docs/labels.md` matches the same grep.
+- **Take both seams at once (noted 2026-10-29).** The file is now ~4,300 words, and the
+  growth since this entry was written landed on the *staying* side: § Frontend is ~1,110
+  words after the hotkey assign-queue paragraphs. The first seam alone would leave
+  ~2,830, so move § Frontend to docs/dev/labels-ui.md in the same pass — that lands
+  roughly 1,770 / 1,470 / 1,160. Doing so breaks the pointer the entry above calls out:
+  `docs/dev/gallery.md` and `docs/dev/persistence.md` both cite "§ Frontend" for the six
+  persistence edits, so give that part its own heading in labels-ui.md and repoint both,
+  and check the bullet at `docs/dev/gallery.md` § Gallery filters against the 250-word
+  paragraph limit afterwards, since a longer pointer can push it over.
 
 ## docs/scoring.md
 

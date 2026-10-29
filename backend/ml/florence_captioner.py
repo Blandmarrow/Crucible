@@ -15,6 +15,14 @@ STYLE_PROMPTS = {
 }
 
 
+# Every Florence-2 `generate()` passes `use_cache=False`. Newer transformers hands
+# the remote code's `prepare_inputs_for_generation` a Cache object that it indexes
+# as the legacy tuple (`past_key_values[0][0].shape`), and the first beam-search
+# step raised on the empty cache. Without the cache the decoder re-reads its
+# prefix each step: ~0.6 s for a detailed caption on a 5090.
+_GENERATE_KWARGS = {"max_new_tokens": 1024, "num_beams": 3, "use_cache": False}
+
+
 def _move_inputs_to_device(model, inputs: dict) -> dict:
     dev = _device.get_device()
     model_dtype = next(model.parameters()).dtype
@@ -47,8 +55,7 @@ def infer_sync(
             generated_ids = model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs.get("pixel_values"),
-                max_new_tokens=1024,
-                num_beams=3,
+                **_GENERATE_KWARGS,
             )
         generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
         parsed = processor.post_process_generation(
@@ -107,8 +114,7 @@ def infer_sync_detection(
             generated_ids = model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs.get("pixel_values"),
-                max_new_tokens=1024,
-                num_beams=3,
+                **_GENERATE_KWARGS,
             )
         generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
         parsed = processor.post_process_generation(

@@ -235,7 +235,13 @@ class ModelManager:
 
         vram_before = _device.memory_allocated_bytes() if _device.is_gpu_available() else 0
         _fl_dtype = _device.safe_dtype_for_device(torch.bfloat16)
-        load_kwargs: dict = {"torch_dtype": _fl_dtype, "trust_remote_code": True}
+        # `attn_implementation="eager"`: left unset, newer transformers (seen on
+        # 4.57) probes `_supports_sdpa` during the load, which Florence-2's remote
+        # code reads off a sub-model its `__init__` has not built yet, so every
+        # load raised AttributeError. Naming the implementation skips the probe.
+        load_kwargs: dict = {
+            "torch_dtype": _fl_dtype, "trust_remote_code": True, "attn_implementation": "eager",
+        }
 
         processor = None
         model = None

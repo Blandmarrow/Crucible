@@ -10,7 +10,7 @@ job and the extension change. `docs/dev/video/tests.md` § Re-extraction indexes
 e2e coverage too. Pass 1's own modal stands in exactly this relation to its backend —
 `docs/dev/video/extract-ui.md` and `docs/dev/video/extract.md` — and the two UIs are
 deliberately unlike each other in the two places noted below. The user-facing account of
-re-extraction is `docs/video.md`.
+re-extraction is `docs/video-reextract.md`.
 
 ## ReextractFramesForm
 

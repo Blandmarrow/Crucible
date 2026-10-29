@@ -21,11 +21,10 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. The budget raise, the Quality and Gallery hubs, the video folder move and the
-   `docs/dev/video/reextract.md` split have landed. Next is the user doc `docs/video.md`,
-   using its seam in `pending-splits.md` (re-measure first). It is a *user* doc, so the new
-   file takes a README Docs-table row and a `docs/features.md` row, and every
-   `docs/video.md#…` anchor that points at a moved section needs repointing.
+2. The budget raise, the Quality and Gallery hubs and the whole video family (the folder
+   move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md` split)
+   have landed. Next is `docs/dev/labels.md`, using both of its seams in
+   `pending-splits.md` (re-measure first), then `docs/dev/ml-models.md`.
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -62,9 +61,10 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       `docs/dev/gallery.md` hub.
 - [x] Video folder (2026-10-29): `docs/dev/video.md`'s eleven detail files moved, without a
       split, into `docs/dev/video/` behind the hub, and twelve Map rows became one.
-- [ ] The video family's two queued seams: `docs/dev/video/reextract.md` (done 2026-10-29:
-      the request side moved to `docs/dev/video/reextract-endpoints.md` and § Tests into
-      `docs/dev/video/tests.md`), then the user doc `docs/video.md`.
+- [x] The video family's two queued seams (2026-10-29): `docs/dev/video/reextract.md` (the
+      request side moved to `docs/dev/video/reextract-endpoints.md` and § Tests into
+      `docs/dev/video/tests.md`), then the user doc `docs/video.md`, split three ways into
+      itself, `docs/video-extraction.md` and `docs/video-reextract.md`.
 - [ ] `docs/dev/labels.md` (both seams), then `docs/dev/ml-models.md` (both seams).
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.

@@ -40,8 +40,8 @@ Every step from raw images to a training-ready export, in order:
 - **Rename and re-nest** a gallery subfolder from its right-click menu or by dragging one row onto another — the whole subtree follows, and the files inside keep their names → [details](docs/gallery.md#renaming-and-re-nesting-a-subfolder)
 - **Sync** a dataset with its folder on disk — rescan to register images and pick up `.txt` captions added outside the app, import captions from a folder, or auto-rescan on open → [details](docs/gallery.md)
 - **Hold videos** alongside a dataset's images as sources for frame extraction — stored and counted separately, browsable in a strip above the image grid with poster frames, an inline player, rename, and delete from the strip or the video's own page (experimental). A codec the browser cannot play says so plainly instead of claiming the file is corrupt — extraction reads the file directly and is unaffected → [details](docs/video.md)
-- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export. A **Frames from** gallery filter finds everything one video produced however far curation has since moved it, and the technical scorer's **brightness** metric separates the usable frames from the fades to black → [details](docs/video.md)
-- **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video.md)
+- **Extract frames** from one video or several at once — preview the clip, drag a crop over a letterbox matte, trim the head and tail, then cut one or more frames per detected shot into a subfolder of ordinary images you can score, caption and export. A **Frames from** gallery filter finds everything one video produced however far curation has since moved it, and the technical scorer's **brightness** metric separates the usable frames from the fades to black → [details](docs/video-extraction.md)
+- **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video-reextract.md)
 
 ### Image generation
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
@@ -305,7 +305,9 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Feature index | [docs/features.md](docs/features.md) |
 | Datasets & Gallery | [docs/gallery.md](docs/gallery.md) |
 | Labels | [docs/labels.md](docs/labels.md) |
-| Videos & Frame Extraction | [docs/video.md](docs/video.md) |
+| Videos | [docs/video.md](docs/video.md) |
+| Frame Extraction | [docs/video-extraction.md](docs/video-extraction.md) |
+| Re-extracting Frames | [docs/video-reextract.md](docs/video-reextract.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |

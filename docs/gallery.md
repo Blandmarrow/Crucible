@@ -19,7 +19,7 @@ Available from: the **Datasets** sidebar item, and the **Gallery** item on any d
 
 - Gallery view with search (filename or caption text), pagination, and sort. The search box has a **×** to clear it in one click
 - **Your filters are remembered per dataset** — the search text, the score chips, the detected-object label and every dropdown come back as you left them when you return from an image, switch pages, or reopen Crucible entirely, along with the page you were on. **Reset filters** clears the lot
-- Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label. In a dataset that holds videos, a **Frames from** dropdown narrows the grid to the frames one video produced — wherever you have since moved or renamed them (see [Videos](video.md))
+- Filter by caption status, quality flags, score ranges (multi-chip — add any number of field + min/max conditions combined as AND), aspect ratio, file size, format, and detected object label. In a dataset that holds videos, a **Frames from** dropdown narrows the grid to the frames one video produced — wherever you have since moved or renamed them (see [Frame extraction](video-extraction.md#while-it-runs-and-afterwards))
 - Filter by **license** — any single license, any free-text license already recorded in this dataset (listed under **Used in this dataset**), or **Missing license only** to find images with no license at either the image or dataset level → [details](provenance.md)
 - Filter by **label** — a dropdown listing every label with the number of images carrying it here, a search box for a long vocabulary, and an **Unlabelled** option → [details](labels.md)
 - The toolbar keeps the filters together on the left and **Import folder / Rescan / Upload** together on the right, so a narrow window wraps the filters under themselves rather than pushing the buttons around
@@ -83,7 +83,7 @@ Two entries are for video frames:
 - **Video timeline** — frames in the order they appear in their source video, earliest first
 - **Shot order** — frames grouped by the shot they were cut from, in shot order
 
-Both are the natural way to review a triage extraction pass, and unlike browsing by subfolder they keep working after you have moved or renamed the frames. Images that did not come from a video sort to the end. Pair either with the **Frames from** filter to see one video's frames on their own → [Videos](video.md).
+Both are the natural way to review a triage extraction pass, and unlike browsing by subfolder they keep working after you have moved or renamed the frames. Images that did not come from a video sort to the end. Pair either with the **Frames from** filter to see one video's frames on their own → [Frame extraction](video-extraction.md#while-it-runs-and-afterwards).
 
 ## Manual Image Ordering
 

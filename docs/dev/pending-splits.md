@@ -170,26 +170,14 @@ staleness sweep while still recording the seam.
   moves. README's `gallery.md#manual-image-ordering` and
   `gallery.md#renaming-and-re-nesting-a-subfolder` anchors both stay behind.
 
-## docs/video.md
-
-- **Moves:** § Extracting frames (706 words), § While it runs, and afterwards (531) and
-  § Re-extracting at full resolution (503)
-- **New file:** docs/video-extraction.md
-- **Why here:** two user tasks share one page. *Holding videos* — adding them, the strip,
-  the player, rename and delete, what plays in a browser and what does not — is what a user
-  does before they have decided to extract anything, and § Browsing them grew again when
-  strip delete and the unplayable message landed. *Turning a video into frames* is the
-  two-step dialog, the progress rows, and pass 2, which a user reads once they are committed.
-  The seam leaves ~1,000 and ~1,740; the second is over the ~1,500 target, so consider moving
-  § Re-extracting at full resolution to its own file or leaving it behind with § Browsing them
-  — it is the one section that is about *curated frames* rather than about the dialog.
-- **Watch for:** this is a user doc, so the inbound links are markdown links from
-  `README.md` (three of them, plus the Docs table row), `docs/gallery.md` (five), and
-  `docs/features.md`'s index row — a new file needs its own README Docs-table row and a
-  `docs/features.md` row, not prose. Several of those links point at the *page*, not a
-  section, so they keep working; the ones to check are any `video.md#...` anchors. The dev
-  docs mirroring this page are `docs/dev/video/extract.md` and `docs/dev/video/extract-ui.md`,
-  which is where the mirror-the-user-doc naming convention points.
+`docs/video.md` → `docs/video-extraction.md` **and** `docs/video-reextract.md` was executed on
+2026-10-29 as an M3 task, taking the entry's own fallback. Re-measured at 2,723 words, the
+recorded seam would have left ~1,740 in the new file, so § Re-extracting at full resolution
+went to its own page rather than staying behind: pass 2 is about *curated frames*, and README
+already described it in its own bullet. `docs/video.md` kept the intro, § Adding videos and
+§ Browsing them (~900), and § Optional packages went with the dialog into
+`docs/video-extraction.md` (~1,400). No `video.md#…` anchor existed anywhere, so the sweep
+was about which of the page-level links wanted a moved half.
 
 `docs/dev/gallery.md` → the Gallery hub and its `docs/dev/gallery/` folder was executed on
 2026-10-29 as an M3 task, and was **re-cut on execution**. The recorded seam assumed 4,335

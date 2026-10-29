@@ -1,12 +1,12 @@
 # Model registry
 
-This file covers the model IDs `model_manager` knows: each registry entry's `kind` and `description`, the prefix → module table for every captioner, scorer, detector and embedder, and the loader quirks particular to one model — JoyCaption's generation settings and the `_TAG_STYLES` set, the Florence-2 compatibility patches, and why Aesthetic Predictor V2.5 is an entry of its own. LaMa, the one `kind: "edit"` entry, is documented with the other pixel pipelines in `docs/dev/image-processing-models.md`.
+This file covers the model IDs `model_manager` knows: each registry entry's `kind` and `description`, the prefix → module table, and the loader quirks particular to one model — JoyCaption's generation settings and the `_TAG_STYLES` set, the Florence-2 compatibility patches, and why Aesthetic Predictor V2.5 is an entry of its own. LaMa, the one `kind: "edit"` entry, is documented with the other pixel pipelines in `docs/dev/image-processing-models.md`.
 
 The manager these register with is `docs/dev/ml-models.md`, eviction and unloads are `docs/dev/model-residency.md`, and the `kind == "caption"` filter that decides what the captioning picker offers is `docs/dev/captioning.md`.
 
 ### The model ID registry
 
-Every registry entry carries a measured `vram_mb` (`docs/dev/ml-models.md`), and also a `kind` (`"caption"` / `"score"` / `"detect"` / `"embed"`) and a `description`, both authored beside the loader that knows the repo id and the VRAM figure — `kind` is the model's *primary* role, singular, and `description` is the copy the pickers render verbatim. `GET /captioning/models` filters on `kind == "caption"`, so a new entry declaring the wrong one silently changes what the captioning picker offers; see `docs/dev/captioning.md` for that filter and the `_caption_backend` validator behind it.
+Every registry entry carries a `kind` (`"caption"` / `"score"` / `"detect"` / `"embed"` / `"edit"`) and a `description`, both authored beside the loader that knows the repo id and the VRAM figure — `kind` is the model's *primary* role, singular, and `description` is the copy the pickers render verbatim. `GET /captioning/models` filters on `kind == "caption"`, so a new entry declaring the wrong one silently changes what the captioning picker offers; see `docs/dev/captioning.md` for that filter and the `_caption_backend` validator behind it.
 
 Model IDs and their captioner/scorer modules:
 | Prefix | Module |

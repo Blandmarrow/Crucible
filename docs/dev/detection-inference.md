@@ -7,7 +7,8 @@ constraints that explain the current SAM 3 scope.
 
 The `/detection` router that calls these — request validation, scope, overwrite scoping,
 `mask_area`, watermark flag sync, storage and the frontend panels — is `docs/dev/detection.md`.
-Model registration, VRAM management and device selection are `docs/dev/ml-models.md`; the crop
+Model registration is `docs/dev/model-registry.md`, eviction and leases are
+`docs/dev/model-residency.md`, and loading and device selection are `docs/dev/ml-models.md`; the crop
 job that consumes detection boxes is `docs/dev/bulk-image-jobs.md`.
 
 ## Model and task matrix

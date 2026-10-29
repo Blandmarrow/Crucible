@@ -4,10 +4,10 @@ This file covers the three image-*processing* pipelines that rewrite pixels thro
 loaded model or table: ML upscaling through `spandrel` (`backend/ml/upscaler.py`,
 `backend/routers/upscaling.py`), 3D LUT color grading (`backend/ml/lut_processor.py`,
 `backend/routers/lut.py`) and LaMa inpainting (`backend/ml/lama_inpainter.py`, the model
-half of `backend/routers/inpaint.py`). Upscaling and LUT grading offer a replace/new-file
-pair and are governed by `image_service._open_safe` rather than by
-`backend/ml/image_utils.py::open_rgb`; LaMa is the exception and opens through `open_rgb`,
-because its mask comes from detection polygons in the EXIF-transposed frame.
+half of `backend/routers/inpaint.py`). All three offer a replace/new-file pair. Upscaling and LUT
+grading are governed by `image_service._open_safe` rather than by
+`backend/ml/image_utils.py::open_rgb`; LaMa opens through `open_rgb` instead, because its
+mask comes from detection polygons in the EXIF-transposed frame.
 
 The loading, VRAM accounting and device abstraction these lean on are
 `docs/dev/ml-models.md`, eviction and leases are `docs/dev/model-residency.md`, and the
@@ -97,7 +97,7 @@ Applies `.cube` and `.3dl` 3D color look-up tables to images with a user-control
 
 **`_ensure_weights` is a plain GET, so `progress_tqdm_patch` does not apply.** That helper monkeypatches `huggingface_hub`'s tqdm and there is no hub call here; the byte loop calls `emit_sync(job_id, loop, msg, pct, dataset_id)` directly instead, roughly every 4 MB. It downloads to a `.part` file and `replace()`s only after the hash verifies, so an interrupted first run leaves nothing a later load would trust. `_load_lama_sync` resolves and verifies the weights **before** touching the accelerator — fail fast, no VRAM spent — and carries the same failure tail every `model_manager` loader does: `.cpu()` → `del` → `_device.empty_cache()` → `raise`. `vram_mb` is `max(2000, measured delta)`.
 
-**`torch` is imported inside the functions, never at module scope**, for the same reason `device.py` does it: `routers/inpaint.py` imports `inpaint_image_sync` at module import and `main.py` imports that router, so a module-level torch import would put torch on the `from backend.main import app` path and take down collection of the whole backend suite in CI. `backend/tests/test_inpaint_http.py` runs torch-free because of it.
+**`torch` is imported inside the functions, never at module scope**, for the same reason `device.py` does it (`docs/dev/ml-models.md` § ML device abstraction): `routers/inpaint.py` imports `inpaint_image_sync` at module import and `main.py` imports that router, so a module-level torch import would put torch on the `from backend.main import app` path and take down collection of the whole backend suite in CI. `backend/tests/test_inpaint_http.py` runs torch-free because of it.
 
 **Inference is crop-and-composite, not whole-image.** `inpaint_image_sync` takes the mask's bounding box, expands it generously, snaps the span to a multiple of 8 (LaMa's stride) and runs the model on that crop alone, downscaling above 1536 px. This bounds VRAM independently of the source resolution — a fully-convolutional model on a 4K image otherwise blows up — and improves the fill, since LaMa was trained at 512². The painted crop is then composited back **through the mask**, so every pixel outside it is bit-identical to the source rather than making a round trip through the model. The image opens through `image_utils.open_rgb`, never a bare `Image.open`: detection polygons are normalized against the EXIF-transposed frame, so any other open misplaces the mask.
 

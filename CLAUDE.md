@@ -170,9 +170,9 @@ substantial edit.
 | File | Read this when... | Words |
 |---|---|---|
 | `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2100 |
-| `docs/dev/ml-models.md` | Working on `backend/ml/` loading, `model_manager`, `backend/ml/device.py`, or how an inference path opens images — the ambient `HF_TOKEN` every loader relies on, config validation, TorchDynamo | ~1250 |
-| `docs/dev/model-residency.md` | Working on a model unload, `evict_all`, `_evict_lru`, or a consumer's lease on a model — `ModelInUseError`, the per-consumer lease scopes, `_release_to_cpu` and dict-shaped entries | ~1500 |
-| `docs/dev/model-registry.md` | Adding a model ID or a captioner/scorer module, or changing a registry entry's `kind`/`description` — `_TAG_STYLES`, the Florence-2 transformers patches, the separate V2.5 aesthetic entry | ~1300 |
+| `docs/dev/ml-models.md` | Working on `backend/ml/` loading, `model_manager`, `backend/ml/device.py`, or how an inference path opens images — `open_rgb_bytes`, the `test_ml_image_opens` AST guard, why torch is imported per function | ~1250 |
+| `docs/dev/model-residency.md` | Working on a model unload, `evict_all`, `_evict_lru`, or a consumer's lease on a model — `POST /models/unload-all`, the per-consumer lease scopes, the Grounding DINO tenant in sam2's entry, a hard cancel outliving a lease | ~1500 |
+| `docs/dev/model-registry.md` | Adding a model ID or a captioner/scorer module, or changing a registry entry's `kind`/`description` — PaliGemma-2 gating, the WD14 tagger's own cache, where the V2.5 predictor head is cached | ~1300 |
 | `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~2750 |
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2410 |
 | `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |

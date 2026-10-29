@@ -5,7 +5,7 @@ The Quality page measures images and compares them. Its three parts are per-imag
 them), duplicate detection and resolution, and style similarity. This file is the family's
 entry point: the tables below route from a code path to whichever file in
 `docs/dev/quality/` owns it. The models these scorers load are managed by
-`docs/dev/ml-models.md`; the threshold settings are `docs/dev/settings.md`.
+`docs/dev/ml-models.md`, and evicted and leased per `docs/dev/model-residency.md`; the threshold settings are `docs/dev/settings.md`.
 
 ## The family
 

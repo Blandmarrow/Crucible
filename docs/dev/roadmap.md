@@ -81,7 +81,8 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README
       § Features last.
-- [ ] `pending-splits.md` itself, which should fall under budget once its entries are gone.
+- [x] `pending-splits.md` itself (2026-10-29): under budget at ~3,340 once the ml-models
+      entry left.
 
 ### M4 — Rating feature
 

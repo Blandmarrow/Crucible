@@ -110,6 +110,13 @@ path that was written and correct:
   no version and falls to that same branch, which is the right answer.
 - The equivalent probe in `Cmd-Update`.
 
+**Follow-up (2026-10-29).** Dropping the preference covered an interpreter that *runs and
+fails*, not one that is *absent*. A `venv\` built on Linux (a Codespace checkout, with
+`bin/` instead of `Scripts\`) has no `python.exe` at all, and `&` on a missing path raises
+`CommandNotFoundException` — which inside a `try` propagates as terminating whatever the
+preference, and the probe's `try` had only a `finally`. So the "partly-deleted `Scripts\`"
+case above was in fact still fatal. Both probes now carry `catch { ... = $null }`.
+
 Left alone deliberately: the two `node --version 2>&1` calls, which are guarded by
 `Get-Command` and whose output goes to stdout. The one at `manage.ps1:121` can still throw
 `CommandNotFoundException` when winget's Node install is not yet on `PATH`, but that is a

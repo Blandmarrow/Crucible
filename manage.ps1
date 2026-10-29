@@ -310,7 +310,8 @@ function Install-TorchIfNeeded {
     }
 
     $nvOut = (& nvidia-smi) | Out-String
-    if ($nvOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
+    # Drivers 610+ print "CUDA UMD Version: X.Y" where older ones print "CUDA Version: X.Y".
+    if ($nvOut -match "CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)") {
         $maj = [int]$Matches[1]; $min = [int]$Matches[2]
         Write-Host "  NVIDIA GPU detected - driver supports CUDA $maj.$min." -ForegroundColor Green
 
@@ -630,8 +631,13 @@ function Cmd-Setup {
         # matches no version and lands on the same branch, which is the right answer.
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
+        # The catch is load-bearing: a MISSING python.exe (a venv built on Linux, with
+        # bin\ instead of Scripts\) raises CommandNotFoundException, which "Continue" does
+        # not soften inside a try - without a catch it aborts setup instead of recreating.
         try {
             $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+        } catch {
+            $venvVer = $null
         } finally {
             $ErrorActionPreference = $prevEap
         }
@@ -644,7 +650,9 @@ function Cmd-Setup {
         if ($venvOk) {
             Write-Host "  venv already exists, skipping creation." -ForegroundColor DarkGray
         } else {
-            Write-Host "  Existing venv uses $venvVer - recreating with stable Python 3.12+..." -ForegroundColor Yellow
+            # $venvVer is null (or stderr text) when the interpreter is missing or broken.
+            if ("$venvVer" -match "Python \d+\.\d+") { $venvDesc = "uses $venvVer" } else { $venvDesc = "has no runnable interpreter" }
+            Write-Host "  Existing venv $venvDesc - recreating with stable Python 3.12+..." -ForegroundColor Yellow
             Remove-Item -Recurse -Force "$ROOT\venv"
             & $script:PythonExe -m venv --system-site-packages "$ROOT\venv"
             Write-Host "  venv created at $ROOT\venv (inherits system ML packages)" -ForegroundColor Green
@@ -879,6 +887,9 @@ function Cmd-Update {
     $ErrorActionPreference = "Continue"
     try {
         $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+    } catch {
+        # A missing python.exe raises CommandNotFoundException; see Cmd-Setup.
+        $venvPyVer = $null
     } finally {
         $ErrorActionPreference = $prevEap
     }

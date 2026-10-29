@@ -3,10 +3,11 @@
 Covers `ReextractFramesForm` and the `ReextractFramesModal` that wraps it, the three entry
 points that open it, the `jobStore` adoption that lets a reopened dialog re-attach to a
 running job, and the `TopBar` invalidations a finished `video_reextract` fires. This is the
-UI counterpart of `docs/dev/video/reextract.md`, which documents the contract, the
-`/videos/reextract` endpoints, `render_at_timestamps`, the `video_reextract` job and the
-extension change these controls sit in front of; the § Tests section there indexes this
-half's e2e coverage too. Pass 1's own modal stands in exactly this relation to its backend —
+UI counterpart of two backend files: `docs/dev/video/reextract-endpoints.md`, which documents
+the contract and the `/videos/reextract` endpoints these controls sit in front of, and
+`docs/dev/video/reextract.md`, which documents `render_at_timestamps`, the `video_reextract`
+job and the extension change. `docs/dev/video/tests.md` § Re-extraction indexes this half's
+e2e coverage too. Pass 1's own modal stands in exactly this relation to its backend —
 `docs/dev/video/extract-ui.md` and `docs/dev/video/extract.md` — and the two UIs are
 deliberately unlike each other in the two places noted below. The user-facing account of
 re-extraction is `docs/video.md`.

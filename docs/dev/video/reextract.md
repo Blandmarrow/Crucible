@@ -3,60 +3,18 @@
 The second half of the two-pass design. Pass 1 (`docs/dev/video/extract.md`) writes cheap
 1024px triage JPEGs so a 900-shot episode can be scored, deduped and eyeballed quickly;
 pass 2 turns the frames that *survived* curation into training data at native resolution.
-`POST /videos/reextract` and `/videos/reextract/preview` in `routers/videos.py` drive it and
-`video_extract.render_at_timestamps` decodes for it. The UI half —
-`ReextractFramesForm`/`ReextractFramesModal`, its three entry points, the job adoption and
-the `TopBar` invalidations — is in `docs/dev/video/reextract-ui.md`, mirroring how
-`docs/dev/video/extract-ui.md` stands to `docs/dev/video/extract.md`.
+This file is how a frame is rewritten in place: `video_extract.render_at_timestamps` decodes
+and the `video_reextract` job swaps. Which frames a run touches, and what it promises — the
+contract and `_resolve_reextract_targets` — is `docs/dev/video/reextract-endpoints.md`; the
+UI half — `ReextractFramesForm`/`ReextractFramesModal`, its three entry points, the job
+adoption and the `TopBar` invalidations — is `docs/dev/video/reextract-ui.md`, mirroring how
+`docs/dev/video/extract-ui.md` stands to `docs/dev/video/extract.md`; the tests are in
+`docs/dev/video/tests.md` § Re-extraction.
 
 Nothing here needs `scenedetect`. The pick already happened in pass 1, and pass 2 never
 re-detects shots, never re-picks a frame, and never touches `_shot_windows`,
 `_candidate_positions`, `sharpness`, `pick_index` or `is_degenerate`. No new columns, so no
 migration and no new mirror sites.
-
-## The contract
-
-**The timestamp is the artifact.** `Image.source_timestamp_ms` is authoritative: pass 2
-re-seeks it rather than upscaling the triage JPEG, which is why `backend/tests/
-test_video_reextract.py::test_re_seeking_a_recorded_timestamp_lands_on_the_same_moment`
-is the test to keep if only one survives review. Off-by-one-keyframe seeking silently
-yields the *wrong frame* — every count the job reports still says success.
-
-**Frames extracted before V-06 carry a timestamp one frame period early.** `read_positions`
-used to read `CAP_PROP_POS_MSEC` *before* the grab, so each frame was labelled with its
-predecessor's timestamp; pass 1 and pass 2 shared the reader, so the pairing was
-self-consistent and nothing visibly broke. Re-extracting one of those frames now returns
-the frame immediately *before* the picture on disk (~42 ms at 24 fps). The rows were
-deliberately not migrated: a migration cannot be complete by construction (`source_video_id`
-is `SET NULL` when the video is deleted, so a frame whose source is gone has no recoverable
-fps), the offset is `1000/fps` rather than a constant and is undefined for VFR, and
-`source_timestamp_ms` is itself the user-visible authoritative artifact. Expect the drift on
-old frames; it is not a seek bug.
-
-**Geometry replays verbatim.** `Video.crop_x/y/w/h` and `Video.deinterlace` hold the
-*normalized* values the extract endpoint stored (`docs/dev/video/extract.md` § The
-endpoints), so pass 2 applies them as-is. Trims are irrelevant to a direct seek.
-
-**Quality scores are left alone but no longer left silent.** Nothing is recomputed, matching
-`batch_upscale`/`batch_lut` replace mode — but the rewrite goes through
-`backend/utils.py::record_in_place`, which sets `Image.scores_stale` alongside the
-`processing_history` entry **for any frame that carries a score**, so a re-extracted frame
-that had been scored wears a badge in the gallery and on its detail page until a re-score
-clears it (`docs/dev/quality/scores-stale.md`). A triage frame is commonly *unscored* —
-the whole point of pass 1 is to get frames cheap and cull them later — so in practice
-re-extraction often leaves the bit `False` and writes only the history entry. That entry is
-unconditional, and it is the one this doc's skip rule below depends on. The
-job still says so through `result_data["note"]` (`REEXTRACT_NOTE`), which the completion
-toast repeats and `ReextractFramesForm` mirrors, but the wording now points at the badge
-instead of asking the user to remember. `phash` *is* re-derived: dedup depends
-on it. It is scale-invariant, so the value often does not change, which is why the test
-poisons it first rather than asserting it moved.
-
-**Output format is the user's.** JPEG (default) or PNG for a lossless capture; resolution
-is native by default (`long_edge=0`, which `_write_frame` — the shared write half below —
-already reads as "no downscale"; `render_shot` neither reads nor interprets 0, it defaults
-to 1024 and passes the value through)
-with an optional `max_long_edge` cap.
 
 ## The shared write half
 
@@ -83,91 +41,6 @@ timestamp per call: the per-frame structure is what buys the cancel check, the C
 protect+commit, the "does it re-open" verification and the progress event, and batching
 would mean N temp files coexisting against a disk preflight that budgets for one.
 
-## Target resolution — one function, two callers
-
-`_resolve_reextract_targets` backs both endpoints, so the modal's accounting and the job's
-cannot diverge. Exactly one scope: `image_ids` for a gallery selection (which can span videos
-and datasets) or `video_id`, optionally narrowed by `subfolder`.
-
-Three rules apply to the scope itself, all enforced before either endpoint returns so
-preview and enqueue refuse identically — two of them inside `_reextract_rows`, and the
-`image_ids` half of the third on the request schema, where a Pydantic `max_length` answers
-**422** rather than the 400 its `video_id` half raises:
-
-- **An unknown `video_id` is a 404**, not an empty result. An empty result means "this video
-  has no eligible frames" — a real answer the modal renders — and returning it for a video
-  that does not exist makes the two indistinguishable. It is raised *before* the busy guard,
-  preserving the ordering `test_a_reextract_with_nothing_to_do_does_not_409` pins.
-- **Both scopes are capped at `REEXTRACT_MAX_FRAMES` (5000)** — the schema's `max_length` for
-  `image_ids`, an explicit 400 naming the count for `video_id`, which resolves its ids from
-  the DB. The constant lives in `schemas/video.py` and the router imports it, so the two
-  cannot drift (and a schema must never import from a router). It bounds three things at
-  once: the `BackgroundJob.config` id blob, the job's `select(Image)` entity load, and the
-  preview's `skipped` array.
-- **`image_ids` is deduped** with `dict.fromkeys` before anything counts it. The `IN` query
-  collapses duplicates anyway, so an id sent twice reported `eligible=2` against one row: a
-  phantom entry in `cfg`, a phantom skip, and a bar that topped out at `1 / 2`.
-
-Per image, in order, each skip carrying a human reason:
-
-| Condition | Reason |
-|---|---|
-| row missing | `"no longer exists"` |
-| `source_video_id is None` | `"not extracted from a video"` |
-| `source_timestamp_ms is None` | `"no recorded timestamp"` |
-| `Video` row missing / different dataset | `"source video is gone"` |
-| video file absent on disk | `"source video file is missing"` |
-| `processing_history` holds any op **other than** `reextract` | `"already edited in place"` |
-
-That last rung is `backend/models/image.py`'s mandate: the **replace** mode of
-crop/upscale/LUT/detection-crop mutates a row in place, so a frame keeps its lineage while
-the pixels stop being the extracted frame. The `reextract` exclusion is load-bearing —
-without it pass 2 refuses to run a second time, because its own history entry looks like
-third-party editing. Anything that is not a dict counts as an unknown edit and skips.
-
-**The ladder runs twice, and the second run is what makes it a guard rather than a
-snapshot.** `_resolve_reextract_targets` evaluates the whole table above at preview and
-enqueue time; nothing holds a `dataset_busy` lock over the frames for the run, so a
-replace-mode crop, upscale, LUT or detection crop landing between enqueue and a frame's turn
-would otherwise be overwritten by a job that checked before the edit existed. The worker
-therefore re-applies the `processing_history` rung alone — against a live re-read of the
-column, immediately before the overwrite — and counts what it refuses as `skipped_edited`
-rather than `failed`: the frame was not delivered, but nothing about the video failed. The
-other rungs are not re-checked; a missing row and a NULL timestamp are still the only other
-things the worker re-filters on.
-
-**The guard is only as good as what writes `processing_history`.** Upscale, LUT and
-detection-crop always recorded an entry; the five in-place paths in `routers/images.py` —
-`resize`, replace-mode `crop`, the `crop_upscale` replace job, `batch_resize` and
-`batch_crop` — did not, so a frame cropped in place stayed silently eligible and pass 2
-would have discarded the crop (`docs/dev/postmortems/PM-010`). They now all go through
-`images._record_in_place(img, op,
-**params)`, which is the single writer: list-concat reassignment, never `.append()`
-(CLAUDE.md § Key invariants), plus the `updated_at` bump. Add a call there in any future
-path that overwrites an image file. (`POST /images/batch/crop` and `/batch/resize` were
-unreachable until 2026-07-31 — `POST /images/{image_id}/crop` was declared first and read
-`batch` as an image id — so their entries were written but had never executed. The block now
-sits above the parameterized routes and both are covered by
-`backend/tests/test_batch_resize_crop_http.py`; see
-`docs/dev/postmortems/PM-018-batch-routes-shadowed-by-a-path-parameter.md`.)
-
-**In-flight dedupe lives in the resolver**, not the enqueue path, so the preview is honest
-about it too — and it now runs in **both directions**: `_videos_with_running_extractions`
-matches `video_extract` *and* `video_reextract`, because a pass-1 `replace` deletes the very
-rows pass 2 is rewriting. `extract_frames` reads the same helper.
-
-The endpoint alone adds `ensure_not_busy` per dataset (the job does not hold `busy`,
-following `batch_upscale`), the deinterlace 503 gate on the *stored* filter — there is no
-request field to override it, and without the gate the job dies inside every frame and
-reports a missing package as a decode fault — and a disk preflight through the shared
-`routers/videos.py::estimate_frame_bytes(width, height, *, fmt, long_edge)`, which budgets
-`cropped_w × cropped_h × BYTES_PER_PIXEL[fmt]` (0.5 JPEG, 2.0 PNG) plus a flat
-`FRAME_OVERHEAD_BYTES`. Conservative because a temp file coexists with the original during
-each swap. The estimator is shared with pass 1, which used to budget a flat 300 KB per frame
-— ~60× low at `long_edge=8192`, and pass 1's preflight runs *before* replace mode's delete,
-so the underestimate let a doomed job start and destroy the previous frames on the way down
-(`docs/dev/video/extract.md` § The `video_extract` job, step 4).
-
 ## The `video_reextract` job
 
 One job per video, which is what lets each label name its video
@@ -185,7 +58,8 @@ wrapper verbatim, including its three load-bearing details — see
 3. `get_image_info(tmp)`. `{}` means the file will not re-open — unlink the temp, count
    failed, carry on. **The original is still intact**, unlike upscale and LUT, which
    overwrite first and discover afterwards.
-4. The live `processing_history` re-check (§ Target resolution — one function, two callers: the ladder runs twice), then
+4. The live `processing_history` re-check (`docs/dev/video/reextract-endpoints.md`
+   § Target resolution — one function, two callers, at *The ladder runs twice*), then
    `version_service.protect_file_before_overwrite` and an immediate `commit()` — mandatory
    per that function's docstring, and the eighth *router* call site
    (`docs/dev/versioning-service.md`).
@@ -204,7 +78,7 @@ wrapper verbatim, including its three load-bearing details — see
    with an epilogue of this shape report that count — `batch_lut`, `batch_upscale`,
    `crop_upscale` and `crop_to_detection` as well — and `TopBar` turns it into a warning
    naming the repair; see
-   `docs/dev/frontend-jobs.md` § The stale-thumbnail warning.
+   `docs/dev/frontend-jobs.md` § The stale-thumbnail warning, and the ordering rule behind it.
 
 Steps 6 and 7 used to be the other way round, with the thumbnail between them. That is
 PM-013: `generate_thumbnail` catches nothing, so an unwritable `thumbnails/` raised out of
@@ -300,7 +174,8 @@ still 200s, and the residue is an orphan `.png`. It stays a plain `unlink`, one 
 sites deliberately exempt from the retrying helpers (named in CLAUDE.md): by the time it
 runs the row already names a file that exists, so a lock costs only an orphan a rescan can
 adopt and there is nothing a retry could save. The two files coexist briefly, which the
-endpoint's disk preflight already budgets for — it estimates `× 2.0` for PNG precisely
+endpoint's disk preflight (`docs/dev/video/reextract-endpoints.md` § Target resolution — one
+function, two callers) already budgets for — it estimates `× 2.0` for PNG precisely
 because a second copy of each frame is live during the swap.
 
 Rejected alternative: nulling `thumbnail_path` when regeneration fails, to force it on
@@ -320,26 +195,4 @@ ten. It still counts as `failed`: the user asked for that frame and did not get 
 row used to keep pointing at the stale original, which was also left on disk.
 `routers/lut.py`'s replace branch now follows the written path, and its collision guard runs
 **before** the save rather than after: by the time `apply_lut_sync` returns, an unregistered
-file at the fallback path is already gone. See `docs/dev/image-processing-models.md` § LUT grading.
-
-## Tests
-
-`backend/tests/test_video_reextract.py` covers the decode half against real mp4 fixtures
-(native vs capped resolution, crop replay and clamping, both formats, PNG being
-byte-identical to the decoded frame, and the seek-exactness check above).
-`backend/tests/test_video_reextract_http.py` covers the endpoints and the job: preview and
-enqueue agreeing on the same skip set, the COW hook restoring triage pixels from a
-pre-existing snapshot, a second run not self-skipping, the extension swap and its
-round-trip, the unregistered-file refusal and a whole run of them completing rather than
-tripping the breaker, a temp that will not re-open leaving the original intact, a raise
-between the render and the swap leaving no temp behind, cancel, the 507 and 503 gates,
-in-flight dedupe in both directions, route shadowing and the SSE invariants (including
-`done` reaching `N`). `backend/tests/test_lut_replace_extension_http.py` covers the LUT
-half. `frontend/e2e/video-extract.spec.ts` covers the dialog
-(`docs/dev/video/reextract-ui.md`) in **three** specs, one per behaviour that has bitten:
-*reports what it can and cannot do* opens it from the gallery toolbar and asserts the preview
-accounting, the long-edge bound and that it is a real dialog (Escape closes, focus returns to
-the opener); *waits rather than crashing on an offline tab* pins the error → no data → content
-branch order, the one that took out the pane's ErrorBoundary; and *re-attaches to a job it did
-not start* pins the `jobStore` adoption. None of the three submits a re-extraction: CI has no
-`scenedetect`, so no lineage-carrying frame exists there to re-cut.
+file at the fallback path is already gone. See `docs/dev/image-processing-models.md` § LUT Color Grading.

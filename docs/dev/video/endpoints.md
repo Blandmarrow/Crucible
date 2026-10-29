@@ -4,7 +4,7 @@ The `/videos` request surface: `backend/routers/videos.py`'s twelve registered r
 each answers, and the ordering and containment rules the destructive ones follow. Four of the
 twelve are documented elsewhere because they belong to the extraction arc rather than to this
 router's own surface — `POST /{id}/probe` and `POST /extract` in `docs/dev/video/extract.md`,
-`POST /reextract/preview` and `POST /reextract` in `docs/dev/video/reextract.md`. The `Video`
+`POST /reextract/preview` and `POST /reextract` in `docs/dev/video/reextract-endpoints.md`. The `Video`
 model, the `videos/` storage layout, the poster-stem rules and the three ingest paths are in
 `docs/dev/video.md`; the decode work behind `GET /{id}/poster` is in `docs/dev/video/decode.md`;
 the screens that call all of this are in `docs/dev/video/ui.md`. Tests are indexed in
@@ -18,7 +18,7 @@ the screens that call all of this are in `docs/dev/video/ui.md`. Tests are index
 `docs/dev/video/decode.md` § Poster frames), `GET /{id}/frames-summary`,
 `POST /{id}/probe` and `POST /extract` (both
 in `docs/dev/video/extract.md` § The endpoints),
-`POST /reextract/preview` and `POST /reextract` (pass 2 — `docs/dev/video/reextract.md`),
+`POST /reextract/preview` and `POST /reextract` (pass 2 — `docs/dev/video/reextract-endpoints.md`),
 `PATCH /{id}/rename`, `DELETE /{id}`.
 `GET /capabilities` reports what this install can decode independently of any one video, and
 is **declared above `GET /{video_id}`** on purpose: FastAPI matches in declaration order, so

@@ -856,7 +856,7 @@ def render_at_timestamps(
     timestamp — see its docstring. Frames extracted before that was fixed carry a
     timestamp one frame period early and were deliberately not migrated, so
     re-extracting one returns the frame just before the picture on disk
-    (`docs/dev/video/reextract.md` § The contract).
+    (`docs/dev/video/reextract-endpoints.md` § The contract).
 
     Geometry replays verbatim from the stored `Video.crop_*` / `Video.deinterlace`
     the extract endpoint normalized; trims are irrelevant to a direct seek.

@@ -15,7 +15,8 @@ was.
 | [shots.md](video/shots.md) | Probe sampling, shot detection and frame rendering — the RSS rule, the PySceneDetect contract and cost cliff, `render_shot`/`_write_frame` |
 | [heuristics.md](video/heuristics.md) | Cropdetect, interlace/telecine detection, sharpness, and which frame a shot yields — `pick_index` candidate rejection |
 | [extract.md](video/extract.md) | The extract/probe endpoints and the `video_extract` job — crop/trim validation, subfolder modes, step order and the replace delete, SSE progress, frame lineage |
-| [reextract.md](video/reextract.md) | Re-extraction, `POST /videos/reextract` and a replace-mode extension change — seek-by-timestamp and the `processing_history` skip rule |
+| [reextract-endpoints.md](video/reextract-endpoints.md) | Which frames a re-extraction rewrites — `POST /videos/reextract` and its preview, seek-by-timestamp, the `processing_history` skip rule |
+| [reextract.md](video/reextract.md) | The `video_reextract` job and a replace-mode extension change — `_rewrite`'s step order, the PM-013 window, the locked-file retry |
 | [ui.md](video/ui.md) | Every video browsing screen — `VideoStrip`, `VideoDetailPage`, the extraction history, the frame lineage line and filter |
 | [extract-ui.md](video/extract-ui.md) | The extraction modal and its progress rows — the touched-flag guards, re-attaching to a running job |
 | [extract-controls.md](video/extract-controls.md) | The crop/trim controls and any bounded numeric input — `CropOverlay`'s mattes and even-snap, `TrimBar`'s tail semantics and arrow keys, `NumberField`'s draft contract |
@@ -24,7 +25,7 @@ was.
 
 ## Where things live
 
-Video is documented across twelve files, so the reliable way in is the code file you are
+Video is documented across thirteen files, so the reliable way in is the code file you are
 about to open rather than the topic you have in mind — a reader always knows the former.
 Each row names the doc that **owns** that code. A `+` clause is a second genuine owner,
 not a see-also, and says which part of the file it owns.
@@ -36,12 +37,12 @@ not a see-also, and says which part of the file it owns.
 | `backend/media_types.py` | This file — the single ingestible-extension allowlist |
 | `backend/models/video.py` | This file § The model |
 | `backend/routers/images.py` (its video branch) | This file § Ingest — the gallery-upload path, `_write_video_upload_sync` and the `skipped` response |
-| `backend/routers/videos.py` | `docs/dev/video/endpoints.md`; + `docs/dev/video/extract.md` for the extract and probe routes; + `docs/dev/video/reextract.md` for `POST /videos/reextract` and `POST /videos/reextract/preview` |
-| `backend/schemas/video.py` | `docs/dev/video/extract.md` (pass 1 bodies), `docs/dev/video/reextract.md` (pass 2); + `docs/dev/video/endpoints.md` for `VideoOut`, `VideoFramesSummary` and `RenameVideoRequest` |
+| `backend/routers/videos.py` | `docs/dev/video/endpoints.md`; + `docs/dev/video/extract.md` for the extract and probe routes; + `docs/dev/video/reextract-endpoints.md` for `POST /videos/reextract`, `POST /videos/reextract/preview` and `_resolve_reextract_targets`; + `docs/dev/video/reextract.md` for the `video_reextract` job (`_run_reextraction`, `_rewrite`) |
+| `backend/schemas/video.py` | `docs/dev/video/extract.md` (pass 1 bodies), `docs/dev/video/reextract-endpoints.md` (pass 2 bodies and `REEXTRACT_MAX_FRAMES`); + `docs/dev/video/endpoints.md` for `VideoOut`, `VideoFramesSummary` and `RenameVideoRequest` |
 | `backend/services/video_service.py` | `docs/dev/video/decode.md` — the probe ladder, duration search and poster generation; + this file § Poster stems and collisions for `claimed_poster_stems` |
 | `backend/services/video_extract.py` | `docs/dev/video/shots.md` — sampling, shot detection, `render_shot`; + `docs/dev/video/extract.md` for the `video_extract` job; + `docs/dev/video/reextract.md` for `render_at_timestamps` |
 | `backend/services/video_frames.py` | `docs/dev/video/heuristics.md` — the pure-numpy judgement calls |
-| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision; + `docs/dev/datasets-page.md` § Dataset duplicate for `duplicate_dataset`'s video loop and `_copy_video_sync` |
+| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision; + `docs/dev/datasets-page.md`'s **Dataset duplicate** paragraphs for `duplicate_dataset`'s video loop and `_copy_video_sync` |
 | `backend/tests/test_video_*.py` | `docs/dev/video/tests.md` — also the cv2 gate and the skip convention |
 
 ### Frontend
@@ -265,7 +266,7 @@ re-attach hook are in `docs/dev/video/extract-ui.md`, with its `CropOverlay`/`Tr
   reproduces them exactly.
 - `duplicate_dataset` carries videos only under `include_videos` (default off, preflighted,
   refused for a snapshot), remapping each copied frame's `source_video_id` onto the clone's
-  own video — see `docs/dev/datasets-page.md` § Dataset duplicate.
+  own video — see the **Dataset duplicate** paragraphs of `docs/dev/datasets-page.md`.
 - The file browser (`docs/dev/file-browser.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That

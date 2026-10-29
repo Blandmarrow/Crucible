@@ -742,7 +742,7 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     `processing_history` is the durable signal that a row's pixels are no longer
     what produced it, and video re-extraction reads it as its skip guard: a frame
     carrying any op other than `reextract` is left alone, because re-cutting it from
-    the source would discard the edit (`docs/dev/video/reextract.md`).
+    the source would discard the edit (`docs/dev/video/reextract-endpoints.md`).
 
     `scores_stale` says the ten `*_score` columns and the `quality_flags` derived
     from them were measured against pixels that no longer exist. Nothing here

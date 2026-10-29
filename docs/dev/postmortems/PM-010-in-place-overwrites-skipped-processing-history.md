@@ -100,7 +100,7 @@ whose `processing_history` holds any op **other than** `reextract` with the reas
 refuses to run a second time, because its own entry looks like third-party editing. Anything
 that is not a dict counts as an unknown edit and skips.
 
-See `docs/dev/video/reextract.md` § Target resolution.
+See `docs/dev/video/reextract-endpoints.md` § Target resolution — one function, two callers.
 
 **Amended 2026-07-31 — the choke point this entry asked for now exists.** The helper moved to
 `backend/utils.py::record_in_place`, and the four hand-rolled twins (`lut`, `upscaling`,

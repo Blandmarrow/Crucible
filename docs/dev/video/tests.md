@@ -4,10 +4,11 @@ The arc-wide index of which module pins which behaviour, and the rules that keep
 runnable both with and without OpenCV. It spans the subject matter of every other video doc —
 `docs/dev/video.md` (model, storage, ingest), `docs/dev/video/endpoints.md`,
 `docs/dev/video/decode.md`, `docs/dev/video/shots.md`, `docs/dev/video/heuristics.md`,
-`docs/dev/video/extract.md` and `docs/dev/video/reextract.md` — which is why it is an index of
-its own rather than a section inside any one of them. `docs/dev/video/reextract.md` § Tests is
-the one remaining test index still living in its own file and is the next candidate to land
-here. (`docs/dev/video/extract.md` has no coverage section to move — its test references are
+`docs/dev/video/extract.md`, `docs/dev/video/reextract-endpoints.md` and
+`docs/dev/video/reextract.md` — which is why it is an index of its own rather than a section
+inside any one of them. Pass 2's index, once a Tests section at the end of
+`docs/dev/video/reextract.md`, now lives here as § Re-extraction.
+(`docs/dev/video/extract.md` has no coverage section to move — its test references are
 inline.)
 
 ## The modules
@@ -59,6 +60,29 @@ subfolder stops being a handle the moment curation moves a file while the lineag
 not, and the FK's `ondelete="SET NULL"` drops a deleted video's frames from the filter
 **without destroying the rows** — a frame outlives its video, it just stops being addressable
 this way. Both are cv2- and `scenedetect`-gated.
+
+## Re-extraction
+
+`backend/tests/test_video_reextract.py` covers the decode half against real mp4 fixtures
+(native vs capped resolution, crop replay and clamping, both formats, PNG being
+byte-identical to the decoded frame, and the seek-exactness check in
+`docs/dev/video/reextract-endpoints.md` § The contract).
+`backend/tests/test_video_reextract_http.py` covers the endpoints and the job: preview and
+enqueue agreeing on the same skip set, the COW hook restoring triage pixels from a
+pre-existing snapshot, a second run not self-skipping, the extension swap and its
+round-trip, the unregistered-file refusal and a whole run of them completing rather than
+tripping the breaker, a temp that will not re-open leaving the original intact, a raise
+between the render and the swap leaving no temp behind, cancel, the 507 and 503 gates,
+in-flight dedupe in both directions, route shadowing and the SSE invariants (including
+`done` reaching `N`). `backend/tests/test_lut_replace_extension_http.py` covers the LUT
+half of `docs/dev/video/reextract.md` § The extension change.
+`frontend/e2e/video-extract.spec.ts` covers the dialog (`docs/dev/video/reextract-ui.md`) in **three** specs, one per behaviour that has bitten:
+*reports what it can and cannot do* opens it from the gallery toolbar and asserts the preview
+accounting, the long-edge bound and that it is a real dialog (Escape closes, focus returns to
+the opener); *waits rather than crashing on an offline tab* pins the error → no data → content
+branch order, the one that took out the pane's ErrorBoundary; and *re-attaches to a job it did
+not start* pins the `jobStore` adoption. None of the three submits a re-extraction: CI has no
+`scenedetect`, so no lineage-carrying frame exists there to re-cut.
 
 ## Fixtures
 
@@ -155,7 +179,7 @@ out: no test needs the real `bwdif` path, and both 503 tests monkeypatch `capabi
 **Guard placement decides error vs skip.** A `pytestmark = skipif(...)` is consulted only
 *after* the module body has run, so it cannot protect a module-level constant like
 `SHOTS_MP4 = mp4_shots_bytes()` — those three modules (`test_video_extract_http.py`,
-`test_video_reextract_http.py`, indexed in `docs/dev/video/reextract.md`, and
+`test_video_reextract_http.py`, indexed in § Re-extraction above, and
 `test_frames_from_video_filter.py`) need `pytest.importorskip("cv2")` on the line
 immediately before it. Modules that only touch cv2
 inside tests (`mp4_bytes` imports it lazily) take the same one-liner after the imports.

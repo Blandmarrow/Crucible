@@ -106,7 +106,7 @@ Cheap to get wrong twice, so recorded explicitly.
   guarded against turned out to be **latent rather than live**: the real V2.5 head does use
   that exact filename, but the `aesthetic-predictor-v2-5` package fetches it through
   `torch.hub.load_state_dict_from_url`, so it lands in the torch hub cache and never in
-  `models_cache_dir`. See `docs/dev/ml-models.md`.
+  `models_cache_dir`. See `docs/dev/model-registry.md` § Aesthetic Predictor V2.5.
 - **`QualityPage` already persists a global, cross-dataset "workflow" blob**
   (`QUALITY_WORKFLOW_KEY`, whose own comment says "global, shared across all datasets"),
   holding `embeddingType` and `dinoLayer` — mutually exclusive *model* choices made per run

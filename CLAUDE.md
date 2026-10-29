@@ -170,8 +170,10 @@ substantial edit.
 | File | Read this when... | Words |
 |---|---|---|
 | `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py` — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2100 |
-| `docs/dev/ml-models.md` | Working on captioning models, the LaMa inpainter, `backend/ml/` loading, or a model unload — model leases and `ModelInUseError`, EXIF-consistent opening, the ambient `HF_TOKEN` every loader relies on, TorchDynamo, the hash-pinned TorchScript weight download | ~4440 |
-| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, or LUT color grading — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant | ~1810 |
+| `docs/dev/ml-models.md` | Working on `backend/ml/` loading, `model_manager`, `backend/ml/device.py`, or how an inference path opens images — the ambient `HF_TOKEN` every loader relies on, config validation, TorchDynamo | ~1250 |
+| `docs/dev/model-residency.md` | Working on a model unload, `evict_all`, `_evict_lru`, or a consumer's lease on a model — `ModelInUseError`, the per-consumer lease scopes, `_release_to_cpu` and dict-shaped entries | ~1500 |
+| `docs/dev/model-registry.md` | Adding a model ID or a captioner/scorer module, or changing a registry entry's `kind`/`description` — `_TAG_STYLES`, the Florence-2 transformers patches, the separate V2.5 aesthetic entry | ~1300 |
+| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~2750 |
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2410 |
 | `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
 | `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~500 (+ details) |
@@ -210,7 +212,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~650 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~750 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

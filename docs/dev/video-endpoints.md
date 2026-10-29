@@ -112,8 +112,8 @@ A third site in this router is converted and is **not** a 409: pass 2's in-place
 overwrite (`utils.replace_retrying` inside `_run_reextraction::_rewrite`). A job cannot
 answer a status code, so there the lock is caught, counted as one `failed` frame with
 `is_fault=True`, and the run carries on — see `docs/dev/video-reextract.md`. Three further
-sites in the video code are deliberately **exempt**; `CLAUDE.md` § Key invariants names them
-and why.
+sites in the video code are deliberately **exempt**; `docs/dev/shared-utilities.md` § Locked-file mutation: which sites are converted
+names them and why.
 POSIX unlinks an open file happily, so no test here reaches the failing branch without the
 monkeypatch in `test_video_locked_files_http.py`; the frontend half — unmounting the
 `<video>` before the request goes out — is in `docs/dev/video-ui.md`, and the whole class is

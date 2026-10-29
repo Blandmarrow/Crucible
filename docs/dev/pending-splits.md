@@ -48,37 +48,28 @@ staleness sweep while still recording the seam.
 
 ## CLAUDE.md
 
-- **Moves:** the § Key invariants bullets that are *about one subsystem each* — the two
-  video bullets (the poster/`video_count` one and the Windows open-file one), the
-  `record_in_place`/`scores_stale` bullet, the stem-keyed-derived-artifact bullet, and the
-  `is_duplicate` bullet
-- **New file:** none — they move **into the topic files that already own them**
-  (`docs/dev/video.md`, `docs/dev/video-endpoints.md`, `docs/dev/scores-stale.md`,
-  `docs/dev/image-files.md`, `docs/dev/image-similarity.md`), each leaving a one-line
-  pointer behind in CLAUDE.md
-- **Why here:** § Architecture is 2,905 words and § Key invariants is nearly all of it,
-  which is a symptom rather than the problem: the section's stated test is "would I want
-  this loaded even for a task in an unrelated subsystem?", and five of those bullets fail
-  it outright. Each has grown a full sub-bullet tree of its own that only a reader already
-  inside that subsystem can use, and each has a topic file that is the natural home —
-  `image-similarity.md` already carries the `is_duplicate` bullet's whole section (§ The
-  flag is a relationship), so that one is a pointer swap rather than a move. That
-  is a *misfiling* fix, not a size fix, and it is why the seam is not "split CLAUDE.md in
-  half" — a second always-loaded file would defeat the point of the split. The three
-  bullets that must stay are the ones every module genuinely touches: the path-traversal
-  guard, the client-supplied-regex rule, and the fallible-work-before-commit ordering.
-- **Watch for:** every moved bullet needs its one-line pointer to name the destination
-  file, or the fact becomes unfindable — the invariants list is the only index of these
-  rules that a fresh conversation sees. The `record_in_place` bullet is cited by
-  `docs/dev/postmortems.md` (PM-010) and by the AST guard's docstring in
-  `backend/tests/test_scores_stale.py`; the stem-collision bullet is cited from
-  `docs/dev/video-reextract.md` § The extension change. The `is_duplicate` bullet has one
-  clause its section does not own — `duplicate_of`'s remap-or-strip sits in the
-  *cross-dataset* sub-bullet beside `source_video_id`, which is where it belongs because it
-  is the same rule; that clause stays behind when the rest moves. The Documentation Map is the other
-  1,808 words and is **not** a split candidate: it is the routing table that makes the
-  on-demand split work at all, and it grows by one row per topic file by design.
-
+- **Moves:** two cuts are done (the five subsystem-specific § Key invariants bullets, and the
+  test-writing conventions, now in docs/dev/backend-tests.md). What remains is a trim of
+  *where the weight sits*: the Documentation Map rows' "covers" halves wherever they restate
+  the topic file's own intro, and the reviewer site-lists inside the three largest remaining
+  invariant bullets (Path traversal guard, Provenance, and the `Image`-column mirror with its
+  join-table and `detections` sub-bullets)
+- **New file:** none — the site-lists move into the topic files that already own them
+  (docs/dev/file-browser.md or shared-utilities.md for the traversal gate list,
+  docs/dev/provenance.md for the provenance sub-bullets, docs/dev/versioning-service.md or
+  labels.md for the mirror rules), each leaving a pointer behind in CLAUDE.md
+- **Why here:** after the cut CLAUDE.md is still slightly over its 5,400-word budget. The
+  test every § Key invariants bullet is held to is "would I want this loaded even for a task
+  in an unrelated subsystem?"; the rule statement passes it, the enumerated reviewer
+  checklist beneath it mostly does not. The Map is a separate lever: its rows must stay
+  keyword-front-loaded triggers, so only the half that restates a file's intro goes, as
+  duplication of that intro (never as compression), and the trigger half stays
+- **Watch for:** the PM-013 "nothing fallible" ordering, the client-supplied-regex rule and
+  the platform trap in the Windows open-file bullet are the invariants every module touches
+  and must stay whole. `quality_flags["duplicate_of"]`'s remap-or-strip clause belongs to the
+  `source_video_id` cross-dataset sub-bullet and stays there. Several code comments cite
+  "CLAUDE.md § Key invariants" or a bullet by name, so grep the backend for the bullet's title
+  before moving it, not only the docs
 
 ## docs/dev/gallery.md
 
@@ -159,6 +150,20 @@ staleness sweep while still recording the seam.
   this file for pass 2; both rows need splitting the same way. PM-021's write-up and
   CLAUDE.md § Key invariants now both link here for the `replace_retrying` site, which lives
   in the job half.
+
+## docs/dev/image-files.md
+
+- **Moves:** § Importing captions & folder rescan (the three import paths, the rescan
+  reconciliation and its rename-vs-adopt asymmetry), together with § A stem-keyed derived
+  artifact needs a collision guard at every writer, which it explains
+- **New file:** docs/dev/image-import.md (mirrors the import and sync half of the user-facing
+  dataset docs)
+- **Why here:** the file is three `###` sections and no `##`, and the last is most of its
+  length: naming and cross-dataset moves are one subsystem, bringing files in from disk is
+  another. Add `##` headings when next editing it so the per-section breakdown works
+- **Watch for:** `docs/dev/video.md` § Poster stems and collisions, `docs/dev/file-browser.md`
+  § Path safety and `docs/dev/video-reextract.md` cite the stem-collision section by heading;
+  CLAUDE.md's stem-keyed pointer names it too
 
 ## docs/dev/image-similarity.md
 

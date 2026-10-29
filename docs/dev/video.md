@@ -89,6 +89,10 @@ spurious refusal instead of a silent clobber. It still has to learn the filter, 
 whole point of counting. A suffix convention would require all ten to learn one, and any one
 that forgot would be a bug. A separate directory means none of them change.
 
+## Videos are sources, not images, and their posters live apart
+
+**Videos are sources, not images, and their posters live apart.** A video is a `Video` row in `videos`, flat in `{dataset}/videos/`, never a row in `images`. Poster thumbnails go in `{dataset}/videos/thumbnails/` — a separate directory, *not* the images thumbnail folder with a distinguishing suffix: **ten modules** derive image-thumbnail-stem occupancy from a `thumb_dir.glob("*.webp")` over that folder (enumerated under **Storage layout** above, nine of them building `occupied_thumb_stems` to pick a name and `routers/filesystem.py` to refuse one), and a suffix convention means every one of them must learn to filter it, with any one that forgets being a silent thumbnail clobber. `Dataset.video_count`/`video_size_bytes` are deliberately separate from `image_count`/`total_size_bytes`, and **must be passed explicitly** wherever a `DatasetOut` is hand-built field by field (`list_datasets`): both default to 0, so an omission reports every dataset as video-free instead of failing. A poster is a nicety, never a gate — every *decode* failure in `video_service.generate_poster` is a False, and every caller wraps its encode tail (which can still raise), so a video whose frames will not decode still ingests, lists, plays, renames and deletes. See `docs/dev/video-decode.md` for the decode surface, and `docs/dev/video-extract.md` for frames.
+
 ## Poster stems and collisions
 
 **Poster stem collisions are avoided at every site that writes a poster** — a larger set
@@ -124,8 +128,8 @@ the two disagree, and a set built from filenames alone would let a later upload 
 `clip_001` take a poster another row owns. `utils.poster_path_for(video_path)` derives only
 the *proposal*; for an existing row read `Video.poster_path` and never re-derive it
 (`docs/dev/shared-utilities.md`). Moving the poster rather than the file is the opposite of
-image rescan's fix for the same bug — see CLAUDE.md § Key invariants, PM-007 and
-`docs/dev/image-files.md` § Importing captions & folder rescan.
+image rescan's fix for the same bug — see `docs/dev/image-files.md` § A stem-keyed derived artifact needs a collision guard at every writer,
+PM-007 and § Importing captions & folder rescan there.
 
 ## The model
 

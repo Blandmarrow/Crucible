@@ -21,10 +21,11 @@ restates its stages.
 
 1. M2 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. Record CLAUDE.md's word count before M2 touches it (6,557 on 2026-10-29) and after, and
-   quote both in the commit.
-3. Precaution: M2's second task moves invariant bullets out of CLAUDE.md. Move them
-   verbatim; a pointer line stays behind for each, naming its destination file.
+2. Finish M2 with the second CLAUDE.md seam. Quote CLAUDE.md's word count before (5,955 on
+   2026-10-29) and after in the commit.
+3. Precaution: moved bullets go verbatim, and each leaves a pointer that still states the
+   rule and names its destination; the rules every module touches stay whole (see the
+   queue entry's Watch for).
 
 ## Landed
 
@@ -38,12 +39,16 @@ restates its stages.
 
 Gate: CLAUDE.md under its 5,400-word budget, with every gate listed in one table.
 
-- [ ] A `## Verification` section: the gate table (local, CI, blocking, and what CI cannot
+- [x] A `## Verification` section: the gate table (local, CI, blocking, and what CI cannot
       run), the `tsc --noEmit` trap, and the report-what-the-run-says rule. The `qa-smoke`
       skill points at it.
-- [ ] A `## Working here` section with one dated milestone line linking this file.
-- [ ] Execute the queued CLAUDE.md seam: [pending-splits.md](pending-splits.md) § CLAUDE.md.
-      Re-measure each destination file first; one that tips over budget gets a queue entry.
+- [x] A `## Working here` section with one dated milestone line linking this file.
+- [x] The first CLAUDE.md seam: five invariant bullets to their topic files (the Windows
+      open-file trap keeps its rule; only its site list moved) and the test conventions to
+      [backend-tests.md](backend-tests.md). 7,013 → 5,955 words.
+- [ ] The second CLAUDE.md seam, about 555 words: [pending-splits.md](pending-splits.md)
+      § CLAUDE.md (reviewer site-lists in the three largest bullets, and Map "covers"
+      halves that duplicate a file's intro).
 
 ### M3 — The split queue
 

@@ -39,7 +39,7 @@
   a `SPLIT_INDEXES` folder to be linked from its index, so a detail file that is in
   neither place WARNs. Moving files into a family folder changes their paths: the move
   repoints every inbound link, and the link and path checks FAIL on any it misses.
-- **Not yet decided:** whether `docs/dev/video.md`'s eleven siblings move into a
-  `docs/dev/video/` folder. They have Map rows today and work; that move is optional, and
-  worth doing only when the video family next needs a row.
+- **Every family gets its own folder, video included** (the user, 2026-10-29). Video is
+  the largest family and already has its hub, so its eleven detail files move into
+  `docs/dev/video/` and their eleven Map rows become one.
 - **Amendments:** none yet.

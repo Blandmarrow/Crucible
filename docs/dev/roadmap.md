@@ -54,6 +54,9 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       doc whose new file shares the style-similarity name).
 - [ ] Gallery hub: split `docs/dev/gallery.md` (the recorded seam needs re-cutting) and do
       the same folder move for `gallery-dnd.md`, `gallery-state.md` and `gallery-nav.md`.
+- [ ] Video folder: move `docs/dev/video.md`'s eleven detail files into a folder with
+      `video.md` as its index, and fold their Map rows into its one row. No split; the
+      family's two queued seams (`video-reextract.md`, `docs/video.md`) run afterwards.
 - [ ] `docs/dev/labels.md` (both seams), then `docs/dev/ml-models.md` (both seams).
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.

@@ -158,9 +158,9 @@ rather than the ~2,540 the entry predicted, because § Gallery image selection k
 its recorded second seam therefore still stands.
 
 The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.md` →
-`bulk-image-jobs.md`, `versioning.md` → `versioning-service.md`, `export.md` →
-`export-licensing.md`, `detection.md` → `detection-inference.md`, `statistics.md`'s
-misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
+`bulk-image-jobs.md`, `versioning.md` → `versioning-service.md` (since moved into
+`docs/dev/versioning/`), `export.md` → `export-licensing.md`, `detection.md` →
+`detection-inference.md`, `statistics.md`'s misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
 
 ## README.md
@@ -182,29 +182,6 @@ utilities → `docs/dev/shared-utilities.md`.
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
 
-
-## docs/dev/versioning-service.md
-
-- **Moves:** the `restore_snapshot` bullet with its Pass 0–3 sub-bullets, the five
-  PM-026 bullets after it (complete-or-abort safety snapshot, Pass 1 all-or-nothing,
-  Pass 3's failure contract, the `result_data` outcome, measured phash) and the
-  `duplicate_dataset` read-side-twin bullet
-- **New file:** docs/dev/versioning-restore.md
-- **Why here:** the file is one `## Service` heading over a flat bullet list, and nearly
-  half of it is restore alone — a four-pass algorithm plus its failure contract, read
-  whenever a restore misbehaves. What stays (the two hooks, `_store_row_bytes`, snapshot
-  creation, diff, the mirror bullets, the injection table) is what every *overwrite path
-  elsewhere* needs. Leaves roughly 1,550 (restore) and 2,000 words, both under the 60% target —
-  the latter before GPT-026 added ~330 words of detections-mirror bullets beside the labels
-  one; if the stay half is then over 60%, the labels and detections mirror bullets are the
-  next to move, since each spans snapshot, restore and diff. Give both files `##` headings
-  per subject while splitting; this one has none below `## Service`.
-- **Watch for:** CLAUDE.md's preamble to the invariants says two invariants "point at
-  restore's Pass 2 and Pass 3" in this file, and `docs/dev/versioning.md`,
-  PM-025 and PM-026 cite it for Pass 0c, the safety snapshot and the failure contract —
-  grep `versioning-service.md` across `docs/`, `CLAUDE.md` and `backend/` (an alembic
-  migration docstring cites it too) and repoint whichever ones mean restore. Add a
-  Documentation Map row for the new file.
 
 ## docs/workspace.md
 

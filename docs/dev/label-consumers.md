@@ -8,7 +8,7 @@ derivative sites. The vocabulary itself — the two tables, `label_service.py`, 
 router and `POST /labels/assign` — is `docs/dev/labels.md`; the frontend surfaces are
 `docs/dev/labels-ui.md`. The param contract the filters join is `docs/dev/image-filters.md`,
 the export filter table is `docs/dev/export.md`, and the snapshot passes the mirror rides
-are `docs/dev/versioning-service.md`.
+are `docs/dev/versioning/mirrors.md`.
 
 ## Filters
 
@@ -159,7 +159,7 @@ it. *Snapshots* are the exception: since GPT-026 a snapshot mirrors detections
 too (`VersionImageState.detections`) and a restore writes them back, because a
 restore swaps the pixels their geometry is measured against. Duplicating a
 dataset, from disk or from a snapshot, still leaves them behind. See
-`docs/dev/versioning-service.md`.
+`docs/dev/versioning/mirrors.md`.
 
 **Same-dataset derivatives carry labels too**, for the same reason and by the
 same rule as `copy_provenance`: a crop is the same picture at a different

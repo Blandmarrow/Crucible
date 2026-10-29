@@ -62,7 +62,7 @@ wrapper verbatim, including its three load-bearing details — see
    § Target resolution — one function, two callers, at *The ladder runs twice*), then
    `version_service.protect_file_before_overwrite` and an immediate `commit()` — mandatory
    per that function's docstring, and the eighth *router* call site
-   (`docs/dev/versioning-service.md`).
+   (`docs/dev/versioning/hooks.md`).
 5. `utils.replace_retrying` into place (below).
 6. Row update: `filename`/`file_path` if the suffix changed, plus `width`, `height`,
    `file_size_bytes`, `format`, `phash`, `updated_at` (what busts

@@ -21,15 +21,15 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. The budget raise, the Quality and Gallery hubs, the whole video family (the folder
-   move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md` split)
-   and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
+2. The budget raise, the Quality, Gallery and Versioning hubs, the whole video family (the
+   folder move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md`
+   split) and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
    `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
    splits have landed. Next are the other over-budget dev docs, largest first:
-   `versioning-service.md`, `backend-infrastructure.md`, `image-files.md`, each with a seam
-   in `pending-splits.md` (re-measure first, and check each seam leaves both halves under
-   60% of budget — the captioning seam as recorded would have left ~93%, the file-browser
-   one ~80%, and both went three ways instead).
+   `backend-infrastructure.md`, then `image-files.md`, each with a seam in
+   `pending-splits.md` (re-measure first, and check each seam leaves both halves under 60%
+   of budget — the captioning seam as recorded would have left ~93%, the file-browser one
+   ~80%, the versioning-service one ~65%, and none of the three went as recorded).
 3. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand. The video folder move
@@ -91,6 +91,12 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       `docs/dev/file-browser-move.md`, and rename and delete, the two DB-syncing mutations
       the page fires, to `docs/dev/file-browser-rename-delete.md`; the endpoint table, collisions,
       path safety, § Still open and the page stay. Three flat siblings, no hub.
+- [x] Versioning hub (2026-10-29): the recorded restore seam would have left
+      `versioning-service.md` at ~65%, and moving the mirrors too made the family four
+      files, so it got a hub. Both `versioning-service.md` and the old body of
+      `docs/dev/versioning.md` split eight ways into `docs/dev/versioning/` (guards, routes,
+      storage, hooks, restore, mirrors, frontend, tests) behind the `docs/dev/versioning.md`
+      hub, and two Map rows became one.
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README

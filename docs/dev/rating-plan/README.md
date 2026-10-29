@@ -168,7 +168,7 @@ Cheap to get wrong twice, so recorded explicitly.
 ## 1. The rating column — third
 
 Read `docs/dev/gallery.md`, `docs/dev/image-filters.md`, `docs/dev/bulk-ops.md`,
-`docs/dev/export.md` and `docs/dev/versioning-service.md`.
+`docs/dev/export.md` and `docs/dev/versioning/mirrors.md`.
 
 **Decided — four buckets, decision language.** `Keep / Probably / Probably not / Cut`,
 stored as a nullable small int 1–4 in `Image.aesthetic_rating`.

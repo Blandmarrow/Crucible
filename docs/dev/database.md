@@ -1,6 +1,6 @@
 # Database: SQLite engine, schema conventions, backups and migration drift
 
-This file covers the SQLite engine and the schema conventions every model follows: WAL and the per-connection pragmas, foreign-key enforcement and every `ondelete`, virtual subfolders, the images and videos index inventories, UTC datetime serialization, dataset-folder deletion and the startup orphan sweep, deferred blob columns, the migration drift check, and the startup database backup. The running process — the lifespan hook, server control and the restart loop, SSE, and the job queue — is in `docs/dev/backend-infrastructure.md`. The versioning tables' own semantics are in `docs/dev/versioning.md`, and the frame-lineage FK in `docs/dev/video/extract.md` § Frame lineage.
+This file covers the SQLite engine and the schema conventions every model follows: WAL and the per-connection pragmas, foreign-key enforcement and every `ondelete`, virtual subfolders, the images and videos index inventories, UTC datetime serialization, dataset-folder deletion and the startup orphan sweep, deferred blob columns, the migration drift check, and the startup database backup. The running process — the lifespan hook, server control and the restart loop, SSE, and the job queue — is in `docs/dev/backend-infrastructure.md`. The versioning tables' own semantics are in `docs/dev/versioning/storage.md`, and the frame-lineage FK in `docs/dev/video/extract.md` § Frame lineage.
 
 ## SQLite engine and schema conventions
 

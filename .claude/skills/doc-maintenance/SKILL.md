@@ -205,7 +205,7 @@ diff each topic file's claims against the code it describes and propose correcti
 - **Plain relative paths only.** Never write `@docs/...` or `@CLAUDE` — the `@path` syntax
   recursively auto-loads the target into every conversation. This is a check FAIL.
 - **Cross-reference, don't duplicate.** Documenting something in file A that depends on
-  something in file B gets a one-line pointer ("see `docs/dev/versioning.md` for the
+  something in file B gets a one-line pointer ("see `docs/dev/versioning/hooks.md` for the
   copy-on-write mechanism"), not a copy.
 - **Refresh the Map's word count** when you substantially edit a file. `check_map_words`
   WARNs when the hand-written `Words` cell drifts by more than `MAP_WORDS_TOLERANCE` (5%) or

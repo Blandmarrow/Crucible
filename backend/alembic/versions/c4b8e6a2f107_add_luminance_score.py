@@ -20,7 +20,7 @@ mirror for `luminance_score` (with `nsfw_score` and `saturation_score`). A
 `*_score` column is authored data as far as a snapshot is concerned — nothing
 recomputes one on restore — so all ten are mirrored *and* diffed, and
 `NOT_MIRRORED` holds no score. CLAUDE.md, `docs/dev/quality/scoring.md`,
-`docs/dev/versioning-service.md` and `test_video_lineage_mirrors.py` all agree on
+`docs/dev/versioning/mirrors.md` and `test_video_lineage_mirrors.py` all agree on
 that; only this docstring predates it.
 """
 from typing import Sequence, Union

@@ -20,7 +20,9 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 plan_rebase = _mod.plan_rebase
 
-ROOT = Path("/data/datasets")
+# `.absolute()` gives the root a drive on Windows: a bare "\data\datasets" is not
+# absolute there, and `plan_rebase` rightly refuses every row under it.
+ROOT = Path("/data/datasets").absolute()
 F = ROOT / "new-name"
 
 
@@ -71,7 +73,7 @@ def test_versions_are_decided_independently():
 def test_a_path_outside_the_parent_is_left():
     rows = [
         (1, "v1", _p("old-name", "images", "a.png"), "a.png"),
-        (2, "v1", "/elsewhere/old-name/images/b.png", "b.png"),
+        (2, "v1", str(Path("/elsewhere/old-name/images/b.png").absolute()), "b.png"),
     ]
     updates, left = plan_rebase(str(F), rows)
     assert updates == [], "one unprovable row leaves the whole version"

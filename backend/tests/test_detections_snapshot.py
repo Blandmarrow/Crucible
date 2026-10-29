@@ -201,7 +201,7 @@ def _fail_object_copies(monkeypatch):
     hits = {"n": 0}
 
     def selective(src, dst, *a, **k):
-        if "/.versions/objects/" in str(src) and Path(dst).name.startswith(".tmp-"):
+        if "/.versions/objects/" in Path(src).as_posix() and Path(dst).name.startswith(".tmp-"):
             hits["n"] += 1
             Path(dst).write_bytes(b"partial")
             raise OSError("injected object copy failure")

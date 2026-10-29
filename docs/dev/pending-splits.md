@@ -157,8 +157,9 @@ utilities → `docs/dev/shared-utilities.md`.
   every one of which already ends in a `→ [details](docs/…)` link
 - **New file:** none. The prose does not move to a sibling; it is *deleted* and replaced by
   a short paragraph pointing at the Docs table already sitting further down the file.
-- **Why here:** README is over budget (2,744 against 2,500) and the overflow is a second
-  index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
+- **Why here:** README was over budget (3,027 against 2,500) until the budget was raised
+  to 4,000 on 2026-10-30, deferring this cut rather than dropping it; the overflow is a
+  second index. § Features restates, one bullet at a time, what the twelve rows of the Docs table
   already point at — the deletion rule's "duplicated in a sibling file, replace it with a
   cross-reference" case, not a compression. It grows by a bullet every time a feature ships
   (watermark removal was the latest), so it will trip again on the next one. What must stay

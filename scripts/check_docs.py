@@ -137,7 +137,9 @@ NOTE_TOPIC_WORDS = 3500    # = MAX: no NOTE tier (2026-10-29)
 MAX_USER_WORDS = 2500
 # The landing page. Kept at the user-page budget (the reference allows 3000): README's
 # overflow is a second feature index (see PENDING_SPLITS), not landing-page content.
-MAX_README_WORDS = 2500
+# Raised 2500 -> 4000 (2026-10-30, the user's call): the § Features deletion is deferred,
+# not dropped, and its seam stays in PENDING_SPLITS for when it is picked up.
+MAX_README_WORDS = 4000
 
 # Per-section targets for CLAUDE.md (heading prefix -> words; "(intro)" is the text
 # before the first ## heading). Reported as NOTEs only. Empty since 2026-10-29: the

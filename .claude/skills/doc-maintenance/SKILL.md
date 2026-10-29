@@ -80,7 +80,7 @@ from them**. That check is yours.
 
 `scripts/check_docs.py` warns when a file exceeds its word budget (`MAX_TOPIC_WORDS = 3500`
 for everything under `docs/dev/`, subfolders included; `MAX_USER_WORDS = 2500` for `docs/`
-and `MAX_README_WORDS = 2500`; `MAX_CLAUDE_WORDS = 6000` — that one expresses a ~280-line
+and `MAX_README_WORDS = 4000`; `MAX_CLAUDE_WORDS = 6000` — that one expresses a ~280-line
 ceiling, converted at CLAUDE.md's own density of ~21.5 words per line, raised from 5,400 by
 decision 2 in `docs/dev/decisions.md`) or when any single
 paragraph exceeds `MAX_BLOCK_WORDS` (250). The folders in `TRANSIENT_DIRS` are exempt. The

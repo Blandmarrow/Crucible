@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-10-29)
+## Next session (updated 2026-10-30)
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
@@ -27,9 +27,11 @@ restates its stages.
    `docs/dev/captioning.md`, `docs/dev/bulk-image-jobs.md` and `docs/dev/file-browser.md`
    splits, and the two-way `docs/dev/backend-infrastructure.md` and `docs/dev/image-files.md`
    splits, have landed, so no dev doc is over budget. The user docs go largest first, and
-   `docs/gallery.md` and `docs/workspace.md` have both split three ways. Next and last is
-   `README.md` (3,027 of 2,500), whose seam — deleting § Features — is in `pending-splits.md`. Re-measure
-   first, and check the seam leaves both halves under 60% of budget — the captioning seam as
+   `docs/gallery.md` and `docs/workspace.md` have both split three ways. `README.md`
+   (3,027 words) was left for now: its budget was raised to 4,000 on 2026-10-30 instead, so
+   nothing is over budget. Its seam — deleting § Features — stays in `pending-splits.md`
+   for whenever it is picked up. Re-measure first, and check the seam leaves both halves
+   under 60% of budget — the captioning seam as
    recorded would have left ~93%, the file-browser one ~80%, the versioning-service one ~65%,
    the gallery one ~79% and the workspace one ~67%, and none of the five went as recorded;
    the backend-infrastructure and image-files ones held.
@@ -122,7 +124,9 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
         backups moved to `docs/server.md`, the File Browser to `docs/file-browser.md`;
         dialogs, the top bar and jobs, meters, Split View, Logs and Booru stay. Three flat
         siblings, no hub.
-  - [ ] `README.md`.
+  - [x] `README.md` (2026-10-30): not split. Its budget was raised to 4,000 in
+        `scripts/check_docs.py` at the user's call, which leaves it under budget at 3,027;
+        the § Features seam stays queued in [pending-splits.md](pending-splits.md).
 - [x] `pending-splits.md` itself (2026-10-29): under budget at ~3,340 once the ml-models
       entry left.
 

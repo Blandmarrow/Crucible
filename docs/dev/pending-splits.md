@@ -65,11 +65,12 @@ staleness sweep while still recording the seam.
   lines and belongs exactly where it is, under § Running a scoring run.
 
 `docs/gallery.md` → `docs/datasets.md` **and** `docs/subfolders.md` was executed on 2026-10-29
-as an M3 task, the first of the user docs, and was **re-cut on execution**. Re-measured at
+as an M3 task, the first of the user-docs queue, and was **re-cut on execution**. Re-measured at
 3,227 words rather than the 2,580 the entry assumed, the recorded seam (§ Datasets and
 § Getting images in out to `docs/datasets.md`) would have left ~1,980 behind, 79% of budget.
 So § Organising into subfolders, with its rename/re-nest subsection, went to its own page as
-well, gaining `##` headings where bold lead-ins had marked its three parts. It is the
+well: its two bold lead-ins became `##` headings and its `###` rename subsection was
+promoted to `##`. It is the
 subfolder sidebar, a subsystem of its own, mirroring `docs/dev/gallery/subfolders.md`.
 § Sorting and § Manual Image Ordering stayed with the grid, so README's
 `gallery.md#manual-image-ordering` anchor still holds. That left ~1,300 (datasets), ~1,340

@@ -2,7 +2,7 @@
 
 Creating datasets, organizing them into categories, and getting images into them — uploading, importing a folder, rescanning from disk and importing captions. Once the images are in, browsing, filtering and selecting them is covered in [Gallery](gallery.md), and filing them into subfolders in [Subfolders](subfolders.md).
 
-Available from: the **Datasets** sidebar item. The import dialog, Rescan and Upload are also on the gallery toolbar.
+Available from: the **Datasets** sidebar item. The import dialog, Rescan, Upload and the **Upload to:** picker are also on the gallery toolbar.
 
 ## Creating and managing datasets
 

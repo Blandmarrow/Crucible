@@ -28,7 +28,7 @@ restates its stages.
    splits, and the two-way `docs/dev/backend-infrastructure.md` and `docs/dev/image-files.md`
    splits, have landed, so no dev doc is over budget. The user docs go largest first, and
    the first, `docs/gallery.md`, has split three ways. Next is `docs/workspace.md` (2,696 of
-   2,500), then `README.md` (2,998) with § Features last, each with a seam in
+   2,500), then `README.md` (3,006) with § Features last, each with a seam in
    `pending-splits.md`. Re-measure first, and check the seam leaves both halves under 60%
    of budget — the captioning seam as recorded would have left ~93%, the file-browser one
    ~80%, the versioning-service one ~65% and the gallery one ~79%, and none of the four went
@@ -116,7 +116,7 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
   - [x] `docs/gallery.md` (2026-10-29): three ways rather than the recorded two, which
         would have left 79% behind. Datasets and getting images in moved to
         `docs/datasets.md`, the subfolder sidebar to `docs/subfolders.md`; browsing,
-        sorting and manual ordering stay.
+        sorting and manual ordering stay. Three flat siblings, no hub.
   - [ ] `docs/workspace.md`, then `README.md`.
 - [x] `pending-splits.md` itself (2026-10-29): under budget at ~3,340 once the ml-models
       entry left.

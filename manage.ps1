@@ -254,7 +254,8 @@ function Install-TorchIfNeeded {
     }
 
     $nvOut = (& nvidia-smi) | Out-String
-    if ($nvOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
+    # Drivers 610+ print "CUDA UMD Version: X.Y" where older ones print "CUDA Version: X.Y".
+    if ($nvOut -match "CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)") {
         $maj = [int]$Matches[1]; $min = [int]$Matches[2]
         Write-Host "  NVIDIA GPU detected - driver supports CUDA $maj.$min." -ForegroundColor Green
 
@@ -510,8 +511,13 @@ function Cmd-Setup {
         # matches no version and lands on the same branch, which is the right answer.
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
+        # The catch is load-bearing: a MISSING python.exe (a venv built on Linux, with
+        # bin\ instead of Scripts\) raises CommandNotFoundException, which "Continue" does
+        # not soften inside a try - without a catch it aborts setup instead of recreating.
         try {
             $venvVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+        } catch {
+            $venvVer = $null
         } finally {
             $ErrorActionPreference = $prevEap
         }
@@ -757,6 +763,9 @@ function Cmd-Update {
     $ErrorActionPreference = "Continue"
     try {
         $venvPyVer = & "$ROOT\venv\Scripts\python.exe" --version 2>&1
+    } catch {
+        # A missing python.exe raises CommandNotFoundException; see Cmd-Setup.
+        $venvPyVer = $null
     } finally {
         $ErrorActionPreference = $prevEap
     }

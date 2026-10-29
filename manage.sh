@@ -366,7 +366,8 @@ _install_torch_if_needed() {
     if command -v nvidia-smi &>/dev/null; then
         local nv_out cuda_ver maj min tag=""
         nv_out=$(nvidia-smi 2>/dev/null || true)
-        cuda_ver=$(echo "$nv_out" | grep -oE "CUDA Version: [0-9]+\.[0-9]+" \
+        # Drivers 610+ print "CUDA UMD Version: X.Y" where older ones print "CUDA Version: X.Y".
+        cuda_ver=$(echo "$nv_out" | grep -oE "CUDA (UMD )?Version: [0-9]+\.[0-9]+" \
                    | grep -oE "[0-9]+\.[0-9]+" | head -1)
 
         if [ -n "$cuda_ver" ]; then

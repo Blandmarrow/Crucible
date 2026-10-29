@@ -21,11 +21,13 @@ restates its stages.
 
 1. M3 runs on branch `docs/architecture-v3.1`, which holds M1–M3. Do not merge it until M3
    is done or the user says otherwise.
-2. The budget raise and the dev half of the Quality hub have landed: `docs/dev/quality.md`
-   routes to seven files in `docs/dev/quality/` (the user chose the name, 2026-10-29).
-   Next is the user-doc split of `docs/scoring.md` into a new docs/style-similarity.md.
-3. Then the gallery hub. Moving files into the family folder changes their paths; grep
-   each old path across `docs/`, `CLAUDE.md`, `backend/` and `frontend/` before and after.
+2. The budget raise and the Quality hub have landed. Next is the gallery hub, built the
+   same way: `docs/dev/quality.md` is the worked example (a lean hub with a § Where things
+   live table, the family in a `SPLIT_INDEXES` folder, one Map row sized `~N (+ details)`).
+3. Re-measure `docs/dev/gallery.md` first; its recorded seam needs re-cutting. Moving files
+   into the family folder changes their paths, so before editing hand a scout the old
+   paths to inventory across `docs/`, `CLAUDE.md`, `backend/`, `frontend/`, `scripts/` and
+   `.claude/`, and re-run the sweep after. Keep the repoint pass off `__pycache__`.
 
 ## Landed
 
@@ -48,11 +50,10 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
 
 - [x] Raise `MAX_CLAUDE_WORDS` to 6,000 in `scripts/check_docs.py`, with the dated reason
       pointing at decision 2, and delete the § CLAUDE.md queue entry (2026-10-29).
-- [ ] Image similarity/scoring hub. Dev half done (2026-10-29): the old
-      image-similarity.md split four ways, the old dev scoring.md split two ways, and both
-      moved with scores-stale.md into `docs/dev/quality/` behind the `docs/dev/quality.md`
-      hub. Still open: split `docs/scoring.md` (the user doc whose new file shares the
-      style-similarity name).
+- [x] Image similarity/scoring hub (2026-10-29): the old image-similarity.md split four
+      ways, the old dev scoring.md split two ways, and both moved with scores-stale.md into
+      `docs/dev/quality/` behind the `docs/dev/quality.md` hub. `docs/scoring.md` split off
+      `docs/style-similarity.md`; its residual seam stays queued.
 - [ ] Gallery hub: split `docs/dev/gallery.md` (the recorded seam needs re-cutting) and do
       the same folder move for `gallery-dnd.md`, `gallery-state.md` and `gallery-nav.md`.
 - [ ] Video folder: move `docs/dev/video.md`'s eleven detail files into a folder with

@@ -51,7 +51,7 @@ Every step from raw images to a training-ready export, in order:
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
 
 ### Quality & curation
-- **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md)
+- **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Style similarity reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model produced it → [details](docs/scoring.md) · [style similarity](docs/style-similarity.md)
 - **Filter & curate** via search, quality flags, score ranges, and detected object labels — every filter is remembered per dataset, so leaving the gallery and coming back (or restarting) lands you back on the view you were working in → [details](docs/gallery.md)
 - **Label images** with a small shared vocabulary — a second axis of organisation alongside subfolders, so "usable for FX work" can cut across every subject folder. Apply one at a time, with a single keypress while arrowing through a folder, or in bulk across a whole filtered selection; then filter the gallery, or an export, on it. Labels never touch captions and never appear in an exported `.txt` → [details](docs/labels.md)
 
@@ -309,6 +309,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
+| Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
 | Duplicate Resolution | [docs/duplicates.md](docs/duplicates.md) |
 | Object Detection | [docs/detection.md](docs/detection.md) |
 | Batch Editing & Image Processing | [docs/editing.md](docs/editing.md) |

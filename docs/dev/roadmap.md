@@ -23,9 +23,9 @@ restates its stages.
    is done or the user says otherwise.
 2. The budget raise, the Quality and Gallery hubs, the whole video family (the folder
    move, the `docs/dev/video/reextract.md` split and the three-way `docs/video.md` split)
-   and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md` and
-   `docs/dev/captioning.md` splits have landed. Next are the other over-budget dev docs,
-   largest first: `docs/dev/bulk-image-jobs.md` (~3,950), `file-browser.md`,
+   and the three-way `docs/dev/labels.md`, `docs/dev/ml-models.md`,
+   `docs/dev/captioning.md` and `docs/dev/bulk-image-jobs.md` splits have landed. Next are
+   the other over-budget dev docs, largest first: `file-browser.md`,
    `versioning-service.md`, `backend-infrastructure.md`, `image-files.md`, each with a seam
    in `pending-splits.md` (re-measure first, and check each seam leaves both halves under
    60% of budget — the captioning seam as recorded would have left ~93%).
@@ -81,6 +81,10 @@ split re-measures before cutting, and a seam the file has grown past is re-chose
       Providers moved to `docs/dev/llm-providers.md` and the model picker to
       `docs/dev/caption-model-picker.md`; the job half stays at ~2,480 (71%) as one
       subsystem. Three flat siblings, no hub.
+- [x] `docs/dev/bulk-image-jobs.md` (2026-10-29): the recorded seam. Detection-driven
+      cropping moved to `docs/dev/detection-crop.md` and watermark removal to
+      `docs/dev/inpaint.md`; the crop remap stays as its own `##`, since all four crop sites
+      use it. Three flat siblings, no hub.
 - [ ] The other dev docs, largest first. A family that grows past about three files gets
       a hub as it splits.
 - [ ] The user docs, each with its README Docs-table and `docs/features.md` rows; README

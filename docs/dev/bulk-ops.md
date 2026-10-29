@@ -5,8 +5,9 @@ This file covers the bulk operations that act across a selection or a whole data
 delete / count / provenance / reorder), and `BulkEditPage`'s tabs. The interesting content
 here is **which rows are selected** — `_apply_bulk_filters` and the scope panel that drives it.
 
-The bulk jobs that rewrite pixels or files — batch resize/crop, the thumbnail rebuild, and
-detection-driven cropping — are in `docs/dev/bulk-image-jobs.md`. Dataset export has its own
+The bulk jobs that rewrite pixels or files — batch resize/crop and the thumbnail rebuild —
+are in `docs/dev/bulk-image-jobs.md`; detection-driven cropping is `docs/dev/detection-crop.md`
+and watermark removal `docs/dev/inpaint.md`. Dataset export has its own
 file — see `docs/dev/export.md`.
 
 ## Bulk caption editing
@@ -77,8 +78,11 @@ Two smaller rules in the same function. Temp names are keyed on the row id (`__r
 
 ## Bulk jobs that rewrite files
 
-`POST /images/batch/resize`, `POST /images/batch/crop`, `POST /images/bulk-thumbnails` and
-`POST /detection/crop` are documented in `docs/dev/bulk-image-jobs.md` — they share a loop
-shape (PM-013 commit ordering, `contained_path` gating, `thumbnails_stale`,
-`remap_detections_for_crop`) that has nothing to do with the scope filtering above.
+`POST /images/batch/resize`, `POST /images/batch/crop` and `POST /images/bulk-thumbnails` are
+documented in `docs/dev/bulk-image-jobs.md`, `POST /detection/crop` in
+`docs/dev/detection-crop.md` and `POST /inpaint/run` in `docs/dev/inpaint.md`. They share a
+loop shape (PM-013 commit ordering, `thumbnails_stale`) that has nothing to do with the scope
+filtering above. Two parts of it are not shared: only `bulk-thumbnails` and `/inpaint/run`
+gate stored paths through `contained_path`, and only the replace-mode crops run
+`remap_detections_for_crop`.
 

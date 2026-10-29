@@ -129,6 +129,12 @@ staleness sweep while still recording the seam.
   moves. README's `gallery.md#manual-image-ordering` and
   `gallery.md#renaming-and-re-nesting-a-subfolder` anchors both stay behind.
 
+`docs/dev/bulk-image-jobs.md` → `docs/dev/detection-crop.md` **and** `docs/dev/inpaint.md` was
+executed on 2026-10-29 as an M3 task, with the seam as recorded and the remap bullets promoted
+to their own `##` in the staying half. The entry's word counts were stale: re-measured at
+3,946 words, the split left ~1,970 behind (56%, so little headroom; the next move out is
+§ Rebuilding thumbnails), ~900 and ~1,250.
+
 `docs/video.md` → `docs/video-extraction.md` **and** `docs/video-reextract.md` was executed on
 2026-10-29 as an M3 task, taking the entry's own fallback. Re-measured at 2,723 words, the
 recorded seam would have left ~1,740 in the new file, so § Re-extracting at full resolution
@@ -250,27 +256,6 @@ utilities → `docs/dev/shared-utilities.md`.
   `docs/dev/backend-infrastructure.md` cite `docs/workspace.md` for the backup and Logs
   horizon; repoint only the backup one. § Restarting & shutting down links `#logs`, which
   stays behind, so that link must become `workspace.md#logs`.
-
-## docs/dev/bulk-image-jobs.md
-
-- **Moves:** § Painting detections out (watermark removal) → docs/dev/inpaint.md, and
-  § Detection-driven cropping (crop to detected subject) → docs/dev/detection-crop.md.
-- **New files:** docs/dev/inpaint.md and docs/dev/detection-crop.md (the user-facing side of
-  both is in docs/detection.md, so neither mirrors a user doc of its own name).
-- **Why here:** the file grew around one idea, "bulk jobs that rewrite files", and the two
-  detection-driven jobs became subsystems of their own: each has its own router, request
-  model and scope rules. It tripped the budget when § Batch resize and aspect crop gained the
-  stage, flush, swap, commit order (GPT-010). Moving both leaves ~1,400 words behind and
-  ~1,130 and ~1,210 in the new files, all under the ~2,100 target. One move alone leaves
-  ~2,500, which is still over.
-- **Watch for:** the **Remapping detections through replace-mode crops** bullets sit inside
-  § Detection-driven cropping but serve all four crop sites, batch crop included. Keep them
-  in bulk-image-jobs.md (or give them their own `##`) rather than carrying them out with the
-  detection worker, because § Batch resize and aspect crop and docs/dev/image-detail.md
-  point at them. `docs/dev/bulk-ops.md` § Bulk jobs that rewrite files lists
-  `POST /detection/crop` as living here. CLAUDE.md's Map row for this file names
-  `CropToDetectionForm`, `batch_inpaint` and the LaMa paint mask in its trigger, so those
-  words move to the two new rows.
 
 ## docs/dev/backend-infrastructure.md
 

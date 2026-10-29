@@ -4,7 +4,7 @@ This file covers the detection subsystem's request path: the `/detection` router
 
 The predictors those routes call — the task matrix per model family, multi-phrase prompts, Florence-2/NudeNet/SAM2/SAM3 inference, and the SAM 3 upstream constraints — are `docs/dev/detection-inference.md`. Detection *models* are registered and VRAM-managed like every other model — see `docs/dev/model-registry.md` for their entries, `docs/dev/model-residency.md` for eviction and leases, and `docs/dev/ml-models.md` for loading. The scoring flags that a detection run can write (`has_watermark`) live in `docs/dev/quality/scoring.md`.
 
-Two jobs *consume* detections rather than producing them, and both live in `docs/dev/bulk-image-jobs.md`: `crop_to_detection` crops an image down to what was found, and `batch_inpaint` paints it out. The second is destructive to this router's own rows — a successful replace-mode paint **deletes** the detections it consumed and clears `has_watermark`, because the region they name no longer contains anything. Copy mode consumes nothing: the parent still has the watermark, so it keeps both.
+Two jobs *consume* detections rather than producing them, each in its own file: `crop_to_detection` crops an image down to what was found (`docs/dev/detection-crop.md`), and `batch_inpaint` paints it out (`docs/dev/inpaint.md`). The second is destructive to this router's own rows — a successful replace-mode paint **deletes** the detections it consumed and clears `has_watermark`, because the region they name no longer contains anything. Copy mode consumes nothing: the parent still has the watermark, so it keeps both.
 
 
 Detection runs as a background job, same pattern as quality scoring. Four model families are supported.
@@ -26,7 +26,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `POST /detection/merge` | `DetectionMergeRequest {detection_ids ≥2}` | `DetectionOut` — merge ≥2 same-image rows into one `model="manual"` row |
 | `POST /detection/manual` | `ManualDetectionRequest` | `DetectionOut` (no SAM) **or** `{job_id}` (with SAM) — hand-drawn box |
 | `POST /detection/{detection_id}/refine` | `DetectionRefineRequest {point_prompts, point_labels}` | `{job_id}` — point-refine an existing mask (400 if the row has no mask) |
-| `POST /detection/crop` | `DetectionCropRequest` | `{job_id, total, skipped}` — batch-crop images to their detection boxes; `skipped` counts images with no matching detection. Documented in full in `docs/dev/bulk-image-jobs.md` |
+| `POST /detection/crop` | `DetectionCropRequest` | `{job_id, total, skipped}` — batch-crop images to their detection boxes; `skipped` counts images with no matching detection. Documented in full in `docs/dev/detection-crop.md` |
 
 **Management routes are sync/DB-only** except `manual` (with SAM) and `refine`, which enqueue a `job_type="detection"` job. Declare the static paths (`/models`, `/bulk-delete`, `/merge`, `/manual`, `/crop`) before the `/{detection_id}` routes — `/crop` sat below them until 2026-07-31 and was safe only incidentally, there being no `POST /{detection_id}` and `detection_id: int` 422ing on the segment `"crop"`. That is the PM-018 shape; a comment now marks where the parameterized block begins. `bulk-delete` resolves scope like `crop_to_detection` (image_ids > dataset + `normalize_subfolder` + `ALLOWED_FLAG_KEYS` exclusions), then optional `label.in_` / `model.in_` / `score < score_below`. SQL `score <` never matches NULL, so unscored/manual rows are immune to a score filter (intended).
 

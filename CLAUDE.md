@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working here
+
+**Milestone (2026-10-29):** the docs-architecture upgrade, on branch `docs/architecture-v3.1`
+— this file's Verification section and split, then the split queue; order and the session
+handoff are in `docs/dev/roadmap.md`.
+
 ## Commands
 
 ### Launch
@@ -36,15 +42,7 @@ npm run typecheck:e2e  # tsc over frontend/e2e/ — outside the build, see below
 npm run lint     # ESLint — CI runs it `continue-on-error`, so it never blocks
 ```
 
-**`npm run build` is the only real typecheck for `src/`.** The root `tsconfig.json` is a
-solution-style config (`"files": []` + project references), so a bare `npx tsc --noEmit`
-type-checks **nothing** and exits 0 on code that does not compile. Verify frontend changes
-with `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
-
-**`frontend/e2e/` is deliberately outside that build** — its specs must never enter
-`vite build` — and Playwright only transpiles, so `npm run typecheck:e2e`
-(`tsc -p e2e/tsconfig.json --noEmit`, ~2 s) is the only thing that checks them. It is a
-blocking CI step and part of the `qa-smoke` skill; run it after touching a spec.
+What actually verifies a frontend change is in § Verification below.
 
 ### Tests
 
@@ -87,6 +85,47 @@ npx playwright test               # spins up its own backend on :8199 vs a throw
 
 The full pre-merge sweep (backend pytest → frontend build + e2e typecheck + lint → e2e) is
 the `qa-smoke` skill.
+
+## Verification
+
+**Report what the run says, not that it built.** Quote the test count, the exit code or the
+`RESULT:` line. "It compiled" is not "it works", and a skipped stage is reported as skipped.
+
+**`npm run build` is the only real typecheck for `src/`.** The root `tsconfig.json` is a
+solution-style config (`"files": []` + project references), so a bare `npx tsc --noEmit`
+type-checks **nothing** and exits 0 on code that does not compile. Verify frontend changes
+with `npm run build` (which runs `tsc -b`), never with `tsc --noEmit`.
+
+**`frontend/e2e/` is deliberately outside that build** — its specs must never enter
+`vite build` — and Playwright only transpiles, so `npm run typecheck:e2e`
+(`tsc -p e2e/tsconfig.json --noEmit`, ~2 s) is the only thing that checks them. It is a
+blocking CI step and part of the `qa-smoke` skill; run it after touching a spec.
+
+Which gate runs where — the one place this list lives:
+
+| Gate | Command | Locally | CI job | Blocks a PR |
+|---|---|---|---|---|
+| Backend tests | `python -m pytest backend/tests/ -q` | `qa-smoke` | `backend-tests` (Ubuntu) | yes |
+| Backend tests on Windows | the same | — | `backend-tests-windows` | **no** — `continue-on-error` until it runs green |
+| Backend lint | `ruff check backend` | by hand (not in the venv; CI installs it) | `backend-lint` | yes |
+| Migration drift | `python scripts/check_migrations.py` | after a model or migration change | `migration-drift` | yes |
+| `src/` typecheck + build | `npm run build` | `qa-smoke` | `frontend-build` | yes |
+| e2e spec typecheck | `npm run typecheck:e2e` | `qa-smoke` | `frontend-build` | yes |
+| Frontend lint | `npm run lint` | `qa-smoke` | `frontend-build` | **no** — the react-hooks backlog |
+| End-to-end journeys | `npx playwright test` | `qa-smoke` | `e2e-smoke` | yes |
+| Docs drift check | `python scripts/check_docs.py` (CI runs `--self-test` first) | after any doc change | `check-docs`, every PR | its FAILs only |
+| Brand-mark drift | `python scripts/check_mark.py` | after touching the mark | `check-mark` | yes |
+
+**What no gate runs** — stated so it is not discovered later:
+- **Torch, GPU and real model inference.** `requirements-ci.txt` is torch-free, so anything
+  under `backend/ml/` past the pure-numpy modules is tested only where `needs_torch` lets it
+  skip. Verify such a change by running it.
+- **scenedetect and ffmpeg in e2e**, deliberately absent so the `capabilities: false`
+  branches are exercised (`docs/dev/video-tests.md`).
+- **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
+  only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
+- **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
+  out.
 
 ## Architecture
 

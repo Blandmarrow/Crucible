@@ -9,6 +9,10 @@ Run these three stages in order, from the repo root. Report pass/fail per stage;
 do not stop at the first failure unless a stage is a hard prerequisite for the
 next (noted below).
 
+This is the local half of the gates. Which gates CI runs, and what neither this skill nor CI
+covers (ruff, migration drift, the docs and mark checks, torch/GPU paths), is the table in
+`CLAUDE.md` § Verification — point there rather than restating it.
+
 ## 1. Backend tests
 
 ```bash

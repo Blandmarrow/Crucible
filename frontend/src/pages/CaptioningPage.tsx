@@ -12,7 +12,7 @@ import { providersApi, type ProviderOut } from "../api/providers";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { useSelectionStore } from "../store/selectionStore";
-import { usePresetsStore } from "../store/promptPresetsStore";
+import { usePromptPresets } from "../hooks/usePromptPresets";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -28,82 +28,15 @@ import {
   CAPTION_DEFAULT_STRIP_REFS_KEY,
   CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY,
-  CAPTIONING_WORKFLOW_KEY,
   CAPTIONING_FILTERS_PREFIX,
 } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
-
-type Scope = "uncaptioned" | "selected" | "all";
-
-interface StepConfig {
-  id: string;
-  model: string;
-  style: string;
-  customPrompt: string;
-  wd14Threshold: number;
-  providerModelInput: string;
-  delimiterMode: DelimiterMode;
-  delimiterParts: string[];
-  usePreviousCaption: boolean;
-  stripRefusals: boolean;
-  stripThinking: boolean;
-  stripUnderscores: boolean;
-  stripHedges: boolean;
-  dedupeTags: boolean;
-  targetWidth: number | null;
-  targetHeight: number | null;
-}
-
-interface CaptioningWorkflow {
-  selectedModel: string;
-  providerModelInput: string;
-  style: string;
-  customPrompt: string;
-  wd14Threshold: number;
-  targetWidth: number | null;
-  targetHeight: number | null;
-  scope: Scope;
-  delimiterMode: DelimiterMode;
-  delimiterParts: string[];
-  stripRefusals: boolean;
-  stripThinking: boolean;
-  stripUnderscores: boolean;
-  stripHedges: boolean;
-  dedupeTags: boolean;
-  saveBackup: boolean;
-  renameOnCaption: boolean;
-  detectTask: string;
-  detectPrompt: string;
-  detectUseCaptions: boolean;
-  detectOverwrite: boolean;
-  additionalSteps: StepConfig[];
-}
-
-const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
-  selectedModel: "",
-  providerModelInput: "",
-  style: "detailed",
-  customPrompt: "",
-  wd14Threshold: 0.35,
-  targetWidth: null,
-  targetHeight: null,
-  scope: "uncaptioned",
-  delimiterMode: "overwrite",
-  delimiterParts: [",", " "],
-  stripRefusals: true,
-  stripThinking: false,
-  stripUnderscores: false,
-  stripHedges: false,
-  dedupeTags: false,
-  saveBackup: false,
-  renameOnCaption: false,
-  detectTask: "<OD>",
-  detectPrompt: "",
-  detectUseCaptions: false,
-  detectOverwrite: true,
-  additionalSteps: [],
-};
+import { CAPTIONING_WORKFLOW_DEFAULTS, type CaptioningWorkflow, type Scope, type StepConfig } from "../constants/captioningWorkflow";
+import ServerStateGate from "../components/common/ServerStateGate";
+import { CAPTIONING_WORKFLOW_PATH, appDataApi } from "../api/appData";
+import { runLegacyImport } from "../utils/legacyImport";
+import { serverWritesSettled, writeToServer } from "../utils/serverWriter";
 
 interface CaptioningFilters {
   activeSubfolder: string | null;
@@ -287,7 +220,29 @@ function StepModelPicker({
   );
 }
 
+function saveCaptioningWorkflow(path: string, value: object) {
+  writeToServer(path, "PUT", { value });
+}
+
+/** The remembered workflow lives on the server, and the form reads it in its state
+    initializers, so it mustn't mount until it has arrived. */
 export default function CaptioningPage() {
+  return (
+    <ServerStateGate
+      queryKey={["app-data", "captioning-workflow"]}
+      load={async () => {
+        await runLegacyImport();
+        await serverWritesSettled(CAPTIONING_WORKFLOW_PATH);
+        return appDataApi.getCaptioningWorkflow();
+      }}
+      label="your saved captioning setup"
+    >
+      {(saved) => <CaptioningForm saved={saved} />}
+    </ServerStateGate>
+  );
+}
+
+function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }) {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
   const { selectedIds, datasetByImageId } = useSelectionStore();
@@ -299,13 +254,13 @@ export default function CaptioningPage() {
     [selectedIds, datasetByImageId, datasetId],
   );
   const selCountForDataset = selectedIdsForDataset.length;
-  const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
+  const { presets, emptyMessage: presetsEmptyMessage, save: savePreset, remove: removePreset } = usePromptPresets();
 
   // Remembered "workflow" config — global, shared across all datasets.
-  const [workflow] = useState(() => loadPersisted(CAPTIONING_WORKFLOW_KEY, CAPTIONING_WORKFLOW_DEFAULTS));
+  const [workflow] = useState<CaptioningWorkflow>(() => ({ ...CAPTIONING_WORKFLOW_DEFAULTS, ...saved }));
   // True once any workflow blob has ever been saved — gates whether Settings' CAPTION_DEFAULT_*
   // values still apply. After the first debounced save, this stays true forever (until Reset).
-  const [hasStoredWorkflow] = useState(() => localStorage.getItem(CAPTIONING_WORKFLOW_KEY) !== null);
+  const [hasStoredWorkflow] = useState(saved !== null);
 
   const [selectedModel, setSelectedModel] = useState(hasStoredWorkflow ? workflow.selectedModel : "");
   const [providerModelInput, setProviderModelInput] = useState(workflow.providerModelInput);
@@ -439,7 +394,7 @@ export default function CaptioningPage() {
     queryKey: ["captioning-models"],
     queryFn: captioningApi.models,
   });
-  const { data: providers = [] } = useQuery({
+  const { data: providers = [], isFetched: providersResolved } = useQuery({
     queryKey: ["providers"],
     queryFn: providersApi.list,
     staleTime: 30_000,
@@ -459,14 +414,30 @@ export default function CaptioningPage() {
   const ollamaModels = modelsData?.ollama_models ?? [];
   const wd14Models = modelsData?.wd14_models ?? [];
 
+  // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
+  const rebaselineWorkflow = useDebouncedPersist(CAPTIONING_WORKFLOW_PATH, {
+    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
+    targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
+    stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
+    saveBackup, renameOnCaption,
+    detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
+    additionalSteps,
+  }, undefined, saveCaptioningWorkflow);
+
   // Apply stored default model once after models/providers load, if no model is selected yet —
   // or if the remembered model is no longer valid (uninstalled model / removed provider).
   // Also correct the style if it's incompatible with the resolved model.
+  //
+  // Neither is the user's edit, so neither is saved: the workflow is shared by every browser,
+  // and this browser's default model, or a provider list that failed to load here, isn't
+  // theirs. It also has to wait for providers, whose empty list while loading would blank
+  // a remembered provider model.
   useEffect(() => {
-    if (!modelsData) return;
+    if (!modelsData || !providersResolved) return;
     const allIds = captionModelIds(modelsData, providers);
     const tryApply = (candidate: string | null | undefined): boolean => {
       if (!candidate || !allIds.includes(candidate)) return false;
+      rebaselineWorkflow();
       setSelectedModel(candidate);
       const mt = modelType(candidate);
       const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
@@ -475,23 +446,14 @@ export default function CaptioningPage() {
     };
     if (selectedModel !== "") {
       if (!allIds.includes(selectedModel)) {
+        rebaselineWorkflow();
         setSelectedModel("");
         tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
       }
       return;
     }
     tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
-  }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
-  useDebouncedPersist(CAPTIONING_WORKFLOW_KEY, {
-    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
-    targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
-    stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
-    saveBackup, renameOnCaption,
-    detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
-    additionalSteps,
-  });
+  }, [modelsData, providers, providersResolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
   useDebouncedPersist(
@@ -732,16 +694,19 @@ export default function CaptioningPage() {
 
   function handleStop() { cancelMutation.mutate(); }
 
-  function handleSavePreset() {
+  async function handleSavePreset() {
     if (!presetName.trim()) return;
-    savePreset({ name: presetName.trim(), model: selectedModel, style, prompt: customPrompt });
+    if (!(await savePreset({ name: presetName.trim(), model: selectedModel, style, prompt: customPrompt }))) return;
     setPresetName("");
     setSavingPreset(false);
     toast.success("Preset saved");
   }
 
   function handleResetToDefaults() {
-    clearPersisted(CAPTIONING_WORKFLOW_KEY);
+    writeToServer(CAPTIONING_WORKFLOW_PATH, "DELETE");
+    // The state set below isn't an edit either. Saved, it would turn "never saved" straight
+    // back into a stored copy of the defaults, which later Settings changes couldn't reach.
+    rebaselineWorkflow(true);
     if (datasetId) clearPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId));
 
     // Fields with no Settings-configured default — reset to hardcoded defaults.
@@ -982,7 +947,7 @@ export default function CaptioningPage() {
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {presets.length === 0 ? (
-                    <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>No presets saved yet.</p>
+                    <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>{presetsEmptyMessage}</p>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {presets.map((p) => (
@@ -1446,7 +1411,7 @@ function PipelineStepCard({
   const [expanded, setExpanded] = useState(true);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
-  const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
+  const { presets, emptyMessage: presetsEmptyMessage, save: savePreset, remove: removePreset } = usePromptPresets();
 
   const isStepWd14 = step.model.startsWith("wd14:");
   const isStepOAI = step.model.startsWith("openai_compat:");
@@ -1465,12 +1430,12 @@ function PipelineStepCard({
     providers,
   );
 
-  function handleSavePreset() {
+  async function handleSavePreset() {
     if (!presetName.trim()) return;
     // Mirrors `PromptPresetManager`: a preset with no model, loaded into a surface whose
     // preset loader sets the model, hands that surface an id the backend refuses.
     if (!step.model) return;
-    savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt });
+    if (!(await savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt }))) return;
     setPresetName("");
     setSavingPreset(false);
     toast.success("Preset saved");
@@ -1549,7 +1514,7 @@ function PipelineStepCard({
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {presets.length === 0 ? (
-                  <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>No presets saved yet.</p>
+                  <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>{presetsEmptyMessage}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {presets.map((p) => (

@@ -39,3 +39,10 @@ detail files in a `SPLIT_INDEXES` folder, so the Map grows by family rather than
 gallery and image similarity/scoring are the first.
 Amends decision 1. Full record:
 [decisions/02-claude-md-budget-and-hub-routing.md](decisions/02-claude-md-budget-and-hub-routing.md).
+
+## 3. App-stored prompts
+
+**Decided** (2026-10-30, by the user): user-written LLM text and empty category names move from
+browser storage to the database, with a one-time import that keeps the old keys for one release;
+per-browser preferences stay in the browser. Full record:
+[decisions/03-app-stored-prompts.md](decisions/03-app-stored-prompts.md).

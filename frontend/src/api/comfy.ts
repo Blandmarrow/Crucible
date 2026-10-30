@@ -101,6 +101,23 @@ export interface CanvasWorkflowResponse {
   age_seconds: number | null;
 }
 
+/** A plan's "Generate prompts" form, saved on the plan. */
+export interface ComfyGenSettings {
+  instructions: string;
+  provider_id: string;
+  model: string;
+  batch_size: number;
+  temperature: number;
+  target_count: number;
+}
+
+export const COMFY_GEN_DEFAULTS: ComfyGenSettings = {
+  instructions: "", provider_id: "", model: "", batch_size: 5, temperature: 0.9, target_count: 20,
+};
+
+/** Under `/api/v1`, for `writeToServer`: this form saves as the user types. */
+export const genSettingsPath = (planId: string) => `/comfy/plans/${planId}/gen-settings`;
+
 export const comfyApi = {
   ping: (url?: string) =>
     client.get<{ ok: boolean; error?: string }>("/comfy/ping", { params: url ? { url } : {} }).then((r) => r.data),
@@ -111,6 +128,18 @@ export const comfyApi = {
     client.post<ComfyPlan>("/comfy/plans", data).then((r) => r.data),
   getPlan: (planId: string) =>
     client.get<ComfyPlan>(`/comfy/plans/${planId}`).then((r) => r.data),
+
+  /** `null` means never saved, as opposed to saved with its defaults. */
+  getGenSettings: (planId: string) =>
+    client.get<{ value: ComfyGenSettings | null }>(genSettingsPath(planId)).then((r) => {
+      // The SPA catch-all can answer with 200 HTML, which must not read as "never saved".
+      if (typeof r.data !== "object" || r.data === null || !("value" in r.data)) {
+        throw new Error("Unexpected gen-settings response");
+      }
+      return r.data.value;
+    }),
+  putGenSettings: (planId: string, value: ComfyGenSettings) =>
+    client.put(genSettingsPath(planId), value).then((r) => r.data),
   updatePlan: (planId: string, data: Partial<Pick<ComfyPlan, "name" | "workflow_json" | "pinned_params" | "output_node_ids" | "output_is_synthetic">>) =>
     client.patch<ComfyPlan>(`/comfy/plans/${planId}`, data).then((r) => r.data),
   deletePlan: (planId: string) => client.delete(`/comfy/plans/${planId}`),

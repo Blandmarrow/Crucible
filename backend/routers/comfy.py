@@ -18,13 +18,14 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, func, select
+from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.licenses import FIELD_MAX_LEN
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
+from backend.schemas.app_data import ComfyGenSettings
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
@@ -665,6 +666,27 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
 @router.get("/plans/{plan_id}")
 async def get_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
     return _plan_out(await _get_plan(db, plan_id))
+
+
+@router.get("/plans/{plan_id}/gen-settings")
+async def get_gen_settings(plan_id: str, db: AsyncSession = Depends(get_db)):
+    return {"value": (await _get_plan(db, plan_id)).gen_settings}
+
+
+@router.put("/plans/{plan_id}/gen-settings")
+async def put_gen_settings(plan_id: str, body: ComfyGenSettings, db: AsyncSession = Depends(get_db)):
+    await _get_plan(db, plan_id)
+    value = body.model_dump()
+    # `updated_at` is pinned to itself to suppress `onupdate`. ComfyPage keys the workflow
+    # editor on `plan.id + plan.updated_at`, and this form saves as the user types, so a
+    # bump here would remount that editor underneath them.
+    await db.execute(
+        update(ComfyPlan)
+        .where(ComfyPlan.id == plan_id)
+        .values(gen_settings=value, updated_at=ComfyPlan.updated_at)
+    )
+    await db.commit()
+    return {"value": value}
 
 
 @router.patch("/plans/{plan_id}")

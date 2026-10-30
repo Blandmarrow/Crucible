@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useCallback, useRef, useId } from "react";
 import type { HTMLAttributes, DragEvent as ReactDragEvent } from "react";
-import { DECLARED_CATEGORIES_KEY, DATASETS_UI_KEY } from "../constants/storage";
+import { DATASETS_UI_KEY } from "../constants/storage";
+import { appDataApi } from "../api/appData";
+import { runLegacyImport } from "../utils/legacyImport";
 import { loadPersisted } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -169,6 +171,8 @@ function CategoryPicker({ value, onChange, existingCategories, label, labelNote,
   );
 }
 
+const DECLARED_CATEGORIES_QUERY_KEY = ["app-data", "categories"];
+
 export default function DatasetsPage() {
   const { go } = usePaneNavigate();
   // Prefix for the dialog fields' `id`/`htmlFor` pairs (GPT-029).
@@ -203,13 +207,18 @@ export default function DatasetsPage() {
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
 
-  // ── Empty categories (localStorage-backed so they survive page reloads) ──
-  const [emptyCategories, setEmptyCategories] = useState<string[]>(() => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(DECLARED_CATEGORIES_KEY) || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
+  // ── Empty categories (a category with no datasets has no other record) ──
+  const { data: emptyCategories = [], isError: categoriesFailed } = useQuery({
+    queryKey: DECLARED_CATEGORIES_QUERY_KEY,
+    queryFn: async () => {
+      await runLegacyImport();
+      return appDataApi.listCategories();
+    },
   });
+  // Said out loud, or the page would look like they had been deleted.
+  useEffect(() => {
+    if (categoriesFailed) toast.error("Couldn't load your empty categories. They aren't lost: reload to try again.", { id: "declared-categories" });
+  }, [categoriesFailed]);
 
   // ── New Category modal ────────────────────────────────────────────────────
   const [showCreateCategory, setShowCreateCategory] = useState(false);
@@ -434,10 +443,6 @@ export default function DatasetsPage() {
     }
   }, [duplicateJobProgress?.status, duplicateJobProgress?.optimistic, duplicateJobId, qc]);
 
-  useEffect(() => {
-    localStorage.setItem(DECLARED_CATEGORIES_KEY, JSON.stringify(emptyCategories));
-  }, [emptyCategories]);
-
   // Persist page UI state. `collapsed` is deliberately NOT pruned to currently-known
   // categories — that would discard collapse state for categories hidden by search.
   useDebouncedPersist(DATASETS_UI_KEY, {
@@ -562,14 +567,25 @@ export default function DatasetsPage() {
     onError: () => toast.error("Failed to duplicate dataset"),
   });
 
+  const createCategoryMutation = useMutation({
+    mutationFn: appDataApi.createCategory,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DECLARED_CATEGORIES_QUERY_KEY });
+      setShowCreateCategory(false);
+      setNewCategoryName("");
+    },
+    onError: () => toast.error("Failed to create category"),
+  });
+
   /** Rename all datasets that belong to a category to a new name. */
   const renameCategoryMutation = useMutation({
     mutationFn: async ({ oldName, newName }: { oldName: string; newName: string }) => {
       const affected = datasets.filter((d) => d.category === oldName);
       await Promise.all(affected.map((d) => datasetsApi.update(d.id, { category: newName })));
+      await appDataApi.renameCategory(oldName, newName);
     },
     onSuccess: (_data, { oldName, newName: renamedTo }) => {
-      setEmptyCategories((prev) => prev.map((c) => (c === oldName ? renamedTo : c)));
+      qc.invalidateQueries({ queryKey: DECLARED_CATEGORIES_QUERY_KEY });
       // Carry persisted UI state across the rename, or the user silently loses their
       // collapse state and rail selection lands on a name that no longer exists.
       setSelectedCategory((prev) => (prev === oldName ? renamedTo : prev));
@@ -586,6 +602,7 @@ export default function DatasetsPage() {
     },
     onError: () => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: DECLARED_CATEGORIES_QUERY_KEY });
       toast.error("Failed to rename category");
     },
   });
@@ -595,9 +612,10 @@ export default function DatasetsPage() {
     mutationFn: async (catName: string) => {
       const affected = datasets.filter((d) => d.category === catName);
       await Promise.all(affected.map((d) => datasetsApi.update(d.id, { category: "" })));
+      await appDataApi.deleteCategory(catName);
     },
     onSuccess: (_data, catName) => {
-      setEmptyCategories((prev) => prev.filter((c) => c !== catName));
+      qc.invalidateQueries({ queryKey: DECLARED_CATEGORIES_QUERY_KEY });
       setSelectedCategory((prev) => (prev === catName ? null : prev));
       qc.invalidateQueries({ queryKey: ["datasets"] });
       setDeletingCategory(null);
@@ -697,9 +715,7 @@ export default function DatasetsPage() {
       toast("Category already exists");
       return;
     }
-    setEmptyCategories((prev) => [...prev, name]);
-    setShowCreateCategory(false);
-    setNewCategoryName("");
+    createCategoryMutation.mutate(name);
   }
 
   // ── Shared between the card and compact-row renderers ─────────────────────

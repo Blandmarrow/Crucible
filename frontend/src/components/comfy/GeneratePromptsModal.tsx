@@ -2,14 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import toast from "react-hot-toast";
-import { comfyApi } from "../../api/comfy";
+import { COMFY_GEN_DEFAULTS, comfyApi, genSettingsPath, type ComfyGenSettings } from "../../api/comfy";
 import { jobsApi } from "../../api/jobs";
 import { providersApi } from "../../api/providers";
 import { useJobStore } from "../../store/jobStore";
+import { useDebouncedPersist } from "../../hooks/useDebouncedPersist";
 import { useModalBehavior } from "../../hooks/useModalBehavior";
 import ModelPicker from "../providers/ModelPicker";
 import JobProgressBar from "../common/JobProgressBar";
+import ModalShell from "../common/ModalShell";
+import ServerStateGate from "../common/ServerStateGate";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
+import { runLegacyImport } from "../../utils/legacyImport";
+import { serverWritesSettled, writeToServer } from "../../utils/serverWriter";
 import { apiErrorDetail } from "../../utils/apiError";
 
 /** Body of the durable "generate until N" job (see comfyApi.generatePromptsJob). */
@@ -36,21 +41,33 @@ interface Props {
   onClose: () => void;
 }
 
-/** Standing settings worth keeping between sessions, per plan. */
-interface PersistedGenSettings {
-  instructions: string;
-  providerId: string;
-  model: string;
-  batchSize: number;
-  temperature: number;
-  targetCount: number;
+const TERMINAL = ["completed", "failed", "cancelled"];
+
+function saveGenSettings(planId: string, value: object) {
+  writeToServer(genSettingsPath(planId), "PUT", value);
 }
 
-const GEN_DEFAULTS: PersistedGenSettings = {
-  instructions: "", providerId: "", model: "", batchSize: 5, temperature: 0.9, targetCount: 20,
-};
-
-const TERMINAL = ["completed", "failed", "cancelled"];
+/** The plan's saved settings live on the server, and the form reads them in its state
+    initializers, so it mustn't mount until they've arrived. */
+export default function GeneratePromptsModal(props: Props) {
+  const { planId, onClose } = props;
+  return (
+    <ServerStateGate
+      queryKey={["comfy", "gen-settings", planId]}
+      load={async () => {
+        await runLegacyImport();
+        await serverWritesSettled(genSettingsPath(planId));
+        return comfyApi.getGenSettings(planId);
+      }}
+      label="this plan's saved settings"
+      frame={(content) => (
+        <ModalShell label="Generate prompts" onClose={onClose} closeOnBackdrop>{content}</ModalShell>
+      )}
+    >
+      {(saved) => <GeneratePromptsForm {...props} saved={saved ?? COMFY_GEN_DEFAULTS} />}
+    </ServerStateGate>
+  );
+}
 
 /** LLM prompt generation: small batches, each pushed to diverge from everything
     already generated/queued.
@@ -60,9 +77,9 @@ const TERMINAL = ["completed", "failed", "cancelled"];
     until N* is a background job (`comfy_prompts`) that writes rows itself, per
     batch: closing this modal, navigating away or reloading no longer discards
     calls already paid for, which is the entire point of the split. */
-export default function GeneratePromptsModal({
-  planId, onAdd, adding, onStartJob, startingJob, startedJobId, onClose,
-}: Props) {
+function GeneratePromptsForm({
+  planId, onAdd, adding, onStartJob, startingJob, startedJobId, onClose, saved,
+}: Props & { saved: ComfyGenSettings }) {
   const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
 
   // The queue's existing prompts, read from the server rather than derived from
@@ -80,15 +97,13 @@ export default function GeneratePromptsModal({
   });
   const queuePrompts = useMemo(() => planPrompts.map((p) => p.prompt), [planPrompts]);
 
-  const storageKey = `comfy-genprompts-${planId}`;
-  const [persisted] = useState(() => loadPersisted(storageKey, GEN_DEFAULTS));
-  const [providerId, setProviderId] = useState<string>(persisted.providerId);
-  const [model, setModel] = useState(persisted.model);
-  const [instructions, setInstructions] = useState(persisted.instructions);
+  const [providerId, setProviderId] = useState<string>(saved.provider_id);
+  const [model, setModel] = useState(saved.model);
+  const [instructions, setInstructions] = useState(saved.instructions);
   const [instruction, setInstruction] = useState("");
-  const [batchSize, setBatchSize] = useState(persisted.batchSize);
-  const [targetCount, setTargetCount] = useState(persisted.targetCount);
-  const [temperature, setTemperature] = useState(persisted.temperature);
+  const [batchSize, setBatchSize] = useState(saved.batch_size);
+  const [targetCount, setTargetCount] = useState(saved.target_count);
+  const [temperature, setTemperature] = useState(saved.temperature);
   const [useQueueContext, setUseQueueContext] = useState(true);
   const [resultText, setResultText] = useState("");
   const [batching, setBatching] = useState(false);
@@ -97,13 +112,11 @@ export default function GeneratePromptsModal({
   // calls, so this window is a whole batch wide — the button must say so.
   const [stopping, setStopping] = useState(false);
 
-  // Deliberately a synchronous write, not useDebouncedPersist: with no debounce
-  // there is no window in which an unmount could drop a write, and this modal is
-  // closed by unmounting — a debounced write would be the fragile choice here, not
-  // the safe one. See docs/dev/frontend-core.md.
-  useEffect(() => {
-    savePersisted(storageKey, { instructions, providerId, model, batchSize, temperature, targetCount });
-  }, [storageKey, instructions, providerId, model, batchSize, temperature, targetCount]);
+  // Debounced now that each write is a request. This modal is closed by unmounting, and
+  // the hook flushes on unmount, so closing right after typing still saves.
+  useDebouncedPersist(planId, {
+    instructions, provider_id: providerId, model, batch_size: batchSize, temperature, target_count: targetCount,
+  }, undefined, saveGenSettings);
 
   // ── Attaching to the background job ────────────────────────────────────────
   // No useJobSSE here on purpose. useAllJobsSSE is mounted once in TopBar and
@@ -334,6 +347,7 @@ export default function GeneratePromptsModal({
                   style={{ width: "100%", minHeight: 54, fontSize: 12, resize: "vertical" }}
                   placeholder={"e.g. danbooru-style tag prompts, always start with \"masterpiece, best quality\", max 40 tags, no artist names…"}
                   value={instructions}
+                  maxLength={20000}
                   onChange={(e) => setInstructions(e.target.value)}
                 />
               </div>

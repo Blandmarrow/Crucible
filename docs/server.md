@@ -31,7 +31,7 @@ Jobs that were running when the server stopped are not resumed — they are mark
 
 ## Database backups
 
-Everything Crucible knows — captions, scores, detections, version history — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). When the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
+Everything Crucible knows — captions, scores, detections, version history, your saved prompts — lives in one SQLite file (`dataset_manager.db`, next to `manage.ps1`/`manage.sh`). When the server starts it checks that file for corruption and, if it is healthy, saves a timestamped copy into a `backups/` folder beside it, keeping the **five most recent**. This happens in the background a moment after startup; nothing waits on it.
 
 Three things worth knowing:
 

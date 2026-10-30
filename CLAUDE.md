@@ -6,9 +6,9 @@ Documentation Map near the end; load only the ones a task needs.
 
 ## Working here
 
-**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) is done on branch
-`docs/architecture-v3.1`, awaiting merge; next is M4, the rating feature. Order and the
-session handoff are in `docs/dev/roadmap.md`.
+**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) is merged. M5, app-stored
+prompts, is in progress and runs ahead of M4, the rating feature. Order and the session handoff
+are in `docs/dev/roadmap.md`.
 
 ## Commands
 
@@ -208,7 +208,8 @@ substantial edit.
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2250 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2600 |
+| `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~900 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
 | `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline | ~1850 |
@@ -219,7 +220,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~500 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~600 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

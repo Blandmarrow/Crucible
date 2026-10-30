@@ -12,13 +12,14 @@ import {
   GALLERY_DEFAULT_SORT_KEY, GALLERY_DEFAULT_CAPTION_KEY, GALLERY_DEFAULT_QUALITY_KEY,
   CAPTION_DEFAULT_MODEL_KEY, CAPTION_DEFAULT_STYLE_KEY, CAPTION_DEFAULT_SCOPE_KEY,
   CAPTION_DEFAULT_DELIMITER_KEY, CAPTION_DEFAULT_STRIP_REFS_KEY, CAPTION_DEFAULT_RENAME_KEY,
-  CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_WORKFLOW_KEY, CAPTIONING_FILTERS_PREFIX,
+  CAPTION_DEFAULT_SAVE_BACKUP_KEY, CAPTIONING_FILTERS_PREFIX,
   GALLERY_CHECKBOX_SIZE_MIN, GALLERY_CHECKBOX_SIZE_MAX,
   getGalleryPageSize, getGalleryDefaultSort,
 } from "../constants/storage";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import GalleryCheckbox from "../components/gallery/GalleryCheckbox";
-import { clearPersisted } from "../utils/persistentState";
+import { CAPTIONING_WORKFLOW_PATH } from "../api/appData";
+import { writeToServer } from "../utils/serverWriter";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
 import NumberField from "../components/common/NumberField";
@@ -833,7 +834,7 @@ export default function SettingsPage() {
                 <button
                   className="btn ghost sm"
                   onClick={() => {
-                    clearPersisted(CAPTIONING_WORKFLOW_KEY);
+                    writeToServer(CAPTIONING_WORKFLOW_PATH, "DELETE");
                     const prefix = CAPTIONING_FILTERS_PREFIX + "-";
                     const toRemove: string[] = [];
                     for (let i = 0; i < localStorage.length; i++) {

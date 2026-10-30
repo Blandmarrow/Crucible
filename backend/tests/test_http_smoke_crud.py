@@ -388,6 +388,11 @@ def test_comfy_plans_and_rows_crud(tmp_path):
 
             assert (await env.client.get(f"{API}/comfy/plans/{plan_id}")).status_code == 200
 
+            r = await env.client.put(f"{API}/comfy/plans/{plan_id}/gen-settings", json={"instructions": "x"})
+            assert r.status_code == 200, r.text
+            r = await env.client.get(f"{API}/comfy/plans/{plan_id}/gen-settings")
+            assert r.json()["value"]["instructions"] == "x"
+
             r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows", json={"values": {"a": "1"}})
             assert r.status_code == 200, r.text
             rows = (await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()

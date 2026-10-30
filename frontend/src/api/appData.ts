@@ -1,0 +1,77 @@
+import client from "./client";
+import type { ComfyGenSettings } from "./comfy";
+import type { CaptioningWorkflow } from "../constants/captioningWorkflow";
+
+export interface PromptPreset {
+  id: string;
+  name: string;
+  model: string;
+  style: string;
+  prompt: string;
+}
+
+export type PromptPresetCreate = Omit<PromptPreset, "id">;
+
+export interface LegacyImportBody {
+  presets?: unknown[];
+  comfy_gen_settings?: Record<string, ComfyGenSettings>;
+  captioning_workflow?: Partial<CaptioningWorkflow>;
+  categories?: unknown[];
+}
+
+export type LegacyImportStatus = "stored" | "same" | "conflict" | "rejected" | "discarded";
+
+export interface LegacyImportReport {
+  presets?: { created: number; skipped: number; rejected: number[] };
+  comfy_gen_settings?: Record<string, LegacyImportStatus>;
+  captioning_workflow?: LegacyImportStatus;
+  categories?: { created: number; rejected: number[] };
+}
+
+/** Under `/api/v1`, for `writeToServer`: this page saves as the user types. */
+export const CAPTIONING_WORKFLOW_PATH = "/app-data/captioning-workflow";
+
+/** The one-time carry-over waits at most this long. The shared axios client sets no
+ *  timeout, and every query for this data waits on the import. */
+const LEGACY_IMPORT_TIMEOUT_MS = 15_000;
+
+export const appDataApi = {
+  listPresets: () =>
+    client.get<PromptPreset[]>("/app-data/presets").then((r) => {
+      // A server older than the frontend answers with the SPA's 200 HTML, and every
+      // surface maps over this.
+      if (!Array.isArray(r.data)) throw new Error("Unexpected presets response");
+      return r.data;
+    }),
+  createPreset: (body: PromptPresetCreate) =>
+    client.post<PromptPreset>("/app-data/presets", body).then((r) => r.data),
+  deletePreset: (id: string) =>
+    client.delete(`/app-data/presets/${id}`).then((r) => r.data),
+  listCategories: () =>
+    client.get<string[]>("/app-data/categories").then((r) => {
+      // A server older than the frontend answers with the SPA's 200 HTML.
+      if (!Array.isArray(r.data)) throw new Error("Unexpected categories response");
+      return r.data;
+    }),
+  createCategory: (name: string) =>
+    client.post("/app-data/categories", { name }).then((r) => r.data),
+  renameCategory: (oldName: string, newName: string) =>
+    client.post("/app-data/categories/rename", { old_name: oldName, new_name: newName }).then((r) => r.data),
+  deleteCategory: (name: string) =>
+    client.delete("/app-data/categories", { params: { name } }).then((r) => r.data),
+  /** `null` means never saved, which is what lets Settings' caption defaults apply. */
+  getCaptioningWorkflow: () =>
+    client.get<{ value: Partial<CaptioningWorkflow> | null }>(CAPTIONING_WORKFLOW_PATH).then((r) => {
+      // The SPA catch-all can answer with 200 HTML, which must not read as "never saved".
+      if (typeof r.data !== "object" || r.data === null || !("value" in r.data)) {
+        throw new Error("Unexpected captioning workflow response");
+      }
+      return r.data.value;
+    }),
+  putCaptioningWorkflow: (value: Partial<CaptioningWorkflow>) =>
+    client.put(CAPTIONING_WORKFLOW_PATH, { value }).then((r) => r.data),
+  legacyImport: (body: LegacyImportBody) =>
+    client
+      .post<LegacyImportReport>("/app-data/legacy-import", body, { timeout: LEGACY_IMPORT_TIMEOUT_MS })
+      .then((r) => r.data),
+};

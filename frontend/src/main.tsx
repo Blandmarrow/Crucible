@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { runLegacyImport } from './utils/legacyImport'
 
 // `0.0.0.0` is a bind address, not an address to browse to, but it is the last
 // URL on screen at startup — both launchers print `http://localhost:8000` and
@@ -27,6 +28,8 @@ import App from './App.tsx'
 if (location.hostname === '0.0.0.0') {
   location.replace(`${location.protocol}//localhost${location.port ? `:${location.port}` : ''}${location.pathname}${location.search}${location.hash}`)
 } else {
+  // Not awaited: pages render at once, and each query for this data waits on it.
+  void runLegacyImport()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

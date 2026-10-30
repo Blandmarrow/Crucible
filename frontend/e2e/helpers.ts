@@ -90,6 +90,32 @@ export async function createDatasetViaApi(
   return r.json()
 }
 
+/** Delete every saved prompt preset. Browser contexts isolate localStorage but all
+ *  share one server, so a spec that saves a preset cleans up after itself. */
+export async function resetPresetsViaApi(request: APIRequestContext): Promise<void> {
+  const presets: { id: string }[] = await (await request.get('/api/v1/app-data/presets')).json()
+  for (const preset of presets) {
+    const r = await request.delete(`/api/v1/app-data/presets/${preset.id}`)
+    expect(r.status(), await r.text()).toBe(200)
+  }
+}
+
+/** Back to "never saved", for the same reason as `resetPresetsViaApi`. */
+export async function resetCaptioningWorkflowViaApi(request: APIRequestContext): Promise<void> {
+  const r = await request.delete('/api/v1/app-data/captioning-workflow')
+  expect(r.status(), await r.text()).toBe(200)
+}
+
+/** Delete every declared category. This one matters most of all: any left behind
+ *  switches DatasetsPage from its flat grid to category sections for every later spec. */
+export async function resetCategoriesViaApi(request: APIRequestContext): Promise<void> {
+  const names: string[] = await (await request.get('/api/v1/app-data/categories')).json()
+  for (const name of names) {
+    const r = await request.delete('/api/v1/app-data/categories', { params: { name } })
+    expect(r.status(), await r.text()).toBe(200)
+  }
+}
+
 /** Upload one PNG into a dataset through the API and return the added filename. */
 export async function uploadViaApi(
   request: APIRequestContext,

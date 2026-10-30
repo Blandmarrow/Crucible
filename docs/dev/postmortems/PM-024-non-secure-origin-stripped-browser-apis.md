@@ -90,8 +90,10 @@ Branch `Blandmarrow/issue93-insecure-origin`:
   rather than a guard: with no Clipboard API it copies via the hidden-`<textarea>` +
   `document.execCommand("copy")` recipe. Never throws, never rejects; `false` is the only failure
   signal. Documented in `docs/dev/shared-utilities.md`.
-- **`frontend/src/store/promptPresetsStore.ts`** — `nanoid()` in place of `crypto.randomUUID()`.
+- **`promptPresetsStore.ts`** — `nanoid()` in place of `crypto.randomUUID()`.
   Ids are opaque and never parsed, so existing presets keep their UUIDs; no migration.
+  (Later note: this store was removed when presets moved to the server, which generates the ids.
+  See `docs/dev/decisions/03-app-stored-prompts.md`.)
 - All five clipboard sites moved onto `copyText`, each keeping its own feedback, and three of them
   fixing a second bug: `GenerationMetadata` (no `.catch()` at all; its 1500 ms timer is also now
   cleared on unmount), `BooruPage` (toasted success unconditionally), and the two byte-identical

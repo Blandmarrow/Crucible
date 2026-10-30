@@ -8,6 +8,8 @@ API, with outputs auto-imported into the dataset. Covers `ComfyPage`, the `comfy
 
 A **plan** (`comfy_plans`, `backend/models/comfy.py`) belongs to a dataset and stores:
 
+- `gen_settings` — the "Generate prompts" form, NULL until first saved. See
+  `docs/dev/comfy-prompts.md`.
 - `workflow_json` — a ComfyUI **API-format** workflow (`{node_id: {class_type, inputs, _meta?}}`),
   exported in ComfyUI via *Workflow → Export (API)*. The UI-format editor export (`nodes`/`links`
   keys) is rejected client-side with a hint.

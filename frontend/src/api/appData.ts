@@ -1,4 +1,5 @@
 import client from "./client";
+import type { ComfyGenSettings } from "./comfy";
 
 export interface PromptPreset {
   id: string;
@@ -12,10 +13,14 @@ export type PromptPresetCreate = Omit<PromptPreset, "id">;
 
 export interface LegacyImportBody {
   presets?: unknown[];
+  comfy_gen_settings?: Record<string, ComfyGenSettings>;
 }
+
+export type LegacyImportStatus = "stored" | "same" | "conflict" | "rejected" | "discarded";
 
 export interface LegacyImportReport {
   presets?: { created: number; skipped: number; rejected: number[] };
+  comfy_gen_settings?: Record<string, LegacyImportStatus>;
 }
 
 /** The one-time carry-over waits at most this long. The shared axios client sets no

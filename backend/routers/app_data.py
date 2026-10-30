@@ -2,7 +2,7 @@
 presets, declared empty categories and the captioning workflow, plus the one-time
 import of what each browser held before this data moved here.
 
-See docs/dev/persistence.md § Data stored on the server.
+See docs/dev/app-stored-data.md.
 """
 import asyncio
 import json

@@ -5,7 +5,7 @@ progress are in [roadmap.md](../roadmap.md) § M5; the ruling is
 [decision 3](../decisions/03-app-stored-prompts.md).
 
 **Lifecycle**: this file is transient. As each PR lands, move its durable rationale into the
-topic file that owns the code (`docs/dev/persistence.md`, for most of it). When the last PR
+topic file that owns the code (`docs/dev/app-stored-data.md`, for most of it). When the last PR
 lands, delete this folder and its `TRANSIENT_DIRS` entry in `scripts/check_docs.py`.
 
 ## Why
@@ -149,7 +149,7 @@ An Opus review agent checks the diff before each of PRs 2–5 opens.
 
 ## Docs, in the PR that changes the behaviour
 
-- **`docs/dev/`:** `persistence.md`, `frontend-core.md`, `datasets-page.md`, `settings.md`,
+- **`docs/dev/`:** `app-stored-data.md`, `persistence.md`, `frontend-core.md`, `datasets-page.md`, `settings.md`,
   `comfy-prompts.md`, `comfyui.md`, `database.md`, and the CLAUDE.md Documentation Map's word
   counts. Add a map row for any new topic file.
 - **User-facing:** `docs/captioning.md`, `docs/comfyui.md`, `docs/datasets.md`,

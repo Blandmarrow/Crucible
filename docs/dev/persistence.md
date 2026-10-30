@@ -1,29 +1,6 @@
 # Frontend persistence: storage keys, blobs & the persistent page state pattern
 
-This file covers where saved state lives: the data stored on the server, then everything the frontend stores in `localStorage`/`sessionStorage`: the key registry in `frontend/src/constants/storage.ts`, the `loadPersisted`/`useDebouncedPersist` helpers, the three persistence shapes that exist and why two of them are deliberately off the hook, and the workflow/filters split every configurable page follows. The stores that read these keys live in `docs/dev/frontend-core.md` (§ Frontend state).
-
-### Data stored on the server
-
-User-written data that must follow the install rather than the browser lives in the database, behind `backend/routers/app_data.py` (prefix `/app-data`) and two routes in `backend/routers/comfy.py`. The ruling is in `docs/dev/decisions/03-app-stored-prompts.md`, and the migration from browser storage is planned in `docs/dev/server-state-plan/README.md`, which also says how far it has got.
-
-| Data | Storage | Routes |
-|---|---|---|
-| Caption prompt presets | `caption_prompt_presets` | `GET`/`POST /app-data/presets`, `DELETE /app-data/presets/{id}` |
-| Declared empty categories | `declared_categories` | `GET`/`POST`/`DELETE /app-data/categories`, `POST /app-data/categories/rename` |
-| Captioning workflow | `ThresholdSettings.captioning_workflow` | `GET`/`PUT`/`DELETE /app-data/captioning-workflow` |
-| ComfyUI "Generate prompts" form | `ComfyPlan.gen_settings` | `GET`/`PUT /comfy/plans/{id}/gen-settings` |
-
-Three rules a change here has to keep:
-
-- **NULL means never saved, and both JSON columns use `JSON(none_as_null=True)`.** A plain `JSON` column stores Python `None` as JSON `null`, which is not SQL NULL, so "never saved" would silently stop being true. The import's first-copy-wins rule and the Captioning page's fallback to Settings' defaults both depend on it.
-- **Category names travel in the body or query, never the path**, because a name can contain `/`.
-- **Saving `gen_settings` must not bump `ComfyPlan.updated_at`.** `ComfyPage` keys the workflow editor on `plan.id + plan.updated_at`, and this form saves as the user types, so a bump would remount the editor underneath them. Both write sites pin the column to itself to suppress `onupdate`.
-
-`POST /app-data/legacy-import` is the one-time carry-over of what a browser still holds, in one transaction, and is safe to re-run. Presets merge, skipping exact matches. Categories union. A single-value section is stored only if NULL, and otherwise reports `same` or `conflict` by dict equality, so key order doesn't matter. Entries are validated one at a time, so a bad one is reported instead of costing the batch a 422, and a Comfy entry naming a missing plan is reported as `discarded`. The route holds a module-level lock, because presets have no unique constraint and two tabs loading together would each read "no match" and insert the same one.
-
-On the client, `frontend/src/utils/legacyImport.ts` runs that import once per load, started from `main.tsx`'s `else` branch without blocking render. Every query for this data awaits `runLegacyImport()` first, so a page can't read the server before the copy arrives; it never rejects, so a failed import leaves the page working and its section unmarked for the next load. What's been copied is recorded per section under `LEGACY_IMPORT_MARKER_KEY`, and it's the marker that stops a re-import, not the server's dedupe: a preset deleted after importing would otherwise come straight back on reload. The old keys are read but never deleted, as a copy to roll back to for one release.
-
-`frontend/src/hooks/usePromptPresets.ts` is how a component reads and changes presets. Its `save` resolves to whether it worked, so a caller clears its form and reports success only then, and it reports failures itself. Show its `emptyMessage` rather than a literal when the list is empty: while the query is pending or has failed, "No presets saved yet." is what convinces someone their presets are gone.
+This file covers everything the frontend stores in `localStorage`/`sessionStorage`: the key registry in `frontend/src/constants/storage.ts`, the `loadPersisted`/`useDebouncedPersist` helpers, the three persistence shapes that exist and why two of them are deliberately off the hook, and the workflow/filters split every configurable page follows. The stores that read these keys live in `docs/dev/frontend-core.md` (§ Frontend state). User-written data that follows the install rather than the browser is on the server instead: see `docs/dev/app-stored-data.md`.
 
 ### `constants/storage.ts` — the key registry
 
@@ -47,7 +24,7 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `GALLERY_DEFAULT_QUALITY_KEY` | `localStorage`, flag key or `""` | Read at `GalleryPage` init time via `getGalleryDefaultQualityFilter()` | Gallery default |
 | `CAPTION_DEFAULT_MODEL_KEY`, `CAPTION_DEFAULT_STYLE_KEY`, `CAPTION_DEFAULT_SCOPE_KEY`, `CAPTION_DEFAULT_DELIMITER_KEY`, `CAPTION_DEFAULT_STRIP_REFS_KEY`, `CAPTION_DEFAULT_RENAME_KEY`, `CAPTION_DEFAULT_SAVE_BACKUP_KEY` | `localStorage` | Read at `CaptioningPage` init time | Captioning defaults; serve as first-run fallbacks (see Persistent page state below) |
 | `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `TAG_CONSOLIDATE_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
-| `LEGACY_IMPORT_MARKER_KEY` | `localStorage`, JSON `{done: string[]}` | `utils/legacyImport.ts` | Which sections this browser has copied to the server (§ Data stored on the server) |
+| `LEGACY_IMPORT_MARKER_KEY` | `localStorage`, JSON `{done, rejected, conflicts}` | `utils/legacyImport.ts` | Which sections this browser has copied to the server, and what's still undecided. See `docs/dev/app-stored-data.md` |
 | `CAPTIONING_FILTERS_PREFIX`, `EXPORT_FILTERS_PREFIX`, `QUALITY_FILTERS_PREFIX`, `BULK_EDIT_FILTERS_PREFIX`, `STATS_FILTERS_PREFIX` | `localStorage` prefix, JSON blob; append `-${datasetId}` via `datasetScopedKey()` | Their owning page | Per-dataset "filters" blobs |
 
 **Component-local keys — the six sanctioned exceptions.** The first four are storage owned
@@ -57,9 +34,10 @@ of those have a key computed per entity, which is why it cannot be a static cons
 is what earns it the exemption. The last two are exceptions to the single-owner rule itself,
 because a hand-off needs two ends:
 
-- `` `comfy-genprompts-${planId}` `` and `` `comfy-genprompts-job-${planId}` ``
-  (`components/comfy/GeneratePromptsModal.tsx`) — per-plan draft settings and the re-attachable
-  job id, keyed by plan. See `docs/dev/comfy-prompts.md`.
+- `` `comfy-genprompts-job-${planId}` `` (`components/comfy/GeneratePromptsModal.tsx`) — the
+  re-attachable job id, keyed by plan. See `docs/dev/comfy-prompts.md`. The sibling
+  `` `comfy-genprompts-${planId}` `` is where that form's settings lived before they moved to the
+  server; `utils/legacyImport.ts` reads it once, and its pattern must keep excluding `job-`.
 - `` `video-extract-job-${videoId}` `` (`hooks/useVideoExtractJobs.ts`, via the exported
   `videoExtractJobKey`) — the re-attachable `video_extract` job id, keyed by video because a
   batch runs one job per video. It is what lets `VideoDetailPage` show a live bar for its own
@@ -108,18 +86,19 @@ The workflow and filters blobs are all loaded via `loadPersisted` (and reset via
 - `clearPersisted(key): void` — removes a stored blob (used by "Reset to defaults" buttons).
 - `datasetScopedKey(prefix, datasetId): string` — returns `${prefix}-${datasetId}` for per-dataset filter blobs.
 
-`frontend/src/hooks/useDebouncedPersist.ts` — `useDebouncedPersist(key: string | null, value: object, delay = PERSIST_DEBOUNCE_MS): void`. The single sanctioned way to write a persisted page blob; every debounced `savePersisted` call site goes through it. Import this rather than hand-rolling `useEffect` + `setTimeout` + `clearTimeout` — that pattern's cleanup *cancels* the pending write, so a change made inside the debounce window and followed by a navigation was silently lost (it was live in all ten call sites before this hook existed).
+`frontend/src/hooks/useDebouncedPersist.ts` — `useDebouncedPersist(key: string | null, value: object, delay = PERSIST_DEBOUNCE_MS, write?): void`. The single sanctioned way to write a persisted page blob; every debounced `savePersisted` call site goes through it. Import this rather than hand-rolling `useEffect` + `setTimeout` + `clearTimeout` — that pattern's cleanup *cancels* the pending write, so a change made inside the debounce window and followed by a navigation was silently lost (it was live in all ten call sites before this hook existed).
 
 - `key === null` persists nothing this render — use it for the `datasetId`-less case rather than an early `return`.
 - `value` is compared by `JSON.stringify`, not identity, so callers rebuild the object literal each render with no `useMemo`, and the hook owns its own dependency (this replaced hand-maintained dep arrays of up to 23 entries).
 - **The flush is unmount-only, and deliberately not per-cleanup.** The debounce effect still *cancels* on a dependency change. This matters because per-dataset keys change while mounted in split-pane mode, and the effect that reloads the blob for the new dataset lands a render later; flushing on every cleanup would write the previous dataset's values under the new dataset's key and corrupt it. Do not "simplify" the two effects into one.
 - A `pagehide` listener covers tab close/reload inside the debounce window.
-- **The window itself is `PERSIST_DEBOUNCE_MS` in `frontend/src/constants/storage.ts` (350 ms), and every site that depends on it reads it from there** — this hook's `delay` default, `GalleryPage`'s custom timer below, and `frontend/e2e/gallery-restore.spec.ts`, which waits `PERSIST_DEBOUNCE_MS * 3` before asserting the write landed. The spec used to hard-code `1000`, so raising the window past a second would have left it silently passing without guarding the regression it was written for. It lives in `constants/storage.ts` and not in this hook file because that module compiles standalone under the e2e tsconfig (no DOM lib, no React); the spec is the only e2e file importing from `src/`, and `npm run typecheck:e2e` is what keeps that import honest.
+- **`write` sends the blob to the server instead of `localStorage`, and it also skips a value equal to the last written, starting from the value at mount.** The `localStorage` path writes once on mount and always has. For data where NULL means "never saved", that write would destroy the fact just by opening the page, and StrictMode's simulated unmount would flush it at once. It must be a stable function.
+- **The window itself is `PERSIST_DEBOUNCE_MS` in `frontend/src/constants/storage.ts` (350 ms), and every site that depends on it reads it from there** — this hook's `delay` default, `GalleryPage`'s custom timer below, and `frontend/e2e/gallery-restore.spec.ts`, which waits `PERSIST_DEBOUNCE_MS * 3` before asserting the write landed. The spec used to hard-code `1000`, so raising the window past a second would have left it silently passing without guarding the regression it was written for. It lives in `constants/storage.ts` and not in this hook file because that module compiles standalone under the e2e tsconfig (no DOM lib, no React); `gallery-restore.spec.ts` and `comfy.spec.ts` are the only e2e files importing from `src/`, and `npm run typecheck:e2e` is what keeps those imports honest.
 
 ### Three persistence shapes exist, and the two off-hook ones are deliberate
 
 Don't "unify" them without reading this. The hook covers every *debounced blob* write (the ten workflow/filters sites). The exceptions:
-- **Synchronous, undebounced**: `TagConsolidatePage` (`{threshold}`) and `GeneratePromptsModal` (`{instructions, providerId, …}`) call `savePersisted` directly in an effect body. With no debounce there is no window in which an unmount can drop a write, so the hook would *add* a `PERSIST_DEBOUNCE_MS` delay rather than fix anything — strictly worse for `GeneratePromptsModal`, which is closed by unmounting. Both carry a comment saying so.
+- **Synchronous, undebounced**: `TagConsolidatePage` (`{threshold}`) calls `savePersisted` directly in an effect body. With no debounce there is no window in which an unmount can drop a write, so the hook would *add* a `PERSIST_DEBOUNCE_MS` delay rather than fix anything. `GeneratePromptsModal` was the other one until its settings moved to the server, where every write is a request and the hook's unmount flush covers closing the modal.
 - **Custom, with its own unmount flush**: `GalleryPage` writes `gallery-state-${datasetId}` via raw `localStorage` on its own `PERSIST_DEBOUNCE_MS` timer plus a separate unmount-only effect that re-reads `scrollTop` from a DOM ref (see `docs/dev/gallery/state.md`). It cannot use the hook because the hook's `value` is computed during render, whereas `scrollTop` must be sampled at flush time. This effect is the prior art `useDebouncedPersist` generalized from — it identified the <350ms navigation gap long before the other ten sites were fixed. The price of staying off the hook is that a new field in that blob is **six** hand edits rather than one (enumerated in `docs/dev/labels-ui.md` § GalleryPage persistence: the six edits), and that **neither write site merges with the stored value** — each `JSON.stringify`s a full literal, so a field present in one and missing from the other is silently deleted on whichever path happens to run.
 
 ### Persistent page state pattern

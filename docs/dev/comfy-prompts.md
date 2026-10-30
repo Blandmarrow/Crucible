@@ -110,9 +110,10 @@ without that.
 ### Frontend (`GeneratePromptsModal.tsx`, `ComfyPage.tsx`, `TopBar.tsx`)
 
 `GeneratePromptsModal` — provider select + `ModelPicker`; two text fields: standing
-*Instructions* (HOW prompts are written → `system_instructions`, persisted per plan in
-localStorage via `loadPersisted`, with provider/model/batch/temperature/target) and the
-per-call *Request* (WHAT to generate). Two paths, deliberately different in kind: *Generate N
+*Instructions* (HOW prompts are written → `system_instructions`, saved on the plan as
+`ComfyPlan.gen_settings` with provider/model/batch/temperature/target, see
+`docs/dev/app-stored-data.md`) and the per-call *Request* (WHAT to
+generate). Two paths, deliberately different in kind: *Generate N
 more* = one sync call appending to the review textarea → *Add N rows* → `rows/bulk` (sends
 queue prompts + textarea lines as diverge-from context); *Generate until N* = the
 `comfy_prompts` job, which writes rows itself.

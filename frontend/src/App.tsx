@@ -26,6 +26,7 @@ import {
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
+import LegacyConflictsDialog from "./components/common/LegacyConflictsDialog";
 import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
@@ -115,6 +116,7 @@ export default function App() {
           </div>
         </div>
         <ErrorConsole />
+        <LegacyConflictsDialog />
         <Toaster
           position="bottom-right"
           toastOptions={{

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import type { Browser, Page } from '@playwright/test'
+import type { APIRequestContext, Browser, Page } from '@playwright/test'
 import { createDatasetViaApi, resetPresetsViaApi, uploadViaApi } from './helpers'
 
 // What a browser held before this data moved to the server has to arrive there, and
@@ -29,6 +29,100 @@ async function freshCaptioningPage(browser: Browser, datasetId: string): Promise
   await page.goto(`/datasets/${datasetId}/captioning`)
   return page
 }
+
+test.describe('copying Generate prompts settings out of the browser', () => {
+  const WORKFLOW = { '6': { class_type: 'CLIPTextEncode', inputs: { text: 't' } } }
+
+  async function createPlan(request: APIRequestContext, name: string) {
+    const ds = await createDatasetViaApi(request, `${name}-${Date.now()}`)
+    const r = await request.post('/api/v1/comfy/plans', {
+      data: { dataset_id: ds.id, name, workflow_json: WORKFLOW },
+    })
+    expect(r.status(), await r.text()).toBe(200)
+    return { datasetId: ds.id, planId: (await r.json()).id as string }
+  }
+
+  const legacySettings = (instructions: string) =>
+    JSON.stringify({ instructions, providerId: '', model: '', batchSize: 3, temperature: 0.5, targetCount: 50 })
+
+  const saved = async (request: APIRequestContext, planId: string) =>
+    (await (await request.get(`/api/v1/comfy/plans/${planId}/gen-settings`)).json()).value
+
+  test('old settings arrive on the plan, with field names and numbers intact', async ({ page, request }) => {
+    const { datasetId, planId } = await createPlan(request, 'legacy-comfy')
+    await seedStorage(page, `comfy-genprompts-${planId}`, legacySettings('from the old browser'))
+    // Shares the prefix but holds a job id. Read as settings, it would fail validation.
+    await seedStorage(page, `comfy-genprompts-job-${planId}`, JSON.stringify({ jobId: null }))
+
+    await page.goto(`/datasets/${datasetId}/comfy`)
+    await expect.poll(async () => (await saved(request, planId))?.instructions).toBe('from the old browser')
+    expect(await saved(request, planId)).toMatchObject({ batch_size: 3, temperature: 0.5, target_count: 50 })
+    await expect(page.getByText(/could not be copied/)).toHaveCount(0)
+  })
+
+  test('an untouched default copy is not uploaded', async ({ page, request }) => {
+    const { datasetId, planId } = await createPlan(request, 'legacy-comfy-default')
+    await seedStorage(page, `comfy-genprompts-${planId}`, JSON.stringify({
+      instructions: '', providerId: '', model: '', batchSize: 5, temperature: 0.9, targetCount: 20,
+    }))
+
+    await page.goto(`/datasets/${datasetId}/comfy`)
+    await expect.poll(() => page.evaluate((k) => localStorage.getItem(k), MARKER_KEY)).toContain('comfy_gen_settings')
+    expect(await saved(request, planId)).toBeNull()
+  })
+
+  test('a differing copy asks, and "use this browser\'s copy" replaces the app\'s', async ({ page, request }) => {
+    const { datasetId, planId } = await createPlan(request, 'legacy-comfy-use')
+    const put = await request.put(`/api/v1/comfy/plans/${planId}/gen-settings`, { data: { instructions: 'already in the app' } })
+    expect(put.status()).toBe(200)
+    await seedStorage(page, `comfy-genprompts-${planId}`, legacySettings('held by this browser'))
+
+    await page.goto(`/datasets/${datasetId}/comfy`)
+    const dialog = page.getByRole('dialog', { name: 'Different saved copies' })
+    await expect(dialog.getByText('already in the app')).toBeVisible()
+    await expect(dialog.getByText('held by this browser')).toBeVisible()
+    // Nothing is overwritten by showing the question.
+    expect((await saved(request, planId)).instructions).toBe('already in the app')
+
+    await dialog.getByRole('button', { name: "Use this browser's copy" }).click()
+    await expect(dialog).toHaveCount(0)
+    expect((await saved(request, planId)).instructions).toBe('held by this browser')
+
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'ComfyUI generation' })).toBeVisible()
+    await expect(dialog).toHaveCount(0)
+  })
+
+  test('"keep the app\'s copy" changes nothing and does not ask again', async ({ page, request }) => {
+    const { datasetId, planId } = await createPlan(request, 'legacy-comfy-keep')
+    await request.put(`/api/v1/comfy/plans/${planId}/gen-settings`, { data: { instructions: 'already in the app' } })
+    await seedStorage(page, `comfy-genprompts-${planId}`, legacySettings('held by this browser'))
+
+    await page.goto(`/datasets/${datasetId}/comfy`)
+    const dialog = page.getByRole('dialog', { name: 'Different saved copies' })
+    await dialog.getByRole('button', { name: "Keep the app's copy" }).click()
+    await expect(dialog).toHaveCount(0)
+    expect((await saved(request, planId)).instructions).toBe('already in the app')
+
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'ComfyUI generation' })).toBeVisible()
+    await expect(dialog).toHaveCount(0)
+  })
+
+  test('"decide later" asks again on the next load', async ({ page, request }) => {
+    const { datasetId, planId } = await createPlan(request, 'legacy-comfy-later')
+    await request.put(`/api/v1/comfy/plans/${planId}/gen-settings`, { data: { instructions: 'already in the app' } })
+    await seedStorage(page, `comfy-genprompts-${planId}`, legacySettings('held by this browser'))
+
+    await page.goto(`/datasets/${datasetId}/comfy`)
+    const dialog = page.getByRole('dialog', { name: 'Different saved copies' })
+    await dialog.getByRole('button', { name: 'Decide later' }).click()
+    await expect(dialog).toHaveCount(0)
+
+    await page.reload()
+    await expect(dialog.getByText('held by this browser')).toBeVisible()
+  })
+})
 
 test.describe('copying saved presets out of the browser', () => {
   test.beforeEach(async ({ request }) => {

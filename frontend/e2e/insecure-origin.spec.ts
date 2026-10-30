@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { createDatasetViaApi, uploadViaApi } from './helpers'
+import { createDatasetViaApi, resetPresetsViaApi, uploadViaApi } from './helpers'
 
 // Crucible is routinely opened on `http://0.0.0.0:8000` or over a LAN IP, and
 // neither is a secure context — Chromium installs `crypto.randomUUID` and
@@ -26,6 +26,9 @@ async function stripSecureContextApis(page: Page) {
 }
 
 test('a caption preset saves with crypto.randomUUID gone', async ({ page, request }) => {
+  // Presets are on the server now, which outlives a browser context: the reset is
+  // what stops a CI retry finding this spec's own preset and failing on two matches.
+  await resetPresetsViaApi(request)
   const ds = await createDatasetViaApi(request, `insecure-preset-${Date.now()}`)
   await uploadViaApi(request, ds.id, 'a.png')
   await stripSecureContextApis(page)
@@ -44,6 +47,8 @@ test('a caption preset saves with crypto.randomUUID gone', async ({ page, reques
   // before `set()`, so nothing was appended.
   await expect(page.getByRole('button', { name: /insecure-origin preset/ })).toBeVisible()
   await expect(page.getByText('No presets saved yet.')).toHaveCount(0)
+
+  await resetPresetsViaApi(request)
 })
 
 test('Copy Errors copies with navigator.clipboard gone', async ({ page }) => {

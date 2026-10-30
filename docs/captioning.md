@@ -149,6 +149,8 @@ with **Scope** set to *Selected* after picking them in the gallery.
 
 Save and reload named combinations of model, style, and custom prompt text so you can reproduce captioning runs without re-entering settings.
 
+Presets are saved in the app rather than your browser, so they are the same in every browser and survive clearing browser data. Presets saved before this change are copied over the first time each browser opens the updated app, and identical ones are merged.
+
 ## Model management
 
 A **Model unload** button appears next to the model selector when a local model is currently loaded — click it to free VRAM immediately without restarting the app. It is disabled while a captioning run is going; a model a running job is using cannot be unloaded, and if you try anyway (from a second tab, say) you are told it is in use and the run carries on unharmed.

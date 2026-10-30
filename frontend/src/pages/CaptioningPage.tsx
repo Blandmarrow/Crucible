@@ -12,7 +12,7 @@ import { providersApi, type ProviderOut } from "../api/providers";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { useSelectionStore } from "../store/selectionStore";
-import { usePresetsStore } from "../store/promptPresetsStore";
+import { usePromptPresets } from "../hooks/usePromptPresets";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -299,7 +299,7 @@ export default function CaptioningPage() {
     [selectedIds, datasetByImageId, datasetId],
   );
   const selCountForDataset = selectedIdsForDataset.length;
-  const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
+  const { presets, save: savePreset, remove: removePreset } = usePromptPresets();
 
   // Remembered "workflow" config — global, shared across all datasets.
   const [workflow] = useState(() => loadPersisted(CAPTIONING_WORKFLOW_KEY, CAPTIONING_WORKFLOW_DEFAULTS));
@@ -732,9 +732,9 @@ export default function CaptioningPage() {
 
   function handleStop() { cancelMutation.mutate(); }
 
-  function handleSavePreset() {
+  async function handleSavePreset() {
     if (!presetName.trim()) return;
-    savePreset({ name: presetName.trim(), model: selectedModel, style, prompt: customPrompt });
+    if (!(await savePreset({ name: presetName.trim(), model: selectedModel, style, prompt: customPrompt }))) return;
     setPresetName("");
     setSavingPreset(false);
     toast.success("Preset saved");
@@ -1446,7 +1446,7 @@ function PipelineStepCard({
   const [expanded, setExpanded] = useState(true);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
-  const { presets, save: savePreset, remove: removePreset } = usePresetsStore();
+  const { presets, save: savePreset, remove: removePreset } = usePromptPresets();
 
   const isStepWd14 = step.model.startsWith("wd14:");
   const isStepOAI = step.model.startsWith("openai_compat:");
@@ -1465,12 +1465,12 @@ function PipelineStepCard({
     providers,
   );
 
-  function handleSavePreset() {
+  async function handleSavePreset() {
     if (!presetName.trim()) return;
     // Mirrors `PromptPresetManager`: a preset with no model, loaded into a surface whose
     // preset loader sets the model, hands that surface an id the backend refuses.
     if (!step.model) return;
-    savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt });
+    if (!(await savePreset({ name: presetName.trim(), model: step.model, style: step.style, prompt: step.customPrompt }))) return;
     setPresetName("");
     setSavingPreset(false);
     toast.success("Preset saved");

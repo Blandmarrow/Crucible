@@ -4,6 +4,8 @@ The import's whole job is not to lose anything a browser held, and its rules onl
 show up across repeated calls: a re-run must change nothing, the first copy of a
 single-value section must win, and one bad entry must not cost the rest of the batch.
 """
+import asyncio
+
 from sqlalchemy import text
 
 from backend.routers.app_data import MAX_WORKFLOW_BYTES
@@ -306,6 +308,19 @@ def test_import_dedupes_presets_within_one_batch(tmp_path):
         async with api_env(tmp_path) as env:
             r = await env.client.post(f"{BASE}/legacy-import", json={"presets": [PRESET, dict(PRESET)]})
             assert r.json()["presets"] == {"created": 1, "skipped": 1, "rejected": []}
+
+    run(scenario())
+
+
+def test_two_tabs_importing_together_do_not_duplicate_a_preset(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            url = f"{BASE}/legacy-import"
+            responses = await asyncio.gather(
+                *[env.client.post(url, json={"presets": [PRESET]}) for _ in range(4)]
+            )
+            assert all(r.status_code == 200 for r in responses)
+            assert len((await env.client.get(f"{BASE}/presets")).json()) == 1
 
     run(scenario())
 

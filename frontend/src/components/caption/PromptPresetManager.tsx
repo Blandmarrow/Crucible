@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BookOpen, Save, Trash2, ChevronDown, ChevronUp } from "lucide-react";
-import { usePresetsStore, type PromptPreset } from "../../store/promptPresetsStore";
+import type { PromptPreset } from "../../api/appData";
+import { usePromptPresets } from "../../hooks/usePromptPresets";
 
 interface Props {
   currentModel: string;
@@ -11,14 +12,14 @@ interface Props {
 }
 
 export default function PromptPresetManager({ currentModel, currentStyle, currentPrompt, onLoad, defaultOpen = false }: Props) {
-  const { presets, save, remove } = usePresetsStore();
+  const { presets, save, remove } = usePromptPresets();
   const [open, setOpen] = useState(defaultOpen);
   const [saveName, setSaveName] = useState("");
   const [saving, setSaving] = useState(false);
 
-  function handleSave() {
+  async function handleSave() {
     if (!saveName.trim() || !currentModel) return;
-    save({ name: saveName.trim(), model: currentModel, style: currentStyle, prompt: currentPrompt });
+    if (!(await save({ name: saveName.trim(), model: currentModel, style: currentStyle, prompt: currentPrompt }))) return;
     setSaveName("");
     setSaving(false);
   }

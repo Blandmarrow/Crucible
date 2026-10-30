@@ -19,7 +19,11 @@ Three rules a change here has to keep:
 - **Category names travel in the body or query, never the path**, because a name can contain `/`.
 - **Saving `gen_settings` must not bump `ComfyPlan.updated_at`.** `ComfyPage` keys the workflow editor on `plan.id + plan.updated_at`, and this form saves as the user types, so a bump would remount the editor underneath them. Both write sites pin the column to itself to suppress `onupdate`.
 
-`POST /app-data/legacy-import` is the one-time carry-over of what a browser still holds, in one transaction, and is safe to re-run. Presets merge, skipping exact matches. Categories union. A single-value section is stored only if NULL, and otherwise reports `same` or `conflict` by dict equality, so key order doesn't matter. Entries are validated one at a time, so a bad one is reported instead of costing the batch a 422, and a Comfy entry naming a missing plan is reported as `discarded`.
+`POST /app-data/legacy-import` is the one-time carry-over of what a browser still holds, in one transaction, and is safe to re-run. Presets merge, skipping exact matches. Categories union. A single-value section is stored only if NULL, and otherwise reports `same` or `conflict` by dict equality, so key order doesn't matter. Entries are validated one at a time, so a bad one is reported instead of costing the batch a 422, and a Comfy entry naming a missing plan is reported as `discarded`. The route holds a module-level lock, because presets have no unique constraint and two tabs loading together would each read "no match" and insert the same one.
+
+On the client, `frontend/src/utils/legacyImport.ts` runs that import once per load, started from `main.tsx`'s `else` branch without blocking render. Every query for this data awaits `runLegacyImport()` first, so a page can't read the server before the copy arrives; it never rejects, so a failed import leaves the page working and its section unmarked for the next load. What's been copied is recorded per section under `LEGACY_IMPORT_MARKER_KEY`, and it's the marker that stops a re-import, not the server's dedupe: a preset deleted after importing would otherwise come straight back on reload. The old keys are read but never deleted, as a copy to roll back to for one release.
+
+`frontend/src/hooks/usePromptPresets.ts` is how a component reads and changes presets. Its `save` resolves to whether it worked, so a caller clears its form and reports success only then, and it reports failures itself.
 
 ### `constants/storage.ts` — the key registry
 
@@ -43,6 +47,7 @@ Every *statically named* storage key is declared here rather than inline in a co
 | `GALLERY_DEFAULT_QUALITY_KEY` | `localStorage`, flag key or `""` | Read at `GalleryPage` init time via `getGalleryDefaultQualityFilter()` | Gallery default |
 | `CAPTION_DEFAULT_MODEL_KEY`, `CAPTION_DEFAULT_STYLE_KEY`, `CAPTION_DEFAULT_SCOPE_KEY`, `CAPTION_DEFAULT_DELIMITER_KEY`, `CAPTION_DEFAULT_STRIP_REFS_KEY`, `CAPTION_DEFAULT_RENAME_KEY`, `CAPTION_DEFAULT_SAVE_BACKUP_KEY` | `localStorage` | Read at `CaptioningPage` init time | Captioning defaults; serve as first-run fallbacks (see Persistent page state below) |
 | `CAPTIONING_WORKFLOW_KEY`, `EXPORT_WORKFLOW_KEY`, `QUALITY_WORKFLOW_KEY`, `BULK_EDIT_WORKFLOW_KEY`, `TAG_CONSOLIDATE_WORKFLOW_KEY`, `DATASETS_UI_KEY` | `localStorage`, JSON blob | Their owning page | Global "workflow" blobs — one value shared across all datasets. `DATASETS_UI_KEY` holds DatasetsPage collapse / density / rail selection (see `docs/dev/datasets-page.md`) |
+| `LEGACY_IMPORT_MARKER_KEY` | `localStorage`, JSON `{done: string[]}` | `utils/legacyImport.ts` | Which sections this browser has copied to the server (§ Data stored on the server) |
 | `CAPTIONING_FILTERS_PREFIX`, `EXPORT_FILTERS_PREFIX`, `QUALITY_FILTERS_PREFIX`, `BULK_EDIT_FILTERS_PREFIX`, `STATS_FILTERS_PREFIX` | `localStorage` prefix, JSON blob; append `-${datasetId}` via `datasetScopedKey()` | Their owning page | Per-dataset "filters" blobs |
 
 **Component-local keys — the six sanctioned exceptions.** The first four are storage owned
@@ -85,10 +90,9 @@ because a hand-off needs two ends:
   page-private; `gallery-nav-*` no longer is — its shape, its read/write pair and the
   `injectNavId`/`removeNavId` mutators live in `frontend/src/utils/galleryNav.ts`, because
   three independent inline casts of it let the writer drop filters the reader needed.
-- `"caption-prompt-presets"` (`store/promptPresetsStore.ts`) — a *statically* named key that is
-  nonetheless declared inline, because zustand's `persist` middleware takes its name in the
-  store module. The registry cannot hold it without the store reaching back into
-  `storage.ts` for one string. See `docs/dev/frontend-core.md`.
+- `"caption-prompt-presets"` (`utils/legacyImport.ts`) — where presets lived before they moved
+  to the server. Nothing writes it now. It's read once, by the import, and declared there
+  because it goes away with that module.
 
 Anything else belongs in `storage.ts` with a row above.
 

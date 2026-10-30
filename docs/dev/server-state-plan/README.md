@@ -72,9 +72,8 @@ SPA catch-all can answer an API GET with 200 HTML. Used by `CaptioningPage` and
 
 **Consumers:**
 
-- **Presets:** a new react-query hook, `usePromptPresets`, replaces
-  `frontend/src/store/promptPresetsStore.ts`, which is deleted along with its unused `update`
-  action. Saving becomes async, so the save toasts in `CaptioningPage` and the input clearing
+- **Presets:** a new react-query hook, `frontend/src/hooks/usePromptPresets.ts`, replaces the old
+  zustand store, which is deleted along with its unused `update` action. Saving becomes async, so the save toasts in `CaptioningPage` and the input clearing
   in `PromptPresetManager` move to run after success, with an error toast on failure.
 - **Comfy:** `GeneratePromptsModal` gets the gate, and its GET waits on `settled()` first. Add
   `maxLength={20000}` to the textarea. `comfy-genprompts-job-*` stays in the browser.
@@ -127,13 +126,13 @@ The PR list itself is in the roadmap. What each one needs beyond the design abov
    `scripts/check_migrations.py` to exercise the migration. Re-check the Alembic head before
    merging: `comfy-per-row-subfolders`, `feat/scoring-arc` and `style-embedding-measurement`
    all carry migrations from older revisions, so whichever lands second must re-parent.
-2. **Presets.** Includes the conflict dialog. Extend `frontend/e2e/insecure-origin.spec.ts`
-   with a unique preset name and cleanup, since the DB is now shared and CI retries once. Add
-   a legacy-import spec and a reset helper in `frontend/e2e/helpers.ts`. PM-024's reference to
-   the deleted store would fail `check_docs.py`, so annotate that line without rewriting the
-   history.
-3. **Comfy settings.** Extend `frontend/e2e/comfy.spec.ts`, which has no coverage of this modal
-   today.
+2. **Presets.** Extend `frontend/e2e/insecure-origin.spec.ts` with cleanup, since the DB is now
+   shared and CI retries once. Add a legacy-import spec and a reset helper in
+   `frontend/e2e/helpers.ts`. PM-024's reference to the deleted store would fail `check_docs.py`,
+   so annotate that line without rewriting the history.
+3. **Comfy settings.** Includes the conflict dialog, moved here from PR 2 because presets merge
+   and never conflict, so this is its first user. Extend `frontend/e2e/comfy.spec.ts`, which has
+   no coverage of this modal today.
 4. **Workflow blob.** Rewrite `frontend/e2e/captioning-run-gate.spec.ts` to seed through the API
    and clean up, because its first test's blob would otherwise leak into the second. Before
    merging, run `manage.ps1 start` against real browser data (the `run-app` skill): open

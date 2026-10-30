@@ -4,6 +4,7 @@ import of what each browser held before this data moved here.
 
 See docs/dev/persistence.md § Data stored on the server.
 """
+import asyncio
 import json
 from typing import Any
 
@@ -32,6 +33,8 @@ from backend.services.threshold_service import DEFAULTS
 router = APIRouter(prefix="/app-data", tags=["app-data"])
 
 MAX_WORKFLOW_BYTES = 1_000_000
+
+_import_lock = asyncio.Lock()
 
 
 def _preset_out(preset: CaptionPromptPreset) -> dict:
@@ -258,15 +261,19 @@ async def _import_comfy_settings(db: AsyncSession, entries: dict[str, Any]) -> d
 @router.post("/legacy-import")
 async def legacy_import(body: LegacyImportRequest, db: AsyncSession = Depends(get_db)):
     """One transaction: the browser records a section as done only after this commits,
-    so a section is either fully here or retried on its next load."""
+    so a section is either fully here or retried on its next load.
+
+    Serialized because presets have no unique constraint to fall back on: two tabs
+    loading together would each read "no match" and insert the same preset."""
     report: dict[str, Any] = {}
-    if body.presets is not None:
-        report["presets"] = await _import_presets(db, body.presets)
-    if body.categories is not None:
-        report["categories"] = await _import_categories(db, body.categories)
-    if body.captioning_workflow is not None:
-        report["captioning_workflow"] = await _import_workflow(db, body.captioning_workflow)
-    if body.comfy_gen_settings is not None:
-        report["comfy_gen_settings"] = await _import_comfy_settings(db, body.comfy_gen_settings)
-    await db.commit()
+    async with _import_lock:
+        if body.presets is not None:
+            report["presets"] = await _import_presets(db, body.presets)
+        if body.categories is not None:
+            report["categories"] = await _import_categories(db, body.categories)
+        if body.captioning_workflow is not None:
+            report["captioning_workflow"] = await _import_workflow(db, body.captioning_workflow)
+        if body.comfy_gen_settings is not None:
+            report["comfy_gen_settings"] = await _import_comfy_settings(db, body.comfy_gen_settings)
+        await db.commit()
     return report

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Float, Integer, String
+from sqlalchemy import JSON, Boolean, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -29,3 +29,8 @@ class ThresholdSettings(Base):
     hf_token: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     gelbooru_api_key: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     gelbooru_user_id: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
+
+    # The Captioning page's remembered setup, its shape owned by the frontend. NULL means
+    # never saved, which is what lets Settings' caption defaults apply; none_as_null keeps
+    # a Python None from being stored as JSON `null`, which is not NULL.
+    captioning_workflow: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)

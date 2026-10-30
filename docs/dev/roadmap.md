@@ -54,7 +54,7 @@ first, and neither depends on the other. Gate: PRs 1–5 merged, with existing b
 carried over. Design: [server-state-plan/README.md](server-state-plan/README.md). Ruling:
 [decision 3](decisions/03-app-stored-prompts.md).
 
-- [ ] PR 1: backend models, migration, routes and the import endpoint.
+- [x] PR 1: backend models, migration, routes and the import endpoint.
 - [ ] PR 2: caption prompt presets, and the conflict dialog. Needs PR 1.
 - [ ] PR 3: ComfyUI "Generate prompts" settings. Needs PR 2.
 - [ ] PR 4: the captioning workflow blob. Needs PR 3, for the writer and the loading gate.

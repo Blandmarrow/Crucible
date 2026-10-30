@@ -37,6 +37,10 @@ class ComfyPlan(Base):
     output_is_synthetic: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=sa.true()
     )
+    # The "Generate prompts" form (schemas/app_data.ComfyGenSettings). NULL means never
+    # saved, which the browser import relies on; none_as_null keeps None from being
+    # stored as JSON `null`.
+    gen_settings: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

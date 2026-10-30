@@ -1,6 +1,25 @@
 # Frontend persistence: storage keys, blobs & the persistent page state pattern
 
-This file covers everything the frontend stores in `localStorage`/`sessionStorage`: the key registry in `frontend/src/constants/storage.ts`, the `loadPersisted`/`useDebouncedPersist` helpers, the three persistence shapes that exist and why two of them are deliberately off the hook, and the workflow/filters split every configurable page follows. The stores that read these keys live in `docs/dev/frontend-core.md` (§ Frontend state).
+This file covers where saved state lives: the data stored on the server, then everything the frontend stores in `localStorage`/`sessionStorage`: the key registry in `frontend/src/constants/storage.ts`, the `loadPersisted`/`useDebouncedPersist` helpers, the three persistence shapes that exist and why two of them are deliberately off the hook, and the workflow/filters split every configurable page follows. The stores that read these keys live in `docs/dev/frontend-core.md` (§ Frontend state).
+
+### Data stored on the server
+
+User-written data that must follow the install rather than the browser lives in the database, behind `backend/routers/app_data.py` (prefix `/app-data`) and two routes in `backend/routers/comfy.py`. The ruling is in `docs/dev/decisions/03-app-stored-prompts.md`, and the migration from browser storage is planned in `docs/dev/server-state-plan/README.md`, which also says how far it has got.
+
+| Data | Storage | Routes |
+|---|---|---|
+| Caption prompt presets | `caption_prompt_presets` | `GET`/`POST /app-data/presets`, `DELETE /app-data/presets/{id}` |
+| Declared empty categories | `declared_categories` | `GET`/`POST`/`DELETE /app-data/categories`, `POST /app-data/categories/rename` |
+| Captioning workflow | `ThresholdSettings.captioning_workflow` | `GET`/`PUT`/`DELETE /app-data/captioning-workflow` |
+| ComfyUI "Generate prompts" form | `ComfyPlan.gen_settings` | `GET`/`PUT /comfy/plans/{id}/gen-settings` |
+
+Three rules a change here has to keep:
+
+- **NULL means never saved, and both JSON columns use `JSON(none_as_null=True)`.** A plain `JSON` column stores Python `None` as JSON `null`, which is not SQL NULL, so "never saved" would silently stop being true. The import's first-copy-wins rule and the Captioning page's fallback to Settings' defaults both depend on it.
+- **Category names travel in the body or query, never the path**, because a name can contain `/`.
+- **Saving `gen_settings` must not bump `ComfyPlan.updated_at`.** `ComfyPage` keys the workflow editor on `plan.id + plan.updated_at`, and this form saves as the user types, so a bump would remount the editor underneath them. Both write sites pin the column to itself to suppress `onupdate`.
+
+`POST /app-data/legacy-import` is the one-time carry-over of what a browser still holds, in one transaction, and is safe to re-run. Presets merge, skipping exact matches. Categories union. A single-value section is stored only if NULL, and otherwise reports `same` or `conflict` by dict equality, so key order doesn't matter. Entries are validated one at a time, so a bad one is reported instead of costing the batch a 422, and a Comfy entry naming a missing plan is reported as `discarded`.
 
 ### `constants/storage.ts` — the key registry
 

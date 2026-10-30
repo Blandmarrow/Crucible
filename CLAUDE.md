@@ -208,7 +208,7 @@ substantial edit.
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2250 |
+| `docs/dev/persistence.md` | Adding a storage key, persisting page configuration, or the `/app-data` routes and server-stored user data | ~2650 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
 | `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline | ~1850 |

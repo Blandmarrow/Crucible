@@ -19,11 +19,11 @@ restates its stages.
 
 ## Next session (updated 2026-10-30)
 
-1. M1–M3 are done and pushed on branch `docs/architecture-v3.1`. It is ready to merge into
-   `main`, but merging is the user's call; open the PR or merge only when asked.
-2. M4 starts on a fresh branch off `main` once that merge lands, so the rating work does not
-   ride on the docs branch. Its first task is the rating column (§1); read
-   [rating-plan/README.md](rating-plan/README.md) before starting.
+1. M5 is in progress on branch `feat/app-stored-prompts`, and it runs ahead of M4. Read
+   [server-state-plan/README.md](server-state-plan/README.md) before picking up the next
+   unticked task. Opening or merging its PRs is the user's call.
+2. M4 starts on a fresh branch off `main` after M5's PRs 1–5 land. Its first task is the rating
+   column (§1); read [rating-plan/README.md](rating-plan/README.md) before starting.
 3. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
@@ -46,6 +46,21 @@ restates its stages.
   [roadmap-archive/m3-split-queue.md](roadmap-archive/m3-split-queue.md).
 
 ## Milestones
+
+### M5 — App-stored prompts
+
+Saved prompts move from the browser to the database. It is listed ahead of M4 because it runs
+first, and neither depends on the other. Gate: PRs 1–5 merged, with existing browser data
+carried over. Design: [server-state-plan/README.md](server-state-plan/README.md). Ruling:
+[decision 3](decisions/03-app-stored-prompts.md).
+
+- [ ] PR 1: backend models, migration, routes and the import endpoint.
+- [ ] PR 2: caption prompt presets, and the conflict dialog. Needs PR 1.
+- [ ] PR 3: ComfyUI "Generate prompts" settings. Needs PR 2.
+- [ ] PR 4: the captioning workflow blob. Needs PR 3, for the writer and the loading gate.
+- [ ] PR 5: declared categories. Needs PR 2.
+- [ ] Cleanup, one release after PR 5: delete the legacy keys, the import code and the plan
+  folder, then archive this milestone.
 
 ### M4 — Rating feature
 

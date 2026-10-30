@@ -178,7 +178,11 @@ GENERATED_DOCS: set[str] = set()
 # Transient handoff folders (Module C), exempt from budgets. Links are still checked.
 # Each one's README states its lifecycle: durable rationale moves into a topic file,
 # then the folder is deleted.
-TRANSIENT_DIRS: set[str] = {"docs/dev/gpt-review", "docs/dev/rating-plan"}
+TRANSIENT_DIRS: set[str] = {
+    "docs/dev/gpt-review",
+    "docs/dev/rating-plan",
+    "docs/dev/server-state-plan",
+}
 
 # Inline-code tokens that look like paths but are illustrative, not files.
 # Upstream source paths a postmortem cites (sam3 in PM-004, CPython's PC/ in PM-021):

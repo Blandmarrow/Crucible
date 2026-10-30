@@ -4,8 +4,8 @@ Designed and approved on 2026-10-30, with implementation starting the same day. 
 progress are in [roadmap.md](../roadmap.md) § M5; the ruling is
 [decision 3](../decisions/03-app-stored-prompts.md).
 
-**Lifecycle**: this file is transient. As each PR lands, move its durable rationale into the
-topic file that owns the code (`docs/dev/app-stored-data.md`, for most of it). When the last PR
+**Lifecycle**: this file is transient. As each stage lands, move its durable rationale into the
+topic file that owns the code (`docs/dev/app-stored-data.md`, for most of it). When the cleanup
 lands, delete this folder and its `TRANSIENT_DIRS` entry in `scripts/check_docs.py`.
 
 ## Why
@@ -52,7 +52,7 @@ returns a report per entry:
 ## Frontend
 
 **Writer** (`frontend/src/utils/serverWriter.ts`): serializes writes per resource, sends with
-`fetch` and `keepalive`, and keeps retrying a failed write until it lands. Review of PR 3 replaced
+`fetch` and `keepalive`, and keeps retrying a failed write until it lands. Review of stage 3 replaced
 the original "retry once, then toast", which lost a failed or queued write on close. Details are in
 `docs/dev/app-stored-data.md`.
 
@@ -101,7 +101,7 @@ without blocking render.
    **Use this browser's copy** or **Keep current**. Closing the dialog doesn't lose them.
    Entries the server rejected stay in the browser and are named in a toast.
 
-Each consumer PR adds its own import section, so no data is left behind between PRs. A crash
+Each consumer stage adds its own import section. A crash
 before the marker is written is safe, because re-running the import changes nothing.
 
 ## Accepted limits
@@ -125,9 +125,10 @@ before the marker is written is safe, because re-running the import changes noth
   because the marker lives in the browser. The legacy keys are still there during the
   one-release window.
 
-## PR notes
+## Stage notes
 
-The PR list itself is in the roadmap. What each one needs beyond the design above:
+Built as the stages in the roadmap and shipped together as one PR. What each needed beyond the
+design above:
 
 1. **Backend.** Tests in a new `test_app_data_http.py` on `conftest.api_env`, plus additions to
    `backend/tests/test_http_smoke_crud.py`. `api_env` uses `create_all`, so run
@@ -138,21 +139,22 @@ The PR list itself is in the roadmap. What each one needs beyond the design abov
    shared and CI retries once. Add a legacy-import spec and a reset helper in
    `frontend/e2e/helpers.ts`. PM-024's reference to the deleted store would fail `check_docs.py`,
    so annotate that line without rewriting the history.
-3. **Comfy settings.** Includes the conflict dialog, moved here from PR 2 because presets merge
+3. **Comfy settings.** Includes the conflict dialog, moved here from stage 2 because presets merge
    and never conflict, so this is its first user. Extend `frontend/e2e/comfy.spec.ts`, which has
    no coverage of this modal today.
 4. **Workflow blob.** Rewrite `frontend/e2e/captioning-run-gate.spec.ts` to seed through the API
-   and clean up, because its first test's blob would otherwise leak into the second. Before
-   merging, run `manage.ps1 start` against real browser data (the `run-app` skill): open
-   `localhost`, then the machine's LAN IP, and check the conflict dialog and saved prompts.
+   and clean up, because its first test's blob would otherwise leak into the second. Checked by
+   hand on 2026-10-30: prompts saved in a normal window appeared in a private window, which
+   has empty storage. Not checked by hand against real data: a LAN IP and the conflict dialog,
+   which only the e2e suite covers.
 5. **Categories.** Extend `frontend/e2e/datasets.spec.ts`.
 6. **One release later.** Delete the legacy keys and the import code, then this folder. Leave
    the presets key alone in any browser whose marker lists `rejected` names, since those
    presets exist nowhere else, and offer them as a download before they're ever removed.
 
-An Opus review agent checks the diff before each of PRs 2–5 opens.
+An Opus review agent checked the diff of each of stages 2–5.
 
-## Docs, in the PR that changes the behaviour
+## Docs, in the stage that changes the behaviour
 
 - **`docs/dev/`:** `app-stored-data.md`, `persistence.md`, `frontend-core.md`, `datasets-page.md`, `settings.md`,
   `comfy-prompts.md`, `comfyui.md`, `database.md`, and the CLAUDE.md Documentation Map's word
@@ -163,7 +165,7 @@ An Opus review agent checks the diff before each of PRs 2–5 opens.
 
 ## Verification
 
-Every PR runs the gates in CLAUDE.md § Verification. New backend tests cover import
+The gates in CLAUDE.md § Verification apply. New backend tests cover import
 idempotency, first upload wins, `same` versus `conflict`, one bad entry not rejecting the batch,
 a discarded missing plan, and NULL staying SQL NULL.
 

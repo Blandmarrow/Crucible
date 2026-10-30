@@ -19,12 +19,11 @@ restates its stages.
 
 ## Next session (updated 2026-10-30)
 
-1. M5 runs ahead of M4. PRs 1–5 are ticked because they're written and reviewed, but none is
-   merged: each sits on its own branch stacked on the last (`feat/app-stored-prompts`, then
-   `-presets`, `-comfy-settings`, `-captioning-workflow`, `-categories`). Opening or merging
-   them is the user's call. Before PR 4 merges, it still needs the hand check against real
-   browser data in [server-state-plan/README.md](server-state-plan/README.md).
-2. M4 starts on a fresh branch off `main` after M5's PRs 1–5 land. Its first task is the rating
+1. M5 runs ahead of M4. Its five stages are ticked because they're written and reviewed, and
+   they shipped together as one PR from branch `feat/app-stored-prompts`, open against `main`.
+   Merging it is the user's call. See
+   [server-state-plan/README.md](server-state-plan/README.md) for what was checked by hand.
+2. M4 starts on a fresh branch off `main` after that PR lands. Its first task is the rating
    column (§1); read [rating-plan/README.md](rating-plan/README.md) before starting.
 3. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
@@ -52,16 +51,16 @@ restates its stages.
 ### M5 — App-stored prompts
 
 Saved prompts move from the browser to the database. It is listed ahead of M4 because it runs
-first, and neither depends on the other. Gate: PRs 1–5 merged, with existing browser data
+first, and neither depends on the other. Gate: the PR merged, with existing browser data
 carried over. Design: [server-state-plan/README.md](server-state-plan/README.md). Ruling:
 [decision 3](decisions/03-app-stored-prompts.md).
 
-- [x] PR 1: backend models, migration, routes and the import endpoint.
-- [x] PR 2: caption prompt presets. Needs PR 1.
-- [x] PR 3: ComfyUI "Generate prompts" settings, and the conflict dialog. Needs PR 2.
-- [x] PR 4: the captioning workflow blob. Needs PR 3, for the writer and the loading gate.
-- [x] PR 5: declared categories. Needs PR 2.
-- [ ] Cleanup, one release after PR 5: delete the legacy keys, the import code and the plan
+- [x] Stage 1: backend models, migration, routes and the import endpoint.
+- [x] Stage 2: caption prompt presets. Needs stage 1.
+- [x] Stage 3: ComfyUI "Generate prompts" settings, and the conflict dialog. Needs stage 2.
+- [x] Stage 4: the captioning workflow blob. Needs stage 3, for the writer and the loading gate.
+- [x] Stage 5: declared categories. Needs stage 2.
+- [ ] Cleanup, one release after the PR merges: delete the legacy keys, the import code and the plan
   folder, then archive this milestone.
 
 ### M4 — Rating feature

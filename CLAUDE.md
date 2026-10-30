@@ -6,9 +6,10 @@ Documentation Map near the end; load only the ones a task needs.
 
 ## Working here
 
-**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) is merged. M5, app-stored
-prompts, is in progress and runs ahead of M4, the rating feature. Order and the session handoff
-are in `docs/dev/roadmap.md`.
+**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) and M5, app-stored prompts,
+are merged. M4, the rating feature, is next, ported from an unmerged branch rather than built
+fresh, and two more branch ports follow it. Order and the session handoff are in
+`docs/dev/roadmap.md`.
 
 ## Commands
 
@@ -220,7 +221,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~600 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1000 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~310 |
 
 ### Code review & bug investigation

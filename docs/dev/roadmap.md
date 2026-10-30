@@ -22,8 +22,10 @@ restates its stages.
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-2. M4 is next, on a fresh branch off `main`. Its first task is the rating column (§1); read
-   [rating-plan/README.md](rating-plan/README.md) before starting.
+2. M4 is next, as a port and not a fresh build: the rating column (§1) already exists on
+   `feat/scoring-arc`. Follow § Porting the unmerged branches. Read the plan as it stands on
+   that branch (docs/dev/roadmap/roadmap.md there), because `main`'s
+   [rating-plan/README.md](rating-plan/README.md) predates the work and still calls §1 unbuilt.
 3. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
@@ -45,6 +47,22 @@ restates its stages.
   hubs, and README's budget raised to 4,000 rather than cut. Record:
   [roadmap-archive/m3-split-queue.md](roadmap-archive/m3-split-queue.md).
 
+## Porting the unmerged branches
+
+Three branches hold work from August that never reached `main`, and none has an open PR. They
+land one at a time, in the order M4, M6, M7. M4 and M7 conflict with each other in six files, so
+M7 goes after M4; M6 touches neither and is the smallest.
+
+1. Cut each port's branch from the latest `main`, and merge it before starting the next. All
+   three add migrations from old revisions, so each re-parents onto the head the last one left.
+2. `git cherry-pick -x` the commits its milestone names, so the messages and the link to the
+   original survive. Skip merge commits.
+3. Port doc changes by hand into `main`'s current layout rather than resolving their conflicts.
+   A plan file gets its own transient folder, registered in `TRANSIENT_DIRS`.
+4. Before merging, check every path added to `main` since the branch was cut. A clean port only
+   reconciles lines that clash, and a missed mirror or rebuild path fails silently.
+5. Leave the source branch untouched until its port has merged.
+
 ## Milestones
 
 ### M5 — App-stored prompts
@@ -64,11 +82,33 @@ to copy their data over. Design: [server-state-plan/README.md](server-state-plan
 
 ### M4 — Rating feature
 
-Gate: the rating column and the learned head shipped, each with its user docs. Build order
-and stage detail: [rating-plan/README.md § Sequencing](rating-plan/README.md#sequencing).
-Open rulings go in the decision log as they are made.
+Gate: the rating column and head phase 0 shipped with their user docs, and the learned head
+either shipped or ruled out by phase 0's numbers. Build order and stage detail:
+[rating-plan/README.md § Sequencing](rating-plan/README.md#sequencing), which the port brings up
+to date. Open rulings go in the decision log as they are made.
 
 - [x] Token UI (§6) and the aesthetic model picker (§2), both shipped 2026-08-02.
-- [ ] The rating column (§1). Ships alone and needs no ML.
-- [ ] The learned head (§3). Needs §1 and §2.
-- DINOv3 (§5) stays deferred, the lowest priority; it needs only §2.
+- [ ] Port the rating column (§1) and head phase 0 (the rating event log and metrics page) from
+  `feat/scoring-arc`: 67ac441, 9004f18, 4233da1, ce0c788. Needs no ML.
+- [ ] The learned head (§3, phases 1+). Needs the port and re-ratings to measure. Not built if
+  phase 0 shows an existing scorer already near its ceiling.
+- DINOv3 (§5) stays deferred, the lowest priority. M7's plan supersedes §5, so it is settled
+  there.
+
+### M6 — ComfyUI per-row folders and automation
+
+Gate: per-row folders merged with their docs, then the remaining stages expanded here in their
+plan's order.
+
+- [ ] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Its plan comes with
+  it (docs/dev/roadmap/comfy-automation.md on that branch).
+
+### M7 — Style embedding
+
+Gate: the layer and blend change merged with its docs, then the remaining stages expanded here
+in their plan's order. Needs M4 merged.
+
+- [ ] Decide whether the layer 7 default stands, given that the photograph test failed its
+  pre-registered criterion. See docs/dev/roadmap/style-embedding.md on the branch.
+- [ ] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,
+  and the doc splits 9f6219e and 9156988, because `main` made its own.

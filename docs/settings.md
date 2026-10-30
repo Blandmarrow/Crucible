@@ -28,7 +28,7 @@ Browser-local preferences, each taking effect immediately (applied once when the
 If the default model is not among the ones currently on offer — Ollama not running, an LLM
 provider still loading — the field shows blank, but your saved choice is kept and reappears
 as soon as that service is back.
-- **Reset remembered Captioning configuration** — forgets the Captioning page's remembered setup so the defaults above apply again on the next visit. It clears the global setup *and* the remembered filters for **every** dataset, not just the one you last used
+- **Reset remembered Captioning configuration** — forgets the Captioning page's remembered setup so the defaults above apply again on the next visit. It clears the global setup, which is saved in the app and so is cleared for every browser, *and* this browser's remembered filters for **every** dataset, not just the one you last used. Other browsers keep their own filters
 
 ## UI Behavior
 

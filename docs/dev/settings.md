@@ -37,7 +37,7 @@ Constants defined in `docs/dev/frontend-core.md` § Frontend constants and `docs
 
 ## Captioning tab
 
-Seven immediate-save preferences (lazy-loads `["captioning-models"]` query only when tab is first opened). These are **first-run fallbacks**: they apply the first time you visit the Captioning page, or after clearing the remembered workflow configuration. Once the page has been used, the model, style, scope, and other settings are remembered automatically via `CAPTIONING_WORKFLOW_KEY` (see Persistent page state in `docs/dev/persistence.md`) and take precedence over these defaults.
+Seven immediate-save preferences (lazy-loads `["captioning-models"]` query only when tab is first opened). These are **first-run fallbacks**: they apply the first time you visit the Captioning page, or after clearing the remembered workflow configuration. Once the page has been used, the model, style, scope, and other settings are remembered automatically in `ThresholdSettings.captioning_workflow` (see `docs/dev/app-stored-data.md`) and take precedence over these defaults.
 - Default model (`CAPTION_DEFAULT_MODEL_KEY`). Applied if no workflow blob exists yet and `selectedModel` is `""`. If the remembered workflow model is not installed (uninstalled model / removed provider), the model-validation `useEffect` clears it and falls back to this key. Also corrects the remembered style if it is incompatible with the applied model.
 - Default style (`CAPTION_DEFAULT_STYLE_KEY`, e.g. `"detailed" | "short" | "tags" | "promptgen" | "booru"`).
 - Default scope (`CAPTION_DEFAULT_SCOPE_KEY`, `"uncaptioned" | "all"`).
@@ -45,7 +45,7 @@ Seven immediate-save preferences (lazy-loads `["captioning-models"]` query only 
 - Strip refusals toggle (`CAPTION_DEFAULT_STRIP_REFS_KEY`, default `true`).
 - Rename on caption toggle (`CAPTION_DEFAULT_RENAME_KEY`, default `false`).
 - Save backup toggle (`CAPTION_DEFAULT_SAVE_BACKUP_KEY`, default `false`).
-- **Reset remembered Captioning configuration** ghost button at the bottom of this section: clears the global workflow blob **and every per-dataset `captioning-filters-*` blob**, the latter found by scanning `localStorage` for the prefix rather than by enumerating dataset ids — so the one button forgets the Captioning page's remembered setup everywhere, not only globally. `toast.success` only, no confirm dialog.
+- **Reset remembered Captioning configuration** ghost button at the bottom of this section: clears the global workflow blob on the server **and every per-dataset `captioning-filters-*` blob in this browser**, the latter found by scanning `localStorage` for the prefix rather than by enumerating dataset ids. The filter blobs are per-browser, so another browser keeps its own. `toast.success` only, no confirm dialog.
 
 ## Labels tab
 

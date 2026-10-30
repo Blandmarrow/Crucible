@@ -39,6 +39,7 @@ export const CAPTION_DEFAULT_SAVE_BACKUP_KEY = "caption-default-save-backup";   
 
 // Remembered per-page "workflow" config — global blobs shared across all datasets.
 // Loaded/saved via loadPersisted/savePersisted/clearPersisted in utils/persistentState.ts
+// The Captioning page's moved to the server; only the one-time browser import reads this.
 export const CAPTIONING_WORKFLOW_KEY = "captioning-workflow-config";
 export const EXPORT_WORKFLOW_KEY     = "export-workflow-config";
 export const QUALITY_WORKFLOW_KEY    = "quality-workflow-config";

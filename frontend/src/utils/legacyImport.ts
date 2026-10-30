@@ -1,7 +1,8 @@
 import toast from "react-hot-toast";
 import { appDataApi, type LegacyImportBody, type LegacyImportReport } from "../api/appData";
 import { COMFY_GEN_DEFAULTS, comfyApi, type ComfyGenSettings } from "../api/comfy";
-import { LEGACY_IMPORT_MARKER_KEY } from "../constants/storage";
+import { CAPTIONING_WORKFLOW_DEFAULTS, type CaptioningWorkflow } from "../constants/captioningWorkflow";
+import { CAPTIONING_WORKFLOW_KEY, LEGACY_IMPORT_MARKER_KEY } from "../constants/storage";
 import { loadPersisted, savePersisted } from "./persistentState";
 
 /** Written by the zustand `persist` store that held presets before they moved to the
@@ -15,11 +16,9 @@ const LEGACY_COMFY_KEY = /^comfy-genprompts-(?!job-)(.+)$/;
 type Section = keyof LegacyImportBody;
 
 /** A browser's copy that lost to one already on the server, kept until the user chooses. */
-export interface LegacyConflict {
-  section: "comfy_gen_settings";
-  id: string;
-  value: ComfyGenSettings;
-}
+export type LegacyConflict =
+  | { section: "comfy_gen_settings"; id: string; value: ComfyGenSettings }
+  | { section: "captioning_workflow"; id: "captioning_workflow"; value: Partial<CaptioningWorkflow> };
 
 interface ImportMarker {
   done: Section[];
@@ -74,6 +73,19 @@ function readLegacyComfySettings(): Record<string, ComfyGenSettings> {
   return entries;
 }
 
+function readLegacyWorkflow(): Partial<CaptioningWorkflow> | null {
+  try {
+    const old = JSON.parse(localStorage.getItem(CAPTIONING_WORKFLOW_KEY) ?? "null");
+    if (typeof old !== "object" || old === null || Array.isArray(old)) return null;
+    // The old page wrote this on every visit, so an untouched copy says nothing, and
+    // uploading it could beat another browser's real prompts to the server.
+    const merged = { ...CAPTIONING_WORKFLOW_DEFAULTS, ...old };
+    return JSON.stringify(merged) === JSON.stringify(CAPTIONING_WORKFLOW_DEFAULTS) ? null : old;
+  } catch {
+    return null;
+  }
+}
+
 /** A rejected preset is often rejected for its name being too long, so shorten it. */
 function presetLabel(preset: unknown): string {
   const name = (preset as { name?: unknown } | null)?.name;
@@ -95,7 +107,11 @@ function reportRejected(body: LegacyImportBody, report: LegacyImportReport): str
   if (plans.length > 0) {
     toast.error(`Generate-prompts settings for ${plans.length} plan(s) could not be copied to the app and stay in this browser only.`, { duration: 15_000 });
   }
-  return [...presets, ...plans];
+  const workflow = report.captioning_workflow === "rejected" ? ["Captioning setup"] : [];
+  if (workflow.length > 0) {
+    toast.error("Your saved captioning setup could not be copied to the app and stays in this browser only.", { duration: 15_000 });
+  }
+  return [...presets, ...plans, ...workflow];
 }
 
 async function runImport(): Promise<void> {
@@ -116,6 +132,11 @@ async function runImport(): Promise<void> {
     if (Object.keys(settings).length > 0) body.comfy_gen_settings = settings;
     else finished.push("comfy_gen_settings");
   }
+  if (!done.has("captioning_workflow")) {
+    const workflow = readLegacyWorkflow();
+    if (workflow) body.captioning_workflow = workflow;
+    else finished.push("captioning_workflow");
+  }
 
   if (Object.keys(body).length > 0) {
     const report = await appDataApi.legacyImport(body);
@@ -128,6 +149,9 @@ async function runImport(): Promise<void> {
       if (status === "conflict" && body.comfy_gen_settings) {
         conflicts.push({ section: "comfy_gen_settings", id, value: body.comfy_gen_settings[id] });
       }
+    }
+    if (report.captioning_workflow === "conflict" && body.captioning_workflow) {
+      conflicts.push({ section: "captioning_workflow", id: "captioning_workflow", value: body.captioning_workflow });
     }
     rejected.push(...reportRejected(body, report));
   }
@@ -167,5 +191,6 @@ export function dismissLegacyConflict(conflict: LegacyConflict): void {
 
 /** Replace the server's copy with this browser's. */
 export async function applyLegacyConflict(conflict: LegacyConflict): Promise<void> {
-  await comfyApi.putGenSettings(conflict.id, conflict.value);
+  if (conflict.section === "captioning_workflow") await appDataApi.putCaptioningWorkflow(conflict.value);
+  else await comfyApi.putGenSettings(conflict.id, conflict.value);
 }

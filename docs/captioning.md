@@ -53,6 +53,12 @@ Captions can also be **imported** rather than generated: from `.txt` sidecars du
 
 Tag-producing styles (`danbooru`, `e621`, `rule34`, `booru_like`) are treated the same as WD14/booru output — they produce a comma-separated list of tags stored directly in the caption text. A custom prompt overrides the style prompt entirely.
 
+## Your setup is remembered
+
+The page remembers your model, prompts, options and pipeline steps as you change them. They are saved in the app rather than your browser, so they are the same in every browser and survive clearing browser data. **Reset to defaults** clears them. The subfolder and quality filters are still remembered per dataset in each browser.
+
+A setup saved before this change is copied over the first time each browser opens the updated app. If a second browser holds a different one, you are asked which to keep.
+
 ## Post-processing options
 
 - **Strip refusal phrases & identity guesses** — removes the usual "I'm sorry, I can't…" boilerplate and speculative name-guessing

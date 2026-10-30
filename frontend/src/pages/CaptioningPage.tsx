@@ -28,82 +28,15 @@ import {
   CAPTION_DEFAULT_STRIP_REFS_KEY,
   CAPTION_DEFAULT_RENAME_KEY,
   CAPTION_DEFAULT_SAVE_BACKUP_KEY,
-  CAPTIONING_WORKFLOW_KEY,
   CAPTIONING_FILTERS_PREFIX,
 } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
-
-type Scope = "uncaptioned" | "selected" | "all";
-
-interface StepConfig {
-  id: string;
-  model: string;
-  style: string;
-  customPrompt: string;
-  wd14Threshold: number;
-  providerModelInput: string;
-  delimiterMode: DelimiterMode;
-  delimiterParts: string[];
-  usePreviousCaption: boolean;
-  stripRefusals: boolean;
-  stripThinking: boolean;
-  stripUnderscores: boolean;
-  stripHedges: boolean;
-  dedupeTags: boolean;
-  targetWidth: number | null;
-  targetHeight: number | null;
-}
-
-interface CaptioningWorkflow {
-  selectedModel: string;
-  providerModelInput: string;
-  style: string;
-  customPrompt: string;
-  wd14Threshold: number;
-  targetWidth: number | null;
-  targetHeight: number | null;
-  scope: Scope;
-  delimiterMode: DelimiterMode;
-  delimiterParts: string[];
-  stripRefusals: boolean;
-  stripThinking: boolean;
-  stripUnderscores: boolean;
-  stripHedges: boolean;
-  dedupeTags: boolean;
-  saveBackup: boolean;
-  renameOnCaption: boolean;
-  detectTask: string;
-  detectPrompt: string;
-  detectUseCaptions: boolean;
-  detectOverwrite: boolean;
-  additionalSteps: StepConfig[];
-}
-
-const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
-  selectedModel: "",
-  providerModelInput: "",
-  style: "detailed",
-  customPrompt: "",
-  wd14Threshold: 0.35,
-  targetWidth: null,
-  targetHeight: null,
-  scope: "uncaptioned",
-  delimiterMode: "overwrite",
-  delimiterParts: [",", " "],
-  stripRefusals: true,
-  stripThinking: false,
-  stripUnderscores: false,
-  stripHedges: false,
-  dedupeTags: false,
-  saveBackup: false,
-  renameOnCaption: false,
-  detectTask: "<OD>",
-  detectPrompt: "",
-  detectUseCaptions: false,
-  detectOverwrite: true,
-  additionalSteps: [],
-};
+import { CAPTIONING_WORKFLOW_DEFAULTS, type CaptioningWorkflow, type Scope, type StepConfig } from "../constants/captioningWorkflow";
+import ServerStateGate from "../components/common/ServerStateGate";
+import { CAPTIONING_WORKFLOW_PATH, appDataApi } from "../api/appData";
+import { runLegacyImport } from "../utils/legacyImport";
+import { serverWritesSettled, writeToServer } from "../utils/serverWriter";
 
 interface CaptioningFilters {
   activeSubfolder: string | null;
@@ -287,7 +220,29 @@ function StepModelPicker({
   );
 }
 
+function saveCaptioningWorkflow(path: string, value: object) {
+  writeToServer(path, "PUT", { value });
+}
+
+/** The remembered workflow lives on the server, and the form reads it in its state
+    initializers, so it mustn't mount until it has arrived. */
 export default function CaptioningPage() {
+  return (
+    <ServerStateGate
+      queryKey={["app-data", "captioning-workflow"]}
+      load={async () => {
+        await runLegacyImport();
+        await serverWritesSettled(CAPTIONING_WORKFLOW_PATH);
+        return appDataApi.getCaptioningWorkflow();
+      }}
+      label="your saved captioning setup"
+    >
+      {(saved) => <CaptioningForm saved={saved} />}
+    </ServerStateGate>
+  );
+}
+
+function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }) {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
   const { selectedIds, datasetByImageId } = useSelectionStore();
@@ -302,10 +257,10 @@ export default function CaptioningPage() {
   const { presets, emptyMessage: presetsEmptyMessage, save: savePreset, remove: removePreset } = usePromptPresets();
 
   // Remembered "workflow" config — global, shared across all datasets.
-  const [workflow] = useState(() => loadPersisted(CAPTIONING_WORKFLOW_KEY, CAPTIONING_WORKFLOW_DEFAULTS));
+  const [workflow] = useState<CaptioningWorkflow>(() => ({ ...CAPTIONING_WORKFLOW_DEFAULTS, ...saved }));
   // True once any workflow blob has ever been saved — gates whether Settings' CAPTION_DEFAULT_*
   // values still apply. After the first debounced save, this stays true forever (until Reset).
-  const [hasStoredWorkflow] = useState(() => localStorage.getItem(CAPTIONING_WORKFLOW_KEY) !== null);
+  const [hasStoredWorkflow] = useState(saved !== null);
 
   const [selectedModel, setSelectedModel] = useState(hasStoredWorkflow ? workflow.selectedModel : "");
   const [providerModelInput, setProviderModelInput] = useState(workflow.providerModelInput);
@@ -484,14 +439,14 @@ export default function CaptioningPage() {
   }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
-  useDebouncedPersist(CAPTIONING_WORKFLOW_KEY, {
+  useDebouncedPersist(CAPTIONING_WORKFLOW_PATH, {
     selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
     targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
     stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
     saveBackup, renameOnCaption,
     detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
     additionalSteps,
-  });
+  }, undefined, saveCaptioningWorkflow);
 
   // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
   useDebouncedPersist(
@@ -741,7 +696,7 @@ export default function CaptioningPage() {
   }
 
   function handleResetToDefaults() {
-    clearPersisted(CAPTIONING_WORKFLOW_KEY);
+    writeToServer(CAPTIONING_WORKFLOW_PATH, "DELETE");
     if (datasetId) clearPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId));
 
     // Fields with no Settings-configured default — reset to hardcoded defaults.

@@ -1,14 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { createDatasetViaApi, uploadViaApi } from './helpers'
+import type { APIRequestContext } from '@playwright/test'
+import { createDatasetViaApi, resetCaptioningWorkflowViaApi, uploadViaApi } from './helpers'
 
 // `POST /captioning/run` and `/pipeline` 422 any model id whose prefix reaches no
 // captioning backend, and a pipeline is one request — so a stale step 3 stops step 1
 // from running and the error names no step. The page has to refuse the Run itself.
 //
 // Pure client state: no GPU, no job, no model download. The gate is decided before
-// anything is sent, so seeding the persisted workflow blob is the whole setup.
+// anything is sent, so seeding the saved workflow blob is the whole setup. That blob is
+// on the server, which outlives a browser context, so each test clears it afterwards.
 //
-// `loadPersisted` shallow-merges at the top level only, so a seeded `additionalSteps`
+// The page shallow-merges it at the top level only, so a seeded `additionalSteps`
 // entry has to be a COMPLETE StepConfig — `delimiterParts` is `.join()`ed and
 // `wd14Threshold` is `.toFixed(2)`ed during render, and a partial object throws.
 function step(model: string) {
@@ -32,19 +34,22 @@ function step(model: string) {
   }
 }
 
+async function seedWorkflow(request: APIRequestContext, value: object) {
+  const r = await request.put('/api/v1/app-data/captioning-workflow', { data: { value } })
+  expect(r.status(), await r.text()).toBe(200)
+}
+
+test.afterEach(async ({ request }) => {
+  await resetCaptioningWorkflowViaApi(request)
+})
+
 test('a pipeline step holding a non-captioning model blocks the run and names itself', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `run-gate-${Date.now()}`)
   await uploadViaApi(request, ds.id, 'a.png')
 
   // `sam3` is a detector: it is in the model registry, so it could be selected here
   // before the picker was filtered, and it survives in anyone's saved workflow.
-  await page.addInitScript(
-    ({ key, blob }) => localStorage.setItem(key, blob),
-    {
-      key: 'captioning-workflow-config',
-      blob: JSON.stringify({ selectedModel: 'florence2_large', additionalSteps: [step('sam3')] }),
-    },
-  )
+  await seedWorkflow(request, { selectedModel: 'florence2_large', additionalSteps: [step('sam3')] })
 
   await page.goto(`/datasets/${ds.id}/captioning`)
 
@@ -63,13 +68,7 @@ test('a wd14 tagger leaves the run enabled', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `run-gate-ok-${Date.now()}`)
   await uploadViaApi(request, ds.id, 'a.png')
 
-  await page.addInitScript(
-    ({ key, blob }) => localStorage.setItem(key, blob),
-    {
-      key: 'captioning-workflow-config',
-      blob: JSON.stringify({ selectedModel: 'wd14:eva02_large', additionalSteps: [] }),
-    },
-  )
+  await seedWorkflow(request, { selectedModel: 'wd14:eva02_large', additionalSteps: [] })
 
   await page.goto(`/datasets/${ds.id}/captioning`)
 

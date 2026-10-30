@@ -57,7 +57,7 @@ carried over. Design: [server-state-plan/README.md](server-state-plan/README.md)
 - [x] PR 1: backend models, migration, routes and the import endpoint.
 - [x] PR 2: caption prompt presets. Needs PR 1.
 - [x] PR 3: ComfyUI "Generate prompts" settings, and the conflict dialog. Needs PR 2.
-- [ ] PR 4: the captioning workflow blob. Needs PR 3, for the writer and the loading gate.
+- [x] PR 4: the captioning workflow blob. Needs PR 3, for the writer and the loading gate.
 - [ ] PR 5: declared categories. Needs PR 2.
 - [ ] Cleanup, one release after PR 5: delete the legacy keys, the import code and the plan
   folder, then archive this milestone.

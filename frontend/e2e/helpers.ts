@@ -100,6 +100,12 @@ export async function resetPresetsViaApi(request: APIRequestContext): Promise<vo
   }
 }
 
+/** Back to "never saved", for the same reason as `resetPresetsViaApi`. */
+export async function resetCaptioningWorkflowViaApi(request: APIRequestContext): Promise<void> {
+  const r = await request.delete('/api/v1/app-data/captioning-workflow')
+  expect(r.status(), await r.text()).toBe(200)
+}
+
 /** Upload one PNG into a dataset through the API and return the added filename. */
 export async function uploadViaApi(
   request: APIRequestContext,

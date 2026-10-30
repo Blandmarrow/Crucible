@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import axios from "axios";
+import { appDataApi } from "../../api/appData";
 import { comfyApi, type ComfyGenSettings } from "../../api/comfy";
+import type { CaptioningWorkflow } from "../../constants/captioningWorkflow";
 import {
   applyLegacyConflict,
   dismissLegacyConflict,
@@ -26,10 +28,30 @@ function describeGenSettings(s: ComfyGenSettings): string {
   return `${s.instructions || "(no instructions)"}\n\n${settings}`;
 }
 
+function describeWorkflow(w: Partial<CaptioningWorkflow>): string {
+  const steps = w.additionalSteps?.length ?? 0;
+  return [
+    `Model: ${w.selectedModel || "(none)"}`,
+    `Prompt: ${w.customPrompt || "(none)"}`,
+    w.detectPrompt ? `Detection prompt: ${w.detectPrompt}` : "",
+    steps > 0 ? `${steps} extra pipeline step(s)` : "",
+  ].filter(Boolean).join("\n");
+}
+
 async function loadDetails(): Promise<ConflictDetail[]> {
   await runLegacyImport();
   const details: ConflictDetail[] = [];
   for (const conflict of readLegacyConflicts()) {
+    if (conflict.section === "captioning_workflow") {
+      const current = await appDataApi.getCaptioningWorkflow();
+      details.push({
+        conflict,
+        title: "The Captioning page's saved setup",
+        thisBrowser: describeWorkflow(conflict.value),
+        current: current ? describeWorkflow(current) : "(nothing saved)",
+      });
+      continue;
+    }
     try {
       const [plan, current] = await Promise.all([
         comfyApi.getPlan(conflict.id),
@@ -93,7 +115,7 @@ export default function LegacyConflictsDialog() {
     <ModalShell label="Different saved copies" onClose={() => setClosed(true)} style={{ width: 560, maxWidth: "94vw" }}>
       <h3 style={{ margin: "0 0 8px" }}>Different saved copies</h3>
       <p style={{ fontSize: 13, color: "var(--fg-mute)", margin: "0 0 12px" }}>
-        {title} now live in the app, and another browser got there first with a different copy. Which do you want to keep?
+        {title}. This is now saved in the app, and another browser got there first with a different copy. Which do you want to keep?
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
         <div>

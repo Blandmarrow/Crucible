@@ -115,6 +115,12 @@ before the marker is written is safe, because re-running the import changes noth
 - **A tab left open on the previous build** can still write a preset to the old key after this
   browser has marked presets done, and that preset won't be imported. It's a window of one
   update, and re-import on change would need a hash of the key to fix it.
+- **A model missing here** (Ollama off, say) is blanked on this page but not saved. If the user
+  then edits something, the blank goes with it, and every browser loses the saved model until
+  it's picked again. The page's blanking predates this work and `docs/captioning.md` describes
+  it; only its reach is new.
+- **Settings' reset beside an open Captioning pane:** that pane keeps its state, and its next
+  edit saves it back, as it did with `localStorage`.
 - **Backup restore:** restoring a database backup from before the import won't re-import,
   because the marker lives in the browser. The legacy keys are still there during the
   one-release window.

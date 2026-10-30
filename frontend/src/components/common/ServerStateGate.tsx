@@ -32,20 +32,22 @@ export default function ServerStateGate<T>({ queryKey, load, label, frame = (c) 
     refetchOnReconnect: false,
   });
 
+  // `isFetchedAfterMount` and not just `data`: a second pane's gate shares this query with
+  // the first, whose subscription keeps the cache alive despite `gcTime: 0`, so `data` can
+  // be what the first pane read before its edits. A form that started from that would
+  // save it back over them.
   const [latched, setLatched] = useState<{ value: T } | null>(null);
-  if (latched === null && query.data !== undefined) setLatched({ value: query.data });
+  if (latched === null && query.isSuccess && query.isFetchedAfterMount) setLatched({ value: query.data });
 
   if (latched !== null) return <>{children(latched.value)}</>;
 
-  if (query.isError) {
+  if (query.isError && !query.isFetching) {
     return (
       <>
         {frame(
           <div style={{ padding: 40, color: "var(--fg-mute)" }}>
             <p style={{ margin: "0 0 12px" }}>Couldn't load {label}. Nothing has been changed.</p>
-            <button className="btn sm" onClick={() => query.refetch()} disabled={query.isFetching}>
-              {query.isFetching ? "Retrying…" : "Retry"}
-            </button>
+            <button className="btn sm" onClick={() => query.refetch()}>Retry</button>
           </div>,
         )}
       </>

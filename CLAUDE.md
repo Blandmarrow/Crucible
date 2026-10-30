@@ -208,7 +208,7 @@ substantial edit.
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2400 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2600 |
 | `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~900 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |

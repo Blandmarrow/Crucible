@@ -91,11 +91,84 @@ test.describe('the remembered captioning setup', () => {
     await page.getByRole('button', { name: 'Reset', exact: true }).click()
     await expect(page.getByPlaceholder(PROMPT_FIELD)).toHaveValue('')
 
-    // The DELETE goes first and the page's own save of its reset state follows, in order,
-    // so what must hold is that the old prompt doesn't come back.
-    await expect.poll(async () => (await savedWorkflow(request))?.customPrompt ?? '').toBe('')
+    // Really NULL, not a saved copy of the defaults, or Settings' defaults stop applying.
+    await expect.poll(() => savedWorkflow(request)).toBeNull()
     await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
-    expect((await savedWorkflow(request))?.customPrompt ?? '').toBe('')
+    expect(await savedWorkflow(request)).toBeNull()
+
+    // And the page is still saving: the reset must not swallow the next edit.
+    await page.getByPlaceholder(PROMPT_FIELD).fill('after the reset')
+    await expect.poll(async () => (await savedWorkflow(request))?.customPrompt).toBe('after the reset')
+  })
+
+  test("applying this browser's default model is not saved for everyone", async ({ page, request }) => {
+    const datasetId = await captioningDataset(request, 'wf-default-model')
+    await seedStorage(page, 'caption-default-model', 'florence2_large')
+
+    await page.goto(`/datasets/${datasetId}/captioning`)
+    // Waited for rather than assumed: until the models have loaded, nothing has been
+    // applied, and this test would pass without reaching the path it's about.
+    await expect(page.locator('.model-row.sel')).toContainText('Florence-2-large')
+    await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+    expect(await savedWorkflow(request)).toBeNull()
+
+    // An edit still saves, and carries the applied model with it.
+    await page.getByPlaceholder(PROMPT_FIELD).fill('an actual edit')
+    await expect.poll(async () => (await savedWorkflow(request))?.customPrompt).toBe('an actual edit')
+    expect((await savedWorkflow(request)).selectedModel).toBe('florence2_large')
+  })
+
+  test('a remembered model missing here is not cleared for everyone', async ({ page, request }) => {
+    const datasetId = await captioningDataset(request, 'wf-missing-model')
+    await request.put('/api/v1/app-data/captioning-workflow', {
+      data: { value: { selectedModel: 'ollama:not-running-here', customPrompt: 'keep me' } },
+    })
+
+    await page.goto(`/datasets/${datasetId}/captioning`)
+    await expect(page.getByPlaceholder(PROMPT_FIELD)).toHaveValue('keep me')
+    await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+    expect((await savedWorkflow(request)).selectedModel).toBe('ollama:not-running-here')
+  })
+
+  test('a second pane starts from what the first just saved, not what it first read', async ({ page, request }) => {
+    const datasetId = await captioningDataset(request, 'wf-panes')
+    await page.goto(`/datasets/${datasetId}/captioning`)
+    await page.getByPlaceholder(PROMPT_FIELD).fill('typed before splitting')
+    await expect.poll(async () => (await savedWorkflow(request))?.customPrompt).toBe('typed before splitting')
+
+    await page.getByRole('button', { name: 'Enter split view' }).click()
+    await page.getByRole('button', { name: 'Split horizontal (side by side)' }).click()
+    const panes = page.getByTestId('pane-leaf')
+    await expect(panes).toHaveCount(2)
+
+    // Index 0 of a pane header's selects is its page select.
+    for (const i of [0, 1]) {
+      const select = panes.nth(i).locator('select').first()
+      await select.selectOption('captioning')
+      await expect(panes.nth(i).getByPlaceholder(PROMPT_FIELD)).toHaveValue('typed before splitting')
+    }
+    await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+    expect((await savedWorkflow(request)).customPrompt).toBe('typed before splitting')
+  })
+
+  test('copies differing only in a pipeline step show that step', async ({ page, request }) => {
+    const datasetId = await captioningDataset(request, 'wf-conflict-step')
+    const step = (customPrompt: string) => ({
+      id: 's', model: 'florence2_large', style: 'detailed', customPrompt, wd14Threshold: 0.35, providerModelInput: '',
+      delimiterMode: 'overwrite', delimiterParts: [',', ' '], usePreviousCaption: false, stripRefusals: true,
+      stripThinking: false, stripUnderscores: false, stripHedges: false, dedupeTags: false, targetWidth: null, targetHeight: null,
+    })
+    await request.put('/api/v1/app-data/captioning-workflow', { data: { value: { additionalSteps: [step('in the app')] } } })
+    await seedStorage(page, LEGACY_KEY, JSON.stringify({ additionalSteps: [step('in this browser')] }))
+
+    await page.goto(`/datasets/${datasetId}/captioning`)
+    const dialog = page.getByRole('dialog', { name: 'Different saved copies' })
+    await expect(dialog.getByText(/prompt: in the app/)).toBeVisible()
+    await expect(dialog.getByText(/prompt: in this browser/)).toBeVisible()
+
+    await dialog.getByRole('button', { name: "Keep the app's copy" }).click()
+    await expect(dialog).toHaveCount(0)
+    expect((await savedWorkflow(request)).additionalSteps[0].customPrompt).toBe('in the app')
   })
 
   test('Reset in Settings clears the saved setup', async ({ page, request }) => {

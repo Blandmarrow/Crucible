@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { savePersisted } from "../utils/persistentState";
 import { PERSIST_DEBOUNCE_MS } from "../constants/storage";
 
@@ -22,13 +22,17 @@ import { PERSIST_DEBOUNCE_MS } from "../constants/storage";
  *              value at mount: a server write costs a request, and for data where NULL
  *              means "never saved" a write on mount would destroy that fact just by
  *              opening the page. The localStorage path keeps writing on mount.
+ * @returns     `rebaseline`, for use with `write`: call it in the same update as a state
+ *              change that isn't the user's edit, so that change isn't saved for them.
+ *              An edit still waiting to be written goes ahead anyway, unless
+ *              `discardPending` says it's being thrown away too (a reset).
  */
 export function useDebouncedPersist(
   key: string | null,
   value: object,
   delay = PERSIST_DEBOUNCE_MS,
   write?: (key: string, value: object) => void,
-): void {
+): (discardPending?: boolean) => void {
   // The dependency. Callers build `value` from an object literal, so property
   // order is stable and JSON equality is a sound change check. This also spares
   // every call site a hand-maintained dep array (Captioning's was 23 entries).
@@ -41,6 +45,16 @@ export function useDebouncedPersist(
   const writerRef = useRef(write);
   const lastWrittenRef = useRef(write ? serialized : null);
 
+  const rebaselineRef = useRef(false);
+  // The commit this forces is what ends a rebaseline, even if the state change turns out
+  // to change nothing, which would otherwise swallow the next edit.
+  const [rebaselineCommit, forceCommit] = useReducer((n: number) => n + 1, 0);
+  const rebaseline = useCallback((discardPending = false) => {
+    if (discardPending) pendingRef.current = null;
+    rebaselineRef.current = true;
+    forceCommit();
+  }, []);
+
   const perform = (pending: { key: string; value: object; serialized: string }) => {
     if (writerRef.current) {
       writerRef.current(pending.key, pending.value);
@@ -52,6 +66,7 @@ export function useDebouncedPersist(
 
   useEffect(() => {
     if (!key) return;
+    if (rebaselineRef.current && !pendingRef.current) lastWrittenRef.current = serialized;
     if (serialized === lastWrittenRef.current) {
       // Edited and changed back inside the window: nothing is owed any more.
       pendingRef.current = null;
@@ -60,6 +75,8 @@ export function useDebouncedPersist(
     const pending = { key, value, serialized };
     pendingRef.current = pending;
     const t = setTimeout(() => {
+      // Discarded by a rebaseline that changed nothing, so no cleanup cancelled this.
+      if (pendingRef.current !== pending) return;
       perform(pending);
       pendingRef.current = null;
     }, delay);
@@ -70,6 +87,13 @@ export function useDebouncedPersist(
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `serialized` stands in for `value`
   }, [key, serialized, delay]);
+
+  // Declared after the effect above, so that has already seen the flag this commit. Keyed
+  // on the forced commit and not run on every commit, because a caller's own effect can
+  // ask for a rebaseline earlier in the very commit this would otherwise clear it in.
+  useEffect(() => {
+    rebaselineRef.current = false;
+  }, [rebaselineCommit]);
 
   useEffect(() => {
     const flush = () => {
@@ -86,4 +110,6 @@ export function useDebouncedPersist(
       flush();
     };
   }, []);
+
+  return rebaseline;
 }

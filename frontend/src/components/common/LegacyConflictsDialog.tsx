@@ -24,17 +24,16 @@ interface ConflictDetail {
 const QUERY_KEY = ["app-data", "legacy-conflicts"];
 
 function describeGenSettings(s: ComfyGenSettings): string {
-  const settings = `batch ${s.batch_size} · temperature ${s.temperature} · target ${s.target_count}${s.model ? ` · ${s.model}` : ""}`;
+  const settings = `batch ${s.batch_size} · temperature ${s.temperature} · target ${s.target_count}${s.provider_id ? ` · provider ${s.provider_id}` : ""}${s.model ? ` · ${s.model}` : ""}`;
   return `${s.instructions || "(no instructions)"}\n\n${settings}`;
 }
 
 function describeWorkflow(w: Partial<CaptioningWorkflow>): string {
-  const steps = w.additionalSteps?.length ?? 0;
   return [
     `Model: ${w.selectedModel || "(none)"}`,
     `Prompt: ${w.customPrompt || "(none)"}`,
     w.detectPrompt ? `Detection prompt: ${w.detectPrompt}` : "",
-    steps > 0 ? `${steps} extra pipeline step(s)` : "",
+    ...(w.additionalSteps ?? []).map((s, i) => `Step ${i + 2}: ${s.model || "(no model)"}, prompt: ${s.customPrompt || "(none)"}`),
   ].filter(Boolean).join("\n");
 }
 
@@ -127,6 +126,11 @@ export default function LegacyConflictsDialog() {
           <pre style={preStyle}>{thisBrowser}</pre>
         </div>
       </div>
+      {current === thisBrowser && (
+        <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 12px" }}>
+          The text above matches. These copies differ only in other options, such as style or post-processing.
+        </p>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button className="btn ghost sm" onClick={() => setClosed(true)} disabled={busy}>Decide later</button>
         <button className="btn sm" onClick={() => resolve(false)} disabled={busy}>Keep the app's copy</button>

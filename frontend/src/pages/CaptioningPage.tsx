@@ -394,7 +394,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     queryKey: ["captioning-models"],
     queryFn: captioningApi.models,
   });
-  const { data: providers = [] } = useQuery({
+  const { data: providers = [], isFetched: providersResolved } = useQuery({
     queryKey: ["providers"],
     queryFn: providersApi.list,
     staleTime: 30_000,
@@ -414,14 +414,30 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
   const ollamaModels = modelsData?.ollama_models ?? [];
   const wd14Models = modelsData?.wd14_models ?? [];
 
+  // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
+  const rebaselineWorkflow = useDebouncedPersist(CAPTIONING_WORKFLOW_PATH, {
+    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
+    targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
+    stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
+    saveBackup, renameOnCaption,
+    detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
+    additionalSteps,
+  }, undefined, saveCaptioningWorkflow);
+
   // Apply stored default model once after models/providers load, if no model is selected yet —
   // or if the remembered model is no longer valid (uninstalled model / removed provider).
   // Also correct the style if it's incompatible with the resolved model.
+  //
+  // Neither is the user's edit, so neither is saved: the workflow is shared by every browser,
+  // and this browser's default model, or a provider list that failed to load here, isn't
+  // theirs. It also has to wait for providers, whose empty list while loading would blank
+  // a remembered provider model.
   useEffect(() => {
-    if (!modelsData) return;
+    if (!modelsData || !providersResolved) return;
     const allIds = captionModelIds(modelsData, providers);
     const tryApply = (candidate: string | null | undefined): boolean => {
       if (!candidate || !allIds.includes(candidate)) return false;
+      rebaselineWorkflow();
       setSelectedModel(candidate);
       const mt = modelType(candidate);
       const supported = (mt ? (STYLE_LABELS[mt] ?? []) : []) as string[];
@@ -430,23 +446,14 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     };
     if (selectedModel !== "") {
       if (!allIds.includes(selectedModel)) {
+        rebaselineWorkflow();
         setSelectedModel("");
         tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
       }
       return;
     }
     tryApply(localStorage.getItem(CAPTION_DEFAULT_MODEL_KEY));
-  }, [modelsData, providers]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
-  useDebouncedPersist(CAPTIONING_WORKFLOW_PATH, {
-    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
-    targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
-    stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
-    saveBackup, renameOnCaption,
-    detectTask, detectPrompt, detectUseCaptions, detectOverwrite,
-    additionalSteps,
-  }, undefined, saveCaptioningWorkflow);
+  }, [modelsData, providers, providersResolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist "filters" config (subfolder/quality filters) — per-dataset, debounced.
   useDebouncedPersist(
@@ -697,6 +704,9 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
 
   function handleResetToDefaults() {
     writeToServer(CAPTIONING_WORKFLOW_PATH, "DELETE");
+    // The state set below isn't an edit either. Saved, it would turn "never saved" straight
+    // back into a stored copy of the defaults, which later Settings changes couldn't reach.
+    rebaselineWorkflow(true);
     if (datasetId) clearPersisted(datasetScopedKey(CAPTIONING_FILTERS_PREFIX, datasetId));
 
     // Fields with no Settings-configured default — reset to hardcoded defaults.

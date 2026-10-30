@@ -48,16 +48,23 @@ test.describe('copying Generate prompts settings out of the browser', () => {
   const saved = async (request: APIRequestContext, planId: string) =>
     (await (await request.get(`/api/v1/comfy/plans/${planId}/gen-settings`)).json()).value
 
+  const undecidedConflicts = async (page: Page) =>
+    JSON.parse((await page.evaluate((k) => localStorage.getItem(k), MARKER_KEY))!).conflicts
+
   test('old settings arrive on the plan, with field names and numbers intact', async ({ page, request }) => {
     const { datasetId, planId } = await createPlan(request, 'legacy-comfy')
     await seedStorage(page, `comfy-genprompts-${planId}`, legacySettings('from the old browser'))
-    // Shares the prefix but holds a job id. Read as settings, it would fail validation.
-    await seedStorage(page, `comfy-genprompts-job-${planId}`, JSON.stringify({ jobId: null }))
+    // Shares the prefix but belongs to the job re-attach. The instructions field makes it
+    // look like real settings, so only the key pattern can be what keeps it out.
+    await seedStorage(page, `comfy-genprompts-job-${planId}`, JSON.stringify({ jobId: null, instructions: 'not settings' }))
 
+    const importRequest = page.waitForRequest('**/api/v1/app-data/legacy-import')
     await page.goto(`/datasets/${datasetId}/comfy`)
+    const sent = (await importRequest).postDataJSON()
+    expect(Object.keys(sent.comfy_gen_settings)).toEqual([planId])
+
     await expect.poll(async () => (await saved(request, planId))?.instructions).toBe('from the old browser')
     expect(await saved(request, planId)).toMatchObject({ batch_size: 3, temperature: 0.5, target_count: 50 })
-    await expect(page.getByText(/could not be copied/)).toHaveCount(0)
   })
 
   test('an untouched default copy is not uploaded', async ({ page, request }) => {
@@ -87,10 +94,9 @@ test.describe('copying Generate prompts settings out of the browser', () => {
     await dialog.getByRole('button', { name: "Use this browser's copy" }).click()
     await expect(dialog).toHaveCount(0)
     expect((await saved(request, planId)).instructions).toBe('held by this browser')
-
-    await page.reload()
-    await expect(page.getByRole('heading', { name: 'ComfyUI generation' })).toBeVisible()
-    await expect(dialog).toHaveCount(0)
+    // The dialog waits on requests of its own, so its absence right after a load proves
+    // nothing. The marker is what decides whether it asks again.
+    expect(await undecidedConflicts(page)).toEqual([])
   })
 
   test('"keep the app\'s copy" changes nothing and does not ask again', async ({ page, request }) => {
@@ -103,10 +109,7 @@ test.describe('copying Generate prompts settings out of the browser', () => {
     await dialog.getByRole('button', { name: "Keep the app's copy" }).click()
     await expect(dialog).toHaveCount(0)
     expect((await saved(request, planId)).instructions).toBe('already in the app')
-
-    await page.reload()
-    await expect(page.getByRole('heading', { name: 'ComfyUI generation' })).toBeVisible()
-    await expect(dialog).toHaveCount(0)
+    expect(await undecidedConflicts(page)).toEqual([])
   })
 
   test('"decide later" asks again on the next load', async ({ page, request }) => {

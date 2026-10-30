@@ -78,9 +78,15 @@ test.describe('saved Generate prompts settings', () => {
     await context.close()
   })
 
-  test('closing straight after typing still saves, and reopening shows it', async ({ page, request }) => {
+  test('closing straight after typing still saves, and reopening waits for that save', async ({ page, request }) => {
     const ds = await createDatasetViaApi(request, `e2e-gen-flush-${Date.now()}`)
     await createPlanViaApi(request, ds.id, 'flush plan')
+
+    // Held long enough that a reopen reads the server before this lands, unless it waits.
+    await page.route('**/gen-settings', async (route) => {
+      if (route.request().method() === 'PUT') await new Promise((resolve) => setTimeout(resolve, 1000))
+      await route.continue()
+    })
 
     await openGenerateModal(page, ds.id)
     await page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER).fill('typed then closed')
@@ -89,6 +95,53 @@ test.describe('saved Generate prompts settings', () => {
 
     await page.getByRole('button', { name: 'Generate prompts…' }).click()
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('typed then closed')
+  })
+
+  test('a save queued behind a slow one still lands when the page goes away', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-gen-queued-${Date.now()}`)
+    const plan = await createPlanViaApi(request, ds.id, 'queued plan')
+
+    let held = false
+    await page.route('**/gen-settings', async (route) => {
+      if (route.request().method() === 'PUT' && !held) {
+        held = true
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+      }
+      await route.continue()
+    })
+
+    await openGenerateModal(page, ds.id)
+    const field = page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)
+    await field.fill('first')
+    await expect.poll(() => held).toBe(true)
+    await field.fill('second')
+    // Past the debounce, so this edit has left the hook and sits queued in the writer,
+    // where the hook's own flush can't see it.
+    await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 2)
+    await page.goto('/settings')
+
+    await expect.poll(async () => (await savedGenSettings(request, plan.id))?.instructions).toBe('second')
+  })
+
+  test('a failing save keeps retrying, and meanwhile a reopen refuses to show the old value', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-gen-failing-${Date.now()}`)
+    const plan = await createPlanViaApi(request, ds.id, 'failing plan')
+
+    await openGenerateModal(page, ds.id)
+    await page.route('**/gen-settings', (route) =>
+      route.request().method() === 'PUT' ? route.fulfill({ status: 503, body: '{}' }) : route.continue())
+    await page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER).fill('must not be lost')
+    await expect(page.getByText(/Couldn't save your changes to the app/)).toBeVisible({ timeout: 15_000 })
+
+    await page.getByRole('button', { name: '×' }).click()
+    await page.getByRole('button', { name: 'Generate prompts…' }).click()
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveCount(0)
+
+    await page.unroute('**/gen-settings')
+    await expect.poll(async () => (await savedGenSettings(request, plan.id))?.instructions, { timeout: 15_000 }).toBe('must not be lost')
+    await page.getByRole('button', { name: 'Retry' }).click()
+    await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('must not be lost')
   })
 
   test('opening the modal without editing saves nothing', async ({ page, request }) => {

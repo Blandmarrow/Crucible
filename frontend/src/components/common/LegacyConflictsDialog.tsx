@@ -69,11 +69,13 @@ export default function LegacyConflictsDialog() {
   async function resolve(useThisBrowsers: boolean) {
     setBusy(true);
     try {
-      if (useThisBrowsers) {
-        await applyLegacyConflict(conflict);
-        toast.success("Using this browser's copy");
-      }
+      if (useThisBrowsers) await applyLegacyConflict(conflict);
       dismissLegacyConflict(conflict);
+      // A form already open holds the old copy, and its next save would put it back.
+      if (useThisBrowsers) {
+        window.location.reload();
+        return;
+      }
       await qc.invalidateQueries({ queryKey: QUERY_KEY });
     } catch {
       toast.error("Couldn't save that choice. Try again.");

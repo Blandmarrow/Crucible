@@ -51,11 +51,10 @@ returns a report per entry:
 
 ## Frontend
 
-**Writer** (a new `serverWriter` module in `frontend/src/utils/`): serializes writes per resource, sends with `fetch`
-and `keepalive`, and uses a normal fetch above about 60 KiB because of the browser's keepalive
-limit. It retries once, then shows an error toast and leaves its last-confirmed value unchanged
-so the next edit resends. Exposes `settled()` so a reopening modal can wait for an in-flight
-save.
+**Writer** (`frontend/src/utils/serverWriter.ts`): serializes writes per resource, sends with
+`fetch` and `keepalive`, and keeps retrying a failed write until it lands. Review of PR 3 replaced
+the original "retry once, then toast", which lost a failed or queued write on close. Details are in
+`docs/dev/app-stored-data.md`.
 
 **`frontend/src/hooks/useDebouncedPersist.ts`:** add an optional `write` parameter, defaulting
 to `savePersisted`, so the ten existing call sites are untouched. With a custom writer, the
@@ -109,8 +108,8 @@ before the marker is written is safe, because re-running the import changes noth
 
 - **Last save wins** between tabs and across `--lan` for the workflow blob and Comfy settings.
   These become shared per install, with no per-user separation.
-- **Tab close:** a blob over about 60 KiB can lose its last 350 ms of edits. A localStorage
-  journal was rejected, because replaying it could overwrite newer data from another browser.
+- **Tab close:** a write that would take in-flight keepalive bodies over about 60 KiB can be lost
+  if the tab is closing. A localStorage journal was rejected, because replaying it could overwrite newer data from another browser.
 - **Deleted presets can return** when a second browser does its first import, since an import
   only adds.
 - **A tab left open on the previous build** can still write a preset to the old key after this

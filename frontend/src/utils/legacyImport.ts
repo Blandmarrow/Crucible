@@ -11,6 +11,7 @@ type Section = keyof LegacyImportBody;
 
 interface ImportMarker {
   done: Section[];
+  rejected: string[];
 }
 
 function readLegacyPresets(): unknown[] {
@@ -30,19 +31,30 @@ function readLegacyPresets(): unknown[] {
   }
 }
 
-/** Names what the server refused, because those entries are copied nowhere else. */
-function reportRejected(report: LegacyImportReport): void {
-  const rejected = report.presets?.rejected.length ?? 0;
-  if (rejected > 0) {
-    toast.error(`${rejected} saved preset(s) could not be copied to the app and stay in this browser only.`);
+/** A rejected preset is often rejected for its name being too long, so shorten it. */
+function presetLabel(preset: unknown): string {
+  const name = (preset as { name?: unknown } | null)?.name;
+  if (typeof name !== "string" || !name.trim()) return "(unnamed)";
+  return name.length > 40 ? `${name.slice(0, 40)}…` : name;
+}
+
+/** Names what the server refused, because those entries are copied nowhere else. Returns
+ *  the names, which the marker keeps so the later release that deletes the old keys can
+ *  leave this browser's alone. */
+function reportRejected(body: LegacyImportBody, report: LegacyImportReport): string[] {
+  const names = (report.presets?.rejected ?? []).map((i) => presetLabel(body.presets?.[i]));
+  if (names.length > 0) {
+    toast.error(`These saved presets could not be copied to the app and stay in this browser only: ${names.join(", ")}`, { duration: 15_000 });
   }
+  return names;
 }
 
 async function runImport(): Promise<void> {
-  const marker = loadPersisted<ImportMarker>(LEGACY_IMPORT_MARKER_KEY, { done: [] });
+  const marker = loadPersisted<ImportMarker>(LEGACY_IMPORT_MARKER_KEY, { done: [], rejected: [] });
   const done = new Set(marker.done);
   const body: LegacyImportBody = {};
   const finished: Section[] = [];
+  const rejected = [...marker.rejected];
 
   if (!done.has("presets")) {
     const presets = readLegacyPresets();
@@ -55,11 +67,11 @@ async function runImport(): Promise<void> {
     // The SPA catch-all can answer with 200 HTML, which must not read as success.
     if (typeof report !== "object" || report === null) throw new Error("Unexpected import response");
     if (body.presets && report.presets) finished.push("presets");
-    reportRejected(report);
+    rejected.push(...reportRejected(body, report));
   }
 
   if (finished.length > 0) {
-    savePersisted(LEGACY_IMPORT_MARKER_KEY, { ...marker, done: [...done, ...finished] });
+    savePersisted(LEGACY_IMPORT_MARKER_KEY, { done: [...done, ...finished], rejected });
   }
 }
 
@@ -72,6 +84,8 @@ let started: Promise<void> | null = null;
 export function runLegacyImport(): Promise<void> {
   started ??= runImport().catch((err) => {
     console.warn("Copying saved data from this browser failed; will retry on next load.", err);
+    // Said out loud, or the pages reading that data would make it look lost.
+    toast.error("Couldn't copy your saved data from this browser to the app. It's still safe here, and will be tried again next time you load the page.", { duration: 15_000 });
   });
   return started;
 }

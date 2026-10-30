@@ -23,7 +23,7 @@ Three rules a change here has to keep:
 
 On the client, `frontend/src/utils/legacyImport.ts` runs that import once per load, started from `main.tsx`'s `else` branch without blocking render. Every query for this data awaits `runLegacyImport()` first, so a page can't read the server before the copy arrives; it never rejects, so a failed import leaves the page working and its section unmarked for the next load. What's been copied is recorded per section under `LEGACY_IMPORT_MARKER_KEY`, and it's the marker that stops a re-import, not the server's dedupe: a preset deleted after importing would otherwise come straight back on reload. The old keys are read but never deleted, as a copy to roll back to for one release.
 
-`frontend/src/hooks/usePromptPresets.ts` is how a component reads and changes presets. Its `save` resolves to whether it worked, so a caller clears its form and reports success only then, and it reports failures itself.
+`frontend/src/hooks/usePromptPresets.ts` is how a component reads and changes presets. Its `save` resolves to whether it worked, so a caller clears its form and reports success only then, and it reports failures itself. Show its `emptyMessage` rather than a literal when the list is empty: while the query is pending or has failed, "No presets saved yet." is what convinces someone their presets are gone.
 
 ### `constants/storage.ts` — the key registry
 
@@ -91,8 +91,8 @@ because a hand-off needs two ends:
   `injectNavId`/`removeNavId` mutators live in `frontend/src/utils/galleryNav.ts`, because
   three independent inline casts of it let the writer drop filters the reader needed.
 - `"caption-prompt-presets"` (`utils/legacyImport.ts`) — where presets lived before they moved
-  to the server. Nothing writes it now. It's read once, by the import, and declared there
-  because it goes away with that module.
+  to the server. This build never writes it, though a tab left open on the previous build can.
+  It's read once, by the import, and declared there because it goes away with that module.
 
 Anything else belongs in `storage.ts` with a row above.
 

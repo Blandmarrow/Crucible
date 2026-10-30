@@ -10,8 +10,8 @@ from backend.database import Base
 class CaptionPromptPreset(Base):
     """A saved captioning prompt, shared by every browser that opens this install.
 
-    `model` may be "": a preset saved before a model was chosen has none, and the
-    surfaces that load one keep whatever model they already hold.
+    `model` may be "": the Captioning page saves a preset whether or not a model is
+    chosen, and its older presets carried over as they were.
     """
 
     __tablename__ = "caption_prompt_presets"

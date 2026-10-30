@@ -299,7 +299,7 @@ export default function CaptioningPage() {
     [selectedIds, datasetByImageId, datasetId],
   );
   const selCountForDataset = selectedIdsForDataset.length;
-  const { presets, save: savePreset, remove: removePreset } = usePromptPresets();
+  const { presets, emptyMessage: presetsEmptyMessage, save: savePreset, remove: removePreset } = usePromptPresets();
 
   // Remembered "workflow" config — global, shared across all datasets.
   const [workflow] = useState(() => loadPersisted(CAPTIONING_WORKFLOW_KEY, CAPTIONING_WORKFLOW_DEFAULTS));
@@ -982,7 +982,7 @@ export default function CaptioningPage() {
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {presets.length === 0 ? (
-                    <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>No presets saved yet.</p>
+                    <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>{presetsEmptyMessage}</p>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {presets.map((p) => (
@@ -1446,7 +1446,7 @@ function PipelineStepCard({
   const [expanded, setExpanded] = useState(true);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState("");
-  const { presets, save: savePreset, remove: removePreset } = usePromptPresets();
+  const { presets, emptyMessage: presetsEmptyMessage, save: savePreset, remove: removePreset } = usePromptPresets();
 
   const isStepWd14 = step.model.startsWith("wd14:");
   const isStepOAI = step.model.startsWith("openai_compat:");
@@ -1549,7 +1549,7 @@ function PipelineStepCard({
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {presets.length === 0 ? (
-                  <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>No presets saved yet.</p>
+                  <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>{presetsEmptyMessage}</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {presets.map((p) => (

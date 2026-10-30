@@ -12,7 +12,7 @@ interface Props {
 }
 
 export default function PromptPresetManager({ currentModel, currentStyle, currentPrompt, onLoad, defaultOpen = false }: Props) {
-  const { presets, save, remove } = usePromptPresets();
+  const { presets, emptyMessage, save, remove } = usePromptPresets();
   const [open, setOpen] = useState(defaultOpen);
   const [saveName, setSaveName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -44,7 +44,7 @@ export default function PromptPresetManager({ currentModel, currentStyle, curren
         <div className="border-t border-gray-700 p-3 space-y-3">
           {/* Saved presets list */}
           {presets.length === 0 ? (
-            <p className="text-xs text-gray-500">No presets saved yet.</p>
+            <p className="text-xs text-gray-500">{emptyMessage}</p>
           ) : (
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {presets.map((p) => (

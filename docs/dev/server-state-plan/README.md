@@ -113,6 +113,9 @@ before the marker is written is safe, because re-running the import changes noth
   journal was rejected, because replaying it could overwrite newer data from another browser.
 - **Deleted presets can return** when a second browser does its first import, since an import
   only adds.
+- **A tab left open on the previous build** can still write a preset to the old key after this
+  browser has marked presets done, and that preset won't be imported. It's a window of one
+  update, and re-import on change would need a hash of the key to fix it.
 - **Backup restore:** restoring a database backup from before the import won't re-import,
   because the marker lives in the browser. The legacy keys are still there during the
   one-release window.
@@ -138,7 +141,9 @@ The PR list itself is in the roadmap. What each one needs beyond the design abov
    merging, run `manage.ps1 start` against real browser data (the `run-app` skill): open
    `localhost`, then the machine's LAN IP, and check the conflict dialog and saved prompts.
 5. **Categories.** Extend `frontend/e2e/datasets.spec.ts`.
-6. **One release later.** Delete the legacy keys and the import code, then this folder.
+6. **One release later.** Delete the legacy keys and the import code, then this folder. Leave
+   the presets key alone in any browser whose marker lists `rejected` names, since those
+   presets exist nowhere else, and offer them as a download before they're ever removed.
 
 An Opus review agent checks the diff before each of PRs 2–5 opens.
 

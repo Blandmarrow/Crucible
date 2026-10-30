@@ -81,12 +81,39 @@ test.describe('copying saved presets out of the browser', () => {
 
     await page.route('**/api/v1/app-data/legacy-import', (route) => route.fulfill({ status: 500, body: '{}' }))
     await page.goto(`/datasets/${ds.id}/captioning`)
-    await expect(page.getByText('No presets saved yet.')).toBeVisible()
+    await expect(page.getByText(/Couldn't copy your saved data/)).toBeVisible()
     expect(await page.evaluate((k) => localStorage.getItem(k), MARKER_KEY)).toBeNull()
 
     await page.unroute('**/api/v1/app-data/legacy-import')
     await page.reload()
     await expect(page.getByRole('button', { name: /after a retry/ })).toBeVisible()
+  })
+
+  test('a preset the server refuses is named, and the rest still arrive', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `legacy-reject-${Date.now()}`)
+    await uploadViaApi(request, ds.id, 'a.png')
+    await seedStorage(page, LEGACY_PRESETS_KEY, legacyPresets('a good one', 'x'.repeat(300)))
+
+    await page.goto(`/datasets/${ds.id}/captioning`)
+    await expect(page.getByRole('button', { name: /a good one/ })).toBeVisible()
+    await expect(page.getByText(/could not be copied to the app.*xxxx…/)).toBeVisible()
+
+    await expect.poll(() => page.evaluate((k) => localStorage.getItem(k), MARKER_KEY)).toContain('rejected')
+    const marker = JSON.parse((await page.evaluate((k) => localStorage.getItem(k), MARKER_KEY))!)
+    expect(marker.rejected).toHaveLength(1)
+  })
+
+  test('a list that fails to load does not read as having no presets', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `legacy-list-${Date.now()}`)
+    await uploadViaApi(request, ds.id, 'a.png')
+
+    // The SPA's 200 HTML, as a server older than the frontend answers. It must not crash.
+    await page.route('**/api/v1/app-data/presets', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html>' }))
+    await page.goto(`/datasets/${ds.id}/captioning`)
+
+    await expect(page.getByText("Couldn't load presets.")).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('No presets saved yet.')).toHaveCount(0)
   })
 
   test('two browsers holding the same preset end up with one copy', async ({ page, browser, request }) => {

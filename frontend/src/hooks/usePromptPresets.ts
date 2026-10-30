@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
 import toast from "react-hot-toast";
 import { appDataApi, type PromptPresetCreate } from "../api/appData";
 import { runLegacyImport } from "../utils/legacyImport";
@@ -11,7 +12,7 @@ const PRESETS_QUERY_KEY = ["app-data", "presets"];
 export function usePromptPresets() {
   const qc = useQueryClient();
 
-  const { data: presets = [] } = useQuery({
+  const { data: presets = [], isPending, isError } = useQuery({
     queryKey: PRESETS_QUERY_KEY,
     queryFn: async () => {
       await runLegacyImport();
@@ -25,8 +26,10 @@ export function usePromptPresets() {
   const removeMutation = useMutation({
     mutationFn: appDataApi.deletePreset,
     onSuccess: invalidate,
-    onError: () => {
+    onError: (err) => {
       invalidate();
+      // Already gone, as from a second click before the list refreshed: what was asked for.
+      if (axios.isAxiosError(err) && err.response?.status === 404) return;
       toast.error("Failed to delete preset");
     },
   });
@@ -43,5 +46,12 @@ export function usePromptPresets() {
     }
   }
 
-  return { presets, save, remove: removeMutation.mutate };
+  // Kept apart from "none saved", because that's what would convince someone they've lost them.
+  const emptyMessage = isPending
+    ? "Loading presets…"
+    : isError
+      ? "Couldn't load presets."
+      : "No presets saved yet.";
+
+  return { presets, emptyMessage, save, remove: removeMutation.mutate };
 }

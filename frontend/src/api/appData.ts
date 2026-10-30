@@ -24,7 +24,12 @@ const LEGACY_IMPORT_TIMEOUT_MS = 15_000;
 
 export const appDataApi = {
   listPresets: () =>
-    client.get<PromptPreset[]>("/app-data/presets").then((r) => r.data),
+    client.get<PromptPreset[]>("/app-data/presets").then((r) => {
+      // A server older than the frontend answers with the SPA's 200 HTML, and every
+      // surface maps over this.
+      if (!Array.isArray(r.data)) throw new Error("Unexpected presets response");
+      return r.data;
+    }),
   createPreset: (body: PromptPresetCreate) =>
     client.post<PromptPreset>("/app-data/presets", body).then((r) => r.data),
   deletePreset: (id: string) =>

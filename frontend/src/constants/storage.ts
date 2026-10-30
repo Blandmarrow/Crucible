@@ -5,7 +5,7 @@ export const GALLERY_PAGE_SIZE_KEY = "gallery-page-size"; // 25 | 50 | 100 | 200
 export const SUBFOLDER_RENAME_KEY = "subfolder-auto-rename"; // "on" | "off"
 export const GALLERY_CHECKBOX_SIZE_KEY = "gallery-checkbox-size"; // px, 14..32
 export const VIDEO_STRIP_COLLAPSED_KEY = "gallery-videos-collapsed"; // prefix; append `-${datasetId}` for the full key
-export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]
+export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]. Moved to the server; only the one-time browser import reads this
 export const LEGACY_IMPORT_MARKER_KEY = "crucible-legacy-import-v1"; // JSON: what this browser has copied to the server
 
 import { SORT_OPTIONS } from "./galleryOptions";

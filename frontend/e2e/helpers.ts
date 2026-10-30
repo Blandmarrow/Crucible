@@ -106,6 +106,16 @@ export async function resetCaptioningWorkflowViaApi(request: APIRequestContext):
   expect(r.status(), await r.text()).toBe(200)
 }
 
+/** Delete every declared category. This one matters most of all: any left behind
+ *  switches DatasetsPage from its flat grid to category sections for every later spec. */
+export async function resetCategoriesViaApi(request: APIRequestContext): Promise<void> {
+  const names: string[] = await (await request.get('/api/v1/app-data/categories')).json()
+  for (const name of names) {
+    const r = await request.delete('/api/v1/app-data/categories', { params: { name } })
+    expect(r.status(), await r.text()).toBe(200)
+  }
+}
+
 /** Upload one PNG into a dataset through the API and return the added filename. */
 export async function uploadViaApi(
   request: APIRequestContext,

@@ -2,7 +2,7 @@ import toast from "react-hot-toast";
 import { appDataApi, type LegacyImportBody, type LegacyImportReport } from "../api/appData";
 import { COMFY_GEN_DEFAULTS, comfyApi, type ComfyGenSettings } from "../api/comfy";
 import { CAPTIONING_WORKFLOW_DEFAULTS, type CaptioningWorkflow } from "../constants/captioningWorkflow";
-import { CAPTIONING_WORKFLOW_KEY, LEGACY_IMPORT_MARKER_KEY } from "../constants/storage";
+import { CAPTIONING_WORKFLOW_KEY, DECLARED_CATEGORIES_KEY, LEGACY_IMPORT_MARKER_KEY } from "../constants/storage";
 import { loadPersisted, savePersisted } from "./persistentState";
 
 /** Written by the zustand `persist` store that held presets before they moved to the
@@ -86,6 +86,15 @@ function readLegacyWorkflow(): Partial<CaptioningWorkflow> | null {
   }
 }
 
+function readLegacyCategories(): unknown[] {
+  try {
+    const old = JSON.parse(localStorage.getItem(DECLARED_CATEGORIES_KEY) ?? "null");
+    return Array.isArray(old) ? old : [];
+  } catch {
+    return [];
+  }
+}
+
 /** A rejected preset is often rejected for its name being too long, so shorten it. */
 function presetLabel(preset: unknown): string {
   const name = (preset as { name?: unknown } | null)?.name;
@@ -111,7 +120,11 @@ function reportRejected(body: LegacyImportBody, report: LegacyImportReport): str
   if (workflow.length > 0) {
     toast.error("Your saved captioning setup could not be copied to the app and stays in this browser only.", { duration: 15_000 });
   }
-  return [...presets, ...plans, ...workflow];
+  const categories = (report.categories?.rejected ?? []).map((i) => `Category ${String(body.categories?.[i]).slice(0, 40)}`);
+  if (categories.length > 0) {
+    toast.error(`${categories.length} empty categories could not be copied to the app and stay in this browser only.`, { duration: 15_000 });
+  }
+  return [...presets, ...plans, ...workflow, ...categories];
 }
 
 async function runImport(): Promise<void> {
@@ -131,6 +144,11 @@ async function runImport(): Promise<void> {
     const settings = readLegacyComfySettings();
     if (Object.keys(settings).length > 0) body.comfy_gen_settings = settings;
     else finished.push("comfy_gen_settings");
+  }
+  if (!done.has("categories")) {
+    const categories = readLegacyCategories();
+    if (categories.length > 0) body.categories = categories;
+    else finished.push("categories");
   }
   if (!done.has("captioning_workflow")) {
     const workflow = readLegacyWorkflow();

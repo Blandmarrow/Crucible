@@ -22,7 +22,6 @@ from backend.models.threshold_settings import ThresholdSettings
 from backend.schemas.app_data import (
     CaptioningWorkflowPut,
     CategoryCreate,
-    CategoryName,
     CategoryRename,
     ComfyGenSettings,
     LegacyImportRequest,
@@ -121,13 +120,18 @@ async def rename_category(body: CategoryRename, db: AsyncSession = Depends(get_d
     if body.new_name != body.old_name:
         await db.delete(declared)
         await db.flush()
-        await _insert_category(db, body.new_name)
+        # The caller has already moved any datasets to this name, whatever it is, so a name
+        # this table can't hold just stops being declared rather than failing the rename.
+        new_name = body.new_name.strip()
+        if 0 < len(new_name) <= 255:
+            await _insert_category(db, new_name)
         await db.commit()
     return {"renamed": True}
 
 
 @router.delete("/categories")
-async def delete_category(name: CategoryName, db: AsyncSession = Depends(get_db)):
+async def delete_category(name: str, db: AsyncSession = Depends(get_db)):
+    """An exact match, as with a rename: see CategoryRename."""
     declared = await db.get(DeclaredCategory, name)
     if declared:
         await db.delete(declared)

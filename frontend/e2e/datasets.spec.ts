@@ -81,9 +81,35 @@ test.describe('empty categories', () => {
     page.on('request', (r) => { if (r.url().includes('/legacy-import')) importRequests.push(r.url()) })
     await page.addInitScript(([k, v]) => localStorage.setItem(k, v), ['crucible-declared-categories', '[]'])
     await page.goto('/datasets')
-    await expect(page.getByRole('button', { name: 'New Dataset' })).toBeVisible()
-    expect(await declared(request)).toEqual([])
+    // The marker is written only once the import has run, so this can't check too early.
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('crucible-legacy-import-v1'))).toContain('categories')
     expect(importRequests).toEqual([])
+    expect(await declared(request)).toEqual([])
+  })
+
+  test('a failed load says so rather than looking like none', async ({ page, request }) => {
+    await createDatasetViaApi(request, `e2e-cat-fail-${Date.now()}`)
+    await page.route('**/api/v1/app-data/categories', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html>' }))
+    await page.goto('/datasets')
+    await expect(page.getByText(/Couldn't load your empty categories/)).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('renaming a category that has datasets moves them and declares nothing', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-cat-carry-${Date.now()}`)
+    const patch = await request.patch(`/api/v1/datasets/${ds.id}`, { data: { category: 'with data' } })
+    expect(patch.status(), await patch.text()).toBe(200)
+
+    await page.goto('/datasets')
+    await expect(page.getByText('with data').first()).toBeVisible()
+    await page.getByTitle('Rename category').click({ force: true })
+    await page.locator(':focus').fill('renamed')
+    await page.getByTitle('Save', { exact: true }).click({ force: true })
+
+    await expect(page.getByTitle('Save', { exact: true })).toHaveCount(0)
+    await expect.poll(async () => (await (await request.get(`/api/v1/datasets/${ds.id}`)).json()).category).toBe('renamed')
+    expect(await declared(request)).toEqual([])
+    await request.patch(`/api/v1/datasets/${ds.id}`, { data: { category: '' } })
   })
 })
 

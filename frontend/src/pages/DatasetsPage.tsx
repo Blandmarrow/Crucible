@@ -208,13 +208,17 @@ export default function DatasetsPage() {
   const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
 
   // ── Empty categories (a category with no datasets has no other record) ──
-  const { data: emptyCategories = [] } = useQuery({
+  const { data: emptyCategories = [], isError: categoriesFailed } = useQuery({
     queryKey: DECLARED_CATEGORIES_QUERY_KEY,
     queryFn: async () => {
       await runLegacyImport();
       return appDataApi.listCategories();
     },
   });
+  // Said out loud, or the page would look like they had been deleted.
+  useEffect(() => {
+    if (categoriesFailed) toast.error("Couldn't load your empty categories. They aren't lost: reload to try again.", { id: "declared-categories" });
+  }, [categoriesFailed]);
 
   // ── New Category modal ────────────────────────────────────────────────────
   const [showCreateCategory, setShowCreateCategory] = useState(false);

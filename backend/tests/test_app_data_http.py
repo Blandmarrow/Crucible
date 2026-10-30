@@ -86,6 +86,29 @@ def test_renaming_an_undeclared_category_does_not_declare_it(tmp_path):
     run(scenario())
 
 
+def test_a_category_name_only_a_dataset_could_hold_never_fails_or_touches_another(tmp_path):
+    """`Dataset.category` is neither stripped nor bounded, and by the time these routes run
+    the datasets have already changed, so a 422 here would report a false failure."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            await env.client.post(f"{BASE}/categories", json={"name": "foo"})
+
+            r = await env.client.delete(f"{BASE}/categories", params={"name": "foo "})
+            assert r.json() == {"deleted": 0}
+            r = await env.client.delete(f"{BASE}/categories", params={"name": "   "})
+            assert r.status_code == 200, r.text
+
+            r = await env.client.post(f"{BASE}/categories/rename", json={"old_name": "foo ", "new_name": "bar"})
+            assert r.json() == {"renamed": False}
+            assert (await env.client.get(f"{BASE}/categories")).json() == ["foo"]
+
+            r = await env.client.post(f"{BASE}/categories/rename", json={"old_name": "foo", "new_name": "x" * 300})
+            assert r.status_code == 200, r.text
+            assert (await env.client.get(f"{BASE}/categories")).json() == []
+
+    run(scenario())
+
+
 def test_renaming_onto_an_existing_category_merges_them(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

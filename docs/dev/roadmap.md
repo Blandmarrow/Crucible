@@ -19,9 +19,11 @@ restates its stages.
 
 ## Next session (updated 2026-10-30)
 
-1. M5 is in progress on branch `feat/app-stored-prompts`, and it runs ahead of M4. Read
-   [server-state-plan/README.md](server-state-plan/README.md) before picking up the next
-   unticked task. Opening or merging its PRs is the user's call.
+1. M5 runs ahead of M4. PRs 1–5 are ticked because they're written and reviewed, but none is
+   merged: each sits on its own branch stacked on the last (`feat/app-stored-prompts`, then
+   `-presets`, `-comfy-settings`, `-captioning-workflow`, `-categories`). Opening or merging
+   them is the user's call. Before PR 4 merges, it still needs the hand check against real
+   browser data in [server-state-plan/README.md](server-state-plan/README.md).
 2. M4 starts on a fresh branch off `main` after M5's PRs 1–5 land. Its first task is the rating
    column (§1); read [rating-plan/README.md](rating-plan/README.md) before starting.
 3. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over

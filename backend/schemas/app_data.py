@@ -17,8 +17,12 @@ class CategoryCreate(BaseModel):
 
 
 class CategoryRename(BaseModel):
-    old_name: CategoryName
-    new_name: CategoryName
+    """Plain strings on purpose. `Dataset.category` is neither stripped nor bounded, so a
+    rename can name anything a dataset holds: it has to match the declared row exactly
+    (or "foo " would rename "foo") and must not fail after the datasets have moved."""
+
+    old_name: str
+    new_name: str
 
 
 class CaptioningWorkflowPut(BaseModel):

@@ -459,7 +459,7 @@ export default function ExtractFramesModal({ datasetId, videos, onClose }: Props
                 title={
                   caps.deinterlace === false
                     ? "Deinterlacing needs the imageio-ffmpeg package, which is not installed. Run the update command (manage.sh update / manage.ps1 update), or extract with deinterlacing switched off."
-                    : "bwdif — the only deinterlacer that ships"
+                    : "Removes the jagged comb lines from interlaced video. Most videos don't need it, and it makes extraction slower. The preview doesn't show the effect, so check the extracted frames."
                 }
               >
                 <input

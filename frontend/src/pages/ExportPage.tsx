@@ -20,6 +20,7 @@ import { aestheticModelLabel } from "../constants/aestheticModels";
 import { useCustomLicenses } from "../hooks/useCustomLicenses";
 import { EXPORT_WORKFLOW_KEY, EXPORT_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
+import { buildSubfolderTree, subtreeTargets, tickState, withMissingAncestors, type SubfolderNode } from "../utils/subfolderTree";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
 type Format = "kohya" | "aitoolkit" | "plain";
@@ -128,6 +129,54 @@ function labelParams(
   };
 }
 
+const NO_FOLDERS_TICKED_HINT = "Tick at least one folder, or turn this filter off.";
+
+/** One row of the "Limit to subfolders" tree, and everything below it. The input
+ *  names the whole path because the visible label is only the last segment, and
+ *  two branches can both hold a `raw`.
+ *
+ *  A parent holding images itself gets a "(this folder)" row for them. Its own row
+ *  stands for the whole branch, so without this, ticking `a/b` alone and ticking `a`
+ *  then unticking `a/c` look identical on screen and export different files. */
+function SubfolderTickRow({ node, selected, onToggle }: {
+  node: SubfolderNode;
+  selected: ReadonlySet<string>;
+  onToggle: (paths: string[]) => void;
+}) {
+  const state = tickState(node, selected);
+  return (
+    <>
+      <label className="row-flex" style={{ gap: 8, paddingLeft: node.depth * 16 }}>
+        <input
+          type="checkbox" className="checkbox"
+          aria-label={node.path}
+          checked={state === "all"}
+          // `indeterminate` is a DOM property with no HTML attribute, so React cannot set it.
+          ref={(el) => { if (el) el.indeterminate = state === "some"; }}
+          onChange={() => onToggle(subtreeTargets(node))}
+        />
+        <span style={{ fontSize: 12 }}>{node.label}</span>
+        <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>{node.totalCount}</span>
+      </label>
+      {node.children.length > 0 && node.image_count > 0 && (
+        <label className="row-flex" style={{ gap: 8, paddingLeft: (node.depth + 1) * 16 }}>
+          <input
+            type="checkbox" className="checkbox"
+            aria-label={`${node.path} (this folder)`}
+            checked={selected.has(node.path)}
+            onChange={() => onToggle([node.path])}
+          />
+          <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>(this folder)</span>
+          <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>{node.image_count}</span>
+        </label>
+      )}
+      {node.children.map((child) => (
+        <SubfolderTickRow key={child.path} node={child} selected={selected} onToggle={onToggle} />
+      ))}
+    </>
+  );
+}
+
 export default function ExportPage() {
   const datasetId = usePaneDatasetId();
 
@@ -198,11 +247,43 @@ export default function ExportPage() {
   useJobSSE(activeJobId);
   const jobProgress = useJobStore((s) => s.activeJobs.get(activeJobId ?? ""));
 
-  const { data: subfolders = [] } = useQuery<SubfolderInfo[]>({
+  const { data: subfolders } = useQuery<SubfolderInfo[]>({
     queryKey: ["subfolders", datasetId],
     queryFn: () => datasetsApi.subfolders(datasetId!),
     enabled: !!datasetId,
   });
+  const subfolderTree = useMemo(() => buildSubfolderTree(withMissingAncestors(subfolders ?? [])), [subfolders]);
+  const rootSubfolder = subfolders?.find((sf) => sf.path === "");
+
+  // The one selection the preview, the POST body and the "nothing ticked" check all
+  // read, so they cannot drift apart. It drops a restored path no row can show: a
+  // folder since renamed or deleted would otherwise narrow the export to nothing with
+  // no checkbox showing why. Derived rather than pruned from state, because a prune
+  // would race the `[datasetId]` restore below and could write one dataset's folders
+  // into another's saved blob.
+  const effectiveSubfolders = useMemo(() => {
+    if (!subfolders) return [...selectedSubfolders];
+    const selectable = new Set(subfolderTree.flatMap(subtreeTargets));
+    if (rootSubfolder) selectable.add("");
+    return [...selectedSubfolders].filter((path) => selectable.has(path));
+  }, [subfolders, subfolderTree, rootSubfolder, selectedSubfolders]);
+  // Blocks while the list is still loading too: a restored empty selection would
+  // otherwise leave a live button that writes nothing. Only a list that loaded empty
+  // lets it through, since the section is hidden then and could not explain the block.
+  const noFoldersTicked = subfolderFilterActive && effectiveSubfolders.length === 0 && subfolders?.length !== 0;
+
+  // Ticks every path, or unticks them all if they are already ticked. `tickState`
+  // reads the same rule, so a click on a part-ticked row always completes it.
+  const toggleSubfolders = (paths: string[]) => {
+    setSelectedSubfolders((prev) => {
+      const next = new Set(prev);
+      const tick = paths.some((path) => !next.has(path));
+      for (const path of paths) {
+        if (tick) next.add(path); else next.delete(path);
+      }
+      return next;
+    });
+  };
 
   // The global label vocabulary, for the picker below. `exportLabels` is the
   // same list `useLabels` hands the gallery — one cache entry app-wide.
@@ -252,7 +333,7 @@ export default function ExportPage() {
         captioned_only: filterCaptioned,
         exclude_flags: [...excludeFlags].join(","),
         style_sim_min: filterStyleSim ? styleSimMin : null,
-        subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
+        subfolders: subfolderFilterActive ? effectiveSubfolders : null,
         export_masks: exportMasks && !captionsOnly,
         mask_labels: maskLabels.size > 0 ? [...maskLabels] : null,
         mask_exclude_labels: maskExcludeLabels.size > 0 ? [...maskExcludeLabels] : null,
@@ -268,7 +349,7 @@ export default function ExportPage() {
     // not fire for a state the user has already navigated away from. Persistence
     // was split out below precisely because it needs the opposite semantics.
     return () => clearTimeout(t);
-  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, selectedSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives, labelFilter, labelMatch, labelMissing]);
+  }, [datasetId, filterAesthetic, aestheticMin, filterCaptioned, excludeFlags, filterStyleSim, styleSimMin, subfolderFilterActive, effectiveSubfolders, exportMasks, captionsOnly, maskLabels, maskExcludeLabels, maskMissing, licenseFilter, commercialOnly, excludeUnlicensed, excludeNoDerivatives, labelFilter, labelMatch, labelMissing]);
 
   // Persist "filters" config — per-dataset, debounced.
   useDebouncedPersist(
@@ -338,7 +419,7 @@ export default function ExportPage() {
     captioned_only: filterCaptioned,
     exclude_flags: [...excludeFlags].join(","),
     style_sim_min: filterStyleSim ? styleSimMin : null,
-    subfolders: subfolderFilterActive ? [...selectedSubfolders] : null,
+    subfolders: subfolderFilterActive ? effectiveSubfolders : null,
     strip_metadata: !captionsOnly && stripMetadata,
     captions_only: captionsOnly,
     export_masks: !captionsOnly && exportMasks,
@@ -718,7 +799,7 @@ export default function ExportPage() {
                 </label>
 
                 {/* Subfolder filter */}
-                {subfolders.length > 0 && (
+                {!!subfolders?.length && (
                   <div>
                     <label className="row-flex" style={{ gap: 8 }}>
                       <input type="checkbox" className="checkbox" checked={subfolderFilterActive}
@@ -727,23 +808,24 @@ export default function ExportPage() {
                     </label>
                     {subfolderFilterActive && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4, marginTop: 6 }}>
-                        {subfolders.map((sf) => (
-                          <label key={sf.path} className="row-flex" style={{ gap: 8 }}>
+                        {/* Its own row: the root is not a parent, so ticking `a` never touches it. */}
+                        {rootSubfolder && (
+                          <label className="row-flex" style={{ gap: 8 }}>
                             <input
                               type="checkbox" className="checkbox"
-                              checked={selectedSubfolders.has(sf.path)}
-                              onChange={() => {
-                                setSelectedSubfolders(prev => {
-                                  const next = new Set(prev);
-                                  next.has(sf.path) ? next.delete(sf.path) : next.add(sf.path);
-                                  return next;
-                                });
-                              }}
+                              checked={selectedSubfolders.has("")}
+                              onChange={() => toggleSubfolders([""])}
                             />
-                            <span style={{ fontSize: 12 }}>{sf.path === "" ? "(root)" : sf.path}</span>
-                            <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>{sf.image_count}</span>
+                            <span style={{ fontSize: 12 }}>(root)</span>
+                            <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>{rootSubfolder.image_count}</span>
                           </label>
+                        )}
+                        {subfolderTree.map((node) => (
+                          <SubfolderTickRow key={node.path} node={node} selected={selectedSubfolders} onToggle={toggleSubfolders} />
                         ))}
+                        {noFoldersTicked && (
+                          <p style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "2px 0 0" }}>{NO_FOLDERS_TICKED_HINT}</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1206,7 +1288,8 @@ export default function ExportPage() {
             className="btn primary"
             style={{ height: 38, width: "100%", justifyContent: "center" }}
             onClick={() => exportMutation.mutate()}
-            disabled={!outputDir || isRunning}
+            disabled={!outputDir || isRunning || noFoldersTicked}
+            title={noFoldersTicked ? NO_FOLDERS_TICKED_HINT : undefined}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 10V2M5 7l3 3 3-3M2.5 13.5h11"/>

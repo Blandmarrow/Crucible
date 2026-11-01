@@ -131,7 +131,9 @@ export const exportApi = {
           ...(filters?.captioned_only && { captioned_only: true }),
           ...(filters?.exclude_flags && { exclude_flags: filters.exclude_flags }),
           ...(filters?.style_sim_min != null && { style_sim_min: filters.style_sim_min }),
-          ...(filters?.subfolders?.length && { subfolders: filters.subfolders.join(",") }),
+          // JSON array, sent even when empty. A folder name may contain commas, "" is
+          // the root folder, and [] means "match nothing", just as it does in a POST body.
+          ...(filters?.subfolders != null && { subfolders: JSON.stringify(filters.subfolders) }),
           ...(filters?.export_masks && { export_masks: true }),
           // JSON array — detection labels are free text and may contain commas
           ...(filters?.export_masks && filters?.mask_labels?.length && { mask_labels: JSON.stringify(filters.mask_labels) }),

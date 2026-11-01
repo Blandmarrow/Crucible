@@ -43,6 +43,9 @@ poster-stem rules), `docs/dev/image-files.md` (naming and collisions) and `docs/
 `NumberField` (any bounded numeric input — never re-clamp per keystroke) →
 `docs/dev/frontend-core.md` for the one-line rule, `docs/dev/video/extract-controls.md`
 § NumberField for the full contract;
+`frontend/src/utils/subfolderTree.ts` (`buildSubfolderTree` and `ancestorPaths`, shared by the
+gallery sidebar and the Export page's checklist, plus the tick helpers only the latter uses) →
+`docs/dev/export.md`;
 `frontend/src/utils/galleryNav.ts` (the gallery → detail-view nav context: `readNavContext`/
 `writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a
 listing request over a stored context) and `serverPageContext` (the one way to replace

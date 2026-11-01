@@ -17,7 +17,7 @@ Three fully implemented export formats, all with identical filter and processing
 - Image format conversion (original / JPEG with quality setting)
 - Resize longest side (downscale only)
 - Caption sidecar format: `.txt`, `.caption`, or single `captions.jsonl`
-- Subfolder scoping — export images from one or more selected subfolders; a checklist lets you pick any combination
+- Subfolder scoping — **Limit to subfolders** shows your folders as an indented tree, each with a count that includes everything under it. Tick a parent to take all its subfolders, even if the parent holds no images itself, then untick any you want to leave out; a dash in the box means only part of that branch is selected. A parent that holds images itself also gets a **(this folder)** row, so you can take or leave those images separately from its subfolders. `(root)` is separate, so ticking a parent never adds it. With the filter on and nothing ticked, **Build export** stays disabled. Your selection is saved as a list of folders, so a subfolder added later is not ticked automatically
 - Export order follows the **Custom order** drag sequence when set, with `created_at` as tiebreak — numbered filenames (`0001.jpg`, `0002.jpg`, …) in Kohya and AI Toolkit formats reflect this order
 - If two images would land on the same output filename (e.g. `same.png` and `same.jpg`, or when converting both to one format), the second is suffixed `_001`, `_002`, … so no image, caption, or mask overwrites another
 - **Strip metadata** — forces a lossless PIL round-trip to discard embedded PNG text chunks (A1111 `parameters`, ComfyUI `workflow`/`prompt`, EXIF) even when no format conversion or resize is requested

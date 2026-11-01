@@ -174,6 +174,26 @@ def _parse_labels_json_param(value: str, param_name: str) -> list[str] | None:
     return _normalize_mask_labels(parsed)
 
 
+def _parse_subfolders_param(value: str) -> list[str] | None:
+    """Parse the preview's JSON-array `subfolders` param, keeping every entry.
+
+    The list must reach `preview_export` exactly as a POST body reaches the export,
+    or the preview's count stops matching the files written: `""` is the root folder
+    and `[]` matches nothing. So this is deliberately not
+    `utils.parse_id_list_param`, whose `parsed or None` turns `[]` into "no filter".
+    An empty string means the param was omitted.
+    """
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="subfolders must be a JSON array of strings")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(status_code=400, detail="subfolders must be a JSON array of strings")
+    return parsed
+
+
 def _parse_flags(s: str) -> list[str]:
     """Parse a comma-separated flag list, rejecting unknown names with HTTP 400.
 
@@ -420,7 +440,7 @@ async def preview(
     captioned_only: bool = Query(default=False),
     exclude_flags: str = Query(default=""),
     style_sim_min: float | None = Query(default=None),
-    subfolders: str = Query(default=""),
+    subfolders: str = Query(default="", description="JSON array of subfolder paths; omitted = no filter, [] = match nothing"),
     export_masks: bool = Query(default=False),
     mask_labels: str = Query(default="", description="JSON array of label strings; empty = all labels"),
     mask_exclude_labels: str = Query(default="", description="JSON array of label strings; regions always painted black"),
@@ -434,7 +454,7 @@ async def preview(
     label_missing: bool | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    subfolder_list = [s.strip() for s in subfolders.split(",") if s.strip()] or None
+    subfolder_list = _parse_subfolders_param(subfolders)
     label_list = _parse_labels_json_param(mask_labels, "mask_labels")
     exclude_label_list = _parse_labels_json_param(mask_exclude_labels, "mask_exclude_labels")
     return await preview_export(

@@ -22,6 +22,7 @@ import { labelsApi } from "../api/labels";
 import { adoptJob } from "../utils/jobReconcile";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import { writeNavContext } from "../utils/galleryNav";
+import { ancestorPaths, buildSubfolderTree, type SubfolderNode } from "../utils/subfolderTree";
 import { showUploadSummaryToast, tallyUpload } from "../utils/uploadToast";
 import ImageCard, { SortableImageCard } from "../components/gallery/ImageCard";
 import DropZone from "../components/gallery/DropZone";
@@ -60,52 +61,6 @@ const SCORE_FIELDS = [
   { value: "saturation_score",       label: "Saturation",        short: "Saturation" },
   { value: "luminance_score",        label: "Brightness (0–1)",  short: "Bright"     },
 ];
-
-interface SubfolderNode extends SubfolderInfo {
-  label: string;
-  depth: number;
-  children: SubfolderNode[];
-  totalCount: number;
-}
-
-function buildSubfolderTree(items: SubfolderInfo[]): SubfolderNode[] {
-  const map = new Map<string, SubfolderNode>();
-  for (const item of items) {
-    if (!item.path) continue;
-    map.set(item.path, {
-      ...item,
-      label: item.path.split("/").pop()!,
-      depth: item.path.split("/").length - 1,
-      children: [],
-      totalCount: item.image_count,
-    });
-  }
-  const roots: SubfolderNode[] = [];
-  for (const node of map.values()) {
-    const parts = node.path.split("/");
-    if (parts.length === 1) {
-      roots.push(node);
-    } else {
-      const parent = map.get(parts.slice(0, -1).join("/"));
-      if (parent) parent.children.push(node); else roots.push(node);
-    }
-  }
-  function computeTotals(n: SubfolderNode): void {
-    n.children.sort((a, b) => a.label.localeCompare(b.label));
-    for (const c of n.children) computeTotals(c);
-    n.totalCount = n.image_count + n.children.reduce((s, c) => s + c.totalCount, 0);
-  }
-  roots.sort((a, b) => a.label.localeCompare(b.label));
-  roots.forEach(computeTotals);
-  return roots;
-}
-
-/** Every proper ancestor of a subfolder path: "a/b/c" → ["a", "a/b"]. The set of
- *  `expandedPaths` keys that have to be open for that path's row to be visible. */
-function ancestorPaths(path: string): string[] {
-  const parts = path.split("/");
-  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
-}
 
 /** Is `path` `root` itself or filed anywhere beneath it? The subtree predicate every
  *  path-keyed piece of sidebar state is re-pointed or pruned by. `isInSubtree("", root)`

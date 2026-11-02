@@ -1078,10 +1078,22 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     # --- epilogue: best-effort, cannot undo the crop ---
                     # `expire_on_commit=False` (backend/database.py) keeps `img`
                     # readable after the commit without a refresh.
-                    if img.thumbnail_path:
+                    # `generate_thumbnail` mkdirs its parent, so an out-of-tree
+                    # `thumbnail_path` is a write primitive: gated like
+                    # `file_path`, as inpaint does. A refusal is a stale tile.
+                    thumb_target = (
+                        contained_path(
+                            img.thumbnail_path, settings.datasets_dir,
+                            context="Detection crop thumbnail", ident=img.id,
+                        )
+                        if img.thumbnail_path else None
+                    )
+                    if img.thumbnail_path and thumb_target is None:
+                        counts["thumbnails_stale"] += 1
+                    elif thumb_target is not None:
                         try:
                             await loop.run_in_executor(
-                                None, generate_thumbnail, str(src_path), img.thumbnail_path
+                                None, generate_thumbnail, str(src_path), str(thumb_target)
                             )
                         except Exception as exc:
                             # A stale thumbnail is cosmetic; the cropped image is

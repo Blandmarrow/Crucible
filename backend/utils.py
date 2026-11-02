@@ -234,7 +234,10 @@ def contained_path(
     crop, video re-extraction) use it as a **gate only**: once it passes they
     keep reading, writing and storing the row's own spelling. With
     `datasets_dir` behind a link the resolved path is the link's target, and
-    writing that into a row would leave it matching no other row's prefix.
+    writing that into a row would leave it matching no other row's prefix. They
+    gate the `thumbnail_path` they recut as well (`generate_thumbnail` mkdirs its
+    parent) and write the thumbnail to the resolved path, storing nothing; a
+    refused thumbnail is a stale tile, never a failed edit.
 
     Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
     `videos._delete_previous_frames`, `quality.resolve_duplicates`,

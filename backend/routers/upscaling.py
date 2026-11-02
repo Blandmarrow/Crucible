@@ -302,10 +302,22 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                                 "Upscale: could not remove superseded %s: %s",
                                 superseded.name, exc,
                             )
-                    if img.thumbnail_path:
+                    # `generate_thumbnail` mkdirs its parent, so an out-of-tree
+                    # `thumbnail_path` is a write primitive: gated like
+                    # `file_path`, as inpaint does. A refusal is a stale tile.
+                    thumb_target = (
+                        contained_path(
+                            img.thumbnail_path, settings.datasets_dir,
+                            context="Upscale thumbnail", ident=img.id,
+                        )
+                        if img.thumbnail_path else None
+                    )
+                    if img.thumbnail_path and thumb_target is None:
+                        counts["thumbnails_stale"] += 1
+                    elif thumb_target is not None:
                         try:
                             await loop.run_in_executor(
-                                None, generate_thumbnail, actual_out_path, img.thumbnail_path
+                                None, generate_thumbnail, actual_out_path, str(thumb_target)
                             )
                         except Exception as exc:
                             # A stale thumbnail is cosmetic; the upscaled image is

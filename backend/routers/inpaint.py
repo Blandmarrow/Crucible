@@ -33,6 +33,7 @@ from backend.models import BackgroundJob, Image
 from backend.models.detection import Detection
 from backend.schemas.inpaint import InpaintRunRequest
 from backend.services import version_service
+from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.utils import (
@@ -168,8 +169,11 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
     # `ensure_not_busy` — background jobs are serialized by the single job queue
     # and no bulk job takes the busy flag (services/dataset_busy.py).
     if body.image_ids is not None:
-        result = await db.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-        image_ids = [r[0] for r in result.all()]
+        # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        image_ids = []
+        for chunk in chunked(body.image_ids):
+            result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
+            image_ids.extend(r[0] for r in result.all())
     else:
         q = select(Image.id).where(Image.dataset_id == body.dataset_id)
         if body.subfolder is not None:
@@ -266,6 +270,11 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
             # same reason it carries `copy_provenance` — "this image is a reject"
             # is a fact about the picture, not about the file.
             derivative_ids: dict[str, str] = {}
+
+            # Every dataset whose stored stats the run moved, refreshed after
+            # the loop. A set, not `cfg["dataset_id"]`: a selection can span
+            # datasets (PM-029).
+            touched: set[str] = set()
 
             last_image_id: str | None = None
             cancelled = False
@@ -467,6 +476,7 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # commit — a raise before here would roll back the row of every
                     # image the loop has already overwritten on disk (PM-013).
                     await session.commit()
+                    touched.add(img.dataset_id)
 
                     # --- epilogue: best-effort, cannot undo the paint ---
                     # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -539,6 +549,7 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # `expire_on_commit=False` (backend/database.py), so the id is
                     # readable after the commit without a refresh.
                     derivative_ids[img.id] = new_img.id
+                    touched.add(img.dataset_id)
                     last_image_id = new_img.id
                     try:
                         await loop.run_in_executor(
@@ -573,6 +584,18 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
             # everything it did manage — and so the completion handler that
             # re-fetches the job can see `thumbnails_stale`.
             await session.commit()
+
+            # A replace changed a file's size and a copy added a row, and both
+            # are stored on the dataset. After the final commit, so a failed
+            # refresh cannot roll back the copy rows, their labels or the counts
+            # (PM-013); before the cancel raise, so a cancelled run still
+            # refreshes what it did. Detection crop's epilogue, copied.
+            for ds_id in touched:
+                try:
+                    await refresh_stats(session, ds_id)
+                except Exception:
+                    logger.warning("Inpaint: could not refresh stats for %s", ds_id, exc_info=True)
+                    await session.rollback()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 

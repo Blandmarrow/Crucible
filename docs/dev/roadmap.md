@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-02)
+## Next session (updated 2026-11-03)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -35,8 +35,14 @@ restates its stages.
    docs/dev/roadmap/style-embedding.md, § The DINOv3 run and § The seven-illustrator run.
    DINOv3 tied DINOv2 on seven real styles, so Stage 2 is not worth building on this
    evidence. Next for M7: port the branch. Its DINOv2 layer-7 change won on both test sets,
-   which also answers the layer-7 question. Research on other style models is queued under M7
-   and needs no port. M6 is still independent and can go any time.
+   which also answers the layer-7 question. The style-model research ran on 2026-11-03, on
+   branch `exp/style-models` (pushed, not merged). Kaloscope 3.0 and CSD passed and PE-Core
+   tied; the layer-7 baseline beat `main` again on a third set. It also found that the app
+   builds CLIP with the wrong activation. **Pick up here:** the owner asked for the same
+   test on photographs, 3D art and digital paintings. The feasibility pass is done. Start by
+   putting its three open choices to the owner, in
+   [style-model-research/README.md § Next: other media](style-model-research/README.md#next-other-media-owners-request-2026-11-03).
+   M6 is still independent and can go any time.
 4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
 5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
@@ -134,9 +140,18 @@ in their plan's order. Does not wait for M4 ([decision 5](decisions/05-m7-goes-a
   do not build DINOv3 on this evidence.** Reading DINOv2 at layer 7 instead of its final
   embedding beat `main` on both sets, by +0.085 to +0.223. Detail: § The DINOv3 run and § The
   seven-illustrator run in that branch's docs/dev/roadmap/style-embedding.md.
-- [ ] Research and test other models for style similarity: CSD, larger CLIP models, SigLIP 2,
-  Gram-matrix features. Plan and protocol: [style-model-research/README.md](style-model-research/README.md).
-  This needs no port and can run any time, since the harness is on `exp/dinov3-test`.
+- [x] Research and test other models for style similarity (2026-11-03, `exp/style-models`, no
+  app code). Kaloscope 3.0 and CSD passed a pre-registered test on a new anime set and on
+  `test3`; PE-Core tied. Summary: [style-model-research/README.md](style-model-research/README.md).
+- [ ] Test the three models on photographs, 3D art and digital paintings, at the owner's
+  request. The feasibility pass is done; three choices are open first. Detail:
+  [style-model-research/README.md § Next: other media](style-model-research/README.md#next-other-media-owners-request-2026-11-03).
+- [ ] Decide whether to adopt Kaloscope (or CSD, the permissive fallback) as a style mode. It
+  is the owner's call, then an adoption plan: licence, its own embedding column and
+  discriminator, residency. Needs the M7 port first.
+- [ ] Plan the CLIP QuickGELU fix. `model_manager` builds CLIP with GELU, but the weights
+  expect QuickGELU. It touches every stored `clip_embedding` and the aesthetic scorer's
+  input, so old and new vectors must never mix.
 - [ ] Decide whether the layer 7 default stands, given that the photograph test failed its
   pre-registered criterion. See docs/dev/roadmap/style-embedding.md on the branch.
 - [ ] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,

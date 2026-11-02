@@ -13,6 +13,63 @@ words. The 2026-11-02 DINOv3 test showed that a newer general model does not fix
 seven illustrators it tied DINOv2 (`docs/dev/quality/style-similarity.md` § DINOv3 was
 measured and not adopted). The gain left to find is a model, or a feature, built for style.
 
+## First run (2026-11-03): Kaloscope and CSD pass
+
+The owner picked three candidates after desk research: Kaloscope 3.0 (a DINOv3-B fine-tune
+for Danbooru artist retrieval), CSD ViT-L and PE-Core L14-336. They were pre-registered and
+tested against `0.30 CLIP + v2 L7` on a new anime set, `test4`. It holds seven Danbooru
+artists that Kaloscope never trained on, 204 images. `test3` was the second check.
+
+- **Kaloscope passed widely**: 0.999 against 0.832 on `test4`, and 0.906 against 0.791 on
+  `test3`.
+- **CSD passed modestly**: 0.888 and 0.842.
+- **PE-Core tied.** IntroStyle and Gram matrices were dropped at the desk stage.
+- **The app builds CLIP with plain GELU**, while its weights expect QuickGELU. A correct
+  build scores about +0.015 higher on both sets. Fixing it changes every stored vector,
+  including the aesthetic scorer's input.
+
+Adoption is the owner's call; licence, storage and residency are open. The record is
+docs/dev/roadmap/style-model-runs/README.md on branch `exp/style-models` (pushed, not
+merged), with the pre-registration, the raw tables, the leakage checks and an Opus review
+folded in. The candidate list below is the plan as first written.
+
+## Next: other media (owner's request, 2026-11-03)
+
+Both sets so far are drawn illustration, and a style there means one artist. The owner asked
+for the same three models to be tested on **photographs, 3D art and digital paintings**. A
+metadata-only feasibility pass ran on 2026-11-03, with no images downloaded. Three choices
+are open for the owner before any set is built:
+
+- **Photographs: feasible, from Wikimedia Commons.** The public-domain FSA photographers shot
+  similar Depression-era subjects on similar black-and-white film, so the photographer's eye
+  is what differs. Files per photographer, crawled two subcategories deep with
+  `fetch_commons.py`: Delano 2,155, Lange 1,908, Wolcott 589, Rothstein 436, Vachon 407,
+  Shahn 135, Evans 107, Mydans 97, and Hine 9,305 (documentary, not FSA). The category
+  "Photographs by Russell Lee" holds 1 file, so Lee needs another root. Commons counts only
+  through subcategories, and loc.gov answers automated requests with 403. **Open:** these are
+  all 1930s monochrome. Modern colour photography needs an API source, such as Flickr with a
+  key from the owner.
+- **Digital painting: feasible only with a caveat, from Danbooru.** The test4 rules are an
+  artist unseen by Kaloscope, `1girl` + `solo`, rating general and 1024 px. Under them, no
+  `painterly` or `realistic` artist has more than 12 usable posts. Keeping `solo` but
+  dropping `1girl`, eight artists Kaloscope **was** trained on have 27–94: `yuming_li`,
+  `chan8016`, `nyte_tyde`, `fuyumurasaki`, `kuto_(kuroto)`, `koriarredondo`, `usagimarumei`
+  and `maomi_jita`. From `realistic`: `tenjin_hidetaka`, `vlfdus_0`, `bm94199`, `hatsburg`
+  and `pluvium_grandis`. (`alex_ross` paints traditionally.) Only `john_tedrick` (31) and
+  `hua_bucheng` (25) are unseen. **Open:** whether to build it with seen artists. Kaloscope's
+  score would then be an upper bound only, while CSD, PE-Core and the baseline still get a
+  fair test.
+- **3D: not feasible from Danbooru.** One artist (`serebii_(artist)`, 52, known to
+  Kaloscope) has 25 usable posts under any rule. The best unseen one has 14. **Open:**
+  - **Blender Studio's CC-BY open movies**: Sintel, Spring, Sprite Fright, Charge, Coffee
+    Run and others. Frames would be cut with the app's own video extraction. Here a style
+    means a production's look; the downloads are a few GB; characters recur within a film.
+  - Or skip 3D.
+
+Each set then follows the protocol below. The harness on `exp/style-models` takes any
+`raw/<name>/` folder: `screen.py`, `finalize.py`, `style_embed_offline.py` and `rules.py`.
+`fetch_booru.py` already takes an artist list; photos and films need a fetcher of their own.
+
 ## Candidates to check
 
 None is verified yet. Check each one's licence, weights and size before testing it.

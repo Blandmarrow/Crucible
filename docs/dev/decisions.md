@@ -46,3 +46,10 @@ Amends decision 1. Full record:
 browser storage to the database, with a one-time import that keeps the old keys for one release;
 per-browser preferences stay in the browser. Full record:
 [decisions/03-app-stored-prompts.md](decisions/03-app-stored-prompts.md).
+
+## 5. M7 goes ahead without M4
+
+**Decided** (2026-11-02, by the user): M7 no longer waits for M4 to merge, because the other
+unmerged branches may never land; whichever of the two lands second resolves their six shared
+files. Number 4 is held by the unmerged M4 branch. Full record:
+[decisions/05-m7-goes-ahead-without-m4.md](decisions/05-m7-goes-ahead-without-m4.md).

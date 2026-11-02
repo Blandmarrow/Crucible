@@ -30,6 +30,30 @@ Three things that change what to recommend, none of them visible from the code:
 - **`combined` is not an independent third opinion.** Spearman ρ 0.9844 against `dino`, sharing 18 of 20 top images — it is DINOv2 with a slight CLIP tilt. CLIP vs DINOv2 (ρ 0.7525) is the only real disagreement, so anything wanting an A/B across "the three modes" is really testing two.
 - **Per-layer scoring below layer ~10 cannot be thresholded.** Every candidate scored 0.90–0.99 on layers 1–8: some ordering survives there (AUC 0.68 at layer 1 rising to ~0.94 by layers 5–9, none beating layer 12's 0.961) but it is compressed into a few hundredths, most of which the 4-decimal rounding spends on the constant part. Usable spread appears only at layers 10–12 (range 0.25 → 0.65). The `DINO_LAYER_LABELS` picker offers all twelve as equals; for filtering they are not.
 
+### DINOv3 was measured and not adopted
+
+Tested offline on 2026-11-02, on branch `exp/dinov3-test`, in two pre-registered runs, with no
+app code changed. The full write-up and raw tables are in that branch's
+docs/dev/roadmap/style-embedding.md and its `dinov3-runs/` folder.
+- **Two anime styles.** DINOv3 (ViT-B/16 and ViT-L/16, 224 and 512 px) beat DINOv2 at the
+  same relative depth. But part of that lead was a file confound: one style was all JPEG,
+  the other all PNG.
+- **Seven public-domain illustrators, as identical 1024 px JPEGs.** All four DINOv3 settings
+  **tied** DINOv2 layer 7 (−0.003 to −0.010 mean AUC). Size and resolution made no difference.
+
+**Why a newer model does not help here.** DINO models are trained to give the same answer for
+a picture whatever its colour shift, blur or crop, so a stronger one ignores palette and
+texture *more*. Those are much of what "style" means. DINOv3's headline gain is in its
+per-patch features, which this flow never reads.
+
+Two findings carry over regardless of model:
+- **Reading DINOv2 at a middle layer (7) instead of its final embedding beat the
+  `combined` default** on both sets, by +0.085 to +0.223 AUC. That is the unported M7 branch.
+- **CLIP's value is set-dependent.** On the illustrators, a 30% CLIP blend beat every DINO
+  layer alone by about 0.06. On the anime pair it did not.
+
+Further model research is planned in `docs/dev/style-model-research/README.md`.
+
 `style_similarity_score` is the one score column a re-scoring run cannot refresh, and so the sole member of `_UNREFRESHABLE_SCORE_COLUMNS` — see `docs/dev/quality/scores-stale.md` § The clear predicate for why that is a boundary rather than an oversight.
 
 **All-layers scoring is vectorized and RAM-bounded** (`dino_all_layers` / `combined_all_layers`): rather than re-slicing every reference blob per candidate per layer (the old `slice_layer_embedding` inner loops), the per-layer normalized mean reference is computed once via `_mean_layer_refs()` (stack refs → mean per layer → L2-normalize), and each candidate blob is decoded whole with `_decode_dino_layers()` (`np.frombuffer(...).reshape(12, 768)`); scoring is one matmul per layer (`cand[:, l, :] @ mean_refs[l]`), matching `compute_style_similarity`'s normalize-then-dot exactly. In combined mode the CLIP score doesn't depend on the layer, so it's computed once per chunk. Candidates are **keyset-paginated** (`WHERE Image.id > last ORDER BY Image.id LIMIT 2000`) through the shared local `_score_all_layers_paginated()` helper so the ~18 KB per-layer blobs are never all resident at once (~1.8 GB at 100k images). Output shape and rounding are byte-identical to the pre-vectorization loop (combined rounds the blended score to 4 decimals; both round each per-layer cosine to 4).

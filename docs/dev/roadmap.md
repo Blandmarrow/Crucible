@@ -29,8 +29,14 @@ restates its stages.
    rebuilt `rating-plan/README.md` and the M4 roadmap ticks. Its source, `feat/scoring-arc`,
    is deleted; all four of its commits are on the port branch. Before merging, rebase onto
    `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`.
-3. **Next: M6**, the smallest port, which touches nothing M4 does. Follow § Porting the
-   unmerged branches. M7 needs M4 merged, so it waits on the ship decision.
+3. **M7 no longer waits on M4** ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
+   DINOv3 was tested offline on 2026-11-02, on branch `exp/dinov3-test`. That branch is cut
+   from `style-embedding-measurement` and changes no app code. Its result is in that branch's
+   docs/dev/roadmap/style-embedding.md, § The DINOv3 run and § The seven-illustrator run.
+   DINOv3 tied DINOv2 on seven real styles, so Stage 2 is not worth building on this
+   evidence. Next for M7: port the branch. Its DINOv2 layer-7 change won on both test sets,
+   which also answers the layer-7 question. Research on other style models is queued under M7
+   and needs no port. M6 is still independent and can go any time.
 4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
 5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
@@ -57,8 +63,9 @@ restates its stages.
 ## Porting the unmerged branches
 
 Three branches hold work from August that never reached `main`, and none has an open PR. They
-land one at a time, in the order M4, M6, M7. M4 and M7 conflict with each other in six files, so
-M7 goes after M4; M6 touches neither and is the smallest.
+land one at a time. M4 and M7 conflict with each other in six files, and whichever lands second
+resolves them; M7 does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
+M6 touches neither and is the smallest.
 
 1. Cut each port's branch from the latest `main`, and merge it before starting the next. All
    three add migrations from old revisions, so each re-parents onto the head the last one left.
@@ -118,8 +125,18 @@ plan's order.
 ### M7 — Style embedding
 
 Gate: the layer and blend change merged with its docs, then the remaining stages expanded here
-in their plan's order. Needs M4 merged.
+in their plan's order. Does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
 
+- [x] Test DINOv3 offline before building it in (2026-11-02, `exp/dinov3-test`, no app code).
+  Two pre-registered runs. On two anime styles (`test2`) three of four DINOv3 settings beat
+  DINOv2 layer 7, partly on a file-format confound. On seven public-domain illustrators
+  (`test3`, identical files) all four tied it, and every `test2` hypothesis failed. **Verdict:
+  do not build DINOv3 on this evidence.** Reading DINOv2 at layer 7 instead of its final
+  embedding beat `main` on both sets, by +0.085 to +0.223. Detail: § The DINOv3 run and § The
+  seven-illustrator run in that branch's docs/dev/roadmap/style-embedding.md.
+- [ ] Research and test other models for style similarity: CSD, larger CLIP models, SigLIP 2,
+  Gram-matrix features. Plan and protocol: [style-model-research/README.md](style-model-research/README.md).
+  This needs no port and can run any time, since the harness is on `exp/dinov3-test`.
 - [ ] Decide whether the layer 7 default stands, given that the photograph test failed its
   pre-registered criterion. See docs/dev/roadmap/style-embedding.md on the branch.
 - [ ] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,

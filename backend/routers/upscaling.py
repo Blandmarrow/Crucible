@@ -18,7 +18,7 @@ from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, chunked, contained_path, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -159,6 +159,25 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     "current_item": img.filename,
                     "message": f"Upscaling {img.filename}…",
                 })
+                # Gate before anything reads or writes through the stored path: a
+                # link in images/ would otherwise have the upscale overwrite a file
+                # outside the datasets folder, and `protect_file_before_overwrite`
+                # refuses that path without stopping the write. A gate only — the
+                # row's own spelling is kept below (`contained_path`'s docstring).
+                if contained_path(
+                    img.file_path, settings.datasets_dir, context="Upscale", ident=img.id
+                ) is None:
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {OUT_OF_TREE_MSG}",
+                    })
+                    counts["failed"] += 1
+                    if len(failures) < FAILURE_DETAIL_CAP:
+                        failures.append({"file": img.filename, "error": OUT_OF_TREE_MSG})
+                    continue
                 src_path = Path(img.file_path)
                 dest_path_str: str
 

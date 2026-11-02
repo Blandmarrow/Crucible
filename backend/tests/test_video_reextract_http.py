@@ -692,6 +692,34 @@ def test_an_unregistered_file_at_the_target_png_path_is_never_clobbered(tmp_path
     run(scenario())
 
 
+def test_a_frame_whose_file_resolves_outside_the_tree_is_refused(tmp_path):
+    """A link in `images/` would otherwise have the swap overwrite a file outside
+    the datasets folder. The row is pointed straight outside rather than through
+    a link, which `contained_path` resolves the same way on any account."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _video, frames = await _triage(env, ds["id"], long_edge=160)
+            target = frames[0]
+            outside = tmp_path / "elsewhere" / Path(target.file_path).name
+            outside.parent.mkdir()
+            outside.write_bytes(Path(target.file_path).read_bytes())
+            before = outside.read_bytes()
+            async with env.Session() as db:
+                row = await db.get(Image, target.id)
+                row.file_path = str(outside)
+                await db.commit()
+
+            _payload, jobs = await _reextract_and_wait(env, image_ids=[target.id])
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["rewritten"] == 0
+            assert jobs[0]["result_data"]["failed"] == 1
+            assert outside.read_bytes() == before
+            assert sorted(p.name for p in outside.parent.iterdir()) == [outside.name]
+
+    run(scenario())
+
+
 def test_a_run_whose_every_frame_is_refused_still_completes(tmp_path, monkeypatch):
     """A name collision is not a decode fault. It counts as `failed` — the user
     asked for that frame and did not get it — but it must not feed the

@@ -9,7 +9,8 @@ crop-to-detection scope resolution — the per-thumbnail-dir collision dicts and
 the `result_data` placement are shared with both. Two things deliberately are
 **not**: the copy branch commits its row before cutting the thumbnail (the
 PM-013 Tier-1 shape, where both siblings still carry Tier 3), and every stored
-path goes through `contained_path` before it is read or written.
+path goes through `contained_path` before it is read or written (the siblings
+now gate the same way).
 """
 
 import asyncio
@@ -38,6 +39,7 @@ from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
+    OUT_OF_TREE_MSG,
     chunked,
     contained_path,
     normalize_image_format,
@@ -318,14 +320,23 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                 # the copy branch derives its destination from this path's parent.
                 # The non-raising per-row form — `safe_dataset_path`'s 403 is wrong
                 # inside a job loop, where one bad row must not stop its
-                # neighbours. Everything below uses the *resolved* path it hands
-                # back, never the raw string.
-                src_path = contained_path(
+                # neighbours. A gate only: everything below keeps the row's own
+                # spelling, since with `datasets_dir` behind a link the resolved
+                # path would be written back into the row and match no other
+                # (`contained_path`'s docstring).
+                if contained_path(
                     img.file_path, settings.datasets_dir, context="Inpaint", ident=img.id
-                )
-                if src_path is None:
+                ) is None:
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_inpaint",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {OUT_OF_TREE_MSG}",
+                    })
                     counts["failed"] += 1
                     continue
+                src_path = Path(img.file_path)
 
                 # Rasterize → dilate → PNG-encode in an executor: it is
                 # full-resolution Pillow work with no await in it, and on the event

@@ -130,9 +130,9 @@ Detail, hazards and what to leave alone:
   B4 (unchecked write path). Landed 2026-11-02 on `fix/m8-stage1-bugs`.
 - [x] Stage 1 follow-ups 1–6 (cleanup plan § Stage 1 follow-ups). Landed 2026-11-02 on
   `fix/m8-stage1-followups`. Items 7 and 8 there are folded into stages 6 and 3.
-- [ ] Stage 1 follow-ups 9 (the rest of the unchunked `IN` class) and 10 (batch resize and
-  crop's stats on a partway failure). No order between them; item 9's batch move and copy need
-  M4 merged.
+- [ ] Stage 1 follow-ups 9 (the rest of the unchunked `IN` class) and 10 (batch resize, crop
+  and detection crop's stats on a partway failure). No order between them; item 9's batch move
+  and copy need M4 merged.
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.

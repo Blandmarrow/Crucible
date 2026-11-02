@@ -35,15 +35,41 @@ inpaint included, now gates and keeps the stored form. And video re-extraction's
 eighth in-place writer the review missed; it is gated too. B3's test pins `chunked` with a spy
 rather than `setlimit`, since `chunked`'s 10,000 default sits above any limit low enough to test.
 
-Left open, found while fixing:
+### Stage 1 follow-ups
 
-- `images.py`'s batch resize and batch crop jobs load their ids with one unchunked
-  `Image.id.in_(body.image_ids)`, B3's shape. Stage 8 touches that file, or fix it sooner.
-- Crop+upscale's replace job completes with `processed: 0` when its row vanished mid-run, and
-  the detail page still toasts "Crop & upscale applied". An edge case, left for stage 6.
-- Detection crop, batch resize and crop, inpaint and re-extraction say why they refused a file
-  only in the live `Failed:` message and the log. Only upscale and LUT write `failure_summary`.
-  Stage 3's shared loop is the natural place to extend it.
+Found while fixing, and by an independent review of the branch on 2026-11-02. They are the
+next items to fix, in this order: the first four are wrong today, the rest are gaps.
+
+1. **Thumbnails are not gated.** The in-place sites gate `file_path` but regenerate the
+   thumbnail through an ungated `img.thumbnail_path` (e.g. `upscaling.py`'s replace epilogue);
+   only inpaint gates both. `generate_thumbnail` mkdirs its parent, so it is the write
+   primitive CLAUDE.md names for `bulk_thumbnails`. Pre-existing, but CLAUDE.md's new
+   "Every in-place overwrite is gated too" bullet reads as if both are gated: gate the
+   thumbnail at each site as inpaint does, or narrow the bullet to `file_path`.
+2. **A doc claim is wrong.** `docs/dev/frontend-jobs.md` says every job writing a
+   `failure_summary` builds it with `backend/job_outcome.py`. Captioning builds its own
+   (`captioning.py`'s `_failure_headline`). Fix the sentence, or move captioning onto the helper.
+3. **Detection crop's request-time lookup is unchunked** (`detection.py`'s `crop_to_detection`,
+   `Image.id.in_(body.image_ids)`), B3's shape on the same select-all path as the forms B3
+   fixed. The class reaches further, outside this milestone: `quality.py`, `captioning.py`,
+   `detection.py`'s detection-job lookup and several `images.py` routes. `images.py`'s batch
+   resize and batch crop jobs load their ids the same way.
+4. **A detail-page toast names the wrong cause.** With `processed: 0` and `failed: 0`,
+   `ImageDetailPage`'s upscale and LUT effects always say the new name is taken. `skipped` is
+   also seeded with rows that vanished between enqueue and run, and copy mode has no name skip.
+5. **No stats refresh when a job fails partway.** Upscale, LUT and inpaint refresh on
+   completion and on a soft cancel, but a raise outside the per-image `try` fails the job with
+   earlier images committed and `image_count`/`total_size_bytes` stale. A `try/finally` around
+   the loop closes it.
+6. **A short race on the detail page.** The job id is cleared before `fetchEditOutcome`
+   returns, so Run is enabled during that GET; a second run, or moving to another image, can
+   still receive the first run's `setUpscaleMode(false)`/`paneGo`.
+7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
+   and the detail page still toasts "Crop & upscale applied". An edge case; stage 6 replaces
+   that effect.
+8. **Only upscale and LUT keep a refusal's reason.** Detection crop, batch resize and crop,
+   inpaint and re-extraction say why only in the live `Failed:` message and the log. Stage 3's
+   shared loop is the natural place to extend `failure_summary`.
 
 ## Stages 2 to 4: no port conflict
 

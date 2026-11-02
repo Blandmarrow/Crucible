@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
+from backend.job_outcome import FAILURE_DETAIL_CAP, failure_summary
 from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
@@ -100,6 +101,10 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
+            # What failed and why, for `failure_summary`: the live `Failed:`
+            # message is gone on reload, and the job still ends `completed`
+            # (PM-023).
+            failures: list[dict] = []
 
             lut_path = cfg["lut_path"]
             intensity = cfg["intensity"]
@@ -220,6 +225,8 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                         "message": f"Failed: {exc}",
                     })
                     counts["failed"] += 1
+                    if len(failures) < FAILURE_DETAIL_CAP:
+                        failures.append({"file": img.filename, "error": str(exc)})
                     continue
 
                 # apply_lut_sync may change out_path if format conversion occurred
@@ -327,7 +334,13 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts,
+                    "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be graded"
+                    ),
+                }
             # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
             # everything it did manage — including any stale thumbnail.
             await session.commit()

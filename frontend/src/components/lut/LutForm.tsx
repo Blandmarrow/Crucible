@@ -36,7 +36,8 @@ function resultToast(result: Record<string, unknown>) {
   if (skipped > 0) parts.push(`${skipped} skipped`);
   if (failed > 0) parts.push(`${failed} failed`);
   const msg = parts.join(", ");
-  if (failed > 0) toast(msg, { icon: "⚠️" });
+  const summary = typeof result.failure_summary === "string" ? result.failure_summary : null;
+  if (failed > 0) toast(summary ? `${msg}. ${summary}` : msg, { icon: "⚠️", duration: 10000 });
   else toast.success(msg);
 }
 

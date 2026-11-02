@@ -17,15 +17,15 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-10-31)
+## Next session (updated 2026-11-02)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-2. M8's stage 1 is recommended first: four bug fixes from the 2026-10-31 review, one of which can
-   overwrite a file with no backup. It changes no lines the ports touch, so it does not hold M4
-   up. Land B1 before B4, and make B4's refusal explain itself for users who link images. See
-   [cleanup-plan/README.md](cleanup-plan/README.md).
+2. M8's stage 1 is done on `fix/m8-stage1-bugs`: merge its PR before cutting M4's port branch.
+   It adds `OUT_OF_TREE_MSG` to `backend/routers/images.py`'s `backend.utils` import line, which
+   `feat/scoring-arc` also changes, so M4's port must keep that name when it resolves the line.
+   Three small follow-ups it found are listed in [cleanup-plan/README.md](cleanup-plan/README.md).
 3. M4 follows, as a port and not a fresh build: the rating column (§1) already exists on
    `feat/scoring-arc`. Follow § Porting the unmerged branches. Read the plan as it stands on
    that branch (docs/dev/roadmap/roadmap.md there), because `main`'s
@@ -124,8 +124,8 @@ with regression tests; the later stages can stop wherever the duplication stops 
 Detail, hazards and what to leave alone:
 [cleanup-plan/README.md](cleanup-plan/README.md).
 
-- [ ] Stage 1: fix B1 (failed job shows success), B2 (stale dataset counts), B3 (bind limit) and
-  B4 (unchecked write path). Independent of the ports. B4 needs B1.
+- [x] Stage 1: fix B1 (failed job shows success), B2 (stale dataset counts), B3 (bind limit) and
+  B4 (unchecked write path). Landed 2026-11-02 on `fix/m8-stage1-bugs`, with three follow-ups.
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.

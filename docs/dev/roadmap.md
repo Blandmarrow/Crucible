@@ -22,16 +22,17 @@ restates its stages.
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-2. M8's stage 1 follow-ups 1–6 are done on `fix/m8-stage1-followups`: merge its PR before
-   cutting M4's port branch. Stage 1 itself merged as PR #103.
-3. **Next: M4**, as a port and not a fresh build: the rating column (§1) already exists on
-   `feat/scoring-arc`. Follow § Porting the unmerged branches. Read the plan as it stands on
-   that branch (docs/dev/roadmap/roadmap.md there), because `main`'s
-   [rating-plan/README.md](rating-plan/README.md) predates the work and still calls §1 unbuilt.
-   `backend/routers/images.py`'s `backend.utils` import line gained `OUT_OF_TREE_MSG` in M8,
-   and `feat/scoring-arc` changes that line too, so keep the name when resolving it.
-4. M8's follow-ups 9, 10 and 11 can go any time, beside M4 or after it. Batch move and copy, in
-   item 9, must wait for M4. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
+2. **M4 is implemented but held.** The port is complete on `feat/m4-rating-port` (pushed,
+   not merged): the rating column, phase 0, rebindable rating keys and the docs, with every
+   gate green. The user chose on 2026-11-02 not to ship it yet, so PR #106 was closed and the
+   branch waits. On that branch only, for now: decision 4 (rating keys and old snapshots), the
+   rebuilt `rating-plan/README.md` and the M4 roadmap ticks. Its source, `feat/scoring-arc`,
+   is deleted; all four of its commits are on the port branch. Before merging, rebase onto
+   `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`.
+3. **Next: M6**, the smallest port, which touches nothing M4 does. Follow § Porting the
+   unmerged branches. M7 needs M4 merged, so it waits on the ship decision.
+4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
+   M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
 5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
@@ -67,7 +68,9 @@ M7 goes after M4; M6 touches neither and is the smallest.
    A plan file gets its own transient folder, registered in `TRANSIENT_DIRS`.
 4. Before merging, check every path added to `main` since the branch was cut. A clean port only
    reconciles lines that clash, and a missed mirror or rebuild path fails silently.
-5. Leave the source branch untouched until its port has merged.
+5. Leave the source branch untouched until its port has merged. M4 is the exception: the user
+   had `feat/scoring-arc` deleted on 2026-11-02 once every commit was verified on the port
+   branch, which is held unmerged.
 
 ## Milestones
 
@@ -94,8 +97,11 @@ either shipped or ruled out by phase 0's numbers. Build order and stage detail:
 to date. Open rulings go in the decision log as they are made.
 
 - [x] Token UI (§6) and the aesthetic model picker (§2), both shipped 2026-08-02.
-- [ ] Port the rating column (§1) and head phase 0 (the rating event log and metrics page) from
-  `feat/scoring-arc`: 67ac441, 9004f18, 4233da1, ce0c788. Needs no ML.
+- [x] Port the rating column (§1) and head phase 0 (the rating event log and metrics page) from
+  `feat/scoring-arc`: 67ac441, 9004f18, 4233da1, ce0c788. Ported 2026-11-02 on
+  `feat/m4-rating-port`, with rebindable rating keys and old snapshots leaving ratings alone.
+  **Held unmerged** by the user's choice; the source branch is deleted.
+- [ ] Merge `feat/m4-rating-port` once the user decides to ship the feature.
 - [ ] The learned head (§3, phases 1+). Needs the port and re-ratings to measure. Not built if
   phase 0 shows an existing scorer already near its ceiling.
 - DINOv3 (§5) stays deferred, the lowest priority. M7's plan supersedes §5, so it is settled

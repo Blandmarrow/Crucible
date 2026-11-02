@@ -78,7 +78,9 @@ test('the rating page reports its corpus and withholds an unearned ceiling', asy
   // substring "Rated", so a text filter is ambiguous.
   const tile = (id: string) => page.getByTestId(`tile-${id}`).locator('.sv')
   const ratedPct = Math.round((after.rated / after.total) * 100)
-  await expect(tile('rated')).toContainText(
+  await expect(tile('rated')).toHaveText(after.rated.toLocaleString('en-US'))
+  // The ratio sits on its own line under the number, not inside it.
+  await expect(page.getByTestId('tile-rated')).toContainText(
     `${ratedPct}% of ${after.total.toLocaleString('en-US')}`,
   )
   await expect(tile('unrated')).toHaveText(after.unrated.toLocaleString('en-US'))

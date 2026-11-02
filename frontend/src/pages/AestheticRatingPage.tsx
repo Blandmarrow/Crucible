@@ -98,9 +98,11 @@ export default function AestheticRatingPage() {
             contain the substring "Rated". */}
         <div className="stat-card" data-testid="tile-rated">
           <div className="sk">Rated</div>
-          <div className="sv">
-            {summary.rated.toLocaleString()}
-            <small>{ratedPct}% of {summary.total.toLocaleString()}</small>
+          <div className="sv">{summary.rated.toLocaleString()}</div>
+          {/* Under the number, like the Re-rated tile's "of N ever rated", not
+              beside it: `.sv small` is styled as a unit, and this is a ratio. */}
+          <div className="sdelta" style={{ color: "var(--fg-dim)" }}>
+            {ratedPct}% of {summary.total.toLocaleString()}
           </div>
           {summary.rating_stale > 0 && (
             <div className="sdelta" style={{ color: "var(--warn)" }}>

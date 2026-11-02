@@ -64,25 +64,6 @@ function labelColor(label: string): string {
   return BBOX_COLORS[Math.abs(h) % BBOX_COLORS.length];
 }
 
-/** What a finished upscale or LUT job did to the one image this page sent it.
- *  Both jobs catch a per-image failure and still end `completed` (PM-023), so
- *  the status alone would toast success over an image that was never touched.
- *  `null` when the job cannot be read, and the caller falls back to the status. */
-async function fetchEditOutcome(
-  jobId: string,
-): Promise<{ processed: number; failed: number; summary: string | null } | null> {
-  try {
-    const r = (await jobsApi.get(jobId)).result_data ?? {};
-    return {
-      processed: Number(r.processed ?? 0),
-      failed: Number(r.failed ?? 0),
-      summary: typeof r.failure_summary === "string" ? r.failure_summary : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function formatSize(bytes: number | null) {
   if (!bytes) return "—";
   return bytes < 1_048_576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1_048_576).toFixed(1)} MB`;
@@ -232,6 +213,25 @@ function syncGalleryStatePage(datasetId: string, page: number) {
       localStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page, scrollTop: 0 }));
     }
   } catch {}
+}
+
+/** What a finished upscale or LUT job did to the one image this page sent it.
+ *  Both jobs catch a per-image failure and still end `completed` (PM-023), so
+ *  the status alone would toast success over an image that was never touched.
+ *  `null` when the job cannot be read, and the caller falls back to the status. */
+async function fetchEditOutcome(
+  jobId: string,
+): Promise<{ processed: number; failed: number; summary: string | null } | null> {
+  try {
+    const r = (await jobsApi.get(jobId)).result_data ?? {};
+    return {
+      processed: Number(r.processed ?? 0),
+      failed: Number(r.failed ?? 0),
+      summary: typeof r.failure_summary === "string" ? r.failure_summary : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export default function ImageDetailPage() {

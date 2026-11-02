@@ -164,6 +164,15 @@ def canonical_abs_path(path: str, root: Path) -> Path:
     return canonical
 
 
+# Why an in-place edit refused a row: the job's `Failed:` message, its
+# `failure_summary` entry, and the single-image routes' 403 detail. A user who
+# links images into a dataset from elsewhere meets this, so it names the cause.
+OUT_OF_TREE_MSG = (
+    "The file resolves outside the datasets folder (through a link?), "
+    "so Crucible will not edit it"
+)
+
+
 def within_datasets_dir(path_str: str, base_dir: Path) -> Path | None:
     """Resolve a stored file path, returning it only if it is inside `base_dir`.
 
@@ -217,7 +226,15 @@ def contained_path(
     `backend.config`; pass `settings.datasets_dir`. `context` names the site and
     `ident` the row, for the warning. Never raises — one caller
     (`version_service._remove_stale_files`) sits inside a bare
-    `except Exception: pass` that would swallow it.
+    `except Exception: pass` that would swallow it, and the in-place edit jobs
+    call it per row, where a raise would fail the run instead of the image. A
+    path `resolve()` cannot finish (a symlink loop) is refused, not raised.
+
+    The in-place edits (upscale, LUT, detection crop, batch and single resize and
+    crop, video re-extraction) use it as a **gate only**: once it passes they
+    keep reading, writing and storing the row's own spelling. With
+    `datasets_dir` behind a link the resolved path is the link's target, and
+    writing that into a row would leave it matching no other row's prefix.
 
     Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
     `videos._delete_previous_frames`, `quality.resolve_duplicates`,
@@ -229,7 +246,10 @@ def contained_path(
     """
     if not path_str:
         return None
-    safe = within_datasets_dir(path_str, base_dir)
+    try:
+        safe = within_datasets_dir(path_str, base_dir)
+    except (OSError, RuntimeError, ValueError):
+        safe = None
     if safe is None:
         logger.warning("%s %s: refusing to touch out-of-tree path %s", context, ident, path_str)
     return safe

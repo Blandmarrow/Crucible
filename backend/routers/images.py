@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
+from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -1232,6 +1232,37 @@ async def _refresh_stats_after_edit(db: AsyncSession, dataset_id: str) -> None:
         await db.rollback()
 
 
+def _require_in_tree(img: Image) -> None:
+    """403 before a single-image edit reads or writes through the stored path.
+
+    A link in images/ would otherwise have the edit overwrite a file outside the
+    datasets folder, and `protect_file_before_overwrite` refuses that path
+    without stopping the write. A gate only: the route keeps the row's own
+    spelling (`utils.contained_path`'s docstring says why)."""
+    if contained_path(img.file_path, settings.datasets_dir, context="Edit", ident=img.id) is None:
+        raise HTTPException(403, OUT_OF_TREE_MSG)
+
+
+async def _refuse_out_of_tree(
+    img: Image, counts: dict, job_id: str, job_type: str, i: int, total: int
+) -> bool:
+    """`_require_in_tree` for the batch resize and crop jobs: count the image as
+    failed and say why, rather than fail the run. True when it was refused."""
+    if contained_path(img.file_path, settings.datasets_dir, context=job_type, ident=img.id) is not None:
+        return False
+    from backend.workers.progress import broadcaster
+
+    counts["failed"] += 1
+    await broadcaster.emit(job_id, {
+        "type": "progress", "job_id": job_id, "job_type": job_type,
+        "status": "running", "done": i + 1, "total": total,
+        "percent": round((i + 1) / total * 100, 1),
+        "current_item": img.filename,
+        "message": f"Failed: {OUT_OF_TREE_MSG}",
+    })
+    return True
+
+
 def _discard_temp(tmp: Path) -> None:
     """Remove an in-place edit's temp output after the edit failed.
 
@@ -1326,6 +1357,8 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 img = await session.get(Image, image_id)
                 if img is None:
                     counts["skipped"] += 1
+                    continue
+                if await _refuse_out_of_tree(img, counts, job_id, "batch_resize", i, total):
                     continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
@@ -1443,6 +1476,8 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 if img is None:
                     counts["skipped"] += 1
                     continue
+                if await _refuse_out_of_tree(img, counts, job_id, "batch_crop", i, total):
+                    continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
                 filename = img.filename
@@ -1521,6 +1556,7 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
     if not img:
         raise HTTPException(404, "Image not found")
     ensure_not_busy(img.dataset_id)
+    _require_in_tree(img)
     await version_service.protect_file_before_overwrite(image_id, img.file_path, db)
     await db.commit()  # persist the COW hash backfill before the overwrite
     # Stage, flush, swap, commit (GPT-010): resize into a temp file, stage every
@@ -1576,6 +1612,9 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
     if not img:
         raise HTTPException(404, "Image not found")
     ensure_not_busy(img.dataset_id)
+    # Both modes: replace writes through this path, and copy derives its
+    # destination from its folder.
+    _require_in_tree(img)
 
     src_path = Path(img.file_path)
     dest_images = src_path.parent

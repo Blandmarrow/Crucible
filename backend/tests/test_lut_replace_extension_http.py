@@ -188,6 +188,7 @@ def test_lut_reports_all_zero_counts_on_a_clean_run(tmp_path):
 
             assert job["result_data"] == {
                 "processed": 1, "skipped": 0, "failed": 0, "thumbnails_stale": 0,
+                "failed_count": 0, "failure_summary": None,
             }
 
     run(scenario())
@@ -217,6 +218,7 @@ def test_lut_counts_a_disk_collision_as_skipped_not_processed(tmp_path):
 
             assert job["result_data"] == {
                 "processed": 0, "skipped": 1, "failed": 0, "thumbnails_stale": 0,
+                "failed_count": 0, "failure_summary": None,
             }
 
     run(scenario())

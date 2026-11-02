@@ -123,7 +123,11 @@ gone unreadable mid-job; frames already rewritten stay, and the job ends `failed
 breaker can tell a decode fault from a refusal — see § The extension change. **`is_fault` is
 a prediction that the next frame will fail the same way, not a severity or readability
 claim**: it belongs to a condition that will still hold a millisecond later. `False` is for a
-refusal specific to *this* frame. Cancellation
+refusal specific to *this* frame — including the first check `_rewrite` makes, before the
+temp is placed beside the stored path: `utils.contained_path` on `img.file_path`. A frame
+whose file resolves outside the datasets folder (through a link in `images/`) is
+`("failed", OUT_OF_TREE_MSG, False)`. The gate is only a gate; the row's own spelling is
+used from there on (`docs/dev/shared-utilities.md`). Cancellation
 keeps everything already written: the files are real and their COW backups exist.
 
 ## The extension change

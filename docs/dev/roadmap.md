@@ -17,25 +17,28 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-10-31)
+## Next session (updated 2026-11-02)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-2. M8's stage 1 is recommended first: four bug fixes from the 2026-10-31 review, one of which can
-   overwrite a file with no backup. It changes no lines the ports touch, so it does not hold M4
-   up. Land B1 before B4, and make B4's refusal explain itself for users who link images. See
-   [cleanup-plan/README.md](cleanup-plan/README.md).
-3. M4 follows, as a port and not a fresh build: the rating column (§1) already exists on
+2. M8's stage 1 is done on `fix/m8-stage1-bugs`: merge its PR before cutting M4's port branch.
+   It adds `OUT_OF_TREE_MSG` to `backend/routers/images.py`'s `backend.utils` import line, which
+   `feat/scoring-arc` also changes, so M4's port must keep that name when it resolves the line.
+3. **Next to fix: M8's stage 1 follow-ups**, items 1–6 of
+   [cleanup-plan/README.md § Stage 1 follow-ups](cleanup-plan/README.md#stage-1-follow-ups), in
+   that order. The first two are docs or a rule that overstate what the code does today, so
+   they come first. Items 7 and 8 wait for stages 6 and 3, which replace that code.
+4. M4 follows, as a port and not a fresh build: the rating column (§1) already exists on
    `feat/scoring-arc`. Follow § Porting the unmerged branches. Read the plan as it stands on
    that branch (docs/dev/roadmap/roadmap.md there), because `main`'s
    [rating-plan/README.md](rating-plan/README.md) predates the work and still calls §1 unbuilt.
-4. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
+5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
    to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
-5. A split moves sections, so `§` pointers that named a section in the same file now
+6. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
 
@@ -124,8 +127,10 @@ with regression tests; the later stages can stop wherever the duplication stops 
 Detail, hazards and what to leave alone:
 [cleanup-plan/README.md](cleanup-plan/README.md).
 
-- [ ] Stage 1: fix B1 (failed job shows success), B2 (stale dataset counts), B3 (bind limit) and
-  B4 (unchecked write path). Independent of the ports. B4 needs B1.
+- [x] Stage 1: fix B1 (failed job shows success), B2 (stale dataset counts), B3 (bind limit) and
+  B4 (unchecked write path). Landed 2026-11-02 on `fix/m8-stage1-bugs`.
+- [ ] Stage 1 follow-ups 1–6 (cleanup plan § Stage 1 follow-ups): the next items to fix. Items 7
+  and 8 there are folded into stages 6 and 3.
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.

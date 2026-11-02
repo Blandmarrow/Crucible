@@ -40,6 +40,7 @@ from backend.services.image_service import generate_thumbnail, get_image_info
 from backend.services.video_frames import clamp_crop
 from backend.services.video_service import claimed_poster_stems, generate_poster, measure_duration_ms
 from backend.utils import (
+    OUT_OF_TREE_MSG,
     FileInUseError,
     InsufficientDiskSpaceError,
     chunked,
@@ -1604,6 +1605,15 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         On success the row has already been committed: nothing fallible runs
         between the swap and that commit, so disk and DB can never disagree.
         """
+        # Gate before the temp is placed beside the stored path or the swap
+        # writes through it: a link in images/ would otherwise have the rewrite
+        # overwrite a file outside the datasets folder. Not a fault — it is this
+        # frame's path, not the video, so the rest of the run still gets its
+        # chance. A gate only: the row's own spelling is kept below.
+        if contained_path(
+            img.file_path, settings.datasets_dir, context="video_reextract", ident=img.id
+        ) is None:
+            return "failed", OUT_OF_TREE_MSG, False
         src_path = Path(img.file_path)
         target = src_path.with_suffix(suffix)
         tmp = src_path.with_name(f"{src_path.stem}.{uuid4().hex}.tmp{suffix}")

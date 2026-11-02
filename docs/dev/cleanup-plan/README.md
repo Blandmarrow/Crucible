@@ -21,78 +21,55 @@ missed a fix: PM-003, 005, 007, 009, 010, 013, 014, 015, 023, 026, 029. None is 
 by a file being long. The project's existing answer is the right pattern: one writer plus a
 guard, as with `utils.record_in_place`. Prefer that to a file split wherever both would work.
 
-## Stage 1: the bugs
+## Stage 1: the bugs (landed 2026-11-02)
 
-All four were confirmed by reading the code. None has been reproduced at runtime, so reproduce
-each one with a failing test first. No port branch changes these lines, so this stage can land
-before M4.
+B1–B4 are fixed on `fix/m8-stage1-bugs`, each with a test that failed first. What stays true now
+lives in the topic files: `docs/dev/image-processing-models.md` § Upscaling (the gate, chunking,
+stats refresh and the detail page's outcome read), `docs/dev/frontend-jobs.md` (upscale and LUT
+in the `failed_count` convention, `backend/job_outcome.py`), `docs/dev/shared-utilities.md` (the
+gate-only rule and the rename exemption), `docs/dev/inpaint.md` and CLAUDE.md § Key invariants.
 
-### B1: a failed upscale or LUT on the detail page shows success
+Two things went differently from the plan above. Inpaint was *not* the model to copy for B4: it
+wrote the resolved path back into the row, which breaks a linked `datasets_dir`, so every site,
+inpaint included, now gates and keeps the stored form. And video re-extraction's `_rewrite` was an
+eighth in-place writer the review missed; it is gated too. B3's test pins `chunked` with a spy
+rather than `setlimit`, since `chunked`'s 10,000 default sits above any limit low enough to test.
 
-- **Where:** the "Standalone upscale job tracking" and "LUT job tracking" effects in
-  `frontend/src/pages/ImageDetailPage.tsx` (lines 942 and 968).
-- **Why:** the backend catches a per-image failure, adds it to `counts`, and the job still ends
-  `completed` (`backend/routers/upscaling.py:219`, `backend/routers/lut.py:212`). On a one-image
-  job a failed run therefore shows a green "Upscaling complete". A skipped image reads the same
-  way. This is PM-023's class again.
-- **Fix:** read `result_data` from the finished job and report failed and skipped counts, as
-  `frontend/src/components/upscale/UpscaleForm.tsx` already does. Stage 6 later removes the copy.
-- **Also check:** the "Crop+upscale job tracking" effect beside them. Whether that job can
-  complete with a failure inside was not checked.
+### Stage 1 follow-ups
 
-### B2: upscale, LUT and inpaint leave dataset counts stale
+Found while fixing, and by an independent review of the branch on 2026-11-02. They are the
+next items to fix, in this order: the first four are wrong today, the rest are gaps.
 
-- **Where:** `backend/routers/upscaling.py`, `backend/routers/lut.py` and
-  `backend/routers/inpaint.py` never call `refresh_stats`.
-- **Why it shows:** `Dataset.image_count` and `total_size_bytes` are stored columns. Copy mode
-  adds rows and replace mode changes sizes, so both stay wrong until another operation refreshes
-  them. The frontend's `refreshStats` client has no caller.
-- **Fix:** refresh after the loop, following `images._refresh_stats_after_edit`. It must sit in
-  an epilogue that cannot change the outcome (PM-013), run on a cancelled job too, and cover
-  every dataset the selection touched (PM-029).
-
-### B3: whole-dataset upscale and LUT exceed SQLite's bind limit
-
-- **Where:** `backend/routers/upscaling.py:75` and `backend/routers/lut.py:74` pass the whole id
-  list to one `Image.id.in_()`. The client-list lookups at lines 36 and 35, and
-  `backend/routers/inpaint.py:171`, have the same shape.
-- **Why:** the limit in this venv measures 32,766 variables, so a larger run should fail on that
-  query. `inpaint.py` and `detection.py` already chunk their image loads.
-- **Fix:** `utils.chunked`. To test without inserting 33k rows, lower the limit on the test
-  connection with `sqlite3.Connection.setlimit`.
-
-### B4: in-place edits write through a path nothing has checked
-
-- **Where:** seven sites use a raw `Path(img.file_path)`: `run_upscale`'s job
-  (`backend/routers/upscaling.py:147`), `run_lut`'s job (`backend/routers/lut.py:134`),
-  `crop_to_detection`'s job (`backend/routers/detection.py:992`), and in
-  `backend/routers/images.py` the batch resize (1333), batch crop (1449), single resize (1532)
-  and single crop (1580).
-- **Why it matters:** the likely route is accidental. A rescan registers a symlink or junction in
-  `{dataset}/images/` under its in-tree path, as `_store_row_bytes` in
-  `backend/services/version_service.py` documents. A replace-mode edit then saves through the
-  link and overwrites a file outside the datasets folder. The versioning backup refuses the same
-  path, logs a warning and lets the overwrite continue, so no snapshot holds the original. The
-  user sees no error. It is not a known remote exploit: no route found lets a client set
-  `file_path`, though not every writer was audited.
-- **Fix:** copy `backend/routers/inpaint.py:314`. Call `contained_path` per row, count a refusal
-  as failed, and use the resolved path from then on. The single-image routes use
-  `safe_dataset_path` for a 403. Add the sites to the list in CLAUDE.md § Key invariants.
-- **Land after B1, or with it:** a refused image counts as failed, and the detail page shows a
-  failed count as success until B1 is fixed.
-- **Other users' setups:** the owner keeps images separate and does not use links, but other users
-  may (owner, 2026-10-31), so make the refusal explain itself. Emit a `Failed:` progress message
-  that says the file resolves outside the datasets folder, not just a count and a log line, and
-  add a short note to the user docs, which say nothing about links today. From reading the code,
-  not run:
-  - A link inside a dataset that resolves outside `datasets_dir`, or a dataset folder linked
-    elsewhere: `serve_file` already answers 403 through `safe_dataset_path`, so the full image
-    cannot be opened today. The guard adds refused edits to a setup that is already partly broken.
-  - `datasets_dir` itself behind a link: unaffected, because the guard resolves both sides, and
-    `test_a_symlinked_datasets_dir_still_matches_rows` covers that setup for delete. This is the
-    arrangement to point users at for keeping data on another drive.
-- **Also assess:** the single-image rename reads a raw path too (`images.py:1988`). It was not
-  assessed.
+1. **Thumbnails are not gated.** The in-place sites gate `file_path` but regenerate the
+   thumbnail through an ungated `img.thumbnail_path` (e.g. `upscaling.py`'s replace epilogue);
+   only inpaint gates both. `generate_thumbnail` mkdirs its parent, so it is the write
+   primitive CLAUDE.md names for `bulk_thumbnails`. Pre-existing, but CLAUDE.md's new
+   "Every in-place overwrite is gated too" bullet reads as if both are gated: gate the
+   thumbnail at each site as inpaint does, or narrow the bullet to `file_path`.
+2. **A doc claim is wrong.** `docs/dev/frontend-jobs.md` says every job writing a
+   `failure_summary` builds it with `backend/job_outcome.py`. Captioning builds its own
+   (`captioning.py`'s `_failure_headline`). Fix the sentence, or move captioning onto the helper.
+3. **Detection crop's request-time lookup is unchunked** (`detection.py`'s `crop_to_detection`,
+   `Image.id.in_(body.image_ids)`), B3's shape on the same select-all path as the forms B3
+   fixed. The class reaches further, outside this milestone: `quality.py`, `captioning.py`,
+   `detection.py`'s detection-job lookup and several `images.py` routes. `images.py`'s batch
+   resize and batch crop jobs load their ids the same way.
+4. **A detail-page toast names the wrong cause.** With `processed: 0` and `failed: 0`,
+   `ImageDetailPage`'s upscale and LUT effects always say the new name is taken. `skipped` is
+   also seeded with rows that vanished between enqueue and run, and copy mode has no name skip.
+5. **No stats refresh when a job fails partway.** Upscale, LUT and inpaint refresh on
+   completion and on a soft cancel, but a raise outside the per-image `try` fails the job with
+   earlier images committed and `image_count`/`total_size_bytes` stale. A `try/finally` around
+   the loop closes it.
+6. **A short race on the detail page.** The job id is cleared before `fetchEditOutcome`
+   returns, so Run is enabled during that GET; a second run, or moving to another image, can
+   still receive the first run's `setUpscaleMode(false)`/`paneGo`.
+7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
+   and the detail page still toasts "Crop & upscale applied". An edge case; stage 6 replaces
+   that effect.
+8. **Only upscale and LUT keep a refusal's reason.** Detection crop, batch resize and crop,
+   inpaint and re-extraction say why only in the live `Failed:` message and the log. Stage 3's
+   shared loop is the natural place to extend `failure_summary`.
 
 ## Stages 2 to 4: no port conflict
 

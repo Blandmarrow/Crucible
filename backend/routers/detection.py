@@ -10,6 +10,7 @@ from sqlalchemy import Integer, and_, cast, delete, func, select
 from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.database import get_db
 from backend.licenses import copy_provenance
 from backend.ml.mask_utils import detection_crop_rect, merge_detection_geometry
@@ -32,7 +33,9 @@ from backend.services.image_service import crop_image_to_dest, generate_thumbnai
 from backend.services.label_service import copy_labels
 from backend.utils import (
     ALLOWED_FLAG_KEYS,
+    OUT_OF_TREE_MSG,
     chunked,
+    contained_path,
     normalize_subfolder,
     record_in_place,
     replace_retrying,
@@ -987,6 +990,24 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                 if rect == (0, 0, img.width, img.height):
                     # Full-image rect: writing would only re-encode the file
                     counts["skipped_noop"] += 1
+                    continue
+
+                # Gate before either branch reads or writes through the stored
+                # path: a link in images/ would otherwise have a replace overwrite
+                # a file outside the datasets folder, and the copy branch derives
+                # its destination from this path's folder. A gate only — the row's
+                # own spelling is kept below (`contained_path`'s docstring).
+                if contained_path(
+                    img.file_path, settings.datasets_dir, context="Detection crop", ident=img.id
+                ) is None:
+                    counts["failed"] += 1
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {OUT_OF_TREE_MSG}",
+                    })
                     continue
 
                 src_path = Path(img.file_path)

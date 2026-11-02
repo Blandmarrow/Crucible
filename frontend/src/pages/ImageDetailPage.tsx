@@ -19,6 +19,7 @@ import DelimiterControls from "../components/caption/DelimiterControls";
 import { detectionApi } from "../api/detection";
 import { upscalingApi, upscaleModelLabel } from "../api/upscaling";
 import { lutApi } from "../api/lut";
+import { jobsApi } from "../api/jobs";
 import { useJobStore } from "../store/jobStore";
 import { useSelectionStore } from "../store/selectionStore";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
@@ -212,6 +213,25 @@ function syncGalleryStatePage(datasetId: string, page: number) {
       localStorage.setItem(`gallery-state-${datasetId}`, JSON.stringify({ ...state, page, scrollTop: 0 }));
     }
   } catch {}
+}
+
+/** What a finished upscale or LUT job did to the one image this page sent it.
+ *  Both jobs catch a per-image failure and still end `completed` (PM-023), so
+ *  the status alone would toast success over an image that was never touched.
+ *  `null` when the job cannot be read, and the caller falls back to the status. */
+async function fetchEditOutcome(
+  jobId: string,
+): Promise<{ processed: number; failed: number; summary: string | null } | null> {
+  try {
+    const r = (await jobsApi.get(jobId)).result_data ?? {};
+    return {
+      processed: Number(r.processed ?? 0),
+      failed: Number(r.failed ?? 0),
+      summary: typeof r.failure_summary === "string" ? r.failure_summary : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export default function ImageDetailPage() {
@@ -944,20 +964,32 @@ export default function ImageDetailPage() {
     if (upscaleJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["image", imageId] });
+      const finishedId = upscaleJobId;
+      const newImageId = upscaleJobProgress.image_id;
       setUpscaleJobId(null);
-      if (!upscaleReplace && upscaleJobProgress.image_id) {
-        if (datasetId && imageId) injectNavId(datasetId, imageId, upscaleJobProgress.image_id);
-        toast.success("Upscaling complete — navigating to new image");
+      void fetchEditOutcome(finishedId).then((outcome) => {
+        // Nothing processed: say why, and leave the tool open to try again.
+        if (outcome && outcome.processed === 0) {
+          if (outcome.failed > 0) {
+            toast.error(outcome.summary ?? "Upscaling failed", { duration: 10000 });
+          } else {
+            toast("Upscaling skipped — a file with the new name already exists", { icon: "⚠️" });
+          }
+          return;
+        }
         setUpscaleMode(false);
-        paneGo(
-          `/datasets/${datasetId}/image/${upscaleJobProgress.image_id}`,
-          { page: "image-detail", datasetId: datasetId ?? "", imageId: upscaleJobProgress.image_id },
-          { replace: true },
-        );
-      } else {
-        toast.success("Upscaling complete");
-        setUpscaleMode(false);
-      }
+        if (!upscaleReplace && newImageId) {
+          if (datasetId && imageId) injectNavId(datasetId, imageId, newImageId);
+          toast.success("Upscaling complete — navigating to new image");
+          paneGo(
+            `/datasets/${datasetId}/image/${newImageId}`,
+            { page: "image-detail", datasetId: datasetId ?? "", imageId: newImageId },
+            { replace: true },
+          );
+        } else {
+          toast.success("Upscaling complete");
+        }
+      });
     } else if (upscaleJobProgress.status === "failed") {
       setUpscaleJobId(null);
       toast.error("Upscaling failed");
@@ -970,20 +1002,32 @@ export default function ImageDetailPage() {
     if (lutJobProgress.status === "completed") {
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["image", imageId] });
+      const finishedId = lutJobId;
+      const newImageId = lutJobProgress.image_id;
       setLutJobId(null);
-      if (!lutReplace && lutJobProgress.image_id) {
-        if (datasetId && imageId) injectNavId(datasetId, imageId, lutJobProgress.image_id);
-        toast.success("LUT applied — navigating to new image");
+      void fetchEditOutcome(finishedId).then((outcome) => {
+        // Nothing processed: say why, and leave the tool open to try again.
+        if (outcome && outcome.processed === 0) {
+          if (outcome.failed > 0) {
+            toast.error(outcome.summary ?? "LUT grading failed", { duration: 10000 });
+          } else {
+            toast("LUT skipped — a file with the new name already exists", { icon: "⚠️" });
+          }
+          return;
+        }
         setLutMode(false);
-        paneGo(
-          `/datasets/${datasetId}/image/${lutJobProgress.image_id}`,
-          { page: "image-detail", datasetId: datasetId ?? "", imageId: lutJobProgress.image_id },
-          { replace: true },
-        );
-      } else {
-        toast.success("LUT applied");
-        setLutMode(false);
-      }
+        if (!lutReplace && newImageId) {
+          if (datasetId && imageId) injectNavId(datasetId, imageId, newImageId);
+          toast.success("LUT applied — navigating to new image");
+          paneGo(
+            `/datasets/${datasetId}/image/${newImageId}`,
+            { page: "image-detail", datasetId: datasetId ?? "", imageId: newImageId },
+            { replace: true },
+          );
+        } else {
+          toast.success("LUT applied");
+        }
+      });
     } else if (lutJobProgress.status === "failed") {
       setLutJobId(null);
       toast.error("LUT grading failed");

@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # `settings as app_settings`: several functions here bind `settings = await
 # get_thresholds(db)` as a local, so the plain name is a shadowing trap.
 from backend.config import settings as app_settings
+from backend.job_outcome import FAILURE_DETAIL_CAP, failure_summary
 from backend.models.dataset import Dataset
 from backend.models.detection import Detection
 from backend.models.image import Image
@@ -250,21 +251,12 @@ async def _measure_into(img: Image) -> None:
             setattr(img, key, info[key])
 
 
-_FAILURE_DETAIL_CAP = 50
+_FAILURE_DETAIL_CAP = FAILURE_DETAIL_CAP
 
 
 def _failure_summary(failed_count: int, failures: list[dict]) -> str | None:
     """One line for the job's ``result_data`` (PM-023's convention), ≤ 300 chars."""
-    if not failed_count:
-        return None
-    names = ", ".join(f["file"] for f in failures[:3])
-    more = failed_count - min(3, len(failures))
-    text = f"{failed_count} file(s) could not be restored: {names}"
-    if more > 0:
-        text += f" and {more} more"
-    if failures:
-        text += f" ({failures[0]['error']})"
-    return text if len(text) <= 300 else text[:297] + "..."
+    return failure_summary(failed_count, failures, action="could not be restored")
 
 
 def _sync_caption_sidecar(image_path: str, caption: str | None) -> None:

@@ -28,6 +28,8 @@ Bulk score, upscale, LUT, detect, detection-crop, watermark-removal, thumbnail r
 
 ## Image Processing
 
+The tools below report an image they could not process instead of calling the run a success. When an upscale or LUT started from an image's detail view fails, the error message says why and the tool stays open, so you can try another model or setting. A file that resolves outside the datasets folder, through a link inside the dataset, is always refused, so nothing outside the folder is overwritten → [details](datasets.md#getting-images-in)
+
 ### Upscaling
 
 ML-based image upscaling via the [`spandrel`](https://github.com/chaiNNer-org/spandrel) library, which auto-detects architecture from model files:

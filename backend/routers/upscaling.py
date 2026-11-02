@@ -9,14 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
 from backend.database import get_db
+from backend.job_outcome import FAILURE_DETAIL_CAP, failure_summary
 from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
+from backend.services.dataset_service import refresh_stats
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, chunked, contained_path, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -32,10 +34,11 @@ async def list_upscale_models():
 async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db)):
     # Resolve image list
     if body.image_ids is not None:
-        result = await db.execute(
-            select(Image.id).where(Image.id.in_(body.image_ids))
-        )
-        image_ids = [r[0] for r in result.all()]
+        # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        image_ids = []
+        for chunk in chunked(body.image_ids):
+            result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
+            image_ids.extend(r[0] for r in result.all())
     else:
         q = select(Image.id).where(Image.dataset_id == body.dataset_id)
         if body.subfolder is not None:
@@ -71,12 +74,15 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             # parent's provenance, source_meta included, and a deferred lazy load
             # would raise on this async session. The replace branch never calls
             # `copy_provenance`, so undeferring there would load a scraper's full
-            # raw payload for the whole batch and discard it.
-            query = select(Image).where(Image.id.in_(image_ids))
-            if not cfg["replace"]:
-                query = query.options(undefer(Image.source_meta))
-            result = await session.execute(query)
-            images = result.scalars().all()
+            # raw payload for the whole batch and discard it. Chunked, because a
+            # whole-dataset run can pass SQLite's bind limit.
+            images = []
+            for chunk in chunked(image_ids):
+                query = select(Image).where(Image.id.in_(chunk))
+                if not cfg["replace"]:
+                    query = query.options(undefer(Image.source_meta))
+                result = await session.execute(query)
+                images.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # The whole outcome of the run, written to `result_data` at the end —
@@ -94,6 +100,10 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
+            # What failed and why, for `failure_summary`: the live `Failed:`
+            # message is gone on reload, and the job still ends `completed`
+            # (PM-023).
+            failures: list[dict] = []
 
             model_path = cfg["model_path"]
             replace = cfg["replace"]
@@ -129,6 +139,11 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             # is a fact about the picture, not about the file.
             derivative_ids: dict[str, str] = {}
 
+            # Every dataset whose stored stats the run moved, refreshed after
+            # the loop. A set, not `body.dataset_id`: a selection can span
+            # datasets (PM-029).
+            touched: set[str] = set()
+
             cancelled = False
             for i, img in enumerate(images):
                 if job_queue.cancel_requested(job_id):
@@ -144,6 +159,25 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     "current_item": img.filename,
                     "message": f"Upscaling {img.filename}…",
                 })
+                # Gate before anything reads or writes through the stored path: a
+                # link in images/ would otherwise have the upscale overwrite a file
+                # outside the datasets folder, and `protect_file_before_overwrite`
+                # refuses that path without stopping the write. A gate only — the
+                # row's own spelling is kept below (`contained_path`'s docstring).
+                if contained_path(
+                    img.file_path, settings.datasets_dir, context="Upscale", ident=img.id
+                ) is None:
+                    await broadcaster.emit(job_id, {
+                        "type": "progress", "job_id": job_id, "job_type": "batch_upscale",
+                        "status": "running", "done": i + 1, "total": len(images),
+                        "percent": round((i + 1) / len(images) * 100, 1),
+                        "current_item": img.filename,
+                        "message": f"Failed: {OUT_OF_TREE_MSG}",
+                    })
+                    counts["failed"] += 1
+                    if len(failures) < FAILURE_DETAIL_CAP:
+                        failures.append({"file": img.filename, "error": OUT_OF_TREE_MSG})
+                    continue
                 src_path = Path(img.file_path)
                 dest_path_str: str
 
@@ -217,6 +251,8 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                         "message": f"Failed: {exc}",
                     })
                     counts["failed"] += 1
+                    if len(failures) < FAILURE_DETAIL_CAP:
+                        failures.append({"file": img.filename, "error": str(exc)})
                     continue
 
                 # upscale_image_sync may change out_path if format conversion occurred
@@ -253,6 +289,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     # this commit — a raise before here would roll the row back
                     # onto a file that no longer exists (PM-013).
                     await session.commit()
+                    touched.add(img.dataset_id)
 
                     # --- epilogue: best-effort, cannot undo the upscale ---
                     # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -304,6 +341,7 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
                     session.add(new_img)
                     await session.flush()
                     derivative_ids[img.id] = new_img.id
+                    touched.add(img.dataset_id)
                     last_image_id = new_img.id
 
                 await broadcaster.emit(job_id, {
@@ -320,10 +358,28 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts,
+                    "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be upscaled"
+                    ),
+                }
             # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
             # everything it did manage — including any stale thumbnail.
             await session.commit()
+
+            # A replace changed a file's size and a copy added a row, and both
+            # are stored on the dataset. After the final commit, so a failed
+            # refresh cannot roll back the copy rows, their labels or the counts
+            # (PM-013); before the cancel raise, so a cancelled run still
+            # refreshes what it did. Detection crop's epilogue, copied.
+            for ds_id in touched:
+                try:
+                    await refresh_stats(session, ds_id)
+                except Exception:
+                    logger.warning("Upscale: could not refresh stats for %s", ds_id, exc_info=True)
+                    await session.rollback()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 

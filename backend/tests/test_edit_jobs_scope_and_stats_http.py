@@ -216,9 +216,16 @@ def test_detection_crop_chunks_the_request_time_lookup(tmp_path, monkeypatch):
 
 def test_detection_run_chunks_the_request_time_lookup(tmp_path, monkeypatch):
     """Only the request side is pinned: the job needs a model, and how it ends
-    without one is not this test's business."""
+    without one is not this test's business. The loader is stubbed to fail, so
+    a machine with torch never loads real SAM2 weights for it."""
     async def scenario():
         import backend.routers.detection as detection_router
+        from backend.ml.model_manager import model_manager
+
+        async def no_sam2(**_kwargs):
+            raise RuntimeError("no model in this test")
+
+        monkeypatch.setattr(model_manager, "load_sam2", no_sam2)
 
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
@@ -264,6 +271,32 @@ def test_batch_edits_chunk_the_job_id_load(tmp_path, monkeypatch, route, body):
 
             # The request's busy guard, then the job's load.
             assert [set(c) for c in calls] == [ids, ids], calls
+
+    run(scenario())
+
+
+def test_a_repeated_id_is_edited_once_across_chunks(tmp_path, monkeypatch):
+    """One `IN` collapsed a repeated id; chunks do not, and the spy puts each
+    id in its own chunk, as a list past `chunked`'s size would. Without the
+    dedupe the image is halved twice."""
+    async def scenario():
+        import backend.routers.images as images_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+
+            monkeypatch.setattr(images_router, "chunked", _spy([]))
+            r = await env.client.post(f"{API}/images/batch/resize", json={
+                "image_ids": [img["id"], img["id"]], "scale": 0.5,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["processed"] == 1, job
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            assert (row.width, row.height) == (20, 10)
 
     run(scenario())
 

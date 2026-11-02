@@ -35,8 +35,10 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
     # Resolve image list
     if body.image_ids is not None:
         # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        # Deduplicated first: one IN collapsed a repeated id, separate chunks
+        # would each return the row, and the job would edit it twice.
         image_ids = []
-        for chunk in chunked(body.image_ids):
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
             result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
             image_ids.extend(r[0] for r in result.all())
     else:

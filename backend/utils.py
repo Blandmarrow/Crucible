@@ -34,6 +34,10 @@ def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
     would already exceed it, so a comment citing 999 is describing the wrong limit,
     not a tighter one. Empty ``seq`` yields nothing. Use this in every batched
     ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
+
+    Deduplicate a client's id list before chunking it
+    (``chunked(list(dict.fromkeys(ids)))``): one ``IN`` collapsed a repeated id,
+    but two chunks holding it each return the row, and a job then edits it twice.
     """
     if size <= 0:
         raise ValueError("size must be positive")

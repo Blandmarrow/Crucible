@@ -99,8 +99,10 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         # `is not None`, not truthiness (same convention as bulk-delete/crop):
         # an empty selection must match nothing, never widen to the dataset.
         # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        # Deduplicated first: one IN collapsed a repeated id, separate chunks
+        # would each return the row, and the job would edit it twice.
         rows = []
-        for chunk in chunked(body.image_ids):
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
             rows.extend((await db.execute(query.where(Image.id.in_(chunk)))).all())
     else:
         # Dataset-scope filters (mirror bulk-delete / crop). Explicit ids win and
@@ -875,8 +877,10 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
     # Resolve image list (same triple as batch upscale: ids > dataset+subfolder+flags)
     if body.image_ids is not None:
         # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        # Deduplicated first: one IN collapsed a repeated id, separate chunks
+        # would each return the row, and the job would edit it twice.
         image_ids = []
-        for chunk in chunked(body.image_ids):
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
             result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
             image_ids.extend(r[0] for r in result.all())
     else:

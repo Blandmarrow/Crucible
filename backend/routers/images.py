@@ -1341,8 +1341,10 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
             # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            # Deduplicated first: one IN collapsed a repeated id, separate chunks
+            # would each return the row, and the job would edit it twice.
             image_ids = []
-            for chunk in chunked(body.image_ids):
+            for chunk in chunked(list(dict.fromkeys(body.image_ids))):
                 result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
                 image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
@@ -1470,8 +1472,10 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
             # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            # Deduplicated first: one IN collapsed a repeated id, separate chunks
+            # would each return the row, and the job would edit it twice.
             image_ids = []
-            for chunk in chunked(body.image_ids):
+            for chunk in chunked(list(dict.fromkeys(body.image_ids))):
                 result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
                 image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
